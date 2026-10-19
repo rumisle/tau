@@ -10,6 +10,7 @@ import LottieSettings
 import AnimationCache
 import MultiAnimationRenderer
 import TextFormat
+import Display
 
 public struct EnergyUsageSettings: Equatable {
     public var loopEmoji: Bool
@@ -32,11 +33,16 @@ public struct EnergyUsageSettings: Equatable {
 public protocol SharedAccountContext: AnyObject {
     var currentPresentationData: Atomic<PresentationData> { get }
     var energyUsageSettings: EnergyUsageSettings { get }
+    var mainWindow: Window1? { get }
+    var applicationBindings: TelegramApplicationBindings { get }
     var presentationData: Signal<PresentationData, NoError> { get }
 }
 
 public protocol AccountContext: AnyObject {
     var sharedContext: SharedAccountContext { get }
+    var account: Account { get }
+    var currentLimitsConfiguration: Atomic<LimitsConfiguration> { get }
+    var currentAppConfiguration: Atomic<AppConfiguration> { get }
     var animationCache: AnimationCache { get }
     var animationRenderer: MultiAnimationRenderer { get }
     var lottieRenderingSettings: LottieRenderingSettings { get }
@@ -94,5 +100,178 @@ public struct ChatTextInputStateText: Equatable {
             }
         }
         return result
+    }
+}
+
+// As in AccountContext/Sources/AttachmentMainButtonState.swift.
+public struct AttachmentMainButtonState {
+    public enum Background {
+        case color(UIColor)
+        case premium
+        
+        public var colorValue: UIColor? {
+            if case let .color(color) = self {
+                return color
+            }
+            return nil
+        }
+    }
+    
+    public enum Progress: Equatable {
+        case none
+        case side
+        case center
+    }
+    
+    public enum Font: Equatable {
+        case regular
+        case bold
+    }
+    
+    public enum Position: String, Equatable {
+        case top
+        case bottom
+        case left
+        case right
+    }
+    
+    public let text: String?
+    public let badge: String?
+    public let font: Font
+    public let background: Background
+    public let textColor: UIColor
+    public let isVisible: Bool
+    public let progress: Progress
+    public let isEnabled: Bool
+    public let hasShimmer: Bool
+    public let iconName: String?
+    public let iconCustomEmojiId: Int64?
+    public let smallSpacing: Bool
+    public let position: Position?
+    public let hidesPanelBackground: Bool
+    /// The button is an alternative to the tabs' content (e.g. "Edit Current Photo" while replacing a
+    /// message's media), so it is laid out above the tab row instead of replacing it.
+    public let keepsTabRow: Bool
+    
+    public init(
+        text: String?,
+        badge: String? = nil,
+        font: Font,
+        background: Background,
+        textColor: UIColor,
+        isVisible: Bool,
+        progress: Progress,
+        isEnabled: Bool,
+        hasShimmer: Bool,
+        iconName: String? = nil,
+        iconCustomEmojiId: Int64? = nil,
+        smallSpacing: Bool = false,
+        position: Position? = nil,
+        hidesPanelBackground: Bool = false,
+        keepsTabRow: Bool = false
+    ) {
+        self.text = text
+        self.badge = badge
+        self.font = font
+        self.background = background
+        self.textColor = textColor
+        self.isVisible = isVisible
+        self.progress = progress
+        self.isEnabled = isEnabled
+        self.hasShimmer = hasShimmer
+        self.iconName = iconName
+        self.iconCustomEmojiId = iconCustomEmojiId
+        self.smallSpacing = smallSpacing
+        self.position = position
+        self.hidesPanelBackground = hidesPanelBackground
+        self.keepsTabRow = keepsTabRow
+    }
+    
+    public static var initial: AttachmentMainButtonState {
+        return AttachmentMainButtonState(text: nil, font: .bold, background: .color(.clear), textColor: .clear, isVisible: false, progress: .none, isEnabled: false, hasShimmer: false)
+    }
+}
+
+// MARK: Chats, as in AccountContext/Sources/AccountContext.swift
+
+public enum ChatLocation: Equatable {
+    case peer(id: EnginePeer.Id)
+    case customChatContents
+
+    public var peerId: EnginePeer.Id? {
+        if case let .peer(id) = self {
+            return id
+        }
+        return nil
+    }
+}
+
+public enum AttachmentTextInputPanelSendMode {
+    case generic
+    case silent
+    case schedule
+    case whenOnline
+}
+
+public struct ChatSendMessageActionSheetControllerSendParameters {
+    public struct Effect {
+        public let id: Int64
+
+        public init(id: Int64) {
+            self.id = id
+        }
+    }
+
+    public var effect: Effect?
+    public var textIsAboveMedia: Bool
+
+    public init(effect: Effect?, textIsAboveMedia: Bool) {
+        self.effect = effect
+        self.textIsAboveMedia = textIsAboveMedia
+    }
+}
+
+public enum ChatSendMessageActionSheetControllerSendMode {
+    case generic
+    case silently
+    case whenOnline
+}
+
+public protocol ChatSendMessageActionSheetController: ViewController {
+    typealias SendMode = ChatSendMessageActionSheetControllerSendMode
+    typealias SendParameters = ChatSendMessageActionSheetControllerSendParameters
+}
+
+/// The text of a message being written, as in AccountContext's ChatTextInputState, without its rich-text model.
+public struct ChatTextInputState: Equatable {
+    public var inputText: NSAttributedString
+    public var selectionRange: Range<Int>
+
+    public init(inputText: NSAttributedString = NSAttributedString(), selectionRange: Range<Int>? = nil) {
+        self.inputText = inputText
+        self.selectionRange = selectionRange ?? (inputText.length ..< inputText.length)
+    }
+
+    public static func ==(lhs: ChatTextInputState, rhs: ChatTextInputState) -> Bool {
+        return lhs.inputText.isEqual(to: rhs.inputText) && lhs.selectionRange == rhs.selectionRange
+    }
+}
+
+public protocol MediaPickerScreen: ViewController {
+    func dismissAnimated()
+}
+
+public enum PeerType: Equatable {
+    case user(isBot: Bool)
+    case group
+    case channel
+    case community
+}
+
+public final class TelegramApplicationBindings {
+    public let openSettings: () -> Void
+
+    public init(openSettings: @escaping () -> Void) {
+        self.openSettings = openSettings
     }
 }

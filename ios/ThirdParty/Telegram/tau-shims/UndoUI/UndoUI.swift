@@ -10,6 +10,8 @@ import AccountContext
 
 public enum UndoOverlayContent {
     case sticker(context: AccountContext, file: TelegramMediaFile, loop: Bool, title: String?, text: String, undoText: String?, customAction: (() -> Void)?)
+    case image(image: UIImage, title: String?, text: String, round: Bool, undoText: String?)
+    case info(title: String?, text: String, timeout: Double?, customUndoText: String?)
 }
 
 public enum UndoOverlayAction {
@@ -24,7 +26,10 @@ public final class UndoOverlayController: ViewController {
         case bottom
     }
 
+    public var content: UndoOverlayContent
+
     public init(presentationData: PresentationData, content: UndoOverlayContent, elevatedLayout: Bool, position: Position = .bottom, animateInAsReplacement: Bool = false, action: @escaping (UndoOverlayAction) -> Bool) {
+        self.content = content
         super.init(navigationBarPresentationData: nil)
     }
 

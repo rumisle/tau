@@ -1,0 +1,842 @@
+--- a/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift
++++ b/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift
+@@ -315,7 +315,7 @@
+     var hasSelectButton: Bool {
+         var hasSelect = false
+         if !self.forCollage, case let .assets(_, mode) = self.subject, case .story = mode {
+-            if (self.interaction?.selectionState?.selectionLimit ?? 1) == 1 && self.context.isPremium {
++            if (self.interaction?.selectionState?.selectionLimit ?? 1) == 1 {
+             } else {
+                 hasSelect = true
+             }
+@@ -362,7 +362,6 @@
+         fileprivate var modernCameraView: CameraSimplePreviewView?
+         fileprivate var modernCameraTapGestureRecognizer: UITapGestureRecognizer?
+         
+-        fileprivate var avatarEditorPreviewView: AvatarEditorPreviewView?
+         
+         private var cameraActivateAreaNode: AccessibilityAreaNode
+         fileprivate var placeholderNode: MediaPickerPlaceholderNode?
+@@ -494,11 +493,8 @@
+             switch controller.subject {
+             case let .assets(collection, mode):
+                 let drafts: Signal<[MediaEditorDraft], NoError>
+-                if mode == .story {
+-                    drafts = storyDrafts(engine: controller.context.engine)
+-                } else {
+-                    drafts = .single([])
+-                }
++                _ = mode
++                drafts = .single([])
+                 updatedState = combineLatest(mediaAssetsContext.mediaAccess(), mediaAssetsContext.cameraAccess())
+                 |> mapToSignal { mediaAccess, cameraAccess -> Signal<State, NoError> in
+                     if case .notDetermined = mediaAccess {
+@@ -732,14 +728,6 @@
+                 }
+             })
+             
+-            if case .assets(nil, .createAvatar) = controller.subject {
+-                let avatarEditorPreviewView = AvatarEditorPreviewView(context: controller.context)
+-                avatarEditorPreviewView.tapped = { [weak self] in
+-                    self?.controller?.openAvatarEditor()
+-                }
+-                self.gridNode.view.addSubview(avatarEditorPreviewView)
+-                self.avatarEditorPreviewView = avatarEditorPreviewView
+-            }
+             
+             var useLegacyCamera = false
+             var useModernCamera = false
+@@ -778,62 +766,6 @@
+                 
+                 self.gridNode.scrollView.addSubview(cameraView)
+                 self.gridNode.addSubnode(self.cameraActivateAreaNode)
+-            } else if useModernCamera, !LegacyCameraImpl.shared.isIpad {
+-                #if !targetEnvironment(simulator)
+-                let cameraImpl = LegacyCameraImpl.shared
+-                var cameraPosition: Camera.Position = .back
+-                if case .assets(nil, .createAvatar) = controller.subject {
+-                    cameraPosition = .front
+-                }
+-                
+-                let cameraPreviewView = cameraImpl.makeCameraSimplePreviewView(frame: .zero, main: true, roundVideo: false)
+-                cameraPreviewView.resetPlaceholder(front: cameraPosition == .front)
+-                self.modernCameraView = cameraPreviewView
+-                
+-                let tapGestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(self.cameraTapped))
+-                cameraPreviewView.addGestureRecognizer(tapGestureRecognizer)
+-                self.modernCameraTapGestureRecognizer = tapGestureRecognizer
+-                
+-                if #available(iOS 13.0, *) {
+-                    let _ = (cameraPreviewView.isPreviewing
+-                    |> filter { $0 }
+-                    |> take(1)
+-                    |> deliverOnMainQueue).startStandalone(next: { [weak self] _ in
+-                        self?.modernCameraView?.removePlaceholder(delay: 0.35)
+-                    })
+-                } else {
+-                    Queue.mainQueue().after(0.35) {
+-                        cameraPreviewView.removePlaceholder(delay: 0.15)
+-                    }
+-                }
+-                
+-                self.cameraWrapperView.addSubview(cameraPreviewView)
+-                
+-                let setupCamera = {
+-                    let camera = cameraImpl.makeCamera(
+-                        configuration: Camera.Configuration(
+-                            preset: .hd1920x1080,
+-                            position: cameraPosition,
+-                            isDualEnabled: false,
+-                            audio: false,
+-                            photo: true,
+-                            metadata: false
+-                        ),
+-                        previewView: cameraPreviewView,
+-                        secondaryPreviewView: nil
+-                    )
+-                    self.modernCamera = camera
+-                    camera.startCapture()
+-                }
+-                
+-                if case .assets(nil, .createAvatar) = controller.subject {
+-                    Queue.mainQueue().after(0.4, {
+-                        setupCamera()
+-                    })
+-                } else {
+-                    setupCamera()
+-                }
+-                #endif
+             } else {
+                 self.containerNode.clipsToBounds = true
+             }
+@@ -954,7 +886,7 @@
+                     camera.startCapture()
+                 } else {
+                     cameraView.isEnabled = false
+-                    camera.stopCapture()
++                    camera.stopCapture(invalidate: false)
+                 }
+             }
+         }
+@@ -1404,37 +1336,7 @@
+             
+             self.openingMedia = true
+             
+-            self.currentGalleryController = presentLegacyMediaPickerGallery(context: controller.context, peer: controller.peer, threadTitle: controller.threadTitle, chatLocation: controller.chatLocation, isScheduledMessages: controller.isScheduledMessages, isActionButtonDone: controller.isActionButtonDone, presentationData: self.presentationData, source: .fetchResult(fetchResult: fetchResult, index: index, reversed: reversed), immediateThumbnail: immediateThumbnail, selectionContext: interaction.selectionState?.selectionLimit == 1 ? nil : interaction.selectionState, editingContext: interaction.editingState, asFile: controller.subject.asFile, hasSilentPosting: true, hasSchedule: hasSchedule, hasTimer: hasTimer, updateHiddenMedia: { [weak self] id in
+-                self?.hiddenMediaId.set(.single(id))
+-            }, initialLayout: layout, transitionHostView: { [weak self] in
+-                return self?.gridNode.view
+-            }, transitionView: { [weak self] identifier in
+-                return self?.transitionView(for: identifier)
+-            }, completed: { [weak self] result, silently, scheduleTime, completion in
+-                if let strongSelf = self {
+-                    strongSelf.controller?.interaction?.sendSelected(result, silently, scheduleTime, false, nil, completion)
+-                }
+-            }, presentSchedulePicker: controller.presentSchedulePicker, presentTimerPicker: controller.presentTimerPicker, getCaptionPanelView: controller.getCaptionPanelView, present: { [weak self] c, a in
+-                self?.currentGalleryParentController = c
+-                c.navigationPresentation = .flatModal
+-                if let parentController = self?.controller?.parentController() {
+-                    parentController.push(c)
+-                } else {
+-                    self?.controller?.push(c)
+-                }
+-                //self?.controller?.present(c, in: .window(.root), with: a)
+-            }, finishedTransitionIn: { [weak self] in
+-                self?.openingMedia = false
+-                self?.hasGallery = true
+-                self?.updateIsCameraActive()
+-            }, willTransitionOut: { [weak self] in
+-                self?.hasGallery = false
+-                self?.updateIsCameraActive()
+-            }, dismissAll: { [weak self] in
+-                self?.controller?.dismissAll()
+-            }, editCover: { [weak self] dimensions, completion in
+-                self?.controller?.editCover(dimensions, completion)
+-            })
++            self.openingMedia = false
+         }
+         
+         fileprivate func openSelectedMedia(item: TGMediaSelectableItem, immediateThumbnail: UIImage?) {
+@@ -1451,31 +1353,7 @@
+             }
+             
+             self.openingMedia = true
+-            self.currentGalleryController = presentLegacyMediaPickerGallery(context: controller.context, peer: controller.peer, threadTitle: controller.threadTitle, chatLocation: controller.chatLocation, isScheduledMessages: controller.isScheduledMessages, presentationData: self.presentationData, source: .selection(item: item), immediateThumbnail: immediateThumbnail, selectionContext: interaction.selectionState, editingContext: interaction.editingState, asFile: controller.subject.asFile, hasSilentPosting: true, hasSchedule: true, hasTimer: hasTimer, updateHiddenMedia: { [weak self] id in
+-                self?.hiddenMediaId.set(.single(id))
+-            }, initialLayout: layout, transitionHostView: { [weak self] in
+-                return self?.selectionNode?.view
+-            }, transitionView: { [weak self] identifier in
+-                return self?.transitionView(for: identifier)
+-            }, completed: { [weak self] result, silently, scheduleTime, completion in
+-                if let strongSelf = self {
+-                    strongSelf.controller?.interaction?.sendSelected(result, silently, scheduleTime, false, nil, completion)
+-                }
+-            }, presentSchedulePicker: controller.presentSchedulePicker, presentTimerPicker: controller.presentTimerPicker, getCaptionPanelView: controller.getCaptionPanelView, present: { [weak self] c, a in
+-                self?.currentGalleryParentController = c
+-                self?.controller?.present(c, in: .window(.root), with: a, blockInteraction: true)
+-            }, finishedTransitionIn: { [weak self] in
+-                self?.openingMedia = false
+-                self?.hasGallery = true
+-                self?.updateIsCameraActive()
+-            }, willTransitionOut: { [weak self] in
+-                self?.hasGallery = false
+-                self?.updateIsCameraActive()
+-            }, dismissAll: { [weak self] in
+-                self?.controller?.dismissAll()
+-            }, editCover: { _, _ in
+-                
+-            })
++            self.openingMedia = false
+         }
+         
+         fileprivate func openDraft(draft: MediaEditorDraft, immediateThumbnail: UIImage?) {
+@@ -1875,9 +1753,6 @@
+             if let cameraRect {
+                 cutoutRects.append(cameraRect)
+             }
+-            if let _ = self.avatarEditorPreviewView {
+-                cutoutRects.append(CGRect(x: cameraRect != nil ? cameraRect!.maxX + itemSpacing : layout.safeInsets.left, y: 0.0, width: itemWidth, height: itemWidth))
+-            }
+             
+             var itemHeight = itemWidth
+             if case let .assets(_, mode) = controller.subject, case .story = mode {
+@@ -1904,10 +1779,6 @@
+                 }
+             })
+             
+-            if let avatarEditorPreviewView = self.avatarEditorPreviewView {
+-                avatarEditorPreviewView.frame = CGRect(origin: CGPoint(x: cameraRect != nil ? cameraRect!.maxX + itemSpacing : layout.safeInsets.left, y: 0.0), size: CGSize(width: itemWidth, height: itemWidth))
+-                avatarEditorPreviewView.updateLayout(size: CGSize(width: itemWidth, height: itemWidth))
+-            }
+             
+             if let selectionNode = self.selectionNode, let controller = self.controller {
+                 let selectionTransition = selectionNode.supernode == nil ? .immediate : transition
+@@ -3057,32 +2928,6 @@
+     
+     @objc private func selectPressed() {
+         let context = self.context
+-        if let selectionState = self.interaction?.selectionState, selectionState.selectionLimit == 1, !context.isPremium {
+-            var replaceImpl: ((ViewController) -> Void)?
+-            let controller = context.sharedContext.makePremiumLimitController(
+-                context: self.context,
+-                subject: .multiStories,
+-                count: 1,
+-                forceDark: true,
+-                cancel: {},
+-                action: {
+-                    let controller = context.sharedContext.makePremiumIntroController(
+-                        context: context,
+-                        source: .stories,
+-                        forceDark: true,
+-                        dismissed: nil
+-                    )
+-                    replaceImpl?(controller)
+-                    return true
+-                })
+-            replaceImpl = { [weak controller] c in
+-                controller?.replace(with: c)
+-            }
+-            self.requestDismiss {
+-                self.parentController()?.push(controller)
+-            }
+-            return
+-        }
+         
+         self.explicitMultipleSelection = true
+         self.controllerNode.setupSelectionGesture(force: true)
+@@ -3265,18 +3110,7 @@
+                                     return
+                                 }
+                                 
+-                                let controller = self.context.sharedContext.makeStarsAmountScreen(context: self.context, initialValue: price, completion: { [weak self] amount in
+-                                    guard let self else {
+-                                        return
+-                                    }
+-                                    if let selectionContext = self.interaction?.selectionState, let editingContext = self.interaction?.editingState {
+-                                        selectionContext.selectionLimit = Int32(self.enableMultiselection ? self.selectionLimit ?? 10 : 1)
+-                                        for case let item as TGMediaEditableItem in selectionContext.selectedItems() {
+-                                            editingContext.setPrice(NSNumber(value: amount), for: item)
+-                                        }
+-                                    }
+-                                })
+-                                self.parentController()?.push(controller)
++                                _ = price
+                             })))
+                         }
+                     }
+@@ -3657,575 +3491,15 @@
+         mediaPickerController.customSelection = { controller, result in
+             completion(result)
+             controller.dismiss(animated: true)
+-        }
+-        present(mediaPickerController, mediaPickerController.mediaPickerContext)
+-        return true
+-    }
+-    controller.navigationPresentation = .flatModal
+-    controller.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
+-    return controller
+-}
+-
+-public func storyMediaPickerController(
+-    context: AccountContext,
+-    isDark: Bool,
+-    forCollage: Bool,
+-    selectionLimit: Int?,
+-    getSourceRect: @escaping () -> CGRect,
+-    completion: @escaping (Any, UIView, CGRect, UIImage?, @escaping (Bool?) -> (UIView, CGRect)?, @escaping () -> Void) -> Void,
+-    multipleCompletion: @escaping ([Any], Bool) -> Void,
+-    dismissed: @escaping () -> Void,
+-    groupsPresented: @escaping () -> Void
+-) -> ViewController {
+-    var presentationData = context.sharedContext.currentPresentationData.with({ $0 })
+-    if isDark {
+-        presentationData = presentationData.withUpdated(theme: defaultDarkColorPresentationTheme)
+-    }
+-    let updatedPresentationData: (PresentationData, Signal<PresentationData, NoError>) = (presentationData, .single(presentationData))
+-   
+-    var selectionContext: TGMediaSelectionContext?
+-    if let selectionLimit {
+-        selectionContext = TGMediaSelectionContext()
+-        selectionContext?.selectionLimit = Int32(selectionLimit)
+-        selectionContext?.selectionLimitExceeded = {
+-            HapticFeedback().error()
+-        }
+-    }
+-    
+-    let controller = AttachmentController(
+-        context: context,
+-        updatedPresentationData: updatedPresentationData,
+-        style: .glass,
+-        chatLocation: nil,
+-        buttons: [.standalone],
+-        initialButton: .standalone,
+-        fromMenu: false,
+-        hasTextInput: false,
+-        makeEntityInputView: {
+-            return nil
+-        }
+-    )
+-    controller.forceSourceRect = true
+-    controller.getSourceRect = getSourceRect
+-    controller.requestController = { [selectionContext] _, present in
+-        let mediaPickerController = MediaPickerScreenImpl(
+-            context: context,
+-            updatedPresentationData: updatedPresentationData,
+-            style: .glass,
+-            peer: nil,
+-            threadTitle: nil,
+-            chatLocation: nil,
+-            bannedSendPhotos: nil,
+-            bannedSendVideos: nil,
+-            subject: .assets(nil, .story),
+-            forCollage: forCollage,
+-            selectionContext: selectionContext,
+-            mainButtonState: nil,
+-            mainButtonAction: { [weak selectionContext] in
+-                if let selectionContext, let selectedItems = selectionContext.selectedItems() {
+-                    var results: [Any] = []
+-                    for item in selectedItems {
+-                        if let item = item as? TGMediaAsset, let asset = item.backingAsset {
+-                            results.append(asset)
+-                        }
+-                    }
+-                    multipleCompletion(results, forCollage)
+-                }
+-            },
+-            secondaryButtonAction: { [weak selectionContext] in
+-                if let selectionContext, let selectedItems = selectionContext.selectedItems() {
+-                    var results: [Any] = []
+-                    for item in selectedItems {
+-                        if let item = item as? TGMediaAsset, let asset = item.backingAsset {
+-                            results.append(asset)
+-                        }
+-                    }
+-                    multipleCompletion(results, true)
+-                }
+-            }
+-        )
+-        mediaPickerController.groupsPresented = groupsPresented
+-        mediaPickerController.customSelection = { controller, result in
+-            if let result = result as? MediaEditorDraft {
+-                controller.updateHiddenMediaId(result.path)
+-                if let transitionView = controller.transitionView(for: result.path, snapshot: false) {
+-                    let transitionOut: (Bool?) -> (UIView, CGRect)? = { isNew in
+-                        if let isNew {
+-                            controller.updateHiddenMediaId(result.path)
+-                            if isNew {
+-                                if let transitionView = controller.defaultTransitionView() {
+-                                    return (transitionView, transitionView.bounds)
+-                                }
+-                            } else {
+-                                if let transitionView = controller.transitionView(for: result.path, snapshot: false) {
+-                                    return (transitionView, transitionView.bounds)
+-                                }
+-                            }
+-                        }
+-                        return nil
+-                    }
+-                    completion(result, transitionView, transitionView.bounds, controller.transitionImage(for: result.path), transitionOut, { [weak controller] in
+-                        controller?.updateHiddenMediaId(nil)
+-                    })
+-                }
+-            } else if let result = result as? PHAsset {
+-                if !forCollage {
+-                    controller.updateHiddenMediaId(result.localIdentifier)
+-                }
+-                if let transitionView = controller.transitionView(for: result.localIdentifier, snapshot: false) {
+-                    let transitionOut: (Bool?) -> (UIView, CGRect)? = { isNew in
+-                        if let isNew {
+-                            if isNew {
+-                                controller.updateHiddenMediaId(nil)
+-                                if let transitionView = controller.defaultTransitionView() {
+-                                    return (transitionView, transitionView.bounds)
+-                                }
+-                            } else if let transitionView = controller.transitionView(for: result.localIdentifier, snapshot: false) {
+-                                return (transitionView, transitionView.bounds)
+-                            }
+-                        }
+-                        return nil
+-                    }
+-                    completion(result, transitionView, transitionView.bounds, controller.transitionImage(for: result.localIdentifier), transitionOut, { [weak controller] in
+-                        controller?.updateHiddenMediaId(nil)
+-                    })
+-                }
+-            }
+-        }
+-        present(mediaPickerController, mediaPickerController.mediaPickerContext)
+-        return true
+-    }
+-    controller.willDismiss = { [weak selectionContext] in
+-        dismissed()
+-        selectionContext?.clear()
+-    }
+-    controller.navigationPresentation = .flatModal
+-    controller.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
+-    return controller
+-}
+-
+-public func stickerMediaPickerController(
+-    context: AccountContext,
+-    getSourceRect: @escaping () -> CGRect?,
+-    completion: @escaping (Any?, UIView?, CGRect, UIImage?, Bool, @escaping (Bool?) -> (UIView, CGRect)?, @escaping () -> Void) -> Void,
+-    dismissed: @escaping () -> Void
+-) -> ViewController {
+-    let presentationData = context.sharedContext.currentPresentationData.with({ $0 })
+-    let updatedPresentationData: (PresentationData, Signal<PresentationData, NoError>) = (presentationData, .single(presentationData))
+-    let controller = AttachmentController(
+-        context: context,
+-        updatedPresentationData: updatedPresentationData,
+-        style: .glass,
+-        chatLocation: nil,
+-        buttons: [.standalone],
+-        initialButton: .standalone,
+-        fromMenu: false,
+-        hasTextInput: false,
+-        makeEntityInputView: {
+-        return nil
+-    })
+-    controller.forceSourceRect = true
+-    controller.getSourceRect = getSourceRect
+-    controller.requestController = { [weak controller] _, present in
+-        let mediaPickerController = MediaPickerScreenImpl(
+-            context: context,
+-            updatedPresentationData: updatedPresentationData,
+-            style: .glass,
+-            peer: nil,
+-            threadTitle: nil,
+-            chatLocation: nil,
+-            bannedSendPhotos: nil,
+-            bannedSendVideos: nil,
+-            subject: .assets(nil, .createSticker),
+-            mainButtonState: nil,
+-            mainButtonAction: nil
+-        )
+-        mediaPickerController.customSelection = { controller, result in
+-            if let result = result as? PHAsset {
+-                controller.updateHiddenMediaId(result.localIdentifier)
+-                if let transitionView = controller.transitionView(for: result.localIdentifier, snapshot: false) {
+-                    let transitionOut: (Bool?) -> (UIView, CGRect)? = { isNew in
+-                        if let isNew {
+-                            if isNew {
+-                                controller.updateHiddenMediaId(nil)
+-                                if let transitionView = controller.defaultTransitionView() {
+-                                    return (transitionView, transitionView.bounds)
+-                                }
+-                            } else if let transitionView = controller.transitionView(for: result.localIdentifier, snapshot: false) {
+-                                return (transitionView, transitionView.bounds)
+-                            }
+-                        }
+-                        return nil
+-                    }
+-                    completion(result, transitionView, transitionView.bounds, controller.transitionImage(for: result.localIdentifier), false, transitionOut, { [weak controller] in
+-                        controller?.updateHiddenMediaId(nil)
+-                    })
+-                }
+-            }
+         }
+-        mediaPickerController.createFromScratch = { [weak controller] in
+-            completion(nil, nil, .zero, nil, false, { _ in return nil }, {
+-            })
+-            controller?.dismiss(animated: true)
+-        }
+-        mediaPickerController.presentFilePicker = { [weak controller] in
+-            controller?.present(legacyICloudFilePicker(theme: presentationData.theme, mode: .import, documentTypes: ["public.image"], forceDarkTheme: false, dismissed: {
+-            }, completion: { urls in
+-                if let url = urls.first {
+-                    let isScopedResource = url.startAccessingSecurityScopedResource()
+-                    Logger.shared.log("MediaPicker", "isScopedResource = \(isScopedResource)")
+-                    
+-                    let coordinator = NSFileCoordinator(filePresenter: nil)
+-                    var error: NSError?
+-                    coordinator.coordinate(readingItemAt: url, options: .forUploading, error: &error, byAccessor: { sourceUrl in
+-                        let fileName =  "img_\(sourceUrl.lastPathComponent)"
+-                        let copyPath = NSTemporaryDirectory() + fileName
+-                        
+-                        try? FileManager.default.removeItem(atPath: copyPath)
+-                        do {
+-                            try FileManager.default.copyItem(at: sourceUrl, to: URL(fileURLWithPath: copyPath))
+-                        } catch let e {
+-                            Logger.shared.log("MediaPicker", "copy file error \(e)")
+-                            if isScopedResource {
+-                                url.stopAccessingSecurityScopedResource()
+-                            }
+-                            return
+-                        }
+-                        
+-                        if let image = UIImage(contentsOfFile: copyPath) {
+-                            completion(image, nil, .zero, nil, false, { _ in return nil }, {})
+-                        }
+-                    })
+-                }
+-            }), in: .window(.root))
+-                                
+-            controller?.dismiss(animated: true)
+-        }
+-        mediaPickerController.openCamera = { [weak controller] cameraHolder in
+-            let _ = controller
+-            guard let cameraHolder = cameraHolder as? CameraHolder else {
+-                return
+-            }
+-            
+-            var returnToCameraImpl: (() -> Void)?
+-
+-            let cameraScreen = context.sharedContext.makeCameraScreen(
+-                context: context,
+-                mode: .sticker,
+-                cameraHolder: cameraHolder,
+-                transitionIn: CameraScreenTransitionIn(
+-                    sourceView: cameraHolder.parentView,
+-                    sourceRect: cameraHolder.parentView.bounds,
+-                    sourceCornerRadius: 0.0,
+-                    useFillAnimation: false
+-                ),
+-                transitionOut: { _ in
+-                    return CameraScreenTransitionOut(
+-                        destinationView: cameraHolder.parentView,
+-                        destinationRect: cameraHolder.parentView.bounds,
+-                        destinationCornerRadius: 0.0
+-                    )
+-                },
+-                completion: { result, commit in
+-                    completion(result, nil, .zero, nil, true, { _ in return nil }, {
+-                        returnToCameraImpl?()
+-                    })
+-                },
+-                transitionedOut: { [weak cameraHolder] in
+-                    if let cameraHolder {
+-                        cameraHolder.restore()
+-                    }
+-                }
+-            )
+-            controller?.push(cameraScreen)
+-            
+-            returnToCameraImpl = { [weak cameraScreen] in
+-                if let cameraScreen = cameraScreen as? CameraScreen {
+-                    cameraScreen.returnFromEditor()
+-                }
+-            }
+-        }
+         present(mediaPickerController, mediaPickerController.mediaPickerContext)
+         return true
+     }
+-    controller.willDismiss = {
+-        dismissed()
+-    }
+     controller.navigationPresentation = .flatModal
+     controller.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
+     return controller
+ }
+ 
+-public func avatarMediaPickerController(
+-    context: AccountContext,
+-    peerType: PeerType,
+-    getSourceRect: @escaping () -> CGRect?,
+-    canDelete: Bool,
+-    performDelete: @escaping () -> Void,
+-    completion: @escaping (Any?, UIView?, CGRect, UIImage?, Bool, @escaping (Bool?) -> (UIView, CGRect)?, @escaping () -> Void) -> Void,
+-    dismissed: @escaping () -> Void
+-) -> (controller: ViewController?, holder: Any?) {
+-    if #available(iOS 14.0, *), PHPhotoLibrary.authorizationStatus(for: .readWrite) != .authorized {
+-        final class PickerDelegate: NSObject, PHPickerViewControllerDelegate {
+-            var completion: ((Any?, UIView?, CGRect, UIImage?, Bool, @escaping (Bool?) -> (UIView, CGRect)?, @escaping () -> Void) -> Void)?
+-            
+-            private func resolveResult(_ result: PHPickerResult) {
+-                if let assetIdentifier = result.assetIdentifier {
+-                    let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil)
+-                    if let asset = fetchResult.firstObject {
+-                        Queue.mainQueue().async {
+-                            self.completion?(asset, nil, CGRect(), nil, false, { _ in return nil }, {})
+-                        }
+-                        return
+-                    }
+-                }
+-                
+-                if result.itemProvider.canLoadObject(ofClass: UIImage.self) {
+-                    result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] image, _ in
+-                        if let uiImage = image as? UIImage {
+-                            Queue.mainQueue().async {
+-                                self?.completion?(uiImage, nil, CGRect(), nil, false, { _ in return nil }, {})
+-                            }
+-                        }
+-                    }
+-                }
+-            }
+-            
+-            func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+-                picker.dismiss(animated: true)
+-                
+-                if let result = results.first {
+-                    self.resolveResult(result)
+-                }
+-            }
+-        }
+-        
+-        let holder = PickerDelegate()
+-        holder.completion = completion
+-        
+-        let openMediaPicker = {
+-            var configuration = PHPickerConfiguration(photoLibrary: .shared())
+-            configuration.filter = .any(of: [.images, .videos])
+-            configuration.selectionLimit = 1
+-            
+-            let picker = PHPickerViewController(configuration: configuration)
+-            picker.delegate = holder
+-            (context.sharedContext.mainWindow?.viewController as? NavigationController)?.topViewController?.present(picker, animated: true, completion: nil)
+-        }
+-        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+-        let controller = ActionSheetController(presentationData: presentationData)
+-        let dismissAction: () -> Void = { [weak controller] in
+-            controller?.dismissAnimated()
+-        }
+-        
+-        var items: [ActionSheetButtonItem] = [
+-            ActionSheetButtonItem(title: presentationData.strings.Settings_SetNewProfilePhotoOrVideo, color: .accent, action: {
+-                dismissAction()
+-                openMediaPicker()
+-            }),
+-            ActionSheetButtonItem(title: presentationData.strings.ProfilePhoto_SetEmoji, color: .accent, action: {
+-                dismissAction()
+-                completion(nil, nil, CGRect(), nil, false, { _ in return nil }, {})
+-            })
+-        ]
+-        if canDelete {
+-            items.append(ActionSheetButtonItem(title: presentationData.strings.MediaPicker_RemovePhoto, color: .destructive, action: {
+-                dismissAction()
+-                performDelete()
+-            }))
+-        }
+-        controller.setItemGroups([
+-            ActionSheetItemGroup(items: items),
+-            ActionSheetItemGroup(items: [ActionSheetButtonItem(title: presentationData.strings.Common_Cancel, action: { dismissAction() })])
+-        ])
+-        return (controller, holder)
+-    } else {
+-        let presentationData = context.sharedContext.currentPresentationData.with({ $0 })
+-        let updatedPresentationData: (PresentationData, Signal<PresentationData, NoError>) = (presentationData, .single(presentationData))
+-        let controller = AttachmentController(
+-            context: context,
+-            updatedPresentationData: updatedPresentationData,
+-            style: .glass,
+-            chatLocation: nil,
+-            buttons: [.standalone],
+-            initialButton: .standalone,
+-            fromMenu: false,
+-            hasTextInput: false,
+-            makeEntityInputView: {
+-                return nil
+-            })
+-        controller.forceSourceRect = true
+-        controller.getSourceRect = getSourceRect
+-        controller.requestController = { [weak controller] _, present in
+-            var mainButtonState: AttachmentMainButtonState?
+-            
+-            if canDelete {
+-                mainButtonState = AttachmentMainButtonState(text: presentationData.strings.MediaPicker_RemovePhoto, font: .regular, background: .color(.clear), textColor: presentationData.theme.actionSheet.destructiveActionTextColor, isVisible: true, progress: .none, isEnabled: true, hasShimmer: false)
+-            }
+-            
+-            let mediaPickerController = MediaPickerScreenImpl(
+-                context: context,
+-                updatedPresentationData: updatedPresentationData,
+-                style: .glass,
+-                peer: nil,
+-                threadTitle: nil,
+-                chatLocation: nil,
+-                bannedSendPhotos: nil,
+-                bannedSendVideos: nil,
+-                subject: .assets(nil, .createAvatar(mode: peerType)),
+-                mainButtonState: mainButtonState,
+-                mainButtonAction: { [weak controller] in
+-                    controller?.dismiss(animated: true)
+-                    performDelete()
+-                }
+-            )
+-            mediaPickerController.customSelection = { controller, result in
+-                if let result = result as? PHAsset {
+-                    controller.updateHiddenMediaId(result.localIdentifier)
+-                    if let transitionView = controller.transitionView(for: result.localIdentifier, snapshot: false) {
+-                        let transitionOut: (Bool?) -> (UIView, CGRect)? = { isNew in
+-                            if let isNew {
+-                                if isNew {
+-                                    controller.updateHiddenMediaId(nil)
+-                                    if let transitionView = controller.defaultTransitionView() {
+-                                        return (transitionView, transitionView.bounds)
+-                                    }
+-                                } else if let transitionView = controller.transitionView(for: result.localIdentifier, snapshot: false) {
+-                                    return (transitionView, transitionView.bounds)
+-                                }
+-                            }
+-                            return nil
+-                        }
+-                        completion(result, transitionView, transitionView.bounds, controller.transitionImage(for: result.localIdentifier), false, transitionOut, { [weak controller] in
+-                            controller?.updateHiddenMediaId(nil)
+-                        })
+-                    }
+-                }
+-            }
+-            mediaPickerController.openAvatarEditor = { [weak controller] in
+-                completion(nil, nil, .zero, nil, false, { _ in return nil }, {
+-                })
+-                controller?.dismiss(animated: true)
+-            }
+-            mediaPickerController.openCamera = { [weak controller] cameraHolder in
+-                let _ = controller
+-                guard let cameraHolder = cameraHolder as? CameraHolder else {
+-                    return
+-                }
+-                
+-                var returnToCameraImpl: (() -> Void)?
+-                
+-                let cameraScreen = context.sharedContext.makeCameraScreen(
+-                    context: context,
+-                    mode: .avatar,
+-                    cameraHolder: cameraHolder,
+-                    transitionIn: CameraScreenTransitionIn(
+-                        sourceView: cameraHolder.parentView,
+-                        sourceRect: cameraHolder.parentView.bounds,
+-                        sourceCornerRadius: 0.0,
+-                        useFillAnimation: false
+-                    ),
+-                    transitionOut: { _ in
+-                        return CameraScreenTransitionOut(
+-                            destinationView: cameraHolder.parentView,
+-                            destinationRect: cameraHolder.parentView.bounds,
+-                            destinationCornerRadius: 0.0
+-                        )
+-                    },
+-                    completion: { result, commit in
+-                        completion(result, nil, .zero, nil, true, { _ in return nil }, {
+-                            returnToCameraImpl?()
+-                        })
+-                    },
+-                    transitionedOut: { [weak cameraHolder] in
+-                        if let cameraHolder {
+-                            cameraHolder.restore()
+-                        }
+-                    }
+-                )
+-                controller?.push(cameraScreen)
+-                
+-                returnToCameraImpl = { [weak cameraScreen] in
+-                    if let cameraScreen = cameraScreen as? CameraScreen {
+-                        cameraScreen.returnFromEditor()
+-                    }
+-                }
+-            }
+-            present(mediaPickerController, mediaPickerController.mediaPickerContext)
+-            return true
+-        }
+-        controller.willDismiss = {
+-            dismissed()
+-        }
+-        controller.navigationPresentation = .flatModal
+-        controller.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
+-        return (controller, nil)
+-    }
+-}
+-
+-
+-
+-public func coverMediaPickerController(
+-    context: AccountContext,
+-    completion: @escaping (Any?, UIView?, CGRect, UIImage?, Bool, @escaping (Bool?) -> (UIView, CGRect)?, @escaping () -> Void) -> Void,
+-    dismissed: @escaping () -> Void
+-) -> ViewController {
+-    let presentationData = context.sharedContext.currentPresentationData.with({ $0 }).withUpdated(theme: defaultDarkColorPresentationTheme)
+-    let updatedPresentationData: (PresentationData, Signal<PresentationData, NoError>) = (presentationData, .single(presentationData))
+-    
+-    let controller = AttachmentController(context: context, updatedPresentationData: updatedPresentationData, chatLocation: nil, buttons: [.standalone], initialButton: .standalone, fromMenu: false, hasTextInput: false, makeEntityInputView: {
+-        return nil
+-    })
+-    controller.requestController = { [weak controller] _, present in
+-        let mediaPickerController = MediaPickerScreenImpl(
+-            context: context,
+-            updatedPresentationData: updatedPresentationData,
+-            peer: nil,
+-            threadTitle: nil,
+-            chatLocation: nil,
+-            bannedSendPhotos: nil,
+-            bannedSendVideos: nil,
+-            subject: .assets(nil, .cover)
+-        )
+-        mediaPickerController.customSelection = { controller, result in
+-            if let result = result as? PHAsset {
+-                controller.updateHiddenMediaId(result.localIdentifier)
+-                if let transitionView = controller.transitionView(for: result.localIdentifier, snapshot: false) {
+-                    let transitionOut: (Bool?) -> (UIView, CGRect)? = { isNew in
+-                        if let isNew {
+-                            if isNew {
+-                                controller.updateHiddenMediaId(nil)
+-                                if let transitionView = controller.defaultTransitionView() {
+-                                    return (transitionView, transitionView.bounds)
+-                                }
+-                            } else if let transitionView = controller.transitionView(for: result.localIdentifier, snapshot: false) {
+-                                return (transitionView, transitionView.bounds)
+-                            }
+-                        }
+-                        return nil
+-                    }
+-                    completion(result, transitionView, transitionView.bounds, controller.transitionImage(for: result.localIdentifier), false, transitionOut, { [weak controller] in
+-                        controller?.updateHiddenMediaId(nil)
+-                    })
+-                }
+-            }
+-        }
+-        mediaPickerController.openAvatarEditor = { [weak controller] in
+-            completion(nil, nil, .zero, nil, false, { _ in return nil }, {
+-            })
+-            controller?.dismiss(animated: true)
+-        }
+-        present(mediaPickerController, mediaPickerController.mediaPickerContext)
+-        return true
+-    }
+-    controller.willDismiss = {
+-        dismissed()
+-    }
+-    controller.navigationPresentation = .flatModal
+-    controller.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
+-    return controller
+-}
+-
+ private class SelectedButtonNode: ASDisplayNode {
+     private let containerView: UIView
+     private let backgroundView: GlassBackgroundView?

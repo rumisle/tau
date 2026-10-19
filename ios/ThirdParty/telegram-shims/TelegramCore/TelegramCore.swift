@@ -447,3 +447,127 @@ public struct MessageTextEntity: Equatable {
         self.type = type
     }
 }
+
+/// A signed-in Telegram account. tau has none; the type exists for signatures.
+public final class Account {
+    public let postbox = Postbox()
+    public let peerId = PeerId(namespace: 0, id: 0)
+
+    public init() {}
+}
+
+public struct EngineMediaResource: Equatable {
+    public struct Id: Hashable {
+        public var stringRepresentation: String
+
+        public init(_ stringRepresentation: String) {
+            self.stringRepresentation = stringRepresentation
+        }
+    }
+
+    private let resource: MediaResource
+
+    public init(_ resource: MediaResource) {
+        self.resource = resource
+    }
+
+    public var id: Id {
+        return Id(self.resource.id.stringRepresentation)
+    }
+
+    public func _asResource() -> MediaResource {
+        return self.resource
+    }
+
+    public static func ==(lhs: EngineMediaResource, rhs: EngineMediaResource) -> Bool {
+        return lhs.resource.isEqual(to: rhs.resource)
+    }
+}
+
+/// A chat partner. tau's agent conversations are none of Telegram's peers; the media picker only asks whether one is
+/// a secret chat.
+public enum EnginePeer: Equatable {
+    case user(PeerId)
+    case legacyGroup(PeerId)
+    case channel(PeerId)
+    case secretChat(PeerId)
+
+    public typealias Id = PeerId
+
+    public var id: PeerId {
+        switch self {
+        case let .user(id), let .legacyGroup(id), let .channel(id), let .secretChat(id):
+            return id
+        }
+    }
+}
+
+public enum EngineMessage {
+    public typealias Id = MessageId
+}
+
+extension EnginePeerIdValue {
+    public init(_ value: Int64) {
+        self.init(namespace: 0, id: value)
+    }
+}
+
+extension Namespaces {
+    public enum Message {
+        public static let Cloud: Int32 = 0
+        public static let Local: Int32 = 1
+    }
+}
+
+extension Namespaces.Peer {
+    public static let SecretChat: Int32 = 3
+}
+
+/// An attachment-menu bot (a mini app in the attachment menu). tau has none.
+public struct AttachMenuBot: Equatable {
+    public struct Peer: Equatable {
+        public var id: PeerId
+        public var compactDisplayTitle: String
+    }
+
+    public let peer: Peer
+    public let shortName: String
+
+    public init(peer: Peer, shortName: String) {
+        self.peer = peer
+        self.shortName = shortName
+    }
+}
+
+public enum FileMediaReference {
+    case standalone(media: TelegramMediaFile)
+
+    public var media: TelegramMediaFile {
+        switch self {
+        case let .standalone(media):
+            return media
+        }
+    }
+}
+
+public struct LimitsConfiguration: Equatable {
+    public static let defaultValue = LimitsConfiguration()
+
+    public var maxMessageEditingInterval: Int32 = 2 * 24 * 60 * 60
+    public var maxMediaCaptionLength: Int32 = 1024
+
+    public init() {}
+}
+
+public struct AppConfiguration {
+    public var data: [String: Any]?
+
+    public static let defaultValue = AppConfiguration(data: nil)
+
+    public init(data: [String: Any]?) {
+        self.data = data
+    }
+}
+
+/// A scheduled message's time that means "when the recipient comes online".
+public let scheduleWhenOnlineTimestamp: Int32 = 0x7ffffffe

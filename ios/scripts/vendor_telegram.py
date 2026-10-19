@@ -47,6 +47,12 @@ ROOTS = [
     "//submodules/ChatTitleActivityNode",
     "//submodules/TelegramUI/Components/AnimatedTextComponent",
     "//submodules/AnimatedCountLabelNode",
+    "//submodules/AttachmentUI",
+    "//submodules/MediaPickerUI",
+    "//submodules/ImageBlur",
+    "//submodules/Components/ViewControllerComponent",
+    "//submodules/TelegramUI/Components/GlassBarButtonComponent",
+    "//submodules/TelegramUI/Components/GlassControls",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
@@ -67,6 +73,32 @@ SHIMS = {
     "TopMessageReactions": ["TelegramCore", "AccountContext", "ReactionSelectionNode"],
     "UndoUI": ["Display", "AsyncDisplayKit", "TelegramCore", "AccountContext", "TelegramPresentationData"],
     "TextFormat": ["TelegramCore"],
+    "AttachmentTextInputPanelNode": ["Display", "AsyncDisplayKit", "ComponentFlow", "TelegramCore", "TelegramPresentationData", "AccountContext", "ChatPresentationInterfaceState", "GlassBackgroundComponent", "AppBundle"],
+    "ChatPresentationInterfaceState": ["Display", "TelegramCore", "TelegramPresentationData", "TelegramUIPreferences", "AccountContext"],
+    "ChatSendMessageActionUI": ["Display", "ComponentFlow", "SwiftSignalKit"],
+    "LegacyMessageInputPanel": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+    "LegacyMessageInputPanelInputView": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+    "TelegramBaseController": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+    "MinimizedContainer": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+    "UniversalMediaPlayer": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+    "PhotoResources": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "TelegramCore", "Postbox", "AccountContext"],
+    "OverlayStatusController": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+    "TelegramStringFormatting": ["TelegramPresentationData"],
+    "AnimatedStickerComponent": ["Display", "ComponentFlow", "TelegramCore", "LottieComponent", "LottieSettings"],
+    "MediaEditor": ["Display"],
+    "Camera": ["SwiftSignalKit"],
+    "CameraLegacy": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+    "ItemListUI": ["Display", "TelegramPresentationData", "TelegramUIPreferences"],
+    "WallpaperBackgroundNode": ["Display", "AsyncDisplayKit", "AccountContext", "TelegramCore", "TelegramPresentationData"],
+    "LegacyMediaPickerUI": [],
+    "ImageObjectSeparation": ["SwiftSignalKit", "AccountContext"],
+    "PresentationDataUtils": ["Display", "TelegramPresentationData", "SolidRoundedButtonNode", "SwiftSignalKit", "AccountContext"],
+    "ChatMessageBackground": ["Display", "AsyncDisplayKit", "TelegramCore", "TelegramPresentationData", "WallpaperBackgroundNode"],
+    "AvatarBackground": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+    "AlertComponent": ["Display", "TelegramPresentationData", "AccountContext"],
+    "TelegramAnimatedStickerNode": ["AnimatedStickerNode", "LottieSettings"],
+    "LegacyUI": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+    "DrawingUI": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
     "SearchBarNode": ["Display", "AsyncDisplayKit", "TelegramPresentationData"],
     "TLottieBinding": [],
 }
@@ -76,6 +108,8 @@ SHIMS_SOURCE = os.path.join(ROOT, "ios", "ThirdParty", "telegram-shims")
 OVERRIDES = {
     # Only the text engine, not its TelegramCore-bound wrapper.
     "InteractiveTextComponent": {"srcs": ["Sources/InteractiveTextComponent.swift"]},
+    # The avatar editor's preview, and the full-screen gallery (LegacyMediaPickerUI, TGMediaPickerGalleryModel).
+    "MediaPickerUI": {"exclude": ["Sources/AvatarEditorPreviewView.swift", "Sources/LegacyMediaPickerGallery.swift"]},
     # Loading and coding themes and wallpapers from Telegram's cloud. tau uses the built-in themes.
     "TelegramPresentationData": {
         "exclude": [
@@ -285,6 +319,19 @@ def main() -> None:
 
     ws = Workspace(SOURCE)
     rules, deps_of = closure(ws)
+    # Bazel lets a module import its dependencies' dependencies; SwiftPM needs them declared. Add every copied module
+    # or shim a Swift target's sources import.
+    available = {rule.name for rule in rules} | set(SHIMS)
+    for rule in rules:
+        if rule.kind not in SWIFT:
+            continue
+        imported = set()
+        for rel in expand(os.path.join(SOURCE, rule.path), OVERRIDES.get(rule.name, {}).get("srcs", rule.attrs.get("srcs"))):
+            if rel.endswith(".swift"):
+                for line in open(os.path.join(SOURCE, rule.path, rel), errors="ignore"):
+                    if line.startswith("import "):
+                        imported.add(line.split()[1])
+        deps_of[rule.name] = sorted(set(deps_of[rule.name]) | ((imported & available) - {rule.name}))
     module_paths = {rule.path for rule in rules}
     targets = []
     total = 0

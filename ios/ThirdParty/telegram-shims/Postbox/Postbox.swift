@@ -1,6 +1,7 @@
 // tau shim for Telegram's Postbox module (its database): only the value types the copied modules use.
 import Foundation
 import CoreGraphics
+import SwiftSignalKit
 
 public typealias PeerId = EnginePeerIdValue
 
@@ -131,5 +132,22 @@ public struct ItemCollectionId: Hashable {
     public init(namespace: Int32, id: Int64) {
         self.namespace = namespace
         self.id = id
+    }
+}
+
+/// Telegram's database. tau has none; the type exists for signatures.
+public final class Postbox {
+    public let mediaBox = MediaBox()
+
+    public init() {}
+}
+
+extension MediaBox {
+    public func completedResourcePath(_ resource: MediaResource, pathExtension: String? = nil) -> String? {
+        return nil
+    }
+
+    public func resourceData(_ resource: MediaResource) -> Signal<MediaResourceData, NoError> {
+        return .never()
     }
 }

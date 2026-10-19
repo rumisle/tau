@@ -68,6 +68,23 @@ let package = Package(
         .library(name: "ChatTitleActivityNode", targets: ["ChatTitleActivityNode"]),
         .library(name: "AnimatedTextComponent", targets: ["AnimatedTextComponent"]),
         .library(name: "AnimatedCountLabelNode", targets: ["AnimatedCountLabelNode"]),
+        .library(name: "DirectionalPanGesture", targets: ["DirectionalPanGesture"]),
+        .library(name: "ManagedAnimationNode", targets: ["ManagedAnimationNode"]),
+        .library(name: "SemanticStatusNode", targets: ["SemanticStatusNode"]),
+        .library(name: "MoreButtonNode", targets: ["MoreButtonNode"]),
+        .library(name: "ShimmerEffect", targets: ["ShimmerEffect"]),
+        .library(name: "AttachmentUI", targets: ["AttachmentUI"]),
+        .library(name: "SegmentedControlNode", targets: ["SegmentedControlNode"]),
+        .library(name: "MosaicLayout", targets: ["MosaicLayout"]),
+        .library(name: "SolidRoundedButtonNode", targets: ["SolidRoundedButtonNode"]),
+        .library(name: "SparseItemGrid", targets: ["SparseItemGrid"]),
+        .library(name: "RadialStatusNode", targets: ["RadialStatusNode"]),
+        .library(name: "MediaAssetsContext", targets: ["MediaAssetsContext"]),
+        .library(name: "GlassBarButtonComponent", targets: ["GlassBarButtonComponent"]),
+        .library(name: "GlassControls", targets: ["GlassControls"]),
+        .library(name: "MediaPickerUI", targets: ["MediaPickerUI"]),
+        .library(name: "ImageBlur", targets: ["ImageBlur"]),
+        .library(name: "ViewControllerComponent", targets: ["ViewControllerComponent"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -84,6 +101,32 @@ let package = Package(
         .library(name: "TopMessageReactions", targets: ["TopMessageReactions"]),
         .library(name: "UndoUI", targets: ["UndoUI"]),
         .library(name: "TextFormat", targets: ["TextFormat"]),
+        .library(name: "AttachmentTextInputPanelNode", targets: ["AttachmentTextInputPanelNode"]),
+        .library(name: "ChatPresentationInterfaceState", targets: ["ChatPresentationInterfaceState"]),
+        .library(name: "ChatSendMessageActionUI", targets: ["ChatSendMessageActionUI"]),
+        .library(name: "LegacyMessageInputPanel", targets: ["LegacyMessageInputPanel"]),
+        .library(name: "LegacyMessageInputPanelInputView", targets: ["LegacyMessageInputPanelInputView"]),
+        .library(name: "TelegramBaseController", targets: ["TelegramBaseController"]),
+        .library(name: "MinimizedContainer", targets: ["MinimizedContainer"]),
+        .library(name: "UniversalMediaPlayer", targets: ["UniversalMediaPlayer"]),
+        .library(name: "PhotoResources", targets: ["PhotoResources"]),
+        .library(name: "OverlayStatusController", targets: ["OverlayStatusController"]),
+        .library(name: "TelegramStringFormatting", targets: ["TelegramStringFormatting"]),
+        .library(name: "AnimatedStickerComponent", targets: ["AnimatedStickerComponent"]),
+        .library(name: "MediaEditor", targets: ["MediaEditor"]),
+        .library(name: "Camera", targets: ["Camera"]),
+        .library(name: "CameraLegacy", targets: ["CameraLegacy"]),
+        .library(name: "ItemListUI", targets: ["ItemListUI"]),
+        .library(name: "WallpaperBackgroundNode", targets: ["WallpaperBackgroundNode"]),
+        .library(name: "LegacyMediaPickerUI", targets: ["LegacyMediaPickerUI"]),
+        .library(name: "ImageObjectSeparation", targets: ["ImageObjectSeparation"]),
+        .library(name: "PresentationDataUtils", targets: ["PresentationDataUtils"]),
+        .library(name: "ChatMessageBackground", targets: ["ChatMessageBackground"]),
+        .library(name: "AvatarBackground", targets: ["AvatarBackground"]),
+        .library(name: "AlertComponent", targets: ["AlertComponent"]),
+        .library(name: "TelegramAnimatedStickerNode", targets: ["TelegramAnimatedStickerNode"]),
+        .library(name: "LegacyUI", targets: ["LegacyUI"]),
+        .library(name: "DrawingUI", targets: ["DrawingUI"]),
         .library(name: "SearchBarNode", targets: ["SearchBarNode"]),
         .library(name: "TLottieBinding", targets: ["TLottieBinding"]),
     ],
@@ -1181,7 +1224,7 @@ let package = Package(
         ),
         .target(
             name: "TelegramPresentationData",
-            dependencies: ["AppBundle", "Display", "FastBlur", "MediaResources", "Postbox", "PresentationStrings", "StringPluralization", "Sunrise", "SwiftSignalKit", "TelegramCore", "TelegramUIPreferences", "TinyThumbnail"],
+            dependencies: ["AppBundle", "AsyncDisplayKit", "Display", "FastBlur", "MediaResources", "Postbox", "PresentationStrings", "StringPluralization", "Sunrise", "SwiftSignalKit", "TelegramCore", "TelegramUIPreferences", "TinyThumbnail"],
             path: "submodules/TelegramPresentationData",
             sources: [
                 "Sources/ChatMessageBubbleImages.swift",
@@ -1274,7 +1317,7 @@ let package = Package(
         ),
         .target(
             name: "TextNodeWithEntities",
-            dependencies: ["AnimationCache", "AsyncDisplayKit", "Display", "EmojiTextAttachmentView", "InvisibleInkDustNode", "MultiAnimationRenderer", "SwiftSignalKit", "TextFormat"],
+            dependencies: ["AccountContext", "AnimationCache", "AsyncDisplayKit", "Display", "EmojiTextAttachmentView", "InvisibleInkDustNode", "MultiAnimationRenderer", "SwiftSignalKit", "TelegramCore", "TextFormat"],
             path: "submodules/TelegramUI/Components/TextNodeWithEntities",
             sources: [
                 "Sources/TextNodeWithEntities.swift",
@@ -1508,7 +1551,7 @@ let package = Package(
         ),
         .target(
             name: "ContextUI",
-            dependencies: ["AccountContext", "AnimationUI", "AppBundle", "AsyncDisplayKit", "ComponentDisplayAdapters", "ComponentFlow", "Display", "EmojiStatusComponent", "EntityKeyboard", "GlassBackgroundComponent", "LottieComponent", "Markdown", "MultilineTextComponent", "PlainButtonComponent", "ReactionSelectionNode", "SwiftSignalKit", "TabSelectorComponent", "TelegramCore", "TelegramPresentationData", "TextFormat", "TextNodeWithEntities", "TextSelectionNode", "UIKitRuntimeUtils", "UndoUI"],
+            dependencies: ["AccountContext", "AnimationCache", "AnimationUI", "AppBundle", "AsyncDisplayKit", "ComponentDisplayAdapters", "ComponentFlow", "Display", "EmojiStatusComponent", "EntityKeyboard", "GlassBackgroundComponent", "LottieComponent", "Markdown", "MultiAnimationRenderer", "MultilineTextComponent", "PlainButtonComponent", "ReactionSelectionNode", "SwiftSignalKit", "TabSelectorComponent", "TelegramCore", "TelegramPresentationData", "TextFormat", "TextNodeWithEntities", "TextSelectionNode", "UIKitRuntimeUtils", "UndoUI"],
             path: "submodules/ContextUI",
             sources: [
                 "Sources/ContextController.swift",
@@ -1552,7 +1595,7 @@ let package = Package(
         ),
         .target(
             name: "ContextControllerImpl",
-            dependencies: ["AccountContext", "AnimationCache", "AnimationUI", "AppBundle", "AsyncDisplayKit", "BalancedTextComponent", "ComponentDisplayAdapters", "ComponentFlow", "ContextUI", "Display", "EmojiStatusComponent", "EntityKeyboard", "GlassBackgroundComponent", "LensTransition", "LottieComponent", "LottieSettings", "Markdown", "MultiAnimationRenderer", "ReactionSelectionNode", "SwiftSignalKit", "TelegramCore", "TelegramPresentationData", "TextFormat", "TextNodeWithEntities", "TextSelectionNode", "UIKitRuntimeUtils", "UndoUI"],
+            dependencies: ["AccountContext", "AnimationCache", "AnimationUI", "AppBundle", "AsyncDisplayKit", "BalancedTextComponent", "ComponentDisplayAdapters", "ComponentFlow", "ContextUI", "Display", "EmojiStatusComponent", "EntityKeyboard", "GlassBackgroundComponent", "LensTransition", "LottieComponent", "LottieSettings", "Markdown", "MultiAnimationRenderer", "MultilineTextComponent", "PlainButtonComponent", "ReactionSelectionNode", "SwiftSignalKit", "TabSelectorComponent", "TelegramCore", "TelegramPresentationData", "TextFormat", "TextNodeWithEntities", "TextSelectionNode", "UIKitRuntimeUtils", "UndoUI"],
             path: "submodules/TelegramUI/Components/ContextControllerImpl",
             sources: [
                 "Sources/ContextActionNode.swift",
@@ -1641,6 +1684,190 @@ let package = Package(
             path: "submodules/AnimatedCountLabelNode",
             sources: [
                 "Sources/AnimatedCountLabelNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "DirectionalPanGesture",
+            dependencies: [],
+            path: "submodules/DirectionalPanGesture",
+            sources: [
+                "Sources/DirectionalPanGestureRecognizer.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ManagedAnimationNode",
+            dependencies: ["AppBundle", "AsyncDisplayKit", "Display", "GZip", "LottieBinding", "LottieSettings", "SwiftSignalKit", "TelegramCore"],
+            path: "submodules/ManagedAnimationNode",
+            sources: [
+                "Sources/ManagedAnimationNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "SemanticStatusNode",
+            dependencies: ["AppBundle", "AsyncDisplayKit", "Display", "GZip", "HierarchyTrackingLayer", "LegacyComponents", "LottieBinding", "LottieSettings", "ManagedAnimationNode", "SwiftSignalKit"],
+            path: "submodules/SemanticStatusNode",
+            sources: [
+                "Sources/SemanticStatusNode.swift",
+                "Sources/SemanticStatusNodeCheckContext.swift",
+                "Sources/SemanticStatusNodeIconContext.swift",
+                "Sources/SemanticStatusNodeProgressContext.swift",
+                "Sources/SemanticStatusNodeSecretTimeoutContext.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "MoreButtonNode",
+            dependencies: ["AsyncDisplayKit", "ContextUI", "Display", "LottieSettings", "ManagedAnimationNode", "TelegramPresentationData"],
+            path: "submodules/MoreButtonNode",
+            sources: [
+                "Sources/MoreButtonNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ShimmerEffect",
+            dependencies: ["AsyncDisplayKit", "Display", "GenerateStickerPlaceholderImage", "HierarchyTrackingLayer"],
+            path: "submodules/ShimmerEffect",
+            sources: [
+                "Sources/ShimmerEffect.swift",
+                "Sources/StickerShimmerEffectNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AttachmentUI",
+            dependencies: ["AccountContext", "AnimatedStickerComponent", "AppBundle", "AsyncDisplayKit", "AttachmentTextInputPanelNode", "ChatPresentationInterfaceState", "ChatSendMessageActionUI", "ComponentFlow", "ContextUI", "DirectionalPanGesture", "Display", "EdgeEffect", "EmojiTextAttachmentView", "GlassBackgroundComponent", "LegacyComponents", "LegacyMessageInputPanel", "LegacyMessageInputPanelInputView", "LiquidLens", "ManagedAnimationNode", "MediaResources", "MinimizedContainer", "MoreButtonNode", "MultilineTextComponent", "OverlayStatusController", "PhotoResources", "Postbox", "ReactionSelectionNode", "SemanticStatusNode", "ShimmerEffect", "SwiftSignalKit", "TabSelectionRecognizer", "TelegramBaseController", "TelegramCore", "TelegramPresentationData", "TelegramStringFormatting", "TelegramUIPreferences", "TextFormat", "TopMessageReactions", "UIKitRuntimeUtils", "UndoUI", "UniversalMediaPlayer"],
+            path: "submodules/AttachmentUI",
+            sources: [
+                "Sources/AttachmentContainer.swift",
+                "Sources/AttachmentController.swift",
+                "Sources/AttachmentPanel.swift",
+                "Sources/BackButtonNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "SegmentedControlNode",
+            dependencies: ["AsyncDisplayKit", "Display", "TelegramPresentationData"],
+            path: "submodules/SegmentedControlNode",
+            sources: [
+                "Sources/SegmentedControlNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "MosaicLayout",
+            dependencies: [],
+            path: "submodules/MosaicLayout",
+            sources: [
+                "Sources/ChatMessageBubbleMosaicLayout.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "SolidRoundedButtonNode",
+            dependencies: ["AsyncDisplayKit", "Display", "GlassBackgroundComponent", "HierarchyTrackingLayer", "LottieSettings", "ManagedAnimationNode", "ShimmerEffect", "SwiftSignalKit"],
+            path: "submodules/SolidRoundedButtonNode",
+            sources: [
+                "Sources/SolidRoundedButtonNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "SparseItemGrid",
+            dependencies: ["AnimationUI", "AsyncDisplayKit", "ComponentFlow", "Display", "GlassBackgroundComponent", "MultilineTextComponent", "SwiftSignalKit", "TelegramPresentationData"],
+            path: "submodules/SparseItemGrid",
+            sources: [
+                "Sources/SparseDiscreteScrollingArea.swift",
+                "Sources/SparseItemGrid.swift",
+                "Sources/SparseItemGridScrollingArea.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "RadialStatusNode",
+            dependencies: ["AsyncDisplayKit", "Display", "LegacyComponents", "LottieSettings", "ManagedAnimationNode", "SwiftSignalKit"],
+            path: "submodules/RadialStatusNode",
+            sources: [
+                "Sources/RadialCheckContentNode.swift",
+                "Sources/RadialCloudProgressContentNode.swift",
+                "Sources/RadialDownloadContentNode.swift",
+                "Sources/RadialProgressContentNode.swift",
+                "Sources/RadialStatusContentNode.swift",
+                "Sources/RadialStatusIconContentNode.swift",
+                "Sources/RadialStatusNode.swift",
+                "Sources/RadialStatusSecretTimeoutContentNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "MediaAssetsContext",
+            dependencies: ["Display", "SwiftSignalKit"],
+            path: "submodules/TelegramUI/Components/MediaAssetsContext",
+            sources: [
+                "Sources/FetchAssets.swift",
+                "Sources/MediaAssetsContext.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "GlassBarButtonComponent",
+            dependencies: ["AsyncDisplayKit", "ComponentFlow", "Display", "GlassBackgroundComponent"],
+            path: "submodules/TelegramUI/Components/GlassBarButtonComponent",
+            sources: [
+                "Sources/GlassBarButtonComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "GlassControls",
+            dependencies: ["BundleIconComponent", "ComponentFlow", "Display", "GlassBackgroundComponent", "LottieComponent", "LottieSettings", "MultilineTextComponent", "PlainButtonComponent", "TelegramPresentationData"],
+            path: "submodules/TelegramUI/Components/GlassControls",
+            sources: [
+                "Sources/GlassControlGroup.swift",
+                "Sources/GlassControlPanel.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "MediaPickerUI",
+            dependencies: ["AccountContext", "AlertComponent", "AnimatedCountLabelNode", "AnimatedStickerNode", "AppBundle", "AsyncDisplayKit", "AttachmentUI", "AvatarBackground", "BundleIconComponent", "Camera", "CameraLegacy", "ChatMessageBackground", "ChatSendMessageActionUI", "CheckNode", "ComponentDisplayAdapters", "ComponentFlow", "ContextUI", "Display", "EdgeEffect", "EmojiTextAttachmentView", "FastBlur", "GlassBackgroundComponent", "GlassBarButtonComponent", "GlassControls", "ImageBlur", "ImageObjectSeparation", "InvisibleInkDustNode", "ItemListUI", "LegacyComponents", "LegacyMediaPickerUI", "LegacyUI", "LottieComponent", "LottieSettings", "ManagedAnimationNode", "MediaAssetsContext", "MediaEditor", "MergeLists", "MoreButtonNode", "MosaicLayout", "MultilineTextComponent", "PhotoResources", "PlainButtonComponent", "Postbox", "PresentationDataUtils", "RadialStatusNode", "SSignalKit", "SegmentedControlNode", "SolidRoundedButtonNode", "SparseItemGrid", "SwiftSignalKit", "TelegramAnimatedStickerNode", "TelegramCore", "TelegramPresentationData", "TelegramStringFormatting", "TelegramUIPreferences", "TextFormat", "UndoUI", "ViewControllerComponent", "WallpaperBackgroundNode"],
+            path: "submodules/MediaPickerUI",
+            sources: [
+                "Sources/LivePhotoButton.swift",
+                "Sources/MediaGroupsAlbumGridItem.swift",
+                "Sources/MediaGroupsAlbumItem.swift",
+                "Sources/MediaGroupsContextMenuContent.swift",
+                "Sources/MediaGroupsHeaderItem.swift",
+                "Sources/MediaGroupsScreen.swift",
+                "Sources/MediaPickerGridItem.swift",
+                "Sources/MediaPickerManageNode.swift",
+                "Sources/MediaPickerPhotoToolbarView.swift",
+                "Sources/MediaPickerPlaceholderNode.swift",
+                "Sources/MediaPickerScreen.swift",
+                "Sources/MediaPickerSelectedListNode.swift",
+                "Sources/MediaPickerTitleView.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ImageBlur",
+            dependencies: ["FastBlur"],
+            path: "submodules/ImageBlur",
+            sources: [
+                "Sources/ImageBlur.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ViewControllerComponent",
+            dependencies: ["AccountContext", "ComponentDisplayAdapters", "ComponentFlow", "Display", "SwiftSignalKit", "TelegramPresentationData"],
+            path: "submodules/Components/ViewControllerComponent",
+            sources: [
+                "Sources/ViewControllerComponent.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
@@ -1754,6 +1981,188 @@ let package = Package(
             dependencies: ["TelegramCore"],
             path: "tau-shims/TextFormat",
             sources: ["TextFormat.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AttachmentTextInputPanelNode",
+            dependencies: ["Display", "AsyncDisplayKit", "ComponentFlow", "TelegramCore", "TelegramPresentationData", "AccountContext", "ChatPresentationInterfaceState", "GlassBackgroundComponent", "AppBundle"],
+            path: "tau-shims/AttachmentTextInputPanelNode",
+            sources: ["AttachmentTextInputPanelNode.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ChatPresentationInterfaceState",
+            dependencies: ["Display", "TelegramCore", "TelegramPresentationData", "TelegramUIPreferences", "AccountContext"],
+            path: "tau-shims/ChatPresentationInterfaceState",
+            sources: ["ChatPresentationInterfaceState.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ChatSendMessageActionUI",
+            dependencies: ["Display", "ComponentFlow", "SwiftSignalKit"],
+            path: "tau-shims/ChatSendMessageActionUI",
+            sources: ["ChatSendMessageActionUI.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "LegacyMessageInputPanel",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/LegacyMessageInputPanel",
+            sources: ["LegacyMessageInputPanel.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "LegacyMessageInputPanelInputView",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/LegacyMessageInputPanelInputView",
+            sources: ["LegacyMessageInputPanelInputView.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "TelegramBaseController",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/TelegramBaseController",
+            sources: ["TelegramBaseController.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "MinimizedContainer",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/MinimizedContainer",
+            sources: ["MinimizedContainer.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "UniversalMediaPlayer",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/UniversalMediaPlayer",
+            sources: ["UniversalMediaPlayer.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "PhotoResources",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "TelegramCore", "Postbox", "AccountContext"],
+            path: "tau-shims/PhotoResources",
+            sources: ["PhotoResources.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "OverlayStatusController",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/OverlayStatusController",
+            sources: ["OverlayStatusController.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "TelegramStringFormatting",
+            dependencies: ["TelegramPresentationData"],
+            path: "tau-shims/TelegramStringFormatting",
+            sources: ["TelegramStringFormatting.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AnimatedStickerComponent",
+            dependencies: ["Display", "ComponentFlow", "TelegramCore", "LottieComponent", "LottieSettings"],
+            path: "tau-shims/AnimatedStickerComponent",
+            sources: ["AnimatedStickerComponent.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "MediaEditor",
+            dependencies: ["Display"],
+            path: "tau-shims/MediaEditor",
+            sources: ["MediaEditor.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "Camera",
+            dependencies: ["SwiftSignalKit"],
+            path: "tau-shims/Camera",
+            sources: ["Camera.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "CameraLegacy",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/CameraLegacy",
+            sources: ["CameraLegacy.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ItemListUI",
+            dependencies: ["Display", "TelegramPresentationData", "TelegramUIPreferences"],
+            path: "tau-shims/ItemListUI",
+            sources: ["ItemListUI.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "WallpaperBackgroundNode",
+            dependencies: ["Display", "AsyncDisplayKit", "AccountContext", "TelegramCore", "TelegramPresentationData"],
+            path: "tau-shims/WallpaperBackgroundNode",
+            sources: ["WallpaperBackgroundNode.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "LegacyMediaPickerUI",
+            dependencies: [],
+            path: "tau-shims/LegacyMediaPickerUI",
+            sources: ["LegacyMediaPickerUI.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ImageObjectSeparation",
+            dependencies: ["SwiftSignalKit", "AccountContext"],
+            path: "tau-shims/ImageObjectSeparation",
+            sources: ["ImageObjectSeparation.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "PresentationDataUtils",
+            dependencies: ["Display", "TelegramPresentationData", "SolidRoundedButtonNode", "SwiftSignalKit", "AccountContext"],
+            path: "tau-shims/PresentationDataUtils",
+            sources: ["PresentationDataUtils.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ChatMessageBackground",
+            dependencies: ["Display", "AsyncDisplayKit", "TelegramCore", "TelegramPresentationData", "WallpaperBackgroundNode"],
+            path: "tau-shims/ChatMessageBackground",
+            sources: ["ChatMessageBackground.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AvatarBackground",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/AvatarBackground",
+            sources: ["AvatarBackground.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AlertComponent",
+            dependencies: ["Display", "TelegramPresentationData", "AccountContext"],
+            path: "tau-shims/AlertComponent",
+            sources: ["AlertComponent.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "TelegramAnimatedStickerNode",
+            dependencies: ["AnimatedStickerNode", "LottieSettings"],
+            path: "tau-shims/TelegramAnimatedStickerNode",
+            sources: ["TelegramAnimatedStickerNode.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "LegacyUI",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/LegacyUI",
+            sources: ["LegacyUI.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "DrawingUI",
+            dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
+            path: "tau-shims/DrawingUI",
+            sources: ["DrawingUI.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(

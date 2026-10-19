@@ -1,0 +1,132 @@
+--- a/submodules/AttachmentUI/Sources/AttachmentController.swift
++++ b/submodules/AttachmentUI/Sources/AttachmentController.swift
+@@ -783,55 +783,6 @@
+                     case .whenOnline:
+                         strongSelf.mediaPickerContext?.send(mode: .whenOnline, attachmentMode: .media, parameters: parameters)
+                     }
+-                }
+-            }
+-            self.panel.invokeAICompose = { [weak self] in
+-                Task { @MainActor in
+-                    guard let self, let controller = self.controller, let mediaPickerContext = self.mediaPickerContext else {
+-                        return
+-                    }
+-
+-                    guard let caption = await mediaPickerContext.caption.get() else {
+-                        return
+-                    }
+-                    if caption.length == 0 {
+-                        return
+-                    }
+-
+-                    let textProcessingScreen = await controller.context.sharedContext.makeTextProcessingScreen(
+-                        context: controller.context,
+-                        theme: self.presentationData.theme,
+-                        mode: .edit(
+-                            saveRestoreStateId: nil,
+-                            completion: { [weak self] text in
+-                                guard let self, let mediaPickerContext = self.mediaPickerContext else {
+-                                    return
+-                                }
+-                                // Captions are plain text with entities; the API only returns a rich result for rich input.
+-                                guard case let .plain(text, entities) = text else {
+-                                    return
+-                                }
+-                                self.panel.updateCaption(chatInputStateStringWithAppliedEntities(text, entities: entities))
+-                                mediaPickerContext.setCaption(chatInputStateStringWithAppliedEntities(text, entities: entities))
+-                            },
+-                            send: { [weak self] text in
+-                                guard let self, let mediaPickerContext = self.mediaPickerContext else {
+-                                    return
+-                                }
+-                                // Captions are plain text with entities; the API only returns a rich result for rich input.
+-                                guard case let .plain(text, entities) = text else {
+-                                    return
+-                                }
+-                                mediaPickerContext.setCaption(chatInputStateStringWithAppliedEntities(text, entities: entities))
+-                                mediaPickerContext.send(mode: .generic, attachmentMode: .media, parameters: nil)
+-                            },
+-                            sendContextActions: nil
+-                        ),
+-                        inputText: .plain(text: caption.string, entities: []),
+-                        copyResult: nil,
+-                        translateChat: nil
+-                    )
+-                    self.controller?.push(textProcessingScreen)
+                 }
+             }
+ 
+@@ -944,33 +895,6 @@
+ 
+         private var didMaximizeOnce = false
+         fileprivate func minimize(damping: CGFloat? = nil, initialVelocity: CGFloat? = nil) {
+-            guard let controller = self.controller, let navigationController = controller.navigationController as? NavigationController else {
+-                return
+-            }
+-            navigationController.minimizeViewController(controller, damping: damping, velocity: initialVelocity, beforeMaximize: { [weak self, weak controller] navigationController, completion in
+-                self?.didMaximizeOnce = true
+-                controller?.mainController.beforeMaximize(navigationController: navigationController, completion: completion)
+-            }, setupContainer: { [weak self] current in
+-                let minimizedContainer: MinimizedContainerImpl?
+-                if let current = current as? MinimizedContainerImpl {
+-                    minimizedContainer = current
+-                } else if let context = self?.controller?.context {
+-                    minimizedContainer = MinimizedContainerImpl(sharedContext: context.sharedContext)
+-                } else {
+-                    minimizedContainer = nil
+-                }
+-                return minimizedContainer
+-            }, animated: true)
+-
+-            self.dim.isHidden = true
+-
+-            self.isMinimizing = true
+-            self.container.update(isExpanded: true, force: true, transition: .immediate)
+-            self.isMinimizing = false
+-
+-            Queue.mainQueue().after(0.45, {
+-                self.dim.isHidden = false
+-            })
+         }
+ 
+         fileprivate func updateSelectionCount(_ count: Int, animated: Bool = true) {
+@@ -1788,38 +1712,7 @@
+     }
+ 
+     public static func preloadAttachBotIcons(context: AccountContext) -> DisposableSet {
+-        let disposableSet = DisposableSet()
+-        let _ = (context.engine.messages.attachMenuBots()
+-        |> take(1)
+-        |> deliverOnMainQueue).startStandalone(next: { bots in
+-            for bot in bots {
+-                for (name, file) in bot.icons {
+-                    if [.iOSAnimated, .placeholder].contains(name), let peer = PeerReference(bot.peer) {
+-                        if case .placeholder = name {
+-                            let path = context.account.postbox.mediaBox.cachedRepresentationCompletePath(file.resource.id, representation: CachedPreparedSvgRepresentation())
+-                            if !FileManager.default.fileExists(atPath: path) {
+-                                let accountFullSizeData = Signal<(Data?, Bool), NoError> { subscriber in
+-                                    let accountResource = context.account.postbox.mediaBox.cachedResourceRepresentation(file.resource, representation: CachedPreparedSvgRepresentation(), complete: false, fetch: true)
+-
+-                                    let fetchedFullSize = context.engine.resources.fetch(reference: .media(media: .attachBot(peer: peer, media: file), resource: file.resource), userLocation: .other, userContentType: MediaResourceUserContentType(file: file))
+-                                    let fetchedFullSizeDisposable = fetchedFullSize.start()
+-                                    let fullSizeDisposable = accountResource.start()
+-
+-                                    return ActionDisposable {
+-                                        fetchedFullSizeDisposable.dispose()
+-                                        fullSizeDisposable.dispose()
+-                                    }
+-                                }
+-                                disposableSet.add(accountFullSizeData.start())
+-                            }
+-                        } else {
+-                            disposableSet.add(freeMediaFileInteractiveFetched(account: context.account, userLocation: .other, fileReference: .attachBot(peer: peer, media: file)).start())
+-                        }
+-                    }
+-                }
+-            }
+-        })
+-        return disposableSet
++        return DisposableSet()
+     }
+ 
+     public func makeContentSnapshotView() -> UIView? {
