@@ -266,7 +266,14 @@ final class ChatControllerNode: ASDisplayNode {
             }
         }
         self.historyNode.transaction(deleteIndices: deletions, insertIndicesAndItems: insertions, updateIndicesAndItems: updates, options: options, scrollToItem: scrollToItem, updateOpaqueState: nil)
+        if state.isLoaded, let contentReady = self.contentReady {
+            self.contentReady = nil
+            contentReady()
+        }
     }
+
+    /// Called once, when the first known transcript is laid out.
+    var contentReady: (() -> Void)?
 
     private func reloadItems() {
         let updates = self.entries.enumerated().map { ListViewUpdateItem(index: $0.offset, previousIndex: $0.offset, item: self.item(for: $0.element), directionHint: nil) }

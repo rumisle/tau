@@ -23,6 +23,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     /// In a preview, a tap opens the chat.
     var previewTapped: (() -> Void)?
 
+    /// As Telegram's chat: the navigation controller starts the push once the first screen of messages is laid out, so
+    /// nothing is laid out or pops in during the animation. A short timeout keeps a slow server from holding it.
+    private let readyPromise = Promise<Bool>()
+    override var ready: Promise<Bool> {
+        return self.readyPromise
+    }
+
     private var controllerNode: ChatControllerNode {
         return self.displayNode as! ChatControllerNode
     }
@@ -86,6 +93,12 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.displayNode = ChatControllerNode(theme: self.theme, isPreview: self.isPreview)
         let node = self.controllerNode
         node.initialScrollState = self.context.store.scrollState(self.conversationId)
+        node.contentReady = { [weak self] in
+            self?.readyPromise.set(.single(true))
+        }
+        Queue.mainQueue().after(0.35) { [weak self] in
+            self?.readyPromise.set(.single(true))
+        }
         node.sendMessage = { [weak self] text in
             self?.send(text: text, attachments: [])
         }

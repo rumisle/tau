@@ -94,6 +94,8 @@ struct ConversationState: Equatable {
     var busy: Bool
     /// More history exists before the first message.
     var hasOlder: Bool = false
+    /// False until the transcript is known (cached or synced), so a chat can wait before showing it.
+    var isLoaded: Bool = true
 }
 
 /// Where the user left a chat: the message at the bottom of the screen and how far it was scrolled past, as Telegram's

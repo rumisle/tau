@@ -190,7 +190,7 @@ enum TranscriptBuilder {
             rows.append(ChatMessage(id: send.rowId, role: .user, text: send.text, date: send.date, attachments: send.attachments, isPending: true))
         }
 
-        return ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !pending.isEmpty, hasOlder: replica.hasOlder)
+        return ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !pending.isEmpty, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
     }
 
     /// A user message's text and its image blocks.

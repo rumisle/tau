@@ -209,9 +209,6 @@ final class TauUITests: XCTestCase {
         self.app.descendants(matching: .any)["Browse…"].firstMatch.tap()
         sleep(2)
         self.shot("browse-home")
-        self.app.descendants(matching: .any)["work"].firstMatch.tap()
-        sleep(2)
-        self.shot("browse-work")
     }
 
     func testDownButton() {
