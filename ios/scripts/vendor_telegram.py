@@ -151,6 +151,41 @@ MODULES = {
         ],
     ),
     "HierarchyTrackingLayer": ("swift", "submodules/Components/HierarchyTrackingLayer", ["Sources/**/*.swift"], [], None, [], []),
+    # Lottie: rlottie (C++, the submodule at submodules/rlottie/rlottie) behind Telegram's bindings. tlottie (Rust) is
+    # a shim; LottieRenderingSettings.noAccountFallback, which tau uses, selects rlottie.
+    "RLottieBinding": (
+        "objc",
+        "submodules/rlottie",
+        ["rlottie/src/**/*.cpp", "rlottie/src/**/*.h", "rlottie/inc/**/*.h", "RLottieInstance.mm", "config.h"],
+        ["PublicHeaders/**/*.h"],
+        "PublicHeaders",
+        ["pixman_region_selfcheck(x)=1", "LOTTIE_DISABLE_ARM_NEON=1", "LOTTIE_THREAD_SAFE=1", "LOTTIE_IMAGE_MODULE_DISABLED=1"],
+        [],
+        {
+            "exclude": ["rlottie/src/vector/vdrawhelper_neon.cpp", "rlottie/src/vector/stb/**/*", "rlottie/src/lottie/rapidjson/msinttypes/**/*"],
+            "header_paths": [".", "rlottie/inc", "rlottie/src/vector", "rlottie/src/vector/pixman", "rlottie/src/vector/freetype"],
+        },
+    ),
+    "LottieBinding": ("swift", "submodules/LottieBinding", ["Sources/**/*.swift"], [], None, [], ["LottieSettings", "RLottieBinding", "TLottieBinding"]),
+    "GZip": ("objc", "submodules/GZip", ["Sources/**/*.m"], ["Sources/**/*.h"], "Sources", [], [], {"links": ["z"]}),
+    "GenerateStickerPlaceholderImage": (
+        "swift",
+        "submodules/TelegramUI/Components/Utils/GenerateStickerPlaceholderImage",
+        ["Sources/**/*.swift"],
+        [],
+        None,
+        [],
+        ["Display"],
+    ),
+    "LottieComponent": (
+        "swift",
+        "submodules/TelegramUI/Components/LottieComponent",
+        ["Sources/**/*.swift"],
+        [],
+        None,
+        [],
+        ["Display", "ComponentFlow", "HierarchyTrackingLayer", "LottieBinding", "LottieSettings", "SwiftSignalKit", "AppBundle", "GZip", "GenerateStickerPlaceholderImage"],
+    ),
     # Patched (see PATCHES): custom emoji pattern support removed.
     "MessageInlineBlockBackgroundView": (
         "swift",
@@ -252,7 +287,7 @@ MODULES = {
 SHIMS = {
     "TelegramPresentationData": ["Display"],
     "SearchBarNode": ["Display", "AsyncDisplayKit", "TelegramPresentationData"],
-    "LottieComponent": ["Display", "ComponentFlow", "LottieSettings"],
+    "TLottieBinding": [],
 }
 SHIMS_SOURCE = os.path.join(ROOT, "ios", "ThirdParty", "telegram-shims")
 
@@ -265,6 +300,34 @@ IMAGES = [
     "Chat List/Tabs/IconSettings",
     "Chat List/Tabs/IconContacts",
     "Chat List/Tabs/IconCalls",
+    "Chat/Input/Text/IconAttachment",
+    "Chat/Input/Text/IconMicrophone",
+    "Chat/Input/Text/SendIcon",
+    "Item List/Icons/Gradient",
+    "Item List/Icons/Backdrop",
+    "Item List/Icons/Appearance",
+    "Item List/Icons/Proxy",
+    "Item List/Icons/AITools",
+    "Item List/Icons/Notifications",
+    "Item List/Icons/Data",
+    "Item List/Icons/Faq",
+    "Item List/Icons/Privacy",
+    "Item List/Icons/Folder",
+    "Chat/Attach Menu/Camera",
+]
+
+# Lottie animations LottieComponent.AppBundleContent loads by name, from submodules/TelegramUI/Resources/Animations.
+ANIMATIONS = [
+    "TabChats.json",
+    "TabSettings.json",
+    "TabContacts.json",
+    "TabCalls.json",
+    "TabPhoto.tgs",
+    "TabFile.tgs",
+    "TabLocation.tgs",
+    "anim_micToVideo.json",
+    "anim_videoToMic.json",
+    "anim_camera.json",
 ]
 
 # Local changes, applied in order with `git apply` after copying. Paths in them are relative to ios/ThirdParty/Telegram.
@@ -298,12 +361,15 @@ def apply_patches() -> None:
             print(f"applied {patch}")
 
 
-def files(base: str, patterns: list[str]) -> list[str]:
+def files(base: str, patterns: list[str], exclude: list[str] = []) -> list[str]:
     found = set()
     for pattern in patterns:
         for path in glob.glob(os.path.join(base, pattern), recursive=True):
             if os.path.isfile(path):
                 found.add(os.path.relpath(path, base))
+    for pattern in exclude:
+        for path in glob.glob(os.path.join(base, pattern), recursive=True):
+            found.discard(os.path.relpath(path, base))
     return sorted(found)
 
 
@@ -322,9 +388,11 @@ def main() -> None:
         f.write(revision + "\n")
 
     targets = []
-    for name, (kind, path, srcs, hdrs, include, defines, deps) in MODULES.items():
+    for name, (kind, path, srcs, hdrs, include, defines, deps, *rest) in MODULES.items():
+        # Optional extras: exclude (globs), header_paths, links (libraries).
+        extra = rest[0] if rest else {}
         base = os.path.join(SOURCE, path)
-        sources = files(base, srcs)
+        sources = files(base, srcs, extra.get("exclude", []))
         headers = files(base, hdrs)
         if not sources:
             sys.exit(f"{name}: no sources under {base}")
@@ -353,9 +421,16 @@ def main() -> None:
             with open(os.path.join(DEST, path, include, "module.modulemap"), "w") as f:
                 f.write(f"module {name} {{\n" + "".join(f'    header "{header}"\n' for header in public) + "}\n")
             lines.append(f'            publicHeadersPath: "{include}",')
-            settings = ", ".join(f'.define("{define}")' for define in defines)
-            lines.append(f"            cSettings: [{settings}],")
-            lines.append(f"            cxxSettings: [{settings}]")
+            def define(value: str) -> str:
+                if "=" in value:
+                    key, val = value.split("=", 1)
+                    return f'.define("{key}", to: "{val}")'
+                return f'.define("{value}")'
+            settings = [define(d) for d in defines] + [f'.headerSearchPath("{h}")' for h in extra.get("header_paths", [])]
+            lines.append(f"            cSettings: [{', '.join(settings)}],")
+            lines.append(f"            cxxSettings: [{', '.join(settings)}],")
+            links = ", ".join(f'.linkedLibrary("{lib}")' for lib in extra.get("links", []))
+            lines.append(f"            linkerSettings: [{links}]")
         else:
             lines.append("            swiftSettings: [.swiftLanguageMode(.v5)]")
         lines.append("        ),")
@@ -398,6 +473,9 @@ let package = Package(
     with open(os.path.join(DEST, "Package.swift"), "w") as f:
         f.write(package)
     copy_images()
+    os.makedirs(os.path.join(DEST, "Animations"))
+    for name in ANIMATIONS:
+        shutil.copy2(os.path.join(SOURCE, "submodules", "TelegramUI", "Resources", "Animations", name), os.path.join(DEST, "Animations", name))
     apply_patches()
     print(f"Telegram-iOS {revision} -> {os.path.relpath(DEST, ROOT)}")
 

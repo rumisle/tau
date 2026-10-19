@@ -1,4 +1,4 @@
-import Foundation
+import UIKit
 
 /// One row of the chat list; mirrors the server's `Dialog` (docs/protocol.md).
 struct DialogModel: Equatable {
@@ -28,6 +28,21 @@ enum MessageRole: Equatable {
     case tool(name: String)
 }
 
+/// Something sent with a message: a photo or a file. Images are sent to the model as image content blocks.
+struct MessageAttachment: Equatable {
+    enum Kind {
+        case image(UIImage)
+        case file(name: String, size: Int64)
+    }
+
+    let id: Int
+    let kind: Kind
+
+    static func == (lhs: MessageAttachment, rhs: MessageAttachment) -> Bool {
+        return lhs.id == rhs.id
+    }
+}
+
 /// A transcript entry as the chat shows it. The server's entries are richer (`pi.user`, `pi.assistant`,
 /// `pi.tool-result`, ...); the client flattens them into these.
 struct ChatMessage: Equatable {
@@ -35,6 +50,7 @@ struct ChatMessage: Equatable {
     var role: MessageRole
     var text: String
     var date: Date
+    var attachments: [MessageAttachment] = []
 }
 
 /// What a chat screen renders: committed entries plus the answer still streaming (`pi.live.generation`).
@@ -43,4 +59,12 @@ struct ConversationState: Equatable {
     /// The partial assistant message while the model streams; replaced by an entry when it finishes.
     var streaming: ChatMessage?
     var busy: Bool
+}
+
+/// Where the user left a chat: the message at the bottom of the screen and how far it was scrolled past, as Telegram's
+/// ChatInterfaceHistoryScrollState. Nil means the end of the conversation.
+struct ChatScrollState: Equatable {
+    var messageId: Int
+    /// Distance from the bottom of the visible area to the bottom of that message.
+    var offset: CGFloat
 }

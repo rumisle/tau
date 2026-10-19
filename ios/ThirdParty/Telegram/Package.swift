@@ -26,6 +26,11 @@ let package = Package(
         .library(name: "EdgeEffect", targets: ["EdgeEffect"]),
         .library(name: "NavigationBarImpl", targets: ["NavigationBarImpl"]),
         .library(name: "HierarchyTrackingLayer", targets: ["HierarchyTrackingLayer"]),
+        .library(name: "RLottieBinding", targets: ["RLottieBinding"]),
+        .library(name: "LottieBinding", targets: ["LottieBinding"]),
+        .library(name: "GZip", targets: ["GZip"]),
+        .library(name: "GenerateStickerPlaceholderImage", targets: ["GenerateStickerPlaceholderImage"]),
+        .library(name: "LottieComponent", targets: ["LottieComponent"]),
         .library(name: "MessageInlineBlockBackgroundView", targets: ["MessageInlineBlockBackgroundView"]),
         .library(name: "InteractiveTextComponent", targets: ["InteractiveTextComponent"]),
         .library(name: "LiquidLens", targets: ["LiquidLens"]),
@@ -37,7 +42,7 @@ let package = Package(
         .library(name: "StreamingTextReveal", targets: ["StreamingTextReveal"]),
         .library(name: "TelegramPresentationData", targets: ["TelegramPresentationData"]),
         .library(name: "SearchBarNode", targets: ["SearchBarNode"]),
-        .library(name: "LottieComponent", targets: ["LottieComponent"]),
+        .library(name: "TLottieBinding", targets: ["TLottieBinding"]),
     ],
     targets: [
         .target(
@@ -140,7 +145,8 @@ let package = Package(
             ],
             publicHeadersPath: "Source/PublicHeaders",
             cSettings: [.define("MINIMAL_ASDK")],
-            cxxSettings: [.define("MINIMAL_ASDK")]
+            cxxSettings: [.define("MINIMAL_ASDK")],
+            linkerSettings: []
         ),
         .target(
             name: "ObjCRuntimeUtils",
@@ -151,7 +157,8 @@ let package = Package(
             ],
             publicHeadersPath: "Source",
             cSettings: [],
-            cxxSettings: []
+            cxxSettings: [],
+            linkerSettings: []
         ),
         .target(
             name: "UIKitRuntimeUtils",
@@ -171,7 +178,8 @@ let package = Package(
             ],
             publicHeadersPath: "Source",
             cSettings: [],
-            cxxSettings: []
+            cxxSettings: [],
+            linkerSettings: []
         ),
         .target(
             name: "AppBundle",
@@ -182,7 +190,8 @@ let package = Package(
             ],
             publicHeadersPath: "PublicHeaders",
             cSettings: [],
-            cxxSettings: []
+            cxxSettings: [],
+            linkerSettings: []
         ),
         .target(
             name: "Markdown",
@@ -436,7 +445,8 @@ let package = Package(
             ],
             publicHeadersPath: "PublicHeaders",
             cSettings: [],
-            cxxSettings: []
+            cxxSettings: [],
+            linkerSettings: []
         ),
         .target(
             name: "MeshTransform",
@@ -486,6 +496,89 @@ let package = Package(
             path: "submodules/Components/HierarchyTrackingLayer",
             sources: [
                 "Sources/HierarchyTrackingLayer.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "RLottieBinding",
+            dependencies: [],
+            path: "submodules/rlottie",
+            sources: [
+                "RLottieInstance.mm",
+                "rlottie/src/binding/c/lottieanimation_capi.cpp",
+                "rlottie/src/lottie/lottieanimation.cpp",
+                "rlottie/src/lottie/lottieitem.cpp",
+                "rlottie/src/lottie/lottiekeypath.cpp",
+                "rlottie/src/lottie/lottieloader.cpp",
+                "rlottie/src/lottie/lottiemodel.cpp",
+                "rlottie/src/lottie/lottieparser.cpp",
+                "rlottie/src/lottie/lottieproxymodel.cpp",
+                "rlottie/src/vector/freetype/v_ft_math.cpp",
+                "rlottie/src/vector/freetype/v_ft_raster.cpp",
+                "rlottie/src/vector/freetype/v_ft_stroker.cpp",
+                "rlottie/src/vector/pixman/vregion.cpp",
+                "rlottie/src/vector/vbezier.cpp",
+                "rlottie/src/vector/vbitmap.cpp",
+                "rlottie/src/vector/vbrush.cpp",
+                "rlottie/src/vector/vcompositionfunctions.cpp",
+                "rlottie/src/vector/vdasher.cpp",
+                "rlottie/src/vector/vdebug.cpp",
+                "rlottie/src/vector/vdrawable.cpp",
+                "rlottie/src/vector/vdrawhelper.cpp",
+                "rlottie/src/vector/vdrawhelper_sse2.cpp",
+                "rlottie/src/vector/velapsedtimer.cpp",
+                "rlottie/src/vector/vimageloader.cpp",
+                "rlottie/src/vector/vinterpolator.cpp",
+                "rlottie/src/vector/vmatrix.cpp",
+                "rlottie/src/vector/vpainter.cpp",
+                "rlottie/src/vector/vpath.cpp",
+                "rlottie/src/vector/vpathmesure.cpp",
+                "rlottie/src/vector/vraster.cpp",
+                "rlottie/src/vector/vrect.cpp",
+                "rlottie/src/vector/vrle.cpp",
+            ],
+            publicHeadersPath: "PublicHeaders",
+            cSettings: [.define("pixman_region_selfcheck(x)", to: "1"), .define("LOTTIE_DISABLE_ARM_NEON", to: "1"), .define("LOTTIE_THREAD_SAFE", to: "1"), .define("LOTTIE_IMAGE_MODULE_DISABLED", to: "1"), .headerSearchPath("."), .headerSearchPath("rlottie/inc"), .headerSearchPath("rlottie/src/vector"), .headerSearchPath("rlottie/src/vector/pixman"), .headerSearchPath("rlottie/src/vector/freetype")],
+            cxxSettings: [.define("pixman_region_selfcheck(x)", to: "1"), .define("LOTTIE_DISABLE_ARM_NEON", to: "1"), .define("LOTTIE_THREAD_SAFE", to: "1"), .define("LOTTIE_IMAGE_MODULE_DISABLED", to: "1"), .headerSearchPath("."), .headerSearchPath("rlottie/inc"), .headerSearchPath("rlottie/src/vector"), .headerSearchPath("rlottie/src/vector/pixman"), .headerSearchPath("rlottie/src/vector/freetype")],
+            linkerSettings: []
+        ),
+        .target(
+            name: "LottieBinding",
+            dependencies: ["LottieSettings", "RLottieBinding", "TLottieBinding"],
+            path: "submodules/LottieBinding",
+            sources: [
+                "Sources/LottieInstance.swift",
+                "Sources/MakeLottieInstance.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "GZip",
+            dependencies: [],
+            path: "submodules/GZip",
+            sources: [
+                "Sources/GZip.m",
+            ],
+            publicHeadersPath: "Sources",
+            cSettings: [],
+            cxxSettings: [],
+            linkerSettings: [.linkedLibrary("z")]
+        ),
+        .target(
+            name: "GenerateStickerPlaceholderImage",
+            dependencies: ["Display"],
+            path: "submodules/TelegramUI/Components/Utils/GenerateStickerPlaceholderImage",
+            sources: [
+                "Sources/GenerateStickerPlaceholderImage.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "LottieComponent",
+            dependencies: ["Display", "ComponentFlow", "HierarchyTrackingLayer", "LottieBinding", "LottieSettings", "SwiftSignalKit", "AppBundle", "GZip", "GenerateStickerPlaceholderImage"],
+            path: "submodules/TelegramUI/Components/LottieComponent",
+            sources: [
+                "Sources/LottieComponent.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
@@ -585,10 +678,10 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
-            name: "LottieComponent",
-            dependencies: ["Display", "ComponentFlow", "LottieSettings"],
-            path: "tau-shims/LottieComponent",
-            sources: ["LottieComponent.swift"],
+            name: "TLottieBinding",
+            dependencies: [],
+            path: "tau-shims/TLottieBinding",
+            sources: ["TLottieAnimation.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ],

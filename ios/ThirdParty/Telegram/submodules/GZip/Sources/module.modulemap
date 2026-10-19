@@ -1,0 +1,3 @@
+module GZip {
+    header "GZip.h"
+}

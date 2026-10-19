@@ -1,4 +1,4 @@
-import Foundation
+import UIKit
 import SwiftSignalKit
 
 /// In-memory stand-in for the tau server. Sending a message streams a canned answer the way the server does: a partial
@@ -11,6 +11,8 @@ final class MockStore {
     private let dialogsPromise = ValuePromise<[DialogModel]>([], ignoreRepeated: true)
     private var conversationPromises: [Int: ValuePromise<ConversationState>] = [:]
     private var streams: [Int: SwiftSignalKit.Timer] = [:]
+    /// Where the user left each chat, as Telegram keeps it in the chat's interface state.
+    private var scrollStates: [Int: ChatScrollState] = [:]
 
     init() {
         let now = Date()
@@ -34,6 +36,8 @@ final class MockStore {
             ("Release notes", "~/work/webapp", [
                 (.user, "Draft release notes for 2.4 from the merged PRs"),
                 (.assistant, "Here's a draft:\n\n**2.4**\n- Faster search on large projects\n- Dark mode for the settings page\n- Fixed: uploads over 2 GB failed silently"),
+                (.user, "Compare the three storage backends in a table"),
+                (.assistant, MockStore.tableAnswer),
             ]),
         ]
         for (index, seed) in seeds.enumerated() {
@@ -87,11 +91,74 @@ final class MockStore {
         return id
     }
 
-    func send(_ text: String, to id: Int) {
+    func scrollState(_ id: Int) -> ChatScrollState? {
+        return self.scrollStates[id]
+    }
+
+    func setScrollState(_ state: ChatScrollState?, for id: Int) {
+        self.scrollStates[id] = state
+    }
+
+    func deleteConversation(_ id: Int) {
+        self.streams[id]?.invalidate()
+        self.streams[id] = nil
+        self.dialogs[id] = nil
+        self.conversations[id] = nil
+        self.publishDialogs()
+    }
+
+    func duplicateConversation(_ id: Int) -> Int? {
+        guard let state = self.conversations[id], let dialog = self.dialogs[id] else {
+            return nil
+        }
+        let newId = (self.dialogs.keys.max() ?? 0) + 1
+        var copy = state
+        copy.streaming = nil
+        copy.busy = false
+        copy.messages = copy.messages.map { message in
+            var message = message
+            message.id = self.mintId()
+            return message
+        }
+        self.conversations[newId] = copy
+        var newDialog = dialog
+        newDialog.id = newId
+        newDialog.title = dialog.title + " (copy)"
+        self.dialogs[newId] = newDialog
+        self.refreshDialog(newId)
+        self.publishDialogs()
+        return newId
+    }
+
+    func deleteMessages(_ ids: Set<Int>, in id: Int) {
         guard var state = self.conversations[id] else {
             return
         }
-        state.messages.append(ChatMessage(id: self.mintId(), role: .user, text: text, date: Date()))
+        state.messages.removeAll(where: { ids.contains($0.id) })
+        self.conversations[id] = state
+        self.publish(id)
+    }
+
+    /// Replace a user message and run again from there, as editing works on the server: a fork at the message before
+    /// it, with the new text submitted.
+    func edit(messageId: Int, text: String, in id: Int) {
+        guard var state = self.conversations[id], let index = state.messages.firstIndex(where: { $0.id == messageId }) else {
+            return
+        }
+        self.streams[id]?.invalidate()
+        self.streams[id] = nil
+        let attachments = state.messages[index].attachments
+        state.messages.removeSubrange(index...)
+        state.streaming = nil
+        self.conversations[id] = state
+        self.send(text, attachments: attachments, to: id)
+    }
+
+    func send(_ text: String, attachments: [MessageAttachment] = [], to id: Int) {
+        guard var state = self.conversations[id] else {
+            return
+        }
+        state.messages.append(ChatMessage(id: self.mintId(), role: .user, text: text, date: Date(), attachments: attachments))
         if self.dialogs[id]?.title == "New chat" {
             self.dialogs[id]?.title = String(text.prefix(40))
         }
@@ -100,7 +167,7 @@ final class MockStore {
         self.publish(id)
         if self.streams[id] == nil {
             Queue.mainQueue().after(0.6) {
-                self.startStreaming(id, prompt: text)
+                self.startStreaming(id, prompt: text.isEmpty ? "this attachment" : text)
             }
         }
     }
@@ -145,7 +212,15 @@ final class MockStore {
             return
         }
         if let last = state.messages.last {
-            dialog.last = DialogModel.EntrySummary(id: last.id, role: last.role, text: last.text, date: last.date)
+            var text = last.text
+            if text.isEmpty, let attachment = last.attachments.first {
+                if case let .file(name, _) = attachment.kind {
+                    text = name
+                } else {
+                    text = last.attachments.count > 1 ? "\(last.attachments.count) Photos" : "Photo"
+                }
+            }
+            dialog.last = DialogModel.EntrySummary(id: last.id, role: last.role, text: text, date: last.date)
         }
         dialog.busy = state.busy
         self.dialogs[id] = dialog
@@ -165,6 +240,10 @@ final class MockStore {
         return promise
     }
 
+    func mintAttachmentId() -> Int {
+        return self.mintId()
+    }
+
     private func mintId() -> Int {
         self.nextId += 1
         return self.nextId
@@ -172,11 +251,26 @@ final class MockStore {
 
     private static func answer(to prompt: String) -> String {
         let lower = prompt.lowercased()
+        if lower.contains("table") {
+            return MockStore.tableAnswer
+        }
         if lower.contains("hello") || lower.contains("hi") {
             return "Hi! I'm the mock agent. The real one runs on your tau server; this one only streams canned answers so the UI has something to draw."
         }
         return "Here's how I'd approach \"\(prompt.prefix(60))\":\n\n1. Read the relevant code and reproduce the problem.\n2. Write a failing test that captures it.\n3. Make the smallest change that fixes it, then run the whole suite.\n\nThis answer is streamed in uneven chunks every 100 ms, the way durable commits a provider's partial message, so the reveal animation can smooth it out."
     }
+
+    static let tableAnswer = """
+Here is how the three storage backends compare:
+
+| Backend | Persists | Crash safety | Best for |
+|---|---|---|---|
+| Memory | No | — | Tests, previews |
+| SQLite | Yes | WAL, commits survive a process crash | Long-running agents |
+| JSONL | Yes | Append-only, optional `fsync` | Inspecting history by hand |
+
+SQLite is the default for `tau-server`: it keeps memory flat however long a conversation gets, while JSONL holds the whole history in memory.
+"""
 
     private static let questions = [
         "How do I undo the last git commit but keep the changes?",

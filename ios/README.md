@@ -8,6 +8,7 @@ the server connection comes next.
 ```bash
 ios/scripts/build.sh --run     # xcodegen + xcodebuild, install and launch on the "iPhone 17 Pro" simulator
 ios/scripts/build.sh --device  # signed Release build on the connected iPhone (TAU_TEAM, default TEAMID)
+ios/scripts/uitest.sh          # UI walkthroughs in the simulator; screenshots of each step in /tmp/tau-ui
 ```
 
 XcodeGen comes from nix when it is not installed (`nix shell nixpkgs#xcodegen`). `Tau.xcodeproj` is generated and
@@ -22,6 +23,9 @@ and screenshots):
 | `-openChat 2 -send "hi"` | ...and send a message a second later (the mock streams an answer) |
 | `-openChat 2 -focus YES` | ...and focus the input field |
 | `-sendTo 3 -send "hi"` | Send to conversation 3 without opening it (to see the busy chat list row) |
+| `-theme dark` | Force Night (`light`: Day, `system`: follow the phone) |
+| `-tab 1` | Open the Settings tab |
+| `-compose YES` | Start a new chat |
 
 ## How the Telegram code is used
 
@@ -38,6 +42,7 @@ generates a SwiftPM package (`ThirdParty/Telegram/Package.swift`), one target pe
 | ComponentFlow, ComponentDisplayAdapters | Telegram's component system, needed by the glass views |
 | NavigationBarImpl, GlassBackgroundComponent, EdgeEffect, MeshTransform | iOS 26 Liquid Glass: navigation bar, glass shapes and containers (`UIGlassEffect` / `UIGlassContainerEffect`), blurred edge fades |
 | TabBarComponent, LiquidLens, TabSelectionRecognizer, BundleIconComponent, TextBadgeComponent | The floating glass tab bar with its lens selection |
+| RLottieBinding (rlottie, C++), LottieBinding, LottieComponent, GZip | Telegram's Lottie animations: tab icons, attachment bar icons |
 | InteractiveTextComponent | Message text: code blocks, quotes, and the per-glyph reveal used for streaming |
 | StreamingTextReveal | `TextRevealController`, which paces streamed text smoothly between server commits |
 | GradientBackground | The four-color animated wallpaper |
@@ -55,14 +60,15 @@ same names and just those members, so the copied code compiles unchanged:
 
 - `TelegramPresentationData`: the theme and strings types, filled from `Tau/Theme/Theme.swift` (`presentationTheme`).
 - `SearchBarNode`: an inert search field, for search modes tau does not enable.
-- `LottieComponent`: draws nothing; rlottie is a separate C++ submodule. Tab icons use static images meanwhile.
+- `TLottieBinding`: Telegram's second Lottie renderer is Rust; tau always selects rlottie, so this one never loads.
 
 When a newly copied module needs another member, add it to the shim with Telegram's name. This is how
 `TabBarComponent` (the floating glass tab bar) came over verbatim.
 
 To change vendored code: edit it in `ThirdParty/Telegram`, then record the change with
 `scripts/make_patch.sh <name> <paths>`. To update or add modules: check out Telegram-iOS into `vendor/Telegram-iOS`
-(`git clone --depth 1 https://github.com/TelegramMessenger/Telegram-iOS vendor/Telegram-iOS`), edit the module table in
+(`git clone --depth 1 https://github.com/TelegramMessenger/Telegram-iOS vendor/Telegram-iOS`, then
+`git -C vendor/Telegram-iOS submodule update --init --depth 1 submodules/rlottie/rlottie` for rlottie), edit the module table in
 `vendor_telegram.py`, and run `uv run ios/scripts/vendor_telegram.py`.
 
 **Ported** into `Tau/`: Telegram's chat list and chat screens are bound to TelegramCore (500+ modules), so their layout
@@ -76,6 +82,14 @@ code is reimplemented on the foundation above, keeping Telegram's metrics:
 | `Chat/ChatMessageItem.swift` | ChatMessageBubbleItemNode layout constants, ChatMessageTextBubbleContentNode text reveal |
 | `Chat/ChatControllerNode.swift` | ChatControllerNode / ChatHistoryListNode: rotated list, keyboard layout |
 | `Theme/Theme.swift` | DefaultDayPresentationTheme colors |
+
+Copied resources: the images in `ThirdParty/Telegram/Images.xcassets` and the Lottie files in
+`ThirdParty/Telegram/Animations`, both listed in `vendor_telegram.py`.
+
+Not copied, built on native iOS instead: context menus (`UIContextMenuInteraction`, which on iOS 26 is liquid glass with
+lifted previews; Telegram's ContextUI pulls in 178 modules), and the attachment picker (Telegram's AttachmentUI and
+MediaPickerUI pull in about 400; `Chat/AttachmentPickerController.swift` follows their layout with PhotoKit and
+AVFoundation).
 
 ## Layout
 

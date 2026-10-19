@@ -1,31 +1,40 @@
 import UIKit
 import AsyncDisplayKit
 import Display
+import AppBundle
 import ComponentFlow
 import ComponentDisplayAdapters
 import GlassBackgroundComponent
 
-/// The composer, laid out like Telegram's iOS 26 ChatTextInputPanelNode: an attachment button, a growing text field and
-/// a send button, each a glass shape inside one GlassBackgroundContainerView, so iOS merges and morphs them as liquid
-/// glass. The send button appears once there is text, and the field gives up its space to it.
+/// The composer, laid out like Telegram's iOS 26 ChatTextInputPanelNode: an attachment button (Telegram's paperclip),
+/// a growing text field, and a microphone that turns into the send button once there is text. Every shape is glass inside
+/// one GlassBackgroundContainerView, so iOS merges and morphs them. Editing a message adds Telegram's accessory bar
+/// above the field.
 final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
-    private let theme: TauTheme
+    private var theme: TauTheme
     private let glassContainer: GlassBackgroundContainerView
     private let attachBackgroundView: GlassBackgroundView
     private let attachIconView: UIImageView
     private let fieldBackgroundView: GlassBackgroundView
     private let textView: UITextView
     private let placeholderLabel: UILabel
+    private let micBackgroundView: GlassBackgroundView
+    private let micIconView: UIImageView
     private let sendBackgroundView: GlassBackgroundView
     private let sendIconView: UIImageView
+    private let accessoryView: EditAccessoryView
 
     var sendMessage: ((String) -> Void)?
-    /// The text changed height, or the send button appeared; the owner lays out again with this transition.
+    var attachPressed: (() -> Void)?
+    var micPressed: (() -> Void)?
+    var cancelEditing: (() -> Void)?
+    /// The text changed height, the send button appeared, or editing began; the owner lays out again.
     var requestLayout: ((ContainedViewLayoutTransition) -> Void)?
 
     private var currentTextHeight: CGFloat = 0.0
     private var displaysSend = false
     private var validWidth: CGFloat?
+    private(set) var editingText: String?
 
     // Telegram ChatTextInputPanelNode: 40 pt controls, 6 pt between glass shapes.
     private static let controlSize: CGFloat = 40.0
@@ -33,36 +42,33 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     private static let fieldMaxLines: CGFloat = 6.0
     private static let font = Font.regular(17.0)
     private static let textInsets = UIEdgeInsets(top: 10.0, left: 16.0, bottom: 10.0, right: 16.0)
+    private static let accessoryHeight: CGFloat = 46.0
 
     init(theme: TauTheme) {
         self.theme = theme
         self.glassContainer = GlassBackgroundContainerView(spacing: 7.0)
         self.attachBackgroundView = GlassBackgroundView()
         self.fieldBackgroundView = GlassBackgroundView()
+        self.micBackgroundView = GlassBackgroundView()
         self.sendBackgroundView = GlassBackgroundView()
-
-        self.attachIconView = UIImageView(image: UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 19.0, weight: .medium)))
-        self.attachIconView.tintColor = theme.chat.inputPanelControlColor
+        self.attachIconView = UIImageView()
         self.attachIconView.contentMode = .center
-
-        self.sendIconView = UIImageView(image: UIImage(systemName: "arrow.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17.0, weight: .bold)))
-        self.sendIconView.tintColor = theme.chat.actionControlForegroundColor
+        self.micIconView = UIImageView()
+        self.micIconView.contentMode = .center
+        self.sendIconView = UIImageView()
         self.sendIconView.contentMode = .center
+        self.accessoryView = EditAccessoryView()
 
         self.textView = UITextView()
         self.textView.backgroundColor = .clear
         self.textView.font = ChatInputPanelNode.font
-        self.textView.textColor = theme.chat.inputTextColor
-        self.textView.tintColor = theme.accentColor
         self.textView.textContainerInset = ChatInputPanelNode.textInsets
         self.textView.textContainer.lineFragmentPadding = 0.0
         self.textView.isScrollEnabled = false
         self.textView.scrollsToTop = false
-        self.textView.keyboardAppearance = theme.overallDarkAppearance ? .dark : .default
 
         self.placeholderLabel = UILabel()
         self.placeholderLabel.font = ChatInputPanelNode.font
-        self.placeholderLabel.textColor = theme.chat.inputPlaceholderColor
         self.placeholderLabel.text = "Message"
 
         super.init()
@@ -72,17 +78,52 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         super.didLoad()
         self.view.addSubview(self.glassContainer)
         let content = self.glassContainer.contentView
+        content.addSubview(self.accessoryView)
         content.addSubview(self.attachBackgroundView)
         self.attachBackgroundView.contentView.addSubview(self.attachIconView)
         content.addSubview(self.fieldBackgroundView)
         self.fieldBackgroundView.contentView.addSubview(self.placeholderLabel)
         self.fieldBackgroundView.contentView.addSubview(self.textView)
+        content.addSubview(self.micBackgroundView)
+        self.micBackgroundView.contentView.addSubview(self.micIconView)
         content.addSubview(self.sendBackgroundView)
         self.sendBackgroundView.contentView.addSubview(self.sendIconView)
 
         self.textView.delegate = self
+        self.attachBackgroundView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.attachTapped)))
+        self.micBackgroundView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.micTapped)))
         self.sendBackgroundView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.sendPressed)))
+        self.accessoryView.cancel = { [weak self] in
+            self?.cancelEditing?()
+        }
         self.sendBackgroundView.alpha = 0.0
+        self.accessoryView.alpha = 0.0
+        for (view, identifier) in [(self.attachBackgroundView, "attach"), (self.micBackgroundView, "microphone"), (self.sendBackgroundView, "send")] as [(UIView, String)] {
+            view.isAccessibilityElement = true
+            view.accessibilityIdentifier = identifier
+            view.accessibilityLabel = identifier.capitalized
+            view.accessibilityTraits = .button
+        }
+        self.applyTheme()
+    }
+
+    func updateTheme(_ theme: TauTheme) {
+        self.theme = theme
+        if self.isNodeLoaded {
+            self.applyTheme()
+        }
+    }
+
+    private func applyTheme() {
+        let chat = self.theme.chat
+        self.attachIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconAttachment"), color: chat.panelControlColor)
+        self.micIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconMicrophone"), color: chat.panelControlColor)
+        self.sendIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/SendIcon"), color: chat.actionControlForegroundColor)
+        self.textView.textColor = chat.inputTextColor
+        self.textView.tintColor = self.theme.accentColor
+        self.textView.keyboardAppearance = self.theme.overallDarkAppearance ? .dark : .default
+        self.placeholderLabel.textColor = chat.inputPlaceholderColor
+        self.accessoryView.update(theme: self.theme)
     }
 
     var text: String {
@@ -93,13 +134,28 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.textView.becomeFirstResponder()
     }
 
+    func deactivateInput() {
+        self.textView.resignFirstResponder()
+    }
+
     func setText(_ text: String) {
         self.textView.text = text
         self.textViewDidChange(self.textView)
     }
 
-    func deactivateInput() {
-        self.textView.resignFirstResponder()
+    /// Show Telegram's "Edit Message" bar for `original`, or hide it with nil.
+    func setEditing(_ original: String?) {
+        self.editingText = original
+        self.accessoryView.setText(original ?? "")
+        self.requestLayout?(.animated(duration: 0.4, curve: .spring))
+    }
+
+    @objc private func attachTapped() {
+        self.attachPressed?()
+    }
+
+    @objc private func micTapped() {
+        self.micPressed?()
     }
 
     @objc private func sendPressed() {
@@ -118,20 +174,20 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         guard let width = self.validWidth else {
             return
         }
-        if displaysSend != self.displaysSend || self.measureTextHeight(width: width, displaysSend: displaysSend) != self.currentTextHeight {
+        if displaysSend != self.displaysSend || self.measureTextHeight(width: width) != self.currentTextHeight {
             self.requestLayout?(.animated(duration: 0.4, curve: .spring))
         }
     }
 
-    private func fieldWidth(_ width: CGFloat, displaysSend: Bool) -> CGFloat {
+    private func fieldWidth(_ width: CGFloat) -> CGFloat {
         let size = ChatInputPanelNode.controlSize
         let spacing = ChatInputPanelNode.spacing
-        return width - size - spacing - (displaysSend ? size + spacing : 0.0)
+        return width - (size + spacing) * 2.0
     }
 
-    private func measureTextHeight(width: CGFloat, displaysSend: Bool) -> CGFloat {
+    private func measureTextHeight(width: CGFloat) -> CGFloat {
         let insets = ChatInputPanelNode.textInsets
-        let textWidth = self.fieldWidth(width, displaysSend: displaysSend) - insets.left - insets.right
+        let textWidth = self.fieldWidth(width) - insets.left - insets.right
         let maxHeight = ceil(ChatInputPanelNode.font.lineHeight * ChatInputPanelNode.fieldMaxLines)
         let text = self.text.isEmpty ? " " : self.text
         let bounds = (text as NSString).boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], attributes: [.font: ChatInputPanelNode.font], context: nil)
@@ -142,44 +198,122 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     func updateLayout(width: CGFloat, transition: ContainedViewLayoutTransition) -> CGFloat {
         self.validWidth = width
         let displaysSend = !self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let sendChanged = displaysSend != self.displaysSend
         self.displaysSend = displaysSend
         let size = ChatInputPanelNode.controlSize
         let spacing = ChatInputPanelNode.spacing
         let insets = ChatInputPanelNode.textInsets
         let isDark = self.theme.overallDarkAppearance
+        let componentTransition = ComponentTransition(transition)
 
-        let textHeight = self.measureTextHeight(width: width, displaysSend: displaysSend)
+        let accessoryHeight: CGFloat = self.editingText == nil ? 0.0 : ChatInputPanelNode.accessoryHeight + spacing
+        let textHeight = self.measureTextHeight(width: width)
         self.currentTextHeight = textHeight
         let fieldHeight = max(size, textHeight + insets.top + insets.bottom)
         self.textView.isScrollEnabled = textHeight >= ceil(ChatInputPanelNode.font.lineHeight * ChatInputPanelNode.fieldMaxLines)
 
-        let componentTransition = ComponentTransition(transition)
-        let panelSize = CGSize(width: width, height: fieldHeight)
+        let panelSize = CGSize(width: width, height: accessoryHeight + fieldHeight)
         componentTransition.setFrame(view: self.glassContainer, frame: CGRect(origin: CGPoint(), size: panelSize))
         self.glassContainer.update(size: panelSize, isDark: isDark, transition: componentTransition)
 
+        let accessoryFrame = CGRect(x: size + spacing, y: 0.0, width: self.fieldWidth(width), height: ChatInputPanelNode.accessoryHeight)
+        componentTransition.setFrame(view: self.accessoryView, frame: accessoryFrame)
+        self.accessoryView.layout(size: accessoryFrame.size, isDark: isDark, transition: componentTransition)
+        componentTransition.setAlpha(view: self.accessoryView, alpha: self.editingText == nil ? 0.0 : 1.0)
+
         // Controls stay on the last line as the field grows, as Telegram's do.
-        let attachFrame = CGRect(origin: CGPoint(x: 0.0, y: fieldHeight - size), size: CGSize(width: size, height: size))
+        let controlsY = accessoryHeight + fieldHeight - size
+        let attachFrame = CGRect(origin: CGPoint(x: 0.0, y: controlsY), size: CGSize(width: size, height: size))
         componentTransition.setFrame(view: self.attachBackgroundView, frame: attachFrame)
         self.attachBackgroundView.update(size: attachFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .panel), isInteractive: true, transition: componentTransition)
         self.attachIconView.frame = CGRect(origin: CGPoint(), size: attachFrame.size)
 
-        let fieldFrame = CGRect(origin: CGPoint(x: attachFrame.maxX + spacing, y: 0.0), size: CGSize(width: self.fieldWidth(width, displaysSend: displaysSend), height: fieldHeight))
+        let fieldFrame = CGRect(origin: CGPoint(x: attachFrame.maxX + spacing, y: accessoryHeight), size: CGSize(width: self.fieldWidth(width), height: fieldHeight))
         componentTransition.setFrame(view: self.fieldBackgroundView, frame: fieldFrame)
         self.fieldBackgroundView.update(size: fieldFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .panel), isInteractive: true, transition: componentTransition)
         componentTransition.setFrame(view: self.textView, frame: CGRect(origin: CGPoint(), size: fieldFrame.size))
         self.placeholderLabel.frame = CGRect(origin: CGPoint(x: insets.left, y: insets.top), size: CGSize(width: fieldFrame.width - insets.left - insets.right, height: ceil(ChatInputPanelNode.font.lineHeight)))
 
-        // The send button grows out of the field's trailing end.
-        let sendFrame = CGRect(origin: CGPoint(x: displaysSend ? width - size : fieldFrame.maxX - size, y: fieldHeight - size), size: CGSize(width: size, height: size))
-        // Position and bounds, not frame: the view is also scaled.
-        componentTransition.setPosition(view: self.sendBackgroundView, position: sendFrame.center)
-        componentTransition.setBounds(view: self.sendBackgroundView, bounds: CGRect(origin: CGPoint(), size: sendFrame.size))
-        self.sendBackgroundView.update(size: sendFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .custom(style: .default, color: self.theme.chat.actionControlFillColor)), isInteractive: true, transition: componentTransition)
-        componentTransition.setAlpha(view: self.sendBackgroundView, alpha: displaysSend ? 1.0 : 0.0)
-        componentTransition.setScale(view: self.sendBackgroundView, scale: displaysSend ? 1.0 : 0.6)
-        self.sendIconView.frame = CGRect(origin: CGPoint(), size: sendFrame.size)
+        // The microphone and the send button share a spot; one replaces the other with Telegram's scale and fade
+        // (ChatTextInputActionButtonsNode).
+        let actionFrame = CGRect(origin: CGPoint(x: width - size, y: controlsY), size: CGSize(width: size, height: size))
+        for view in [self.micBackgroundView, self.sendBackgroundView] {
+            view.center = actionFrame.center
+            view.bounds = CGRect(origin: CGPoint(), size: actionFrame.size)
+        }
+        self.micBackgroundView.update(size: actionFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .panel), isInteractive: true, transition: componentTransition)
+        self.sendBackgroundView.update(size: actionFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .custom(style: .default, color: self.theme.chat.actionControlFillColor)), isInteractive: true, transition: componentTransition)
+        self.micIconView.frame = CGRect(origin: CGPoint(), size: actionFrame.size)
+        self.sendIconView.frame = CGRect(origin: CGPoint(), size: actionFrame.size)
+        if sendChanged && transition.isAnimated {
+            let shown = displaysSend ? self.sendBackgroundView : self.micBackgroundView
+            let hidden = displaysSend ? self.micBackgroundView : self.sendBackgroundView
+            shown.alpha = 1.0
+            hidden.alpha = 0.0
+            shown.layer.animateScale(from: 0.2, to: 1.0, duration: 0.25, timingFunction: kCAMediaTimingFunctionSpring)
+            shown.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.15)
+            hidden.layer.animateScale(from: 1.0, to: 0.2, duration: 0.2)
+            hidden.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.15)
+        } else {
+            self.sendBackgroundView.alpha = displaysSend ? 1.0 : 0.0
+            self.micBackgroundView.alpha = displaysSend ? 0.0 : 1.0
+        }
 
-        return fieldHeight
+        return panelSize.height
+    }
+}
+
+/// Telegram's "Edit Message" bar above the input field: an accent line, a title, the original text and a close button.
+private final class EditAccessoryView: UIView {
+    private let backgroundView = GlassBackgroundView()
+    private let lineView = UIView()
+    private let titleLabel = UILabel()
+    private let textLabel = UILabel()
+    private let closeButton = UIButton(type: .system)
+    var cancel: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        self.addSubview(self.backgroundView)
+        self.backgroundView.contentView.addSubview(self.lineView)
+        self.backgroundView.contentView.addSubview(self.titleLabel)
+        self.backgroundView.contentView.addSubview(self.textLabel)
+        self.backgroundView.contentView.addSubview(self.closeButton)
+        self.lineView.layer.cornerRadius = 1.5
+        self.titleLabel.font = Font.semibold(14.0)
+        self.titleLabel.text = "Edit Message"
+        self.textLabel.font = Font.regular(14.0)
+        self.closeButton.setImage(UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13.0, weight: .semibold)), for: .normal)
+        self.closeButton.addTarget(self, action: #selector(self.closePressed), for: .touchUpInside)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func closePressed() {
+        self.cancel?()
+    }
+
+    func update(theme: TauTheme) {
+        self.lineView.backgroundColor = theme.accentColor
+        self.titleLabel.textColor = theme.accentColor
+        self.textLabel.textColor = theme.chat.inputTextColor
+        self.closeButton.tintColor = theme.chat.panelControlColor
+    }
+
+    func setText(_ text: String) {
+        if !text.isEmpty {
+            self.textLabel.text = text.replacingOccurrences(of: "\n", with: " ")
+        }
+    }
+
+    func layout(size: CGSize, isDark: Bool, transition: ComponentTransition) {
+        transition.setFrame(view: self.backgroundView, frame: CGRect(origin: CGPoint(), size: size))
+        self.backgroundView.update(size: size, cornerRadius: 20.0, isDark: isDark, tintColor: .init(kind: .panel), isInteractive: false, transition: transition)
+        self.lineView.frame = CGRect(x: 14.0, y: 8.0, width: 3.0, height: size.height - 16.0)
+        self.titleLabel.frame = CGRect(x: 25.0, y: 6.0, width: size.width - 70.0, height: 18.0)
+        self.textLabel.frame = CGRect(x: 25.0, y: 23.0, width: size.width - 70.0, height: 18.0)
+        self.closeButton.frame = CGRect(x: size.width - 40.0, y: 0.0, width: 36.0, height: size.height)
     }
 }

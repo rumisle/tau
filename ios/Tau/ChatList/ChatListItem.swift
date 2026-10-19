@@ -83,6 +83,10 @@ final class ChatListItemNode: ListViewItemNode {
 
     private var item: ChatListItem?
 
+    var dialog: DialogModel? {
+        return self.item?.dialog
+    }
+
     init() {
         self.highlightedBackgroundNode = ASDisplayNode()
         self.highlightedBackgroundNode.isLayerBacked = true
@@ -279,7 +283,7 @@ func chatListDateString(_ date: Date) -> String {
 
 /// Three pulsing dots, like Telegram's typing indicator in the chat list.
 final class BusyDotsNode: ASDisplayNode {
-    private let dots: [CALayer] = (0 ..< 3).map { _ in CALayer() }
+    private var dots: [CALayer] = []
 
     var color: UIColor = .black {
         didSet {
@@ -289,19 +293,17 @@ final class BusyDotsNode: ASDisplayNode {
         }
     }
 
-    override init() {
-        super.init()
-        for (index, dot) in self.dots.enumerated() {
+    // Nodes are created off the main thread (ListView lays rows out asynchronously); layers only exist from didLoad.
+    override func didLoad() {
+        super.didLoad()
+        self.dots = (0 ..< 3).map { _ in
+            let dot = CALayer()
             dot.cornerRadius = 2.5
+            dot.backgroundColor = self.color.cgColor
             self.layer.addSublayer(dot)
-            let animation = CAKeyframeAnimation(keyPath: "opacity")
-            animation.values = [0.3, 1.0, 0.3]
-            animation.keyTimes = [0.0, 0.5, 1.0]
-            animation.duration = 1.0
-            animation.repeatCount = .infinity
-            animation.beginTime = CACurrentMediaTime() + Double(index) * 0.2
-            dot.add(animation, forKey: "pulse")
+            return dot
         }
+        self.startAnimations()
     }
 
     override func layout() {
@@ -313,7 +315,11 @@ final class BusyDotsNode: ASDisplayNode {
 
     override func didEnterHierarchy() {
         super.didEnterHierarchy()
-        // Layers drop animations when they leave the window; restart them.
+        // Layers drop their animations when they leave the window.
+        self.startAnimations()
+    }
+
+    private func startAnimations() {
         for (index, dot) in self.dots.enumerated() where dot.animation(forKey: "pulse") == nil {
             let animation = CAKeyframeAnimation(keyPath: "opacity")
             animation.values = [0.3, 1.0, 0.3]

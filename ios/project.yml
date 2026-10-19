@@ -15,6 +15,8 @@ targets:
     sources:
       - path: Tau
       - path: ThirdParty/Telegram/Images.xcassets
+      - path: ThirdParty/Telegram/Animations
+        buildPhase: resources
     dependencies:
       - package: TelegramFoundation
         products:
@@ -34,6 +36,8 @@ targets:
           - TabBarComponent
           - EdgeEffect
           - TelegramPresentationData
+          - LottieComponent
+          - LottieSettings
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau
@@ -50,3 +54,28 @@ targets:
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Send photos to the agent."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Take a photo to send to the agent."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Dictate messages to the agent."
+  TauUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: TauUITests
+    dependencies:
+      - target: Tau
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Tau
+        SWIFT_VERSION: "5.0"
+schemes:
+  Tau:
+    build:
+      targets:
+        Tau: all
+        TauUITests: [test]
+    test:
+      targets:
+        - TauUITests

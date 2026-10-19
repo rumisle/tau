@@ -16,7 +16,7 @@ if [ "${1:-}" = "--device" ]; then
 	[ -n "$device" ] || { echo "no paired device available" >&2; exit 1; }
 	xcodebuild -project Tau.xcodeproj -scheme Tau -configuration Release \
 		-destination 'generic/platform=iOS' -derivedDataPath "$derived-device" \
-		-allowProvisioningUpdates DEVELOPMENT_TEAM="$team" CODE_SIGN_STYLE=Automatic build | tail -n 3
+		-allowProvisioningUpdates DEVELOPMENT_TEAM="$team" CODE_SIGN_STYLE=Automatic build > /tmp/tau-build-device.log 2>&1 || { grep -E "error:" /tmp/tau-build-device.log; exit 1; }
 	xcrun devicectl device install app --device "$device" "$derived-device/Build/Products/Release-iphoneos/Tau.app"
 	xcrun devicectl device process launch --device "$device" "$bundle" || echo "installed; launch it from the home screen"
 	exit 0
@@ -24,7 +24,8 @@ fi
 
 xcodebuild -project Tau.xcodeproj -scheme Tau -configuration Debug \
 	-destination 'generic/platform=iOS Simulator' -derivedDataPath "$derived" \
-	CODE_SIGNING_ALLOWED=NO build | tail -n 3
+	CODE_SIGNING_ALLOWED=NO build > /tmp/tau-build.log 2>&1 || { grep -E "error:" /tmp/tau-build.log; exit 1; }
+echo "build succeeded"
 if [ "${1:-}" = "--run" ]; then
 	device="${TAU_SIMULATOR:-iPhone 17 Pro}"
 	xcrun simctl boot "$device" 2>/dev/null || true

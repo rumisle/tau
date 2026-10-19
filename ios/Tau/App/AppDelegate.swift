@@ -10,7 +10,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
     private var mainWindow: Window1!
     private var statusBarHost: ApplicationStatusBarHost?
-    private var store: MockStore?
+    private var context: AppContext?
+    private var themeDisposable: Disposable?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         // Display only knows the NavigationBar protocol; the app picks the implementation, as Telegram's AppDelegate does.
@@ -18,44 +19,70 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             return NavigationBarImpl(presentationData: presentationData)
         }
 
-        let theme = TauTheme.day
-
         // Telegram's window stack: a native window hosting Display's Window1, which drives layout (keyboard, status bar,
         // safe areas) for every ViewController as a ContainerViewLayout.
         let (window, hostView) = nativeWindowHostView()
         let statusBarHost = ApplicationStatusBarHost(scene: window.windowScene)
         self.statusBarHost = statusBarHost
         self.mainWindow = Window1(hostView: hostView, statusBarHost: statusBarHost)
-        hostView.containerView.backgroundColor = theme.chatList.backgroundColor
         self.window = window
 
-        let store = MockStore()
-        self.store = store
+        let themeContext = ThemeContext()
+        themeContext.observeSystemStyle(hostView.systemUserInterfaceStyle)
+        let context = AppContext(store: MockStore(), themeContext: themeContext)
+        self.context = context
 
-        let navigationController = NavigationController(mode: .single, theme: theme.navigationControllerTheme)
-        navigationController.setViewControllers([ChatListController(store: store, theme: theme)], animated: false)
+        let chatList = ChatListController(context: context)
+        let root = RootTabController(context: context, tabs: [
+            RootTabController.Tab(id: AnyHashable("chats"), title: "Chats", animation: "TabChats", animationOffset: CGPoint(x: 0.0, y: UIScreenPixel), controller: chatList),
+            RootTabController.Tab(id: AnyHashable("settings"), title: "Settings", animation: "TabSettings", animationOffset: CGPoint(), controller: SettingsController(context: context)),
+        ])
+        let navigationController = NavigationController(mode: .single, theme: context.theme.navigationControllerTheme)
+        navigationController.setViewControllers([root], animated: false)
         self.mainWindow.viewController = navigationController
 
+        self.themeDisposable = (themeContext.theme |> deliverOnMainQueue).start(next: { theme in
+            hostView.containerView.backgroundColor = theme.chatList.backgroundColor
+            navigationController.updateTheme(theme.navigationControllerTheme)
+            window.overrideUserInterfaceStyle = themeContext.mode == .system ? .unspecified : (theme.overallDarkAppearance ? .dark : .light)
+        })
+
         window.makeKeyAndVisible()
-        self.applyDebugLaunchArguments(store: store, theme: theme, navigationController: navigationController)
+        self.applyDebugLaunchArguments(context: context, chatList: chatList, root: root, navigationController: navigationController)
         return true
     }
 
     /// For screenshots and UI checks from the command line, e.g.
     /// `xcrun simctl launch booted com.rumisle.tau -openChat 2 -send "hello"`.
-    private func applyDebugLaunchArguments(store: MockStore, theme: TauTheme, navigationController: NavigationController) {
+    private func applyDebugLaunchArguments(context: AppContext, chatList: ChatListController, root: RootTabController, navigationController: NavigationController) {
         let defaults = UserDefaults.standard
+        if let mode = defaults.string(forKey: "theme").flatMap(ThemeContext.Mode.init(rawValue:)) {
+            context.themeContext.setMode(mode)
+        }
+        if defaults.object(forKey: "tab") != nil {
+            Queue.mainQueue().after(0.3) {
+                root.select(index: defaults.integer(forKey: "tab"))
+            }
+        }
         if defaults.object(forKey: "sendTo") != nil, let text = defaults.string(forKey: "send") {
             let conversationId = defaults.integer(forKey: "sendTo")
             Queue.mainQueue().after(1.0) {
-                store.send(text, to: conversationId)
+                context.store.send(text, to: conversationId)
             }
+        }
+        if defaults.bool(forKey: "compose") {
+            Queue.mainQueue().after(1.0) {
+                chatList.compose()
+            }
+        }
+        if defaults.object(forKey: "scrollTo") != nil, defaults.object(forKey: "openChat") != nil {
+            context.store.setScrollState(ChatScrollState(messageId: defaults.integer(forKey: "scrollTo"), offset: 0.0), for: defaults.integer(forKey: "openChat"))
         }
         guard defaults.object(forKey: "openChat") != nil else {
             return
         }
         let conversationId = defaults.integer(forKey: "openChat")
-        let chat = ChatController(store: store, theme: theme, conversationId: conversationId)
+        let chat = ChatController(context: context, conversationId: conversationId)
         navigationController.pushViewController(chat, animated: false)
         if let draft = defaults.string(forKey: "draft") {
             Queue.mainQueue().after(0.6) {
@@ -67,9 +94,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 chat.activateInput()
             }
         }
-        if let text = defaults.string(forKey: "send") {
+        if let text = defaults.string(forKey: "send"), defaults.object(forKey: "sendTo") == nil {
             Queue.mainQueue().after(1.0) {
-                store.send(text, to: conversationId)
+                context.store.send(text, to: conversationId)
             }
         }
     }
