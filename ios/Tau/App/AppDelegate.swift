@@ -33,13 +33,22 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         let context = AppContext(store: makeStore(), themeContext: themeContext)
         self.context = context
 
-        let chatList = ChatListController(context: context)
-        let root = RootTabController(context: context, tabs: [
-            RootTabController.Tab(id: AnyHashable("chats"), title: "Chats", animation: "TabChats", animationOffset: CGPoint(x: 0.0, y: UIScreenPixel), controller: chatList),
-            RootTabController.Tab(id: AnyHashable("settings"), title: "Settings", animation: "TabSettings", animationOffset: CGPoint(), controller: SettingsController(context: context)),
-        ])
+        let makeRoot: () -> (RootTabController, ChatListController) = {
+            let chatList = ChatListController(context: context)
+            let root = RootTabController(context: context, tabs: [
+                RootTabController.Tab(id: AnyHashable("chats"), title: "Chats", animation: "TabChats", animationOffset: CGPoint(x: 0.0, y: UIScreenPixel), controller: chatList),
+                RootTabController.Tab(id: AnyHashable("settings"), title: "Settings", animation: "TabSettings", animationOffset: CGPoint(), controller: SettingsController(context: context)),
+            ])
+            return (root, chatList)
+        }
+        let (root, chatList) = makeRoot()
         let navigationController = NavigationController(mode: .single, theme: context.theme.navigationControllerTheme)
         navigationController.setViewControllers([root], animated: false)
+        context.replaceStore = { _ in
+            let (root, _) = makeRoot()
+            navigationController.setViewControllers([root], animated: false)
+            root.select(index: 1)
+        }
         self.mainWindow.viewController = navigationController
 
         self.themeDisposable = (themeContext.theme |> deliverOnMainQueue).start(next: { theme in
@@ -197,7 +206,7 @@ private final class ApplicationStatusBarHost: StatusBarHost {
 }
 
 /// The server from Settings, or canned data with `-mock YES` (UI tests and screenshots).
-private func makeStore() -> TauStore {
+func makeStore() -> TauStore {
     let defaults = UserDefaults.standard
     if defaults.bool(forKey: "mock") {
         return MockStore()

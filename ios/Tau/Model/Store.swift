@@ -7,6 +7,10 @@ protocol TauStore: AnyObject {
     var connectionStatus: Signal<ConnectionStatus, NoError> { get }
     /// Shown in Settings: where the store gets its data.
     var serverDescription: String { get }
+    /// The model new conversations get, as `provider/id`.
+    var defaultModel: String? { get }
+    /// Stops syncing, before the app switches to another store.
+    func close()
 
     func dialogsSignal() -> Signal<[DialogModel], NoError>
     func dialog(_ id: Int) -> DialogModel?
@@ -36,6 +40,9 @@ protocol TauStore: AnyObject {
     /// Starts a new context: the model forgets the conversation so far; the transcript stays.
     func resetContext(_ id: Int)
 
+    /// One directory of the server's file system, for picking where a conversation runs.
+    func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError>
+
     func scrollState(_ id: Int) -> ChatScrollState?
     func setScrollState(_ state: ChatScrollState?, for id: Int)
     func mintAttachmentId() -> Int
@@ -52,6 +59,19 @@ struct ModelInfo: Equatable {
     var id: String
     var name: String
     var reasoning: Bool
+}
+
+struct DirectoryListing: Equatable {
+    struct Entry: Equatable {
+        var name: String
+        var isDirectory: Bool
+        /// A git repository root.
+        var isRepository: Bool
+    }
+
+    var path: String
+    var parent: String?
+    var entries: [Entry]
 }
 
 struct AgentSettings: Equatable {

@@ -31,6 +31,21 @@ enum SettingsIcon {
     static let privacy = renderSettingsIcon(name: "Item List/Icons/Privacy", backgroundColors: [colorGray])
     static let about = renderSettingsIcon(name: "Item List/Icons/Faq", backgroundColors: [colorOrange])
     static let blue = colorBlue
+    static let repository = renderSettingsIcon(name: "Item List/Icons/Folder", backgroundColors: [colorOrange])
+
+    private static var projectIcons: [String: UIImage] = [:]
+
+    /// A project's folder icon, in a color derived from its name so each project keeps one.
+    static func projectIcon(for path: String) -> UIImage? {
+        if let icon = self.projectIcons[path] {
+            return icon
+        }
+        let colors = [colorLightBlue, colorGreen, colorOrange, colorPurple, colorRed, colorBlue]
+        let index = abs(path.hashValue) % colors.count
+        let icon = renderSettingsIcon(name: "Item List/Icons/Folder", backgroundColors: [colors[index]])
+        self.projectIcons[path] = icon
+        return icon
+    }
 }
 
 /// Copied from Telegram-iOS TelegramPresentationData/Sources/Resources/PresentationResourcesSettings.swift.
@@ -237,6 +252,10 @@ final class SettingsRowItemNode: ListViewItemNode {
                     return
                 }
                 self.item = item
+                self.isAccessibilityElement = true
+                self.accessibilityLabel = item.title
+                self.accessibilityIdentifier = item.title
+                self.accessibilityTraits = item.action == nil ? [] : .button
                 let _ = titleApply()
                 let _ = labelApply()
 

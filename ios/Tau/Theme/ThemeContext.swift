@@ -114,8 +114,15 @@ private struct ThemeBox: Equatable {
 
 /// What every screen needs: the data store and the theme.
 final class AppContext {
-    let store: TauStore
+    private(set) var store: TauStore
+    /// Rebuilds the screens on a new store, after the server address changed.
+    var replaceStore: ((TauStore) -> Void)?
     let themeContext: ThemeContext
+
+    func setStore(_ store: TauStore) {
+        self.store = store
+        self.replaceStore?(store)
+    }
 
     init(store: TauStore, themeContext: ThemeContext) {
         self.store = store

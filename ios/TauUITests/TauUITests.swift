@@ -145,14 +145,19 @@ final class TauUITests: XCTestCase {
 
     func testComposeDiscard() {
         self.launch(["-mock", "YES", "-theme", "light"])
-        // The compose button, top right.
+        // The compose button, top right, then the default folder.
         self.point(0.9, 0.08).tap()
+        sleep(1)
+        self.shot("compose-picker")
+        self.app.descendants(matching: .any)["Default folder"].firstMatch.tap()
         sleep(1)
         self.shot("compose")
         self.point(0.1, 0.08).tap()
         sleep(1)
         self.shot("compose-discarded")
         self.point(0.9, 0.08).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Default folder"].firstMatch.tap()
         sleep(1)
         self.point(0.5, 0.955).tap()
         sleep(1)
@@ -193,5 +198,19 @@ final class TauUITests: XCTestCase {
             sleep(2)
             self.shot("title-models")
         }
+    }
+
+    func testServerBrowse() {
+        self.launch(["-theme", "night"])
+        sleep(2)
+        self.point(0.9, 0.08).tap()
+        sleep(2)
+        self.shot("browse-recent")
+        self.app.descendants(matching: .any)["Browse…"].firstMatch.tap()
+        sleep(2)
+        self.shot("browse-home")
+        self.app.descendants(matching: .any)["work"].firstMatch.tap()
+        sleep(2)
+        self.shot("browse-work")
     }
 }

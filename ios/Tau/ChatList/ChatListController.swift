@@ -117,9 +117,26 @@ final class ChatListController: ViewController {
         self.compose()
     }
 
+    /// New Chat, as Telegram's compose button: pick where the agent works, then the chat replaces the picker.
     func compose() {
-        let id = self.context.store.createConversation(cwd: nil)
-        self.open(conversationId: id)
+        let compose = ComposeController(context: self.context, open: { [weak self] cwd in
+            self?.startChat(cwd: cwd)
+        })
+        (self.navigationController as? NavigationController)?.pushViewController(compose)
+    }
+
+    func startChat(cwd: String?) {
+        guard let navigationController = self.navigationController as? NavigationController else {
+            return
+        }
+        let id = self.context.store.createConversation(cwd: cwd)
+        let chat = ChatController(context: self.context, conversationId: id)
+        // Drop the picker screens under the new chat, so Back returns to the list.
+        let kept = navigationController.viewControllers.filter { !($0 is ComposeController || $0 is FolderBrowserController) }
+        navigationController.setViewControllers(kept + [chat], animated: true)
+        Queue.mainQueue().after(0.45) {
+            chat.activateInput()
+        }
     }
 
     func open(conversationId: Int) {

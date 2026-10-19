@@ -113,10 +113,16 @@ final class SettingsListNode: ASDisplayNode {
 /// Settings, laid out like Telegram's: a profile header, then grouped rows with colored icons.
 final class SettingsController: SettingsListController {
     private var modeDisposable: Disposable?
+    private var statusDisposable: Disposable?
+    private var status: ConnectionStatus = .connecting
 
     init(context: AppContext) {
         super.init(context: context, title: "Settings")
         self.modeDisposable = (context.themeContext.settingsSignal |> deliverOnMainQueue).start(next: { [weak self] _ in
+            self?.reload()
+        })
+        self.statusDisposable = (context.store.connectionStatus |> deliverOnMainQueue).start(next: { [weak self] status in
+            self?.status = status
             self?.reload()
         })
     }
@@ -127,21 +133,34 @@ final class SettingsController: SettingsListController {
 
     deinit {
         self.modeDisposable?.dispose()
+        self.statusDisposable?.dispose()
     }
 
     override func items(theme: TauTheme) -> [ListViewItem] {
         let context = self.context
+        let store = context.store
         let first = SettingsRowPosition(isFirst: true, isLast: false)
         let middle = SettingsRowPosition(isFirst: false, isLast: false)
         let last = SettingsRowPosition(isFirst: false, isLast: true)
         let single = SettingsRowPosition(isFirst: true, isLast: true)
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"
+        let statusText: String
+        switch self.status {
+        case .online:
+            statusText = "online"
+        case .updating:
+            statusText = "updating…"
+        case .connecting:
+            statusText = "connecting…"
+        }
+        let isDemo = store is MockStore
         return [
-            SettingsProfileItem(theme: theme, title: "tau", subtitle: "Mock server · not connected"),
+            SettingsProfileItem(theme: theme, title: "tau", subtitle: isDemo ? "Demo data" : "\(store.serverDescription) · \(statusText)"),
             SettingsTextItem(theme: theme, text: "Server", kind: .header),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.server, title: "Server", accessory: .disclosure(label: "Not set"), position: first, action: {}),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.model, title: "Default Model", accessory: .disclosure(label: "claude-opus-5-5"), position: middle, action: {}),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.projects, title: "Projects", accessory: .disclosure(label: ""), position: last, action: {}),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.server, title: "Server", accessory: .disclosure(label: isDemo ? "Demo" : store.serverDescription), position: first, action: { [weak self] in
+                self?.editServer()
+            }),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.model, title: "Default Model", accessory: .disclosure(label: store.defaultModel?.components(separatedBy: "/").last ?? "—"), position: last, action: {}),
             SettingsTextItem(theme: theme, text: "Preferences", kind: .header),
             SettingsRowItem(theme: theme, icon: SettingsIcon.appearance, title: "Appearance", accessory: .disclosure(label: context.themeContext.settings.theme.title), position: first, action: { [weak self] in
                 guard let self else {
@@ -153,8 +172,48 @@ final class SettingsController: SettingsListController {
             SettingsRowItem(theme: theme, icon: SettingsIcon.data, title: "Data and Storage", accessory: .disclosure(label: ""), position: last, action: {}),
             SettingsTextItem(theme: theme, text: "", kind: .header),
             SettingsRowItem(theme: theme, icon: SettingsIcon.about, title: "About tau", accessory: .disclosure(label: version), position: single, action: {}),
-            SettingsTextItem(theme: theme, text: "tau is a client for pi-durable agents. Server settings arrive with the server connection.", kind: .footer),
+            SettingsTextItem(theme: theme, text: "tau is a client for pi-durable agents. Run the server with `npm start` in server/; on a phone, give it the computer's address, e.g. ws://192.168.1.10:7878 or a Tailscale name.", kind: .footer),
         ]
+    }
+
+    /// The server's address and token. Saving reconnects every screen to it.
+    private func editServer() {
+        let defaults = UserDefaults.standard
+        let alert = UIAlertController(title: "Server", message: "The tau server's WebSocket address, and its TAU_TOKEN if it has one.", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "ws://127.0.0.1:7878"
+            field.text = defaults.string(forKey: "server.url") ?? "ws://127.0.0.1:7878"
+            field.keyboardType = .URL
+            field.autocapitalizationType = .none
+            field.autocorrectionType = .no
+        }
+        alert.addTextField { field in
+            field.placeholder = "Token (optional)"
+            field.text = defaults.string(forKey: "server.token")
+            field.isSecureTextEntry = true
+        }
+        alert.addAction(UIAlertAction(title: "Use Demo Data", style: .default, handler: { [weak self] _ in
+            defaults.set(true, forKey: "mock")
+            self?.switchStore()
+        }))
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Connect", style: .default, handler: { [weak self, weak alert] _ in
+            let address = alert?.textFields?[0].text?.trimmingCharacters(in: .whitespaces) ?? ""
+            let token = alert?.textFields?[1].text ?? ""
+            guard let url = URL(string: address), url.scheme == "ws" || url.scheme == "wss" else {
+                return
+            }
+            defaults.set(url.absoluteString, forKey: "server.url")
+            defaults.set(token.isEmpty ? nil : token, forKey: "server.token")
+            defaults.set(false, forKey: "mock")
+            self?.switchStore()
+        }))
+        self.view.window?.rootViewController?.present(alert, animated: true)
+    }
+
+    private func switchStore() {
+        self.context.store.close()
+        self.context.setStore(makeStore())
     }
 }
 

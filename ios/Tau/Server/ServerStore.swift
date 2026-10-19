@@ -60,6 +60,14 @@ final class ServerStore: TauStore {
         return self.connection.url.host ?? self.connection.url.absoluteString
     }
 
+    var defaultModel: String? {
+        return self.connection.hello?.defaultModel
+    }
+
+    func close() {
+        self.connection.close()
+    }
+
     // MARK: - Connection
 
     private func connected(_ hello: TauConnection.Hello) {
@@ -575,6 +583,21 @@ final class ServerStore: TauStore {
             patch["thinkingLevel"] = thinkingLevel == "off" ? NSNull() : thinkingLevel
         }
         self.connection.request("conversation.configure", ["conversationId": realId, "agent": patch]) { _ in }
+    }
+
+    func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError> {
+        var params: JSONObject = [:]
+        if let path {
+            params["path"] = path
+        }
+        return self.connection.request("fs.list", params)
+        |> map { value -> DirectoryListing in
+            let entries = value.objects("entries").map { entry in
+                DirectoryListing.Entry(name: entry.string("name") ?? "", isDirectory: entry.string("kind") == "dir", isRepository: entry.bool("git") ?? false)
+            }
+            return DirectoryListing(path: value.string("path") ?? path ?? "~", parent: value.string("parent"), entries: entries)
+        }
+        |> deliverOnMainQueue
     }
 
     func compact(_ id: Int) {

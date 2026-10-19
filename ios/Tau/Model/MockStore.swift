@@ -90,7 +90,17 @@ final class MockStore: TauStore {
     }
 
     var serverDescription: String {
-        return "Mock data"
+        return "Demo data"
+    }
+
+    var defaultModel: String? {
+        return "anthropic/claude-opus-5-5"
+    }
+
+    func close() {
+        for stream in self.streams.values {
+            stream.invalidate()
+        }
     }
 
     func abort(_ id: Int) {
@@ -129,6 +139,12 @@ final class MockStore: TauStore {
     }
 
     func compact(_ id: Int) {
+    }
+
+    func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError> {
+        let path = path ?? "/Users/you"
+        let entries = ["work", "tau", "webapp", "engine", "notes"].map { DirectoryListing.Entry(name: $0, isDirectory: true, isRepository: $0 != "work" && $0 != "notes") }
+        return .single(DirectoryListing(path: path, parent: path == "/" ? nil : (path as NSString).deletingLastPathComponent, entries: entries))
     }
 
     func resetContext(_ id: Int) {
