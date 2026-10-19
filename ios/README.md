@@ -7,6 +7,7 @@ the server connection comes next.
 
 ```bash
 ios/scripts/build.sh --run     # xcodegen + xcodebuild, install and launch on the "iPhone 17 Pro" simulator
+ios/scripts/build.sh --device  # signed Release build on the connected iPhone (TAU_TEAM, default TEAMID)
 ```
 
 XcodeGen comes from nix when it is not installed (`nix shell nixpkgs#xcodegen`). `Tau.xcodeproj` is generated and

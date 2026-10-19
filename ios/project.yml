@@ -1,7 +1,7 @@
 # XcodeGen spec: `scripts/generate.sh` (or `nix shell nixpkgs#xcodegen -c xcodegen`) writes Tau.xcodeproj.
 name: Tau
 options:
-  bundleIdPrefix: dev.tau
+  bundleIdPrefix: com.rumisle
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -36,7 +36,7 @@ targets:
           - TelegramPresentationData
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.tau.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau
         PRODUCT_NAME: Tau
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"

@@ -42,7 +42,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     /// For screenshots and UI checks from the command line, e.g.
-    /// `xcrun simctl launch booted dev.tau.app -openChat 2 -send "hello"`.
+    /// `xcrun simctl launch booted com.rumisle.tau -openChat 2 -send "hello"`.
     private func applyDebugLaunchArguments(store: MockStore, theme: TauTheme, navigationController: NavigationController) {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "sendTo") != nil, let text = defaults.string(forKey: "send") {
