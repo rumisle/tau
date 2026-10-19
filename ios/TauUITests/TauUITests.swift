@@ -213,4 +213,16 @@ final class TauUITests: XCTestCase {
         sleep(2)
         self.shot("browse-work")
     }
+
+    func testDownButton() {
+        self.launch(["-mock", "YES", "-theme", "light", "-openChat", "5"])
+        sleep(1)
+        self.app.swipeDown()
+        self.app.swipeDown()
+        sleep(1)
+        self.shot("down-visible")
+        self.point(0.92, 0.895).tap()
+        sleep(1)
+        self.shot("down-tapped")
+    }
 }

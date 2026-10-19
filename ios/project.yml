@@ -53,6 +53,7 @@ targets:
           - Svg
           - AnimatedTextComponent
           - ChatTitleActivityNode
+          - AnimatedCountLabelNode
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau

@@ -48,6 +48,12 @@ final class ChatControllerNode: ASDisplayNode {
     /// Blurs messages as they scroll under the input panel.
     private let bottomEdgeEffectView = EdgeEffectView()
     let wallpaperNode = WallpaperNode()
+    /// Telegram's scroll-to-bottom button, with the count of messages that arrived below.
+    private var downButton: ChatHistoryNavigationButtonNode?
+    /// Glass renders inside a glass container, as the input panel's controls do.
+    private let downButtonContainer = GlassBackgroundContainerView()
+    private var isAtBottom = true
+    private var unseenCount = 0
     private let toastView = ToastView()
     private let isPreview: Bool
 
@@ -90,6 +96,28 @@ final class ChatControllerNode: ASDisplayNode {
         self.historyNode.beganInteractiveDragging = { [weak self] _ in
             self?.inputPanelNode.deactivateInput()
         }
+        // The list is inverted, so its top offset is the distance from the end of the chat.
+        self.historyNode.visibleContentOffsetChanged = { [weak self] offset, _ in
+            guard let self else {
+                return
+            }
+            let atBottom: Bool
+            switch offset {
+            case let .known(value):
+                atBottom = value < 120.0
+            case .none:
+                atBottom = true
+            case .unknown:
+                atBottom = false
+            }
+            if atBottom != self.isAtBottom {
+                self.isAtBottom = atBottom
+                if atBottom {
+                    self.unseenCount = 0
+                }
+                self.updateDownButton(animated: true)
+            }
+        }
         // The list is inverted: the highest visible index is the oldest message on screen.
         self.historyNode.displayedItemRangeChanged = { [weak self] range, _ in
             guard let self, let visible = range.visibleRange, let state = self.state, state.hasOlder else {
@@ -126,6 +154,7 @@ final class ChatControllerNode: ASDisplayNode {
         self.theme = theme
         self.backgroundColor = theme.chat.backgroundColor
         self.wallpaperNode.update(wallpaper: theme.wallpaper, animated: true)
+        self.downButton?.updateTheme(theme: theme.presentationTheme, preferClearGlass: false)
         self.inputPanelNode.updateTheme(theme)
         self.selectionPanel.update(theme: theme)
         self.toastView.update(theme: theme)
@@ -192,6 +221,15 @@ final class ChatControllerNode: ASDisplayNode {
 
         let previous = self.entries
         self.entries = entries
+        if !self.isAtBottom && !previous.isEmpty {
+            // New rows below the screen: committed answers and messages, counted as Telegram counts unread ones.
+            let known = Set(previous.map(\.stableId))
+            let added = entries.filter { !known.contains($0.stableId) && !$0.isStreaming && $0.message.role != .thinking }.count
+            if added > 0 {
+                self.unseenCount += added
+                self.updateDownButton(animated: true)
+            }
+        }
         let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: previous, rightList: entries)
 
         let deletions = deleteIndices.map { ListViewDeleteItem(index: $0, directionHint: nil) }
@@ -201,13 +239,24 @@ final class ChatControllerNode: ASDisplayNode {
         var options = ListViewDeleteAndInsertOptions()
         var scrollToItem: ListViewScrollToItem?
         if !self.hasAppliedInitialState {
-            self.hasAppliedInitialState = true
+            // The first rows may come in more than one step (cached entries, then the server's); the saved position
+            // applies once its message is there.
+            if !entries.isEmpty {
+                self.hasAppliedInitialState = true
+            }
             options.insert(.Synchronous)
             options.insert(.LowLatency)
             // Reopen where the user left off, as Telegram restores a chat's scroll position.
             if let scrollState = self.initialScrollState, let index = entries.firstIndex(where: { $0.message.id == scrollState.messageId }) {
                 scrollToItem = ListViewScrollToItem(index: index, position: .top(scrollState.offset), animated: false, curve: .Default(duration: nil), directionHint: .Up)
+                self.initialScrollState = nil
+            } else if self.hasAppliedInitialState && !state.hasOlder {
+                self.initialScrollState = nil
             }
+        } else if let scrollState = self.initialScrollState, let index = entries.firstIndex(where: { $0.message.id == scrollState.messageId }) {
+            // The saved position's message arrived after the first rows.
+            options.insert(.Synchronous)
+            scrollToItem = ListViewScrollToItem(index: index, position: .top(scrollState.offset), animated: false, curve: .Default(duration: nil), directionHint: .Up)
             self.initialScrollState = nil
         } else {
             options.insert(.AnimateInsertion)
@@ -336,6 +385,16 @@ final class ChatControllerNode: ASDisplayNode {
             }
             self.selectionPanel.isUserInteractionEnabled = isSelecting
 
+            if let downButton = self.downButton {
+                let buttonSize = CGSize(width: 40.0, height: 40.0)
+                // Room above for the badge.
+                let containerFrame = CGRect(origin: CGPoint(x: size.width - layout.safeInsets.right - 10.0 - buttonSize.width, y: panelFrame.minY - 10.0 - buttonSize.height - 10.0), size: CGSize(width: buttonSize.width, height: buttonSize.height + 10.0))
+                transition.updateFrame(view: self.downButtonContainer, frame: containerFrame)
+                self.downButtonContainer.update(size: containerFrame.size, isDark: self.theme.overallDarkAppearance, transition: ComponentTransition(transition))
+                downButton.position = CGPoint(x: buttonSize.width / 2.0, y: 10.0 + buttonSize.height / 2.0)
+                downButton.bounds = CGRect(origin: CGPoint(), size: buttonSize)
+            }
+
             let toastSize = self.toastView.sizeThatFits(CGSize(width: size.width - 80.0, height: 44.0))
             self.toastView.frame = CGRect(x: floor((size.width - toastSize.width) / 2.0), y: panelFrame.minY - toastSize.height - 12.0, width: toastSize.width, height: toastSize.height)
 
@@ -365,6 +424,52 @@ final class ChatControllerNode: ASDisplayNode {
         if isFirstLayout, let state = self.state {
             self.update(state: state)
         }
+    }
+
+    // MARK: - Scroll to bottom
+
+    private func updateDownButton(animated: Bool) {
+        guard !self.isPreview else {
+            return
+        }
+        let button: ChatHistoryNavigationButtonNode
+        if let current = self.downButton {
+            button = current
+        } else {
+            button = ChatHistoryNavigationButtonNode(theme: self.theme.presentationTheme, preferClearGlass: false, type: .down)
+            self.downButtonContainer.alpha = 0.0
+            button.isUserInteractionEnabled = false
+            button.tapped = { [weak self] in
+                self?.scrollToBottom()
+            }
+            self.downButton = button
+            self.view.insertSubview(self.downButtonContainer, belowSubview: self.inputPanelNode.view)
+            self.downButtonContainer.contentView.addSubview(button.view)
+            self.relayout(.immediate)
+        }
+        button.badge = self.unseenCount > 0 ? "\(self.unseenCount)" : ""
+        let visible = !self.isAtBottom && self.selectedIds == nil
+        button.isUserInteractionEnabled = visible
+        // View alpha on the container, not layer opacity: glass renders wrongly under a layer opacity.
+        let alpha: CGFloat = visible ? 1.0 : 0.0
+        let transform = visible ? CGAffineTransform.identity : CGAffineTransform(scaleX: 0.2, y: 0.2)
+        if animated {
+            UIView.animate(withDuration: 0.25, delay: 0.0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.0, options: [.beginFromCurrentState], animations: {
+                self.downButtonContainer.alpha = alpha
+                button.view.transform = transform
+            })
+        } else {
+            self.downButtonContainer.alpha = alpha
+            button.view.transform = transform
+        }
+    }
+
+    func scrollToBottom() {
+        guard !self.entries.isEmpty else {
+            return
+        }
+        self.unseenCount = 0
+        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: 0, position: .top(0.0), animated: true, curve: .Spring(duration: 0.4), directionHint: .Up), updateOpaqueState: nil)
     }
 
     // MARK: - Context menu

@@ -67,6 +67,7 @@ let package = Package(
         .library(name: "Svg", targets: ["Svg"]),
         .library(name: "ChatTitleActivityNode", targets: ["ChatTitleActivityNode"]),
         .library(name: "AnimatedTextComponent", targets: ["AnimatedTextComponent"]),
+        .library(name: "AnimatedCountLabelNode", targets: ["AnimatedCountLabelNode"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -1631,6 +1632,15 @@ let package = Package(
             path: "submodules/TelegramUI/Components/AnimatedTextComponent",
             sources: [
                 "Sources/AnimatedTextComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AnimatedCountLabelNode",
+            dependencies: ["AsyncDisplayKit", "Display"],
+            path: "submodules/AnimatedCountLabelNode",
+            sources: [
+                "Sources/AnimatedCountLabelNode.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

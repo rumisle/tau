@@ -46,6 +46,7 @@ ROOTS = [
     "//submodules/Svg",
     "//submodules/ChatTitleActivityNode",
     "//submodules/TelegramUI/Components/AnimatedTextComponent",
+    "//submodules/AnimatedCountLabelNode",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
@@ -159,6 +160,8 @@ IMAGES = [
     "Chat/Context Menu/Back",
     "Chat/Context Menu/Check",
     "Chat/Context Menu/Timer",
+    "Chat/Input/Search/DownButton",
+    "Chat/Input/Search/UpButton",
 ]
 
 # Lottie animations LottieComponent.AppBundleContent loads by name, from submodules/TelegramUI/Resources/Animations.
