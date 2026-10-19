@@ -75,10 +75,16 @@ type Dialog = {
 type EntrySummary = { id: number; kind: string; role?: string; text: string; timestamp?: number };
 ```
 
-Conversations owned by a task (subagents) have `owner`; a chat list usually hides them.
+Conversations owned by a task (subagents) have `owner`; a chat list usually hides them. The server's `subagent` tool
+creates one per call, titled after its task, and puts its ID in the call's details (`pi.live.tools[i].details` while it
+runs, the `pi.tool-result` entry's `details` after): `{ conversationId }`. Subscribe to it like any conversation to show
+the subagent's own transcript.
 
 ### `conversation.create`
-`{ title?, agent?: AgentPatch }` -> `{ dialog: Dialog }`
+`{ title?, autoTitle?: boolean, agent?: AgentPatch }` -> `{ dialog: Dialog }`
+
+With `autoTitle`, the server names the conversation in a few words after its first answer (with the conversation's
+model) and pushes the new title as a `dialog` event; `title` stands in until then.
 
 ### `conversation.fork`
 `{ conversationId, at: EntryId, title? }` -> `{ dialog: Dialog }`
