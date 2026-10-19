@@ -1,0 +1,6 @@
+vendor/
+node_modules/
+data/
+*.sqlite
+*.sqlite-*
+.DS_Store

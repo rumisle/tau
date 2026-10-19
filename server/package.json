@@ -1,0 +1,25 @@
+{
+	"name": "tau-server",
+	"private": true,
+	"type": "module",
+	"engines": { "node": ">=22.18" },
+	"scripts": {
+		"start": "node --no-warnings src/main.ts",
+		"dev": "node --no-warnings --watch src/main.ts",
+		"check": "tsc --noEmit",
+		"test": "node --no-warnings --test test/*.test.ts"
+	},
+	"dependencies": {
+		"@earendil-works/chord": "1.3.0",
+		"@earendil-works/pi-ai": "1.3.0",
+		"@earendil-works/pi-durable": "1.3.0",
+		"proper-lockfile": "4.1.2",
+		"ws": "8.21.0"
+	},
+	"devDependencies": {
+		"@types/node": "22.19.19",
+		"@types/proper-lockfile": "4.1.4",
+		"@types/ws": "8.18.2",
+		"typescript": "7.0.2"
+	}
+}

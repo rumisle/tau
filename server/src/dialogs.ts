@@ -1,0 +1,194 @@
+// The chat list: one Dialog per conversation, kept current from the Session's commit stream.
+import type { Context } from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { Message } from "@earendil-works/pi-ai";
+import {
+	type ConversationId,
+	type ConversationRecord,
+	type Cursor,
+	type EntryRecord,
+	LiveDoc,
+	type SubmissionRecord,
+} from "@earendil-works/pi-durable";
+import { type Host, MetaDoc } from "./host.ts";
+import type { Dialog, EntrySummary } from "./protocol.ts";
+
+const PREVIEW_CHARS = 200;
+/** Kinds a chat list never shows as the last message. */
+const HIDDEN_KINDS: ReadonlySet<string> = new Set(["pi.system"]);
+
+export type DialogListener = (dialog: Dialog) => void;
+export type SubmissionListener = (record: SubmissionRecord) => void;
+
+/**
+ * Watches every commit once for all connections. A commit that touches a conversation's entries, title, or busy state
+ * schedules a recompute of its Dialog; listeners get it only when it changed.
+ */
+export class Dialogs {
+	readonly #host: Host;
+	readonly #dialogListeners = new Set<DialogListener>();
+	readonly #submissionListeners = new Set<SubmissionListener>();
+	/** Last emitted Dialog per conversation, serialized, to drop no-op updates. */
+	readonly #emitted = new Map<ConversationId, string>();
+	readonly #busy = new Map<ConversationId, boolean>();
+	readonly #dirty = new Set<ConversationId>();
+	#flushing = false;
+	readonly #unsubscribe: () => void;
+
+	constructor(host: Host) {
+		this.#host = host;
+		this.#unsubscribe = host.harness.subscribeCommits((publication) => {
+			for (const change of publication.changes) {
+				if (change.type === "entry") this.#touch(change.value.conversationId);
+				else if (change.type === "conversation") this.#touch(change.value.id);
+				else if (change.type === "submission") {
+					for (const listener of this.#submissionListeners) listener(change.value);
+				} else if (change.type === "document" && change.conversationId !== undefined) {
+					const kind = change.record.kind;
+					if (kind === MetaDoc.definition.kind) this.#touch(change.conversationId);
+					else if (kind === LiveDoc.definition.kind) {
+						// pi.live changes on every streamed chunk; only a run starting or ending matters here.
+						const busy = change.value !== null && (change.value as { run?: unknown }).run !== undefined;
+						if (this.#busy.get(change.conversationId) !== busy) {
+							this.#busy.set(change.conversationId, busy);
+							this.#touch(change.conversationId);
+						}
+					}
+				}
+			}
+		});
+	}
+
+	close(): void {
+		this.#unsubscribe();
+		this.#dialogListeners.clear();
+		this.#submissionListeners.clear();
+	}
+
+	onDialog(listener: DialogListener): () => void {
+		this.#dialogListeners.add(listener);
+		return () => this.#dialogListeners.delete(listener);
+	}
+
+	onSubmission(listener: SubmissionListener): () => void {
+		this.#submissionListeners.add(listener);
+		return () => this.#submissionListeners.delete(listener);
+	}
+
+	async list(context: Context): Promise<Dialog[]> {
+		const dialogs: Dialog[] = [];
+		let cursor: Cursor | undefined;
+		do {
+			const page = await this.#host.storage.scanConversations({}, 200, cursor, context);
+			for (const conversation of page.items) dialogs.push(await this.dialog(conversation, context));
+			cursor = page.next;
+		} while (cursor !== undefined);
+		dialogs.sort((a, b) => (b.last?.id ?? 0) - (a.last?.id ?? 0));
+		for (const dialog of dialogs) this.#emitted.set(dialog.conversation.id, JSON.stringify(dialog));
+		return dialogs;
+	}
+
+	async dialog(conversation: ConversationRecord, context: Context): Promise<Dialog> {
+		const { harness } = this.#host;
+		const handle = await harness.conversation(conversation.id, context);
+		const meta = await harness.snapshot(MetaDoc, conversation.id, context);
+		const live = await harness.snapshot(LiveDoc, conversation.id, context);
+		let last: EntryRecord | undefined;
+		if (handle !== undefined) {
+			const page = await handle.entries({}, 8, undefined, context);
+			last = page.items.find((entry) => !HIDDEN_KINDS.has(entry.kind)) ?? page.items[0];
+		}
+		const busy = live?.run !== undefined;
+		this.#busy.set(conversation.id, busy);
+		return {
+			conversation,
+			...(meta?.title === undefined ? {} : { title: meta.title }),
+			...(meta?.createdAt === undefined ? {} : { createdAt: meta.createdAt }),
+			...(last === undefined ? {} : { last: summarize(last) }),
+			busy,
+		};
+	}
+
+	#touch(id: ConversationId): void {
+		if (this.#dialogListeners.size === 0) return;
+		this.#dirty.add(id);
+		if (this.#flushing) return;
+		this.#flushing = true;
+		// Commit listeners must not call Session APIs; recompute after the commit, coalescing a burst of commits.
+		setTimeout(() => void this.#flush(), 16);
+	}
+
+	async #flush(): Promise<void> {
+		try {
+			while (this.#dirty.size > 0) {
+				const ids = [...this.#dirty];
+				this.#dirty.clear();
+				for (const id of ids) {
+					const conversation = await this.#host.storage.conversation(id, BACKGROUND_CONTEXT);
+					if (conversation === undefined) continue;
+					const dialog = await this.dialog(conversation, BACKGROUND_CONTEXT);
+					const serialized = JSON.stringify(dialog);
+					if (this.#emitted.get(id) === serialized) continue;
+					this.#emitted.set(id, serialized);
+					for (const listener of this.#dialogListeners) listener(dialog);
+				}
+			}
+		} catch (error) {
+			console.error("[tau] dialog update failed:", error);
+		} finally {
+			this.#flushing = false;
+		}
+	}
+}
+
+/** A one-line preview of an entry for the chat list. */
+export function summarize(entry: EntryRecord): EntrySummary {
+	const message = entry.model?.[0];
+	const summary: EntrySummary = { id: entry.id, kind: entry.kind, text: "" };
+	if (message !== undefined) {
+		summary.role = message.role;
+		summary.timestamp = message.timestamp;
+	}
+	summary.text = preview(previewText(entry, message));
+	return summary;
+}
+
+function previewText(entry: EntryRecord, message: Message | undefined): string {
+	switch (entry.kind) {
+		case "pi.reset":
+			return "New context";
+		case "pi.compaction":
+			return "Context compacted";
+	}
+	if (message === undefined) return typeof entry.data === "string" ? entry.data : entry.kind;
+	switch (message.role) {
+		case "user":
+			return typeof message.content === "string"
+				? message.content
+				: message.content.map((part) => (part.type === "text" ? part.text : "[image]")).join(" ");
+		case "assistant": {
+			const text = message.content
+				.filter((part) => part.type === "text")
+				.map((part) => part.text)
+				.join(" ");
+			if (text.trim() !== "") return text;
+			const calls = message.content.filter((part) => part.type === "toolCall").map((part) => part.name);
+			if (calls.length > 0) return `→ ${calls.join(", ")}`;
+			return message.errorMessage ?? "";
+		}
+		case "toolResult": {
+			const text = message.content
+				.filter((part) => part.type === "text")
+				.map((part) => part.text)
+				.join(" ");
+			return `${message.toolName}: ${text}`;
+		}
+		default:
+			return "";
+	}
+}
+
+function preview(text: string): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length <= PREVIEW_CHARS ? flat : `${flat.slice(0, PREVIEW_CHARS - 1)}…`;
+}
