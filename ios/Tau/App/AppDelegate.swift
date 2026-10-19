@@ -84,6 +84,13 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         if defaults.object(forKey: "scrollTo") != nil, defaults.object(forKey: "openChat") != nil {
             context.store.setScrollState(ChatScrollState(messageId: defaults.integer(forKey: "scrollTo"), offset: 0.0), for: defaults.integer(forKey: "openChat"))
         }
+        // -pushChat N: open a chat from the list with the push animation, as a tap does.
+        if defaults.object(forKey: "pushChat") != nil {
+            let id = defaults.integer(forKey: "pushChat")
+            Queue.mainQueue().after(1.0) {
+                chatList.open(conversationId: id)
+            }
+        }
         guard defaults.object(forKey: "openChat") != nil else {
             return
         }

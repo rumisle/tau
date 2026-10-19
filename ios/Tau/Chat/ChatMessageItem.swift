@@ -369,6 +369,9 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let insets = UIEdgeInsets(top: mergedTop ? mergedSpacing : defaultSpacing, left: 0.0, bottom: mergedBottom ? mergedSpacing : defaultSpacing, right: 0.0)
                 let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: bubbleSize.height), insets: insets)
                 let mask = BubbleImageCache.shared.image(incoming: false, neighbors: bubbleNeighbors, color: .black)
+                let fillColors = theme.outgoing.fillColors
+                let isSolid = fillColors.allSatisfy { $0.argb == fillColors[0].argb }
+                let solidImage = isSolid ? BubbleImageCache.shared.image(incoming: false, neighbors: bubbleNeighbors, color: fillColors[0]) : nil
 
                 return (layout, { animation in
                     guard let self else {
@@ -383,7 +386,11 @@ final class ChatMessageItemNode: ListViewItemNode {
 
                     let backgroundFrame = CGRect(origin: CGPoint(x: params.width - params.rightInset - bubbleEdgeInset - bubbleSize.width, y: 0.0), size: bubbleSize)
                     self.contentFrame = backgroundFrame
-                    self.bubbleNode.update(mask: mask, colors: theme.outgoing.fillColors)
+                    if let solidImage {
+                        self.bubbleNode.update(solid: solidImage)
+                    } else {
+                        self.bubbleNode.update(mask: mask, colors: fillColors)
+                    }
                     animation.animator.updateFrame(layer: self.bubbleNode.layer, frame: backgroundFrame.insetBy(dx: -1.0, dy: -1.0), completion: nil)
 
                     // Photos at the top, inset 2 pt as Telegram's media bubbles.
@@ -742,12 +749,33 @@ final class GradientBubbleNode: ASDisplayNode {
     override func didLoad() {
         super.didLoad()
         self.layer.addSublayer(self.gradientLayer)
-        self.layer.mask = self.maskLayer
+    }
+
+    /// A single-color bubble: the stretchable image itself, with no mask and so no offscreen pass, as Telegram draws
+    /// bubbles.
+    func update(solid image: UIImage) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        self.gradientLayer.isHidden = true
+        self.layer.mask = nil
+        if self.layer.contents as AnyObject? !== image.cgImage {
+            self.layer.contents = image.cgImage
+            self.layer.contentsScale = image.scale
+            let insets = image.capInsets
+            let size = image.size
+            self.layer.contentsCenter = CGRect(x: insets.left / size.width, y: insets.top / size.height, width: 1.0 / size.width, height: 1.0 / size.height)
+        }
+        CATransaction.commit()
     }
 
     func update(mask: UIImage, colors: [UIColor]) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        self.layer.contents = nil
+        self.gradientLayer.isHidden = false
+        if self.layer.mask !== self.maskLayer {
+            self.layer.mask = self.maskLayer
+        }
         self.gradientLayer.colors = colors.map(\.cgColor)
         if self.maskLayer.contents as AnyObject? !== mask.cgImage {
             self.maskLayer.contents = mask.cgImage

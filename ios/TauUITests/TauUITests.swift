@@ -142,4 +142,26 @@ final class TauUITests: XCTestCase {
         sleep(1)
         self.shot("microphone")
     }
+
+    func testComposeDiscard() {
+        self.launch(["-theme", "light"])
+        // The compose button, top right.
+        self.point(0.9, 0.08).tap()
+        sleep(1)
+        self.shot("compose")
+        self.point(0.1, 0.08).tap()
+        sleep(1)
+        self.shot("compose-discarded")
+        self.point(0.9, 0.08).tap()
+        sleep(1)
+        self.point(0.5, 0.955).tap()
+        sleep(1)
+        self.app.typeText("hello there")
+        self.app.buttons["send"].firstMatch.tap()
+        sleep(3)
+        self.shot("compose-sent")
+        self.point(0.1, 0.08).tap()
+        sleep(1)
+        self.shot("compose-kept")
+    }
 }

@@ -13,6 +13,8 @@ final class MockStore {
     private var streams: [Int: SwiftSignalKit.Timer] = [:]
     /// Where the user left each chat, as Telegram keeps it in the chat's interface state.
     private var scrollStates: [Int: ChatScrollState] = [:]
+    /// New conversations with no message yet: not in the chat list, and gone if left empty.
+    private var drafts = Set<Int>()
 
     init() {
         let now = Date()
@@ -87,8 +89,18 @@ final class MockStore {
         let id = (self.dialogs.keys.max() ?? 0) + 1
         self.conversations[id] = ConversationState(messages: [], streaming: nil, busy: false)
         self.dialogs[id] = DialogModel(id: id, title: "New chat", cwd: cwd, model: "claude-opus-5-5", last: nil, busy: false)
-        self.publishDialogs()
+        self.drafts.insert(id)
         return id
+    }
+
+    /// Drops a new conversation the user left without writing anything.
+    func discardIfDraft(_ id: Int) {
+        guard self.drafts.contains(id) else {
+            return
+        }
+        self.drafts.remove(id)
+        self.dialogs[id] = nil
+        self.conversations[id] = nil
     }
 
     func scrollState(_ id: Int) -> ChatScrollState? {
@@ -162,6 +174,7 @@ final class MockStore {
         if self.dialogs[id]?.title == "New chat" {
             self.dialogs[id]?.title = String(text.prefix(40))
         }
+        self.drafts.remove(id)
         state.busy = true
         self.conversations[id] = state
         self.publish(id)
@@ -227,7 +240,7 @@ final class MockStore {
     }
 
     private func publishDialogs() {
-        let sorted = self.dialogs.values.sorted { ($0.last?.date ?? .distantFuture) > ($1.last?.date ?? .distantFuture) }
+        let sorted = self.dialogs.values.filter { !self.drafts.contains($0.id) }.sorted { ($0.last?.date ?? .distantFuture) > ($1.last?.date ?? .distantFuture) }
         self.dialogsPromise.set(sorted)
     }
 

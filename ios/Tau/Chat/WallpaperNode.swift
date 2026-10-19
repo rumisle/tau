@@ -15,9 +15,11 @@ import Svg
 final class WallpaperNode: ASDisplayNode {
     private let contentLayer = CALayer()
     private var gradientNode: GradientBackgroundNode?
-    private let patternLayer = CALayer()
+    private let patternLayer = PatternOverlayLayer()
 
     private var wallpaper: TelegramWallpaper?
+    /// The one- or two-color background, for composing the pattern onto when there is no gradient node.
+    private var staticBackground: UIImage?
     private var size: CGSize?
     private var patternKey: PatternKey?
     private let patternDisposable = MetaDisposable()
@@ -76,13 +78,17 @@ final class WallpaperNode: ASDisplayNode {
                 let gradientNode = createGradientBackgroundNode(colors: mapped, useSharedAnimationPhase: true)
                 self.gradientNode = gradientNode
                 self.insertSubnode(gradientNode, at: 0)
+                // The pattern rides on the gradient node, which hands it each new gradient image to compose with.
+                gradientNode.setPatternOverlay(layer: self.patternLayer)
             }
             self.contentLayer.contents = nil
             self.contentLayer.backgroundColor = nil
         } else {
             if let gradientNode = self.gradientNode {
                 self.gradientNode = nil
+                gradientNode.setPatternOverlay(layer: nil)
                 gradientNode.removeFromSupernode()
+                self.layer.addSublayer(self.patternLayer)
             }
             if colors.count == 2 {
                 let top = UIColor(rgb: colors[0])
@@ -97,9 +103,11 @@ final class WallpaperNode: ASDisplayNode {
                 })
                 self.contentLayer.contents = image?.cgImage
                 self.contentLayer.backgroundColor = nil
+                self.staticBackground = image
             } else {
                 self.contentLayer.contents = nil
                 self.contentLayer.backgroundColor = UIColor(rgb: colors.first ?? 0xffffff).cgColor
+                self.staticBackground = generateSingleColorImage(size: CGSize(width: 8.0, height: 8.0), color: UIColor(rgb: colors.first ?? 0xffffff))
             }
         }
         self.updatePattern()
@@ -114,6 +122,9 @@ final class WallpaperNode: ASDisplayNode {
         let bounds = CGRect(origin: CGPoint(), size: size)
         transition.updateFrame(layer: self.contentLayer, frame: bounds)
         transition.updateFrame(layer: self.patternLayer, frame: bounds)
+        if self.gradientNode == nil, let background = self.staticBackground {
+            self.patternLayer.updateCompositionData(size: size, backgroundImage: background, backgroundImageHash: "\(ObjectIdentifier(background))")
+        }
         if let gradientNode = self.gradientNode {
             transition.updateFrame(node: gradientNode, frame: bounds)
             gradientNode.updateLayout(size: size, transition: transition, extendAnimation: false, backwards: false, completion: {})
@@ -127,7 +138,7 @@ final class WallpaperNode: ASDisplayNode {
     private func updatePattern() {
         guard let size = self.size, size.width > 1.0, case let .file(file)? = self.wallpaper, file.settings.colors.count > 0 else {
             self.patternLayer.isHidden = true
-            self.patternLayer.contents = nil
+            self.patternLayer.patternImage = nil
             self.patternKey = nil
             self.backgroundColor = nil
             self.gradientNode?.contentView.alpha = 1.0
@@ -144,14 +155,15 @@ final class WallpaperNode: ASDisplayNode {
             self.backgroundColor = .black
             self.gradientNode?.contentView.alpha = abs(intensity)
             self.contentLayer.opacity = Float(abs(intensity))
-            self.patternLayer.compositingFilter = nil
-            self.patternLayer.opacity = 1.0
+            self.patternLayer.configure(mode: .plain, opacity: 1.0)
         } else {
             self.backgroundColor = nil
             self.gradientNode?.contentView.alpha = 1.0
             self.contentLayer.opacity = 1.0
-            self.patternLayer.compositingFilter = black ? nil : "softLightBlendMode"
-            self.patternLayer.opacity = Float(intensity)
+            self.patternLayer.configure(mode: black ? .plain : .softLight, opacity: Float(intensity))
+        }
+        if self.gradientNode == nil, let background = self.staticBackground {
+            self.patternLayer.updateCompositionData(size: size, backgroundImage: background, backgroundImageHash: "\(ObjectIdentifier(background))")
         }
 
         let key = PatternKey(size: size, inverted: inverted, black: black)
@@ -161,7 +173,7 @@ final class WallpaperNode: ASDisplayNode {
         self.patternKey = key
         let foreground: UIColor = black ? .white : .black
         self.patternDisposable.set((WallpaperNode.patternImage(size: size, inverted: inverted, foreground: foreground) |> deliverOnMainQueue).start(next: { [weak self] image in
-            self?.patternLayer.contents = image?.cgImage
+            self?.patternLayer.patternImage = image
         }))
     }
 
@@ -209,6 +221,124 @@ final class WallpaperNode: ASDisplayNode {
             subscriber.putCompletion()
             return EmptyDisposable
         } |> runOn(Queue.concurrentDefaultQueue())
+    }
+}
+
+/// The pattern over the gradient, after WallpaperBackgroundNode's EffectImageLayer: a live soft-light compositing filter
+/// makes Core Animation re-blend the whole screen every frame something moves above it (a push, a swipe back, a
+/// scroll), so while the gradient is still the layer shows one image with the blend already applied, and switches to
+/// the filter only while the gradient animates.
+final class PatternOverlayLayer: CALayer, GradientBackgroundPatternOverlayLayer {
+    enum Mode {
+        /// Drawn as is: the inverted Night pattern, or a black pattern.
+        case plain
+        case softLight
+    }
+
+    private var mode: Mode = .plain
+    private var patternOpacity: Float = 1.0
+    private var compositionData: (size: CGSize, backgroundImage: UIImage, hash: String)?
+    private var composedKey: String?
+    private let composeDisposable = MetaDisposable()
+
+    var patternImage: UIImage? {
+        didSet {
+            if self.patternImage !== oldValue {
+                self.composedKey = nil
+                self.update()
+            }
+        }
+    }
+
+    var isAnimating: Bool = false {
+        didSet {
+            if self.isAnimating != oldValue {
+                self.update()
+            }
+        }
+    }
+
+    override init() {
+        super.init()
+        self.contentsGravity = .resizeAspectFill
+    }
+
+    override init(layer: Any) {
+        super.init(layer: layer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        self.composeDisposable.dispose()
+    }
+
+    func configure(mode: Mode, opacity: Float) {
+        if self.mode != mode || self.patternOpacity != opacity {
+            self.mode = mode
+            self.patternOpacity = opacity
+            self.composedKey = nil
+            self.update()
+        }
+    }
+
+    func updateCompositionData(size: CGSize, backgroundImage: UIImage, backgroundImageHash: String) {
+        if self.compositionData?.size == size && self.compositionData?.hash == backgroundImageHash {
+            return
+        }
+        self.compositionData = (size, backgroundImage, backgroundImageHash)
+        self.update()
+    }
+
+    private func update() {
+        guard let pattern = self.patternImage else {
+            self.contents = nil
+            return
+        }
+        if self.mode == .plain {
+            self.composeDisposable.set(nil)
+            self.compositingFilter = nil
+            self.opacity = self.patternOpacity
+            self.contents = pattern.cgImage
+            return
+        }
+        if self.isAnimating || self.compositionData == nil {
+            self.composeDisposable.set(nil)
+            self.compositingFilter = "softLightBlendMode"
+            self.opacity = self.patternOpacity
+            self.contents = pattern.cgImage
+            return
+        }
+        guard let (size, background, hash) = self.compositionData else {
+            return
+        }
+        let key = "\(hash)-\(size.width)x\(size.height)-\(self.patternOpacity)-\(ObjectIdentifier(pattern))"
+        if self.composedKey == key {
+            return
+        }
+        let opacity = CGFloat(self.patternOpacity)
+        self.composeDisposable.set((Signal<UIImage?, NoError> { subscriber in
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = pattern.scale
+            format.opaque = true
+            let image = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                background.draw(in: CGRect(origin: CGPoint(), size: size))
+                pattern.draw(in: CGRect(origin: CGPoint(), size: size), blendMode: .softLight, alpha: opacity)
+            }
+            subscriber.putNext(image)
+            subscriber.putCompletion()
+            return EmptyDisposable
+        } |> runOn(Queue.concurrentDefaultQueue()) |> deliverOnMainQueue).start(next: { [weak self] image in
+            guard let self, let image, !self.isAnimating else {
+                return
+            }
+            self.composedKey = key
+            self.compositingFilter = nil
+            self.opacity = 1.0
+            self.contents = image.cgImage
+        }))
     }
 }
 

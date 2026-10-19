@@ -98,8 +98,23 @@ final class ChatListController: ViewController {
     }
 
     func open(conversationId: Int) {
+        let start = CACurrentMediaTime()
         let controller = ChatController(context: self.context, conversationId: conversationId)
         (self.navigationController as? NavigationController)?.pushViewController(controller)
+        if ProcessInfo.processInfo.environment["TAU_TIMING"] != nil { print("TIMING push sync \((CACurrentMediaTime() - start) * 1000.0) ms") }
+        if ProcessInfo.processInfo.environment["TAU_TIMING"] != nil {
+            var frames: [Double] = []
+            var last = CACurrentMediaTime()
+            let link = SharedDisplayLinkDriver.shared.add { _ in
+                let now = CACurrentMediaTime()
+                frames.append((now - last) * 1000.0)
+                last = now
+            }
+            Queue.mainQueue().after(0.8) {
+                link.invalidate()
+                print("TIMING frames \(frames.map { String(format: "%.0f", $0) }.joined(separator: " "))")
+            }
+        }
     }
 
     /// Telegram's chat list preview: the chat itself grows out of the row, with actions under it. Tapping the preview

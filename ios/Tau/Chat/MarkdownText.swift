@@ -76,7 +76,32 @@ enum MarkdownText {
         return result
     }
 
+    /// Parsed messages, keyed by text and style. Foundation's Markdown parser is slow, and a row lays out again on every
+    /// streaming step, selection change and theme change. Layout runs on background queues, hence the lock.
+    private static let cacheLock = NSLock()
+    private static var cache: [String: [MarkdownBlock]] = [:]
+    private static var cacheOrder: [String] = []
+
     static func blocks(_ text: String, style: MarkdownStyle) -> [MarkdownBlock] {
+        let key = "\(style.fontSize)|\(style.textColor.argb)|\(style.linkColor.argb)|\(style.accentColor.argb)|\(text)"
+        self.cacheLock.lock()
+        if let cached = self.cache[key] {
+            self.cacheLock.unlock()
+            return cached
+        }
+        self.cacheLock.unlock()
+        let result = self.parseBlocks(text, style: style)
+        self.cacheLock.lock()
+        self.cache[key] = result
+        self.cacheOrder.append(key)
+        if self.cacheOrder.count > 400 {
+            self.cache.removeValue(forKey: self.cacheOrder.removeFirst())
+        }
+        self.cacheLock.unlock()
+        return result
+    }
+
+    private static func parseBlocks(_ text: String, style: MarkdownStyle) -> [MarkdownBlock] {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
         guard let parsed = try? AttributedString(markdown: text, options: options) else {
             return [.text(NSAttributedString(string: text, font: Font.regular(style.fontSize), textColor: style.textColor))]

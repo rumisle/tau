@@ -126,6 +126,14 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.previewTapped?()
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // Only once the chat is gone: a swipe back can still be cancelled.
+        if !self.isPreview && self.navigationController == nil {
+            self.context.store.discardIfDraft(self.conversationId)
+        }
+    }
+
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         if !self.isPreview && self.isNodeLoaded {
