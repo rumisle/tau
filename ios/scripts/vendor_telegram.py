@@ -156,6 +156,9 @@ IMAGES = [
     "Chat/Context Menu/Folder",
     "Chat/Context Menu/Pause",
     "Chat/Context Menu/More",
+    "Chat/Context Menu/Back",
+    "Chat/Context Menu/Check",
+    "Chat/Context Menu/Timer",
 ]
 
 # Lottie animations LottieComponent.AppBundleContent loads by name, from submodules/TelegramUI/Resources/Animations.

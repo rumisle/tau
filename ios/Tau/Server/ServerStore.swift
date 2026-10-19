@@ -531,6 +531,64 @@ final class ServerStore: TauStore {
         self.publishDialogs()
     }
 
+    // MARK: - Agent
+
+    private var modelsCache: [ModelInfo]?
+
+    func models() -> Signal<[ModelInfo], NoError> {
+        if let cached = self.modelsCache {
+            return .single(cached)
+        }
+        return self.connection.request("models.list")
+        |> map { value -> [ModelInfo] in
+            return value.objects("models").map { ModelInfo(provider: $0.string("provider") ?? "", id: $0.string("id") ?? "", name: $0.string("name") ?? $0.string("id") ?? "", reasoning: $0.bool("reasoning") ?? false) }
+        }
+        |> `catch` { _ -> Signal<[ModelInfo], NoError> in
+            return .single([])
+        }
+        |> deliverOnMainQueue
+        |> beforeNext { [weak self] models in
+            if !models.isEmpty {
+                self?.modelsCache = models
+            }
+        }
+    }
+
+    func agent(_ id: Int) -> AgentSettings {
+        guard let realId = self.resolve(id), let agent = self.replicas[realId]?.docs.object("pi.agent") else {
+            let fallback = self.connection.hello?.defaultModel.split(separator: "/").map(String.init) ?? []
+            return AgentSettings(provider: fallback.first, modelId: fallback.last, thinkingLevel: nil)
+        }
+        let model = agent.object("model")
+        return AgentSettings(provider: model?.string("provider"), modelId: model?.string("modelId"), thinkingLevel: agent.string("thinkingLevel"))
+    }
+
+    func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        var patch: JSONObject = [:]
+        if let model {
+            patch["model"] = ["provider": model.provider, "modelId": model.id]
+        }
+        if let thinkingLevel {
+            patch["thinkingLevel"] = thinkingLevel == "off" ? NSNull() : thinkingLevel
+        }
+        self.connection.request("conversation.configure", ["conversationId": realId, "agent": patch]) { _ in }
+    }
+
+    func compact(_ id: Int) {
+        if let realId = self.resolve(id) {
+            self.connection.request("conversation.compact", ["conversationId": realId]) { _ in }
+        }
+    }
+
+    func resetContext(_ id: Int) {
+        if let realId = self.resolve(id) {
+            self.connection.request("conversation.reset", ["conversationId": realId]) { _ in }
+        }
+    }
+
     // MARK: - Misc
 
     func scrollState(_ id: Int) -> ChatScrollState? {

@@ -110,6 +110,30 @@ final class MockStore: TauStore {
     func loadOlder(_ id: Int) {
     }
 
+    func models() -> Signal<[ModelInfo], NoError> {
+        return .single([
+            ModelInfo(provider: "anthropic", id: "claude-opus-5-5", name: "Claude Opus 5.5", reasoning: true),
+            ModelInfo(provider: "anthropic", id: "claude-haiku-5-5", name: "Claude Haiku 5.5", reasoning: true),
+        ])
+    }
+
+    func agent(_ id: Int) -> AgentSettings {
+        return AgentSettings(provider: "anthropic", modelId: self.dialogs[id]?.model, thinkingLevel: nil)
+    }
+
+    func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?) {
+        if let model {
+            self.dialogs[id]?.model = model.id
+            self.publish(id)
+        }
+    }
+
+    func compact(_ id: Int) {
+    }
+
+    func resetContext(_ id: Int) {
+    }
+
     func edit(messageId: Int, text: String, in id: Int, completion: @escaping (Int) -> Void) {
         self.edit(messageId: messageId, text: text, in: id)
         completion(id)

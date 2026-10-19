@@ -180,4 +180,18 @@ final class TauUITests: XCTestCase {
         sleep(6)
         self.shot("live-done")
     }
+
+    func testTitleMenu() {
+        self.launch(["-theme", "light", "-openChat", "3"])
+        sleep(2)
+        self.point(0.5, 0.08).tap()
+        sleep(1)
+        self.shot("title-menu")
+        let model = self.app.descendants(matching: .any)["Model"].firstMatch
+        if model.waitForExistence(timeout: 2) {
+            model.tap()
+            sleep(2)
+            self.shot("title-models")
+        }
+    }
 }

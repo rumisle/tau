@@ -39,6 +39,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
         self.navigationItem.titleView = self.titleView
         self.updateTitle(busy: false)
+        self.titleView.tapped = { [weak self] in
+            self?.openTitleMenu()
+        }
         self.statusBar.statusBarStyle = self.theme.statusBarStyleValue
         self.themeDisposable = (context.themeContext.theme |> deliverOnMainQueue).start(next: { [weak self] theme in
             self?.updateTheme(theme)
@@ -75,7 +78,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         guard let dialog = self.context.store.dialog(self.conversationId) else {
             return
         }
-        self.titleView.update(title: dialog.title, subtitle: busy ? "working" : "\(dialog.projectName) · \(dialog.model)", isActive: busy)
+        let model = self.context.store.agent(self.conversationId).modelId ?? dialog.model
+        self.titleView.update(title: dialog.title, subtitle: busy ? "working" : "\(dialog.projectName) · \(model)", isActive: busy)
     }
 
     override func loadDisplayNode() {
@@ -226,6 +230,74 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private func share(text: String) {
         let activity = UIActivityViewController(activityItems: [text], applicationActivities: nil)
         self.view.window?.rootViewController?.present(activity, animated: true)
+    }
+
+    // MARK: - Title menu
+
+    /// A tap on the title: the conversation's settings in Telegram's context menu, as Telegram's title opens a peer's
+    /// actions. Model and thinking level open as nested lists.
+    private func openTitleMenu() {
+        guard !self.isPreview, self.controllerNode.selectedIds == nil else {
+            return
+        }
+        self.controllerNode.inputPanelNode.deactivateInput()
+        let store = self.context.store
+        let id = self.conversationId
+        let agent = store.agent(id)
+        let thinking = agent.thinkingLevel ?? "off"
+        let icon: (String) -> (PresentationTheme) -> UIImage? = { name in
+            return { theme in generateTintedImage(image: UIImage(bundleImageName: name), color: theme.contextMenu.primaryColor) }
+        }
+        let checkIcon: (Bool) -> (PresentationTheme) -> UIImage? = { checked in
+            return { theme in checked ? generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: theme.contextMenu.primaryColor) : nil }
+        }
+
+        var items: [ContextMenuItem] = []
+        items.append(.action(ContextMenuActionItem(text: "Model", textLayout: .secondLineWithValue(agent.modelId ?? "default"), icon: icon("Chat/Context Menu/Settings"), action: { controller, _ in
+            let models = store.models() |> map { models -> ContextController.Items in
+                var modelItems: [ContextMenuItem] = [.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
+                    controller?.popItems()
+                })), .separator]
+                for model in models {
+                    let selected = model.id == agent.modelId && model.provider == agent.provider
+                    modelItems.append(.action(ContextMenuActionItem(text: model.name, textLayout: .secondLineWithValue("\(model.provider)/\(model.id)"), icon: checkIcon(selected), action: { [weak self] _, f in
+                        f(.default)
+                        store.configure(id, model: model, thinkingLevel: nil)
+                        self?.controllerNode.showToast("Model: \(model.name)")
+                    })))
+                }
+                return ContextController.Items(content: .list(modelItems))
+            }
+            controller?.pushItems(items: models)
+        })))
+        items.append(.action(ContextMenuActionItem(text: "Thinking", textLayout: .secondLineWithValue(thinking.capitalized), icon: icon("Chat/Context Menu/Timer"), action: { controller, _ in
+            var levelItems: [ContextMenuItem] = [.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
+                controller?.popItems()
+            })), .separator]
+            for level in ["off", "low", "medium", "high"] {
+                levelItems.append(.action(ContextMenuActionItem(text: level.capitalized, icon: checkIcon(level == thinking), action: { [weak self] _, f in
+                    f(.default)
+                    store.configure(id, model: nil, thinkingLevel: level)
+                    self?.controllerNode.showToast("Thinking: \(level.capitalized)")
+                })))
+            }
+            controller?.pushItems(items: .single(ContextController.Items(content: .list(levelItems))))
+        })))
+        items.append(.separator)
+        items.append(.action(ContextMenuActionItem(text: "Compact Context", icon: icon("Chat/Context Menu/Clear"), action: { [weak self] _, f in
+            f(.default)
+            store.compact(id)
+            self?.controllerNode.showToast("Compacting context")
+        })))
+        items.append(.action(ContextMenuActionItem(text: "New Context", textLayout: .secondLineWithValue("The model forgets this chat"), icon: icon("Chat/Context Menu/Reload"), action: { [weak self] _, f in
+            f(.default)
+            store.resetContext(id)
+            self?.controllerNode.showToast("New context")
+        })))
+
+        let source = ChatTitleContextReferenceSource(view: self.titleView, contentArea: self.controllerNode.view.convert(self.controllerNode.frameForVisibleArea(), to: nil))
+        let controller = makeContextController(presentationData: self.theme.presentationData, source: .reference(source), items: .single(ContextController.Items(content: .list(items))), gesture: nil)
+        self.presentInGlobalOverlay(controller)
     }
 
     // MARK: - Context menu
@@ -541,5 +613,32 @@ private final class ChatMessageContextExtractedContentSource: ContextExtractedCo
             return nil
         }
         return ContextControllerPutBackViewInfo(contentAreaInScreenSpace: chatNode.view.convert(chatNode.frameForVisibleArea(), to: nil))
+    }
+}
+
+/// The title capsule as a context menu's anchor: the menu drops from it, as Telegram's peer menus do.
+private final class ChatTitleContextReferenceSource: ContextReferenceContentSource {
+    let keepInPlace: Bool = false
+    private weak var view: UIView?
+    private let contentArea: CGRect
+
+    init(view: UIView, contentArea: CGRect) {
+        self.view = view
+        self.contentArea = contentArea
+    }
+
+    var shouldBeDismissed: Signal<Bool, NoError> {
+        return .single(false)
+    }
+
+    var forceDisplayBelowKeyboard: Bool {
+        return false
+    }
+
+    func transitionInfo() -> ContextControllerReferenceViewInfo? {
+        guard let view = self.view else {
+            return nil
+        }
+        return ContextControllerReferenceViewInfo(referenceView: view, contentAreaInScreenSpace: UIScreen.main.bounds)
     }
 }

@@ -26,6 +26,16 @@ protocol TauStore: AnyObject {
     func abort(_ id: Int)
     func loadOlder(_ id: Int)
 
+    /// Models the server has credentials for.
+    func models() -> Signal<[ModelInfo], NoError>
+    /// The conversation's model and thinking level (`pi.agent`).
+    func agent(_ id: Int) -> AgentSettings
+    func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?)
+    /// Summarizes the context to free room; the transcript stays.
+    func compact(_ id: Int)
+    /// Starts a new context: the model forgets the conversation so far; the transcript stays.
+    func resetContext(_ id: Int)
+
     func scrollState(_ id: Int) -> ChatScrollState?
     func setScrollState(_ state: ChatScrollState?, for id: Int)
     func mintAttachmentId() -> Int
@@ -35,6 +45,19 @@ extension TauStore {
     func send(_ text: String, to id: Int) {
         self.send(text, attachments: [], to: id)
     }
+}
+
+struct ModelInfo: Equatable {
+    var provider: String
+    var id: String
+    var name: String
+    var reasoning: Bool
+}
+
+struct AgentSettings: Equatable {
+    var provider: String?
+    var modelId: String?
+    var thinkingLevel: String?
 }
 
 /// Scroll positions survive restarts, as Telegram keeps each chat's position.
