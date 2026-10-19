@@ -325,21 +325,21 @@ final class ChatMessageItemNode: ListViewItemNode {
                 // Telegram's ChatMessageItemWidthFill: phones leave 36 pt beside a bubble.
                 let fillWidth = contentWidth <= 500.0 ? contentWidth - 36.0 : floor(contentWidth * 0.85)
                 let maxContentWidth = fillWidth - bubbleEdgeInset * 2.0 - bubbleTailInset
-                let maxTextWidth = maxContentWidth - textInsets.left - textInsets.right
-
-                // Photos fill the bubble width, files are rows above the text.
+                // Photos fill the bubble width and the caption wraps to it, as Telegram's media bubbles; files are rows
+                // above the text.
                 var imageSizes: [CGSize] = []
                 var files: [(name: String, size: Int64)] = []
+                let imageWidth = min(maxContentWidth - mediaInset * 2.0, 260.0)
                 for attachment in message.attachments {
                     switch attachment.kind {
                     case let .image(image):
-                        let width = min(maxContentWidth - mediaInset * 2.0, 260.0)
                         let aspect = image.size.height / max(1.0, image.size.width)
-                        imageSizes.append(CGSize(width: width, height: min(320.0, floor(width * aspect))))
+                        imageSizes.append(CGSize(width: imageWidth, height: min(320.0, floor(imageWidth * aspect))))
                     case let .file(name, size):
                         files.append((name, size))
                     }
                 }
+                let maxTextWidth = imageSizes.isEmpty ? maxContentWidth - textInsets.left - textInsets.right : imageWidth + mediaInset * 2.0 - textInsets.left - textInsets.right
 
                 let style = MarkdownStyle(fontSize: messageFontSize, textColor: theme.outgoing.primaryTextColor, linkColor: theme.outgoing.linkTextColor, accentColor: theme.outgoing.primaryTextColor)
                 let textNode = existingTextNodes.first
