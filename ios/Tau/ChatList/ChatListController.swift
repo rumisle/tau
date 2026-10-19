@@ -3,6 +3,10 @@ import AsyncDisplayKit
 import Display
 import SwiftSignalKit
 import MergeLists
+import ComponentFlow
+import ComponentDisplayAdapters
+import TabBarComponent
+import EdgeEffect
 
 private struct ChatListEntry: Comparable, Identifiable {
     let dialog: DialogModel
@@ -34,7 +38,8 @@ final class ChatListController: ViewController {
     init(store: MockStore, theme: TauTheme) {
         self.store = store
         self.theme = theme
-        super.init(navigationBarPresentationData: theme.navigationBarPresentationData())
+        // iOS 26 Telegram: glass buttons and a blurred edge instead of a bar.
+        super.init(navigationBarPresentationData: theme.navigationBarPresentationData(style: .glass))
         self.title = "Chats"
         self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "square.and.pencil"), style: .plain, target: self, action: #selector(self.composePressed))
         self.statusBar.statusBarStyle = .Black
@@ -74,10 +79,21 @@ final class ChatListController: ViewController {
     }
 }
 
+private enum RootTab: Hashable {
+    case chats
+    case settings
+}
+
 final class ChatListControllerNode: ASDisplayNode {
     private let theme: TauTheme
     private let openDialog: (DialogModel) -> Void
     private let listNode: ListViewImpl
+    /// Telegram's floating glass tab bar (TabBarComponent, copied verbatim).
+    private let tabBarView = ComponentView<Empty>()
+    private let bottomEdgeEffectView = EdgeEffectView()
+    private let settingsPlaceholderNode = ImmediateTextNode()
+    private var selectedTab: RootTab = .chats
+    private var validLayout: (layout: ContainerViewLayout, navigationHeight: CGFloat)?
 
     private var entries: [ChatListEntry] = []
     private var pendingDialogs: [DialogModel]?
@@ -90,6 +106,27 @@ final class ChatListControllerNode: ASDisplayNode {
         super.init()
         self.backgroundColor = theme.chatList.backgroundColor
         self.addSubnode(self.listNode)
+        self.settingsPlaceholderNode.attributedText = NSAttributedString(string: "Settings come with the server connection.", font: Font.regular(15.0), textColor: theme.chatList.messageTextColor)
+        self.settingsPlaceholderNode.isHidden = true
+        self.addSubnode(self.settingsPlaceholderNode)
+    }
+
+    override func didLoad() {
+        super.didLoad()
+        self.bottomEdgeEffectView.isUserInteractionEnabled = false
+        self.view.addSubview(self.bottomEdgeEffectView)
+    }
+
+    private func select(_ tab: RootTab) {
+        guard tab != self.selectedTab else {
+            return
+        }
+        self.selectedTab = tab
+        self.listNode.isHidden = tab != .chats
+        self.settingsPlaceholderNode.isHidden = tab != .settings
+        if let (layout, navigationHeight) = self.validLayout {
+            self.containerLayoutUpdated(layout, navigationHeight: navigationHeight, transition: .animated(duration: 0.4, curve: .spring))
+        }
     }
 
     func update(dialogs: [DialogModel]) {
@@ -117,16 +154,75 @@ final class ChatListControllerNode: ASDisplayNode {
     }
 
     func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationHeight: CGFloat, transition: ContainedViewLayoutTransition) {
+        self.validLayout = (layout, navigationHeight)
+        let tabBarHeight = self.updateTabBar(layout: layout, transition: transition)
+
+        let placeholderSize = self.settingsPlaceholderNode.updateLayout(CGSize(width: layout.size.width - 40.0, height: 100.0))
+        self.settingsPlaceholderNode.frame = CGRect(origin: CGPoint(x: floor((layout.size.width - placeholderSize.width) / 2.0), y: floor((layout.size.height - placeholderSize.height) / 2.0)), size: placeholderSize)
+
+        // Rows scroll under the tab bar; a white fade keeps it legible, as in Telegram's ChatListContainerItemNode.
+        let edgeEffectHeight = tabBarHeight + 8.0
+        let edgeEffectFrame = CGRect(origin: CGPoint(x: 0.0, y: layout.size.height - edgeEffectHeight), size: CGSize(width: layout.size.width, height: edgeEffectHeight))
+        transition.updateFrame(view: self.bottomEdgeEffectView, frame: edgeEffectFrame)
+        self.bottomEdgeEffectView.update(content: self.theme.chatList.backgroundColor, alpha: 0.6, rect: edgeEffectFrame, edge: .bottom, edgeSize: min(edgeEffectFrame.height, 40.0), transition: ComponentTransition(transition))
+
         transition.updateFrame(node: self.listNode, frame: CGRect(origin: CGPoint(), size: layout.size))
         let (duration, curve) = listViewAnimationDurationAndCurve(transition: transition)
-        let insets = UIEdgeInsets(top: navigationHeight, left: layout.safeInsets.left, bottom: layout.intrinsicInsets.bottom, right: layout.safeInsets.right)
+        let insets = UIEdgeInsets(top: navigationHeight, left: layout.safeInsets.left, bottom: tabBarHeight, right: layout.safeInsets.right)
         self.listNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: nil, updateSizeAndInsets: ListViewUpdateSizeAndInsets(size: layout.size, insets: insets, duration: duration, curve: curve), stationaryItemRange: nil, updateOpaqueState: nil)
         if !self.hasLayout {
             self.hasLayout = true
+            if let tabBar = self.tabBarView.view {
+                self.view.bringSubviewToFront(tabBar)
+            }
             if let dialogs = self.pendingDialogs {
                 self.pendingDialogs = nil
                 self.update(dialogs: dialogs)
             }
         }
+    }
+}
+
+extension ChatListControllerNode {
+    /// Lays out the floating tab bar as Telegram's TabBarControllerNode.updateImpl does and returns the height it covers
+    /// at the bottom of the screen.
+    fileprivate func updateTabBar(layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) -> CGFloat {
+        let panelsBottomInset = max(layout.insets(options: []).bottom, 8.0)
+        let sideInset: CGFloat = panelsBottomInset <= 28.0 ? 20.0 : 12.0
+
+        let items: [(RootTab, String, String)] = [
+            (.chats, "Chats", "Chat List/Tabs/IconChats"),
+            (.settings, "Settings", "Chat List/Tabs/IconSettings"),
+        ]
+        let tabBarSize = self.tabBarView.update(
+            transition: ComponentTransition(transition),
+            component: AnyComponent(TabBarComponent(
+                theme: self.theme.presentationTheme,
+                strings: self.theme.presentationStrings,
+                items: items.map { tab, title, icon in
+                    TabBarComponent.Item(
+                        content: .customItem(.init(id: AnyHashable(tab), title: title, icon: .bundleIcon(name: icon))),
+                        action: { [weak self] _ in
+                            self?.select(tab)
+                        },
+                        doubleTapAction: nil,
+                        contextAction: nil
+                    )
+                },
+                search: nil,
+                selectedId: AnyHashable(self.selectedTab),
+                outerInsets: UIEdgeInsets(top: 0.0, left: sideInset, bottom: panelsBottomInset, right: sideInset)
+            )),
+            environment: {},
+            containerSize: CGSize(width: layout.size.width - sideInset * 2.0, height: 100.0)
+        )
+        let tabBarFrame = CGRect(origin: CGPoint(x: floor((layout.size.width - tabBarSize.width) * 0.5), y: layout.size.height - tabBarSize.height - panelsBottomInset), size: tabBarSize)
+        if let tabBar = self.tabBarView.view {
+            if tabBar.superview == nil {
+                self.view.addSubview(tabBar)
+            }
+            transition.updateFrame(view: tabBar, frame: tabBarFrame)
+        }
+        return tabBarSize.height + panelsBottomInset
     }
 }

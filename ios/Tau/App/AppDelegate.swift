@@ -57,6 +57,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         let conversationId = defaults.integer(forKey: "openChat")
         let chat = ChatController(store: store, theme: theme, conversationId: conversationId)
         navigationController.pushViewController(chat, animated: false)
+        if let draft = defaults.string(forKey: "draft") {
+            Queue.mainQueue().after(0.6) {
+                chat.setDraft(draft)
+            }
+        }
         if defaults.bool(forKey: "focus") {
             Queue.mainQueue().after(0.5) {
                 chat.activateInput()

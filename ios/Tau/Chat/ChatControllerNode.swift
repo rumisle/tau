@@ -4,6 +4,9 @@ import Display
 import SwiftSignalKit
 import MergeLists
 import GradientBackground
+import ComponentFlow
+import ComponentDisplayAdapters
+import EdgeEffect
 
 /// A transcript row as the list diffs it. List index 0 is the newest message, at the bottom of the inverted list.
 struct ChatHistoryEntry: Comparable, Identifiable {
@@ -30,6 +33,8 @@ final class ChatControllerNode: ASDisplayNode {
     private let backgroundNode: GradientBackgroundNode
     let historyNode: ListViewImpl
     let inputPanelNode: ChatInputPanelNode
+    /// Blurs messages as they scroll under the input panel.
+    private let bottomEdgeEffectView = EdgeEffectView()
 
     private var entries: [ChatHistoryEntry] = []
     private var pendingState: (ConversationState, Bool)?
@@ -51,6 +56,7 @@ final class ChatControllerNode: ASDisplayNode {
         self.addSubnode(self.backgroundNode)
         self.addSubnode(self.historyNode)
         self.addSubnode(self.inputPanelNode)
+        self.bottomEdgeEffectView.isUserInteractionEnabled = false
 
         self.historyNode.transform = CATransform3DMakeRotation(CGFloat.pi, 0.0, 0.0, 1.0)
         self.historyNode.verticalScrollIndicatorColor = UIColor(white: 0.0, alpha: 0.3)
@@ -73,6 +79,11 @@ final class ChatControllerNode: ASDisplayNode {
             }
             self.containerLayoutUpdated(layout, navigationHeight: navigationHeight, transition: transition)
         }
+    }
+
+    override func didLoad() {
+        super.didLoad()
+        self.view.insertSubview(self.bottomEdgeEffectView, belowSubview: self.inputPanelNode.view)
     }
 
     // MARK: - History
@@ -146,6 +157,11 @@ final class ChatControllerNode: ASDisplayNode {
         let panelBottomGap: CGFloat = layout.inputHeight != nil && layout.inputHeight! > 0.0 ? 8.0 : (layout.intrinsicInsets.bottom > 0.0 ? 0.0 : 8.0)
         let panelFrame = CGRect(origin: CGPoint(x: layout.safeInsets.left + panelSideInset, y: size.height - bottomInset - panelBottomGap - panelHeight), size: CGSize(width: panelWidth, height: panelHeight))
         transition.updateFrame(node: self.inputPanelNode, frame: panelFrame)
+
+        let edgeEffectHeight = size.height - panelFrame.minY + 16.0
+        let edgeEffectFrame = CGRect(origin: CGPoint(x: 0.0, y: size.height - edgeEffectHeight), size: CGSize(width: size.width, height: edgeEffectHeight))
+        transition.updateFrame(view: self.bottomEdgeEffectView, frame: edgeEffectFrame)
+        self.bottomEdgeEffectView.update(content: UIColor(white: 1.0, alpha: 0.2), blur: true, alpha: 1.0, rect: edgeEffectFrame, edge: .bottom, edgeSize: min(edgeEffectHeight, 48.0), transition: ComponentTransition(transition))
 
         // The history runs under the navigation bar and the panel; its insets keep content clear of both. The list is
         // rotated, so its top inset is the visual bottom.

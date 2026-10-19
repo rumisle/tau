@@ -31,6 +31,9 @@ targets:
           - UIKitRuntimeUtils
           - ComponentDisplayAdapters
           - InteractiveTextComponent
+          - TabBarComponent
+          - EdgeEffect
+          - TelegramPresentationData
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.tau.app

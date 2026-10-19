@@ -28,7 +28,16 @@ let package = Package(
         .library(name: "HierarchyTrackingLayer", targets: ["HierarchyTrackingLayer"]),
         .library(name: "MessageInlineBlockBackgroundView", targets: ["MessageInlineBlockBackgroundView"]),
         .library(name: "InteractiveTextComponent", targets: ["InteractiveTextComponent"]),
+        .library(name: "LiquidLens", targets: ["LiquidLens"]),
+        .library(name: "BundleIconComponent", targets: ["BundleIconComponent"]),
+        .library(name: "TextBadgeComponent", targets: ["TextBadgeComponent"]),
+        .library(name: "TabSelectionRecognizer", targets: ["TabSelectionRecognizer"]),
+        .library(name: "LottieSettings", targets: ["LottieSettings"]),
+        .library(name: "TabBarComponent", targets: ["TabBarComponent"]),
         .library(name: "StreamingTextReveal", targets: ["StreamingTextReveal"]),
+        .library(name: "TelegramPresentationData", targets: ["TelegramPresentationData"]),
+        .library(name: "SearchBarNode", targets: ["SearchBarNode"]),
+        .library(name: "LottieComponent", targets: ["LottieComponent"]),
     ],
     targets: [
         .target(
@@ -499,12 +508,87 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "LiquidLens",
+            dependencies: ["Display", "ComponentFlow", "GlassBackgroundComponent"],
+            path: "submodules/TelegramUI/Components/LiquidLens",
+            sources: [
+                "Sources/LiquidLensView.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "BundleIconComponent",
+            dependencies: ["ComponentFlow", "AppBundle", "Display"],
+            path: "submodules/Components/BundleIconComponent",
+            sources: [
+                "Sources/BundleIconComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "TextBadgeComponent",
+            dependencies: ["Display", "ComponentFlow"],
+            path: "submodules/TelegramUI/Components/TextBadgeComponent",
+            sources: [
+                "Sources/TextBadgeComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "TabSelectionRecognizer",
+            dependencies: [],
+            path: "submodules/TelegramUI/Components/TabSelectionRecognizer",
+            sources: [
+                "Sources/TabSelectionRecognizer.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "LottieSettings",
+            dependencies: [],
+            path: "submodules/LottieSettings",
+            sources: [
+                "Sources/LottieRenderingSettings.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "TabBarComponent",
+            dependencies: ["Display", "LottieSettings", "TelegramPresentationData", "ComponentFlow", "ComponentDisplayAdapters", "MultilineTextComponent", "GlassBackgroundComponent", "LottieComponent", "BundleIconComponent", "TextBadgeComponent", "UIKitRuntimeUtils", "LiquidLens", "AppBundle", "SearchBarNode", "TabSelectionRecognizer"],
+            path: "submodules/TelegramUI/Components/TabBarComponent",
+            sources: [
+                "Sources/TabBarComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "StreamingTextReveal",
             dependencies: [],
             path: "submodules/TelegramUI/Components/StreamingTextReveal",
             sources: [
                 "Sources/TextRevealController.swift",
             ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "TelegramPresentationData",
+            dependencies: ["Display"],
+            path: "tau-shims/TelegramPresentationData",
+            sources: ["PresentationTheme.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "SearchBarNode",
+            dependencies: ["Display", "AsyncDisplayKit", "TelegramPresentationData"],
+            path: "tau-shims/SearchBarNode",
+            sources: ["SearchBarNode.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "LottieComponent",
+            dependencies: ["Display", "ComponentFlow", "LottieSettings"],
+            path: "tau-shims/LottieComponent",
+            sources: ["LottieComponent.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ],

@@ -35,7 +35,8 @@ generates a SwiftPM package (`ThirdParty/Telegram/Package.swift`), one target pe
 |---|---|
 | AsyncDisplayKit (Telegram's minimal Texture fork), SwiftSignalKit, Display | Nodes, signals, `ListViewImpl` (the scrolling list), `NavigationController`, `Window1` (keyboard and layout), `TextNode` |
 | ComponentFlow, ComponentDisplayAdapters | Telegram's component system, needed by the glass views |
-| NavigationBarImpl, GlassBackgroundComponent, EdgeEffect, MeshTransform | iOS 26 glass navigation bar and input panel |
+| NavigationBarImpl, GlassBackgroundComponent, EdgeEffect, MeshTransform | iOS 26 Liquid Glass: navigation bar, glass shapes and containers (`UIGlassEffect` / `UIGlassContainerEffect`), blurred edge fades |
+| TabBarComponent, LiquidLens, TabSelectionRecognizer, BundleIconComponent, TextBadgeComponent | The floating glass tab bar with its lens selection |
 | InteractiveTextComponent | Message text: code blocks, quotes, and the per-glyph reveal used for streaming |
 | StreamingTextReveal | `TextRevealController`, which paces streamed text smoothly between server commits |
 | GradientBackground | The four-color animated wallpaper |
@@ -46,6 +47,17 @@ generates a SwiftPM package (`ThirdParty/Telegram/Package.swift`), one target pe
 
 - `0001`: MessageInlineBlockBackgroundView without custom emoji patterns.
 - `0002`: InteractiveTextComponent without custom emoji and spoiler dust.
+
+**Shimmed**: some copied modules import heavy Telegram modules only for a few members (a theme color, a string, a
+search field they never show). Rather than patch them, `ThirdParty/telegram-shims/` holds small stand-in modules with the
+same names and just those members, so the copied code compiles unchanged:
+
+- `TelegramPresentationData`: the theme and strings types, filled from `Tau/Theme/Theme.swift` (`presentationTheme`).
+- `SearchBarNode`: an inert search field, for search modes tau does not enable.
+- `LottieComponent`: draws nothing; rlottie is a separate C++ submodule. Tab icons use static images meanwhile.
+
+When a newly copied module needs another member, add it to the shim with Telegram's name. This is how
+`TabBarComponent` (the floating glass tab bar) came over verbatim.
 
 To change vendored code: edit it in `ThirdParty/Telegram`, then record the change with
 `scripts/make_patch.sh <name> <paths>`. To update or add modules: check out Telegram-iOS into `vendor/Telegram-iOS`

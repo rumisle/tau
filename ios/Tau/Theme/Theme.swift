@@ -1,5 +1,6 @@
 import UIKit
 import Display
+import TelegramPresentationData
 
 /// The parts of Telegram's presentation theme tau uses. Values are Telegram-iOS's default day theme
 /// (TelegramPresentationData/Sources/DefaultDayPresentationTheme.swift, the classic variant).
@@ -145,7 +146,8 @@ final class TauTheme {
     }()
 
     /// Mirrors `NavigationBarTheme(rootControllerTheme:...)` in TelegramPresentationData/Sources/ComponentsThemes.swift.
-    func navigationBarTheme(style: NavigationBar.Style = .legacy, hideBackground: Bool = false) -> NavigationBarTheme {
+    /// `edgeEffectColor` tints the blurred fade a glass bar draws over scrolled content; default the list background.
+    func navigationBarTheme(style: NavigationBar.Style = .legacy, hideBackground: Bool = false, edgeEffectColor edgeEffectOverride: UIColor? = nil) -> NavigationBarTheme {
         let theme = self.navigationBar
         let buttonColor: UIColor
         let disabledButtonColor: UIColor
@@ -153,7 +155,7 @@ final class TauTheme {
         if case .glass = style {
             buttonColor = self.chat.inputPanelControlColor
             disabledButtonColor = buttonColor.withMultipliedAlpha(0.5)
-            edgeEffectColor = hideBackground ? .clear : self.plainBackgroundColor
+            edgeEffectColor = hideBackground ? .clear : (edgeEffectOverride ?? self.plainBackgroundColor)
         } else {
             buttonColor = theme.buttonColor
             disabledButtonColor = theme.disabledButtonColor
@@ -179,12 +181,57 @@ final class TauTheme {
         )
     }
 
-    func navigationBarPresentationData(style: NavigationBar.Style = .legacy, hideBackground: Bool = false) -> NavigationBarPresentationData {
+    func navigationBarPresentationData(style: NavigationBar.Style = .legacy, hideBackground: Bool = false, edgeEffectColor: UIColor? = nil) -> NavigationBarPresentationData {
         return NavigationBarPresentationData(
-            theme: self.navigationBarTheme(style: style, hideBackground: hideBackground),
+            theme: self.navigationBarTheme(style: style, hideBackground: hideBackground, edgeEffectColor: edgeEffectColor),
             strings: NavigationBarStrings(back: "Back", close: "Close")
         )
     }
+
+    /// The theme copied Telegram components read (the TelegramPresentationData shim), from the same values.
+    lazy var presentationTheme: PresentationTheme = {
+        let dark = self.overallDarkAppearance
+        return PresentationTheme(
+            overallDarkAppearance: dark,
+            rootController: PresentationThemeRootController(
+                tabBar: PresentationThemeRootTabBar(
+                    backgroundColor: self.navigationBar.blurredBackgroundColor,
+                    separatorColor: UIColor(rgb: 0xb2b2b2),
+                    iconColor: UIColor(rgb: 0x959595),
+                    selectedIconColor: self.accentColor,
+                    textColor: dark ? UIColor(white: 1.0, alpha: 0.8) : UIColor(rgb: 0x000000, alpha: 0.8),
+                    selectedTextColor: self.accentColor,
+                    badgeBackgroundColor: UIColor(rgb: 0xff3b30),
+                    badgeStrokeColor: UIColor(rgb: 0xff3b30),
+                    badgeTextColor: UIColor(rgb: 0xffffff)
+                ),
+                navigationSearchBar: PresentationThemeNavigationSearchBar(
+                    backgroundColor: self.plainBackgroundColor,
+                    accentColor: self.accentColor,
+                    inputFillColor: UIColor(rgb: 0x000000, alpha: 0.06),
+                    inputTextColor: self.navigationBar.primaryTextColor,
+                    inputPlaceholderTextColor: UIColor(rgb: 0x8e8e93),
+                    inputIconColor: UIColor(rgb: 0x8e8e93),
+                    inputClearButtonColor: UIColor(rgb: 0x7b7b81)
+                ),
+                keyboardColor: dark ? .dark : .light
+            ),
+            chat: PresentationThemeChat(inputPanel: PresentationThemeChatInputPanel(
+                panelControlAccentColor: self.accentColor,
+                panelControlColor: self.chat.inputPanelControlColor,
+                panelControlDisabledColor: self.chat.inputPanelControlColor.withMultipliedAlpha(0.5),
+                inputBackgroundColor: self.chat.inputBackgroundColor,
+                inputStrokeColor: self.chat.inputStrokeColor,
+                inputPlaceholderColor: self.chat.inputPlaceholderColor,
+                inputTextColor: self.chat.inputTextColor,
+                inputControlColor: self.chat.inputPanelControlColor,
+                actionControlFillColor: self.chat.actionControlFillColor,
+                actionControlForegroundColor: self.chat.actionControlForegroundColor
+            ))
+        )
+    }()
+
+    let presentationStrings = PresentationStrings()
 
     var navigationControllerTheme: NavigationControllerTheme {
         return NavigationControllerTheme(statusBar: self.statusBarStyle, navigationBar: self.navigationBarTheme(), emptyAreaColor: self.chatList.backgroundColor)
