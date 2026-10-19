@@ -115,6 +115,9 @@ private struct ThemeBox: Equatable {
 /// What every screen needs: the data store and the theme.
 final class AppContext {
     private(set) var store: TauStore
+    /// What Telegram's copied components take as their account context (TelegramAccountContext.swift).
+    let telegram: TauAccountContext
+    let telegramShared: TauSharedAccountContext
     /// Rebuilds the screens on a new store, after the server address changed.
     var replaceStore: ((TauStore) -> Void)?
     let themeContext: ThemeContext
@@ -125,6 +128,10 @@ final class AppContext {
     }
 
     init(store: TauStore, themeContext: ThemeContext) {
+        let shared = TauSharedAccountContext(presentationData: themeContext.current.presentationData)
+        self.telegramShared = shared
+        self.telegram = TauAccountContext(shared: shared)
+        initializeLegacyComponents(context: self.telegram, strings: themeContext.current.presentationStrings)
         self.store = store
         self.themeContext = themeContext
     }

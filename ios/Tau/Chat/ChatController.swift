@@ -409,25 +409,29 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
     // MARK: - Attachments
 
+    /// Telegram's attachment menu (TelegramAttachmentMenu.swift); files and the full camera use the system pickers.
     private func openAttachments() {
         self.controllerNode.inputPanelNode.deactivateInput()
-        let picker = AttachmentPickerController(theme: self.theme, completion: { [weak self] result in
+        let caption = self.controllerNode.inputPanelNode.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let menu = makeTelegramAttachmentMenu(context: self.context.telegram, presentationData: self.theme.presentationData, completion: { [weak self] result in
             guard let self else {
                 return
             }
             switch result {
-            case let .images(images):
+            case let .photos(images, pickedCaption):
                 guard !images.isEmpty else {
                     return
                 }
                 let attachments = images.map { MessageAttachment(id: self.context.store.mintAttachmentId(), kind: .image($0)) }
-                let caption = self.controllerNode.inputPanelNode.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                self.controllerNode.inputPanelNode.setText("")
-                self.send(text: caption, attachments: attachments)
-            case .file:
+                let text = pickedCaption.isEmpty ? caption : pickedCaption
+                if !text.isEmpty {
+                    self.controllerNode.inputPanelNode.setText("")
+                }
+                self.send(text: text, attachments: attachments)
+            case .files:
                 let documentPicker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
                 documentPicker.delegate = self
-                self.present(documentPicker, animated: true)
+                self.view.window?.rootViewController?.present(documentPicker, animated: true)
             case .camera:
                 guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
                     self.controllerNode.showToast("No camera on this device")
@@ -436,10 +440,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 let camera = UIImagePickerController()
                 camera.sourceType = .camera
                 camera.delegate = self
-                self.present(camera, animated: true)
+                self.view.window?.rootViewController?.present(camera, animated: true)
             }
         })
-        self.present(picker, in: .window(.root))
+        self.present(menu, in: .window(.root))
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {

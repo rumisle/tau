@@ -1287,7 +1287,8 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 self.dismissInput()
             }
             
-            if controller.explicitMultipleSelection {
+            // tau: without the full-screen gallery, a tap selects, as in explicit multiple selection.
+            if controller.explicitMultipleSelection || true {
                 let asset = fetchResult[index]
                 if let selectableItem = TGMediaAsset(phAsset: asset), let selectionContext = interaction.selectionState {
                     let value = !selectionContext.isIdentifierSelected(selectableItem.uniqueIdentifier)

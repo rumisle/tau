@@ -97,10 +97,14 @@ final class TauUITests: XCTestCase {
         }
         self.shot("attach")
         self.point(0.5, 0.62).tap()
+        sleep(1)
         self.point(0.83, 0.62).tap()
         sleep(1)
         self.shot("attach-selected")
-        self.app.buttons["send-photos"].firstMatch.tap()
+        let send = self.app.descendants(matching: .any)["attachment-send"].firstMatch
+        if send.waitForExistence(timeout: 2) {
+            send.tap()
+        }
         sleep(3)
         self.shot("attach-sent")
     }

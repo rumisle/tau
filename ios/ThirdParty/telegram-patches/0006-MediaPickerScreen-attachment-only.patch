@@ -118,7 +118,17 @@
                  }
              }
          }
-@@ -1404,37 +1336,7 @@
+@@ -1355,7 +1287,8 @@
+                 self.dismissInput()
+             }
+             
+-            if controller.explicitMultipleSelection {
++            // tau: without the full-screen gallery, a tap selects, as in explicit multiple selection.
++            if controller.explicitMultipleSelection || true {
+                 let asset = fetchResult[index]
+                 if let selectableItem = TGMediaAsset(phAsset: asset), let selectionContext = interaction.selectionState {
+                     let value = !selectionContext.isIdentifierSelected(selectableItem.uniqueIdentifier)
+@@ -1404,37 +1337,7 @@
              
              self.openingMedia = true
              
@@ -157,7 +167,7 @@
          }
          
          fileprivate func openSelectedMedia(item: TGMediaSelectableItem, immediateThumbnail: UIImage?) {
-@@ -1451,31 +1353,7 @@
+@@ -1451,31 +1354,7 @@
              }
              
              self.openingMedia = true
@@ -190,17 +200,17 @@
          }
          
          fileprivate func openDraft(draft: MediaEditorDraft, immediateThumbnail: UIImage?) {
-@@ -1875,9 +1753,6 @@
+@@ -1874,9 +1753,6 @@
+             
              if let cameraRect {
                  cutoutRects.append(cameraRect)
-             }
+-            }
 -            if let _ = self.avatarEditorPreviewView {
 -                cutoutRects.append(CGRect(x: cameraRect != nil ? cameraRect!.maxX + itemSpacing : layout.safeInsets.left, y: 0.0, width: itemWidth, height: itemWidth))
--            }
+             }
              
              var itemHeight = itemWidth
-             if case let .assets(_, mode) = controller.subject, case .story = mode {
-@@ -1904,10 +1779,6 @@
+@@ -1904,10 +1780,6 @@
                  }
              })
              
@@ -211,7 +221,7 @@
              
              if let selectionNode = self.selectionNode, let controller = self.controller {
                  let selectionTransition = selectionNode.supernode == nil ? .immediate : transition
-@@ -3057,32 +2928,6 @@
+@@ -3057,32 +2929,6 @@
      
      @objc private func selectPressed() {
          let context = self.context
@@ -244,7 +254,7 @@
          
          self.explicitMultipleSelection = true
          self.controllerNode.setupSelectionGesture(force: true)
-@@ -3265,18 +3110,7 @@
+@@ -3265,18 +3111,7 @@
                                      return
                                  }
                                  
@@ -264,19 +274,10 @@
                              })))
                          }
                      }
-@@ -3657,575 +3491,15 @@
-         mediaPickerController.customSelection = { controller, result in
-             completion(result)
-             controller.dismiss(animated: true)
--        }
--        present(mediaPickerController, mediaPickerController.mediaPickerContext)
--        return true
--    }
--    controller.navigationPresentation = .flatModal
--    controller.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
--    return controller
--}
--
+@@ -3666,566 +3501,6 @@
+     return controller
+ }
+ 
 -public func storyMediaPickerController(
 -    context: AccountContext,
 -    isDark: Bool,
@@ -473,7 +474,7 @@
 -                    })
 -                }
 -            }
-         }
+-        }
 -        mediaPickerController.createFromScratch = { [weak controller] in
 -            completion(nil, nil, .zero, nil, false, { _ in return nil }, {
 -            })
@@ -556,17 +557,17 @@
 -                }
 -            }
 -        }
-         present(mediaPickerController, mediaPickerController.mediaPickerContext)
-         return true
-     }
+-        present(mediaPickerController, mediaPickerController.mediaPickerContext)
+-        return true
+-    }
 -    controller.willDismiss = {
 -        dismissed()
 -    }
-     controller.navigationPresentation = .flatModal
-     controller.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
-     return controller
- }
- 
+-    controller.navigationPresentation = .flatModal
+-    controller.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
+-    return controller
+-}
+-
 -public func avatarMediaPickerController(
 -    context: AccountContext,
 -    peerType: PeerType,

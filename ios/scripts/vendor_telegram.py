@@ -216,15 +216,28 @@ ANIMATIONS = [
 PATCHES = os.path.join(ROOT, "ios", "ThirdParty", "telegram-patches")
 
 
+def referenced_images() -> list[str]:
+    """Every image name a copied Swift source loads with UIImage(bundleImageName:), plus IMAGES."""
+    import re
+    names = set(IMAGES)
+    pattern = re.compile(r'bundleImageName:\s*"([^"]+)"')
+    for root, _, filenames in os.walk(DEST):
+        for filename in filenames:
+            if filename.endswith(".swift"):
+                names.update(pattern.findall(open(os.path.join(root, filename), errors="ignore").read()))
+    return sorted(names)
+
+
 def copy_images() -> None:
     catalog = os.path.join(SOURCE, "submodules", "TelegramUI", "Images.xcassets")
     target_catalog = os.path.join(DEST, "Images.xcassets")
     os.makedirs(target_catalog)
     with open(os.path.join(target_catalog, "Contents.json"), "w") as f:
         f.write('{\n  "info" : {\n    "author" : "xcode",\n    "version" : 1\n  }\n}\n')
-    for name in IMAGES:
+    for name in referenced_images():
         if not os.path.isdir(os.path.join(catalog, name + ".imageset")):
-            print(f"warning: no image {name}")
+            if name in IMAGES:
+                print(f"warning: no image {name}")
             continue
         # Namespace folders carry a Contents.json that makes "Chat/Message/X" a valid image name.
         parts = name.split("/")
@@ -450,6 +463,10 @@ let package = Package(
     os.makedirs(os.path.join(resources, "en.lproj"))
     shutil.copy2(os.path.join(SOURCE, "Telegram", "Telegram-iOS", "en.lproj", "Localizable.strings"), os.path.join(resources, "en.lproj", "Localizable.strings"))
     shutil.move(os.path.join(DEST, "Telegram", "GeneratedPresentationStrings", "Resources", "PresentationStrings.data"), os.path.join(resources, "PresentationStrings.data"))
+    # LegacyComponents loads its images from this bundle (TGComponentsImageNamed) and an asset catalog.
+    legacy = os.path.join(SOURCE, "submodules", "LegacyComponents")
+    shutil.copytree(os.path.join(legacy, "Resources", "LegacyComponentsResources.bundle"), os.path.join(resources, "LegacyComponentsResources.bundle"), ignore=shutil.ignore_patterns(".*"))
+    shutil.copytree(os.path.join(legacy, "LegacyImages.xcassets"), os.path.join(DEST, "LegacyImages.xcassets"))
     apply_patches()
     print(f"{len(rules)} modules, {total} sources, {len(SHIMS)} shims. Telegram-iOS {revision} -> {os.path.relpath(DEST, ROOT)}")
 

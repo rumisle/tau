@@ -51,7 +51,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         self.mainWindow.viewController = navigationController
 
+        context.telegramShared.mainWindow = self.mainWindow
         self.themeDisposable = (themeContext.theme |> deliverOnMainQueue).start(next: { theme in
+            context.telegramShared.update(presentationData: theme.presentationData)
             hostView.containerView.backgroundColor = theme.chatList.backgroundColor
             navigationController.updateTheme(theme.navigationControllerTheme)
             // System controls (keyboard, menus) follow the theme; with Auto-Night they follow the phone, which drives it.
