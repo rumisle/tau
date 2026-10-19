@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import { Connection } from "./connection.ts";
 import { Dialogs } from "./dialogs.ts";
 import type { Host } from "./host.ts";
+import { Titler } from "./titles.ts";
 
 export type ServerOptions = {
 	host?: string;
@@ -21,6 +22,7 @@ export type Server = {
 
 export async function serve(host: Host, options: ServerOptions = {}): Promise<Server> {
 	const dialogs = new Dialogs(host);
+	const titler = new Titler(host);
 	const connections = new Set<Connection>();
 	const wss = new WebSocketServer({
 		host: options.host ?? "127.0.0.1",
@@ -54,6 +56,7 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 			for (const client of wss.clients) client.terminate();
 			await Promise.allSettled([...connections].map((connection) => connection.close()));
 			dialogs.close();
+			titler.close();
 			await new Promise<void>((resolve) => wss.close(() => resolve()));
 		},
 	};

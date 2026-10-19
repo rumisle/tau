@@ -136,13 +136,16 @@ export class Connection {
 				return { dialogs: await this.#dialogs.list(context) };
 			case "conversation.create": {
 				const title = str(params, "title", true);
+				const autoTitle = params.autoTitle === true;
 				const patch = obj(params, "agent") ?? {};
 				const conversation = await harness.createConversation(
 					{
 						ownership: { kind: "ownerless" },
 						agent: await agentChange({ model: this.#host.defaultModel, ...patch }),
 						init: async (tx, id) => {
-							if (title !== undefined) (await tx.doc(MetaDoc, id)).title = title;
+							const meta = await tx.doc(MetaDoc, id);
+							if (title !== undefined) meta.title = title;
+							if (autoTitle) meta.autoTitle = true;
 						},
 					},
 					context,

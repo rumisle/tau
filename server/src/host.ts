@@ -23,9 +23,15 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
+import { Subagent } from "./subagent.ts";
 
 /** Per-conversation metadata the chat list shows. */
-export type MetaState = { title?: string; createdAt?: number };
+export type MetaState = {
+	title?: string;
+	createdAt?: number;
+	/** The server replaces the title after the first answer (src/titles.ts). */
+	autoTitle?: boolean;
+};
 export const MetaDoc = defineDoc<MetaState>({
 	kind: "tau.meta",
 	version: 1,
@@ -80,6 +86,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 
 	const registry = createRegistry();
 	registry.install(CodingTools);
+	registry.install(Subagent);
 	registry.install(
 		defineExtension({
 			name: "tau",
