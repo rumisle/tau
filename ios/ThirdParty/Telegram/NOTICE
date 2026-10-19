@@ -1,0 +1,2 @@
+These modules are copied from Telegram-iOS (https://github.com/TelegramMessenger/Telegram-iOS), licensed under GPLv2,
+at the revision in REVISION. Modules that carry their own LICENSE file (AsyncDisplayKit: Apache 2.0, from Texture) keep it.

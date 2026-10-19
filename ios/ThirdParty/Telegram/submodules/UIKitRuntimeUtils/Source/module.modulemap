@@ -1,0 +1,12 @@
+module UIKitRuntimeUtils {
+    header "UIKitRuntimeUtils/NSBag.h"
+    header "UIKitRuntimeUtils/NSWeakReference.h"
+    header "UIKitRuntimeUtils/NotificationCenterUtils.h"
+    header "UIKitRuntimeUtils/UIBarButtonItem+Proxy.h"
+    header "UIKitRuntimeUtils/UIButton+LegacyAppearance.h"
+    header "UIKitRuntimeUtils/UIKitUtils.h"
+    header "UIKitRuntimeUtils/UIMenuItem+Icons.h"
+    header "UIKitRuntimeUtils/UINavigationItem+Proxy.h"
+    header "UIKitRuntimeUtils/UIViewController+Navigation.h"
+    header "UIKitRuntimeUtils/UIWindow+OrientationChange.h"
+}

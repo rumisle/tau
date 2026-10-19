@@ -1,0 +1,48 @@
+--- a/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
++++ b/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
+@@ -5,10 +5,7 @@
+ import CoreText
+ import AppBundle
+ import ComponentFlow
+-import TextFormat
+ import MessageInlineBlockBackgroundView
+-import InvisibleInkDustNode
+-import EmojiTextAttachmentView
+ 
+ private let defaultFont = UIFont.systemFont(ofSize: 15.0)
+ 
+@@ -3406,11 +3403,8 @@
+                     copySublayer.opacity = sublayer.opacity
+                     copySublayer.isHidden = sublayer.isHidden
+                     
+-                    if let sublayer = sublayer as? InlineStickerItemLayer {
+-                        sublayer.mirrorLayer = copySublayer
+-                    } else {
+-                        copySublayer.contents = sublayer.contents
+-                    }
++                    // tau: no custom emoji layers to mirror.
++                    copySublayer.contents = sublayer.contents
+                     
+                     copyContentsLayer.addSublayer(copySublayer)
+                 }
+@@ -3570,3 +3564,20 @@
+     let endEndPoint = CGPoint(x: (gradientLayer.startPoint.x + radius.width) * 1.0, y: (gradientLayer.startPoint.y + radius.height) * 1.0)
+     gradientLayer.endPoint = endEndPoint
+ }
++
++// tau: spoiler dust (InvisibleInkDustNode) needs LegacyComponents. This stand-in has its interface and draws nothing,
++// so spoilers render as plain text.
++private final class InvisibleInkDustNode: ASDisplayNode {
++    init(textNode: ASDisplayNode?, enableAnimations: Bool) {
++        super.init()
++    }
++
++    func update(size: CGSize, color: UIColor, textColor: UIColor, rects: [CGRect], wordRects: [CGRect]) {
++    }
++
++    func update(revealed: Bool, animated: Bool) {
++    }
++
++    func revealWithoutMaskAtLocation(_ location: CGPoint) {
++    }
++}

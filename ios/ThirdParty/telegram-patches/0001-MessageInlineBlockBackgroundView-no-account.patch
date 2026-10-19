@@ -1,0 +1,153 @@
+--- a/submodules/TelegramUI/Components/Chat/MessageInlineBlockBackgroundView/Sources/MessageInlineBlockBackgroundView.swift
++++ b/submodules/TelegramUI/Components/Chat/MessageInlineBlockBackgroundView/Sources/MessageInlineBlockBackgroundView.swift
+@@ -2,12 +2,7 @@
+ import UIKit
+ import Display
+ import HierarchyTrackingLayer
+-import TelegramCore
+-import AnimationCache
+-import MultiAnimationRenderer
+ import SwiftSignalKit
+-import AccountContext
+-import EmojiTextAttachmentView
+ 
+ private let radius: CGFloat = 4.0
+ private let lineWidth: CGFloat = 3.0
+@@ -181,22 +176,11 @@
+     })!.withRenderingMode(.alwaysTemplate)
+ }
+ 
+-private final class PatternContentsTarget: MultiAnimationRenderTarget {
+-    private let imageUpdated: () -> Void
++// tau: custom emoji patterns need a Telegram account to load; the target never receives contents.
++private final class PatternContentsTarget {
++    var contents: Any?
+     
+     init(imageUpdated: @escaping () -> Void) {
+-        self.imageUpdated = imageUpdated
+-        
+-        super.init()
+-    }
+-    
+-    required init(coder: NSCoder) {
+-        preconditionFailure()
+-    }
+-    
+-    override func transitionToContents(_ contents: AnyObject, didLoop: Bool) {
+-        self.contents = contents
+-        self.imageUpdated()
+     }
+ }
+ 
+@@ -422,15 +406,11 @@
+ 
+ public final class MessageInlineBlockBackgroundView: UIView {
+     public final class Pattern: Equatable {
+-        public let context: AccountContext
+         public let fileId: Int64
+-        public let file: TelegramMediaFile?
+         public let emptyCorner: Bool
+         
+-        public init(context: AccountContext, fileId: Int64, file: TelegramMediaFile?, emptyCorner: Bool = false) {
+-            self.context = context
++        public init(fileId: Int64, emptyCorner: Bool = false) {
+             self.fileId = fileId
+-            self.file = file
+             self.emptyCorner = emptyCorner
+         }
+         
+@@ -438,13 +418,7 @@
+             if lhs === rhs {
+                 return true
+             }
+-            if lhs.context !== rhs.context {
+-                return false
+-            }
+             if lhs.fileId != rhs.fileId {
+-                return false
+-            }
+-            if lhs.file?.fileId != rhs.file?.fileId {
+                 return false
+             }
+             if lhs.emptyCorner != rhs.emptyCorner {
+@@ -520,7 +494,6 @@
+     
+     private var patternContentsTarget: PatternContentsTarget?
+     private var patternContentLayers: [SimpleLayer] = []
+-    private var patternFile: TelegramMediaFile?
+     private var patternFileDisposable: Disposable?
+     private var patternImage: UIImage?
+     private var patternImageDisposable: Disposable?
+@@ -573,36 +546,6 @@
+     }
+     
+     private func loadPatternFromFile() {
+-        guard let pattern = self.params?.pattern else {
+-            return
+-        }
+-        guard let patternContentsTarget = self.patternContentsTarget else {
+-            return
+-        }
+-        guard let patternFile = self.patternFile else {
+-            return
+-        }
+-        self.patternImageDisposable = pattern.context.animationRenderer.loadFirstFrame(
+-            target: patternContentsTarget,
+-            cache: pattern.context.animationCache, itemId: "reply-pattern-\(patternFile.fileId)",
+-            size: CGSize(width: 64, height: 64),
+-            fetch: animationCacheFetchFile(
+-                postbox: pattern.context.account.postbox,
+-                userLocation: .other,
+-                userContentType: .sticker,
+-                resource: .media(media: .standalone(media: patternFile), resource: patternFile.resource),
+-                type: AnimationCacheAnimationType(file: patternFile),
+-                keyframeOnly: false,
+-                customColor: .white,
+-                lottieSettings: pattern.context.lottieRenderingSettings
+-            ),
+-            completion: { [weak self] _, _ in
+-                guard let self else {
+-                    return
+-                }
+-                self.updatePatternLayerImages()
+-            }
+-        )
+     }
+     
+     private func updatePatternLayerImages() {
+@@ -686,27 +629,9 @@
+                 }
+                 
+                 if previousParams?.pattern?.fileId != pattern.fileId {
+-                    self.patternFile = nil
+                     self.patternFileDisposable?.dispose()
+                     self.patternFileDisposable = nil
+                     self.patternImageDisposable?.dispose()
+-                    
+-                    if let file = pattern.file {
+-                        self.patternFile = file
+-                        self.loadPatternFromFile()
+-                    } else {
+-                        let fileId = pattern.fileId
+-                        self.patternFileDisposable = (pattern.context.engine.stickers.resolveInlineStickers(fileIds: [pattern.fileId])
+-                        |> deliverOnMainQueue).startStrict(next: { [weak self] files in
+-                            guard let self else {
+-                                return
+-                            }
+-                            if let file = files[fileId] {
+-                                self.patternFile = file
+-                                self.loadPatternFromFile()
+-                            }
+-                        })
+-                    }
+                 }
+             } else {
+                 self.layer.masksToBounds = false
+@@ -714,7 +639,6 @@
+                 self.patternContentsTarget = nil
+                 self.patternFileDisposable?.dispose()
+                 self.patternFileDisposable = nil
+-                self.patternFile = nil
+             }
+         }
+         
