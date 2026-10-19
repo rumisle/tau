@@ -24,7 +24,8 @@ public final class AttachmentTextInputPanelNode: ASDisplayNode, UITextViewDelega
     public var textChanged: ((NSAttributedString) -> Void)?
 
     public var inputPanelBottomSpacing: CGFloat
-    public private(set) var additionalInputHeight: CGFloat = 0.0
+    /// In Telegram, the height of an emoji or media input shown in place of the keyboard; tau shows none.
+    public let additionalInputHeight: CGFloat = 0.0
     public let opaqueActionButtons = ASDisplayNode()
     public let inputModeView = UIView()
     public let textPlaceholderNode = ImmediateTextNode()
@@ -95,6 +96,9 @@ public final class AttachmentTextInputPanelNode: ASDisplayNode, UITextViewDelega
         }
         let controlSize: CGFloat = 40.0
         let spacing: CGFloat = 6.0
+        // Telegram's panel keeps 8 pt from the screen edges itself when the attachment panel gives it none (focused).
+        let leftInset = max(leftInset, 8.0)
+        let rightInset = max(rightInset, 8.0)
         let insets = AttachmentTextInputPanelNode.insets
         let fieldWidth = width - leftInset - rightInset - controlSize - spacing
         let textWidth = fieldWidth - insets.left - insets.right
@@ -103,7 +107,6 @@ public final class AttachmentTextInputPanelNode: ASDisplayNode, UITextViewDelega
         let textHeight = min(maxTextHeight, ceil((text as NSString).boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], attributes: [.font: AttachmentTextInputPanelNode.font], context: nil).height))
         self.textView.isScrollEnabled = textHeight >= maxTextHeight
         let fieldHeight = max(controlSize, textHeight + insets.top + insets.bottom)
-        self.additionalInputHeight = fieldHeight - controlSize
 
         let isDark = self.theme.overallDarkAppearance
         let componentTransition = ComponentTransition(transition)

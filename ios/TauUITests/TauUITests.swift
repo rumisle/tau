@@ -226,4 +226,34 @@ final class TauUITests: XCTestCase {
         sleep(1)
         self.shot("down-tapped")
     }
+
+    /// Against a running tau server: a photo with a caption goes to the model.
+    func testServerPhoto() {
+        self.launch(["-theme", "light", "-openChat", "3"])
+        sleep(2)
+        self.app.buttons["attach"].firstMatch.tap()
+        sleep(2)
+        self.point(0.5, 0.62).tap()
+        sleep(1)
+        self.point(0.5, 0.955).tap()
+        sleep(1)
+        self.app.typeText("What is in this photo? One sentence.")
+        let send = self.app.descendants(matching: .any)["attachment-send"].firstMatch
+        if send.waitForExistence(timeout: 2) {
+            send.tap()
+        }
+        sleep(12)
+        self.shot("server-photo")
+    }
+
+    func testCaptionKeyboard() {
+        self.launch(["-mock", "YES", "-theme", "light", "-openChat", "1"])
+        self.app.buttons["attach"].firstMatch.tap()
+        sleep(2)
+        self.point(0.5, 0.62).tap()
+        sleep(1)
+        self.point(0.4, 0.955).tap()
+        sleep(2)
+        self.shot("caption-keyboard")
+    }
 }
