@@ -99,6 +99,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         Queue.mainQueue().after(0.35) { [weak self] in
             self?.readyPromise.set(.single(true))
         }
+        // The position also survives the app being suspended and killed with the chat open.
+        NotificationCenter.default.addObserver(self, selector: #selector(self.saveScrollState), name: UIApplication.didEnterBackgroundNotification, object: nil)
         node.sendMessage = { [weak self] text in
             self?.send(text: text, attachments: [])
         }
@@ -177,6 +179,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        self.saveScrollState()
+    }
+
+    @objc private func saveScrollState() {
         if !self.isPreview && self.isNodeLoaded {
             self.context.store.setScrollState(self.controllerNode.currentScrollState(), for: self.conversationId)
         }

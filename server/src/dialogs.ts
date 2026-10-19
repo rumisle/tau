@@ -168,10 +168,16 @@ function previewText(entry: EntryRecord, message: Message | undefined): string {
 	}
 	if (message === undefined) return typeof entry.data === "string" ? entry.data : entry.kind;
 	switch (message.role) {
-		case "user":
-			return typeof message.content === "string"
-				? message.content
-				: message.content.map((part) => (part.type === "text" ? part.text : "[image]")).join(" ");
+		case "user": {
+			if (typeof message.content === "string") return message.content;
+			// A caption stands for its photos, as in Telegram's chat list; photos alone read "Photo".
+			const text = message.content
+				.flatMap((part) => (part.type === "text" ? [part.text] : []))
+				.join(" ");
+			if (text.trim() !== "") return text;
+			const images = message.content.filter((part) => part.type === "image").length;
+			return images > 1 ? `${images} Photos` : "Photo";
+		}
 		case "assistant": {
 			const text = message.content
 				.filter((part) => part.type === "text")
