@@ -38,7 +38,9 @@ Error codes: `bad_request`, `not_found`, `busy`, `unauthorized`, `internal`.
 ## Methods
 
 ### `hello`
-`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel?: ModelRef }`
+`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultCwd: string, home: string }`
+
+`defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
 
 Must be the first request. A different `protocol` is rejected.
 
@@ -46,6 +48,17 @@ Must be the first request. A different `protocol` is rejected.
 `{}` -> `{ models: { provider, id, name, reasoning, contextWindow, input: ("text"|"image")[] }[] }`
 
 Models the server has credentials for.
+
+### `fs.list`
+`{ path?: string, hidden?: boolean }` -> `{ path, parent?, entries: DirEntry[], truncated?: true }`
+
+```ts
+type DirEntry = { name: string; kind: "dir" | "file" | "link" | "other"; git?: true }; // git: a repository root
+```
+
+One directory of the server's file system, for picking a conversation's `cwd`. `path` is absolute or starts with `~`;
+default the home directory. Directories come first; links to directories are `dir`. Dotfiles only with `hidden`. At most
+2000 entries. `parent` is absent at `/`.
 
 ### `dialogs.subscribe`
 `{}` -> `{ dialogs: Dialog[] }`, then `dialog` events.
@@ -56,6 +69,7 @@ type Dialog = {
   title?: string;
   createdAt?: number;                 // epoch ms
   last?: EntrySummary;                // newest entry; dialogs sort by last.id descending
+  agent: { model?: ModelRef; cwd: string }; // effective model and working directory
   busy: boolean;                      // a run is going
 };
 type EntrySummary = { id: number; kind: string; role?: string; text: string; timestamp?: number };
@@ -81,7 +95,9 @@ type AgentPatch = {
 };
 ```
 
-`null` clears a field back to the server default.
+`null` clears a field back to the server default. `cwd` must be an existing directory, absolute or starting with `~`;
+it is stored absolute, and an invalid one fails the request with `bad_request`. A changed `cwd` applies from the next
+tool call, also within a running turn.
 
 ### `conversation.rename`
 `{ conversationId, title }` -> `{}`

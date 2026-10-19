@@ -3,6 +3,7 @@ import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Message } from "@earendil-works/pi-ai";
 import {
+	AgentDoc,
 	type ConversationId,
 	type ConversationRecord,
 	type Cursor,
@@ -45,7 +46,7 @@ export class Dialogs {
 					for (const listener of this.#submissionListeners) listener(change.value);
 				} else if (change.type === "document" && change.conversationId !== undefined) {
 					const kind = change.record.kind;
-					if (kind === MetaDoc.definition.kind) this.#touch(change.conversationId);
+					if (kind === MetaDoc.definition.kind || kind === AgentDoc.definition.kind) this.#touch(change.conversationId);
 					else if (kind === LiveDoc.definition.kind) {
 						// pi.live changes on every streamed chunk; only a run starting or ending matters here.
 						const busy = change.value !== null && (change.value as { run?: unknown }).run !== undefined;
@@ -93,6 +94,7 @@ export class Dialogs {
 		const handle = await harness.conversation(conversation.id, context);
 		const meta = await harness.snapshot(MetaDoc, conversation.id, context);
 		const live = await harness.snapshot(LiveDoc, conversation.id, context);
+		const agent = await harness.snapshot(AgentDoc, conversation.id, context);
 		let last: EntryRecord | undefined;
 		if (handle !== undefined) {
 			const page = await handle.entries({}, 8, undefined, context);
@@ -105,6 +107,10 @@ export class Dialogs {
 			...(meta?.title === undefined ? {} : { title: meta.title }),
 			...(meta?.createdAt === undefined ? {} : { createdAt: meta.createdAt }),
 			...(last === undefined ? {} : { last: summarize(last) }),
+			agent: {
+				...(agent?.model === undefined ? {} : { model: agent.model }),
+				cwd: agent?.cwd ?? this.#host.cwd,
+			},
 			busy,
 		};
 	}

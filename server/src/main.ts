@@ -1,10 +1,11 @@
 // tau server: `node src/main.ts [--db path] [--port n] [--host addr] [--model provider/id] [--cwd dir] [--memory]
 //   [--dev-tps n]` (speed of the dev/echo model, tokens per second)
 // TAU_TOKEN, when set, is required from clients.
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { FileCredentialStore } from "./credentials.ts";
 import { DEV_MODEL } from "./dev-model.ts";
+import { directory } from "./fs.ts";
 import { openHost } from "./host.ts";
 import { serve } from "./server.ts";
 
@@ -25,7 +26,7 @@ const credentials = new FileCredentialStore();
 const host = await openHost({
 	...(values.memory ? {} : { database: values.db }),
 	model,
-	...(values.cwd === undefined ? {} : { cwd: values.cwd }),
+	...(values.cwd === undefined ? {} : { cwd: await directory(values.cwd.startsWith("~") ? values.cwd : resolve(values.cwd)) }),
 	...(values["dev-tps"] === undefined ? {} : { devTokensPerSecond: Number(values["dev-tps"]) }),
 	credentials,
 });

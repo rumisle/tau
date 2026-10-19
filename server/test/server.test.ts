@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { ConversationReplica, type Entry, type Push, RequestError, TauClient } from "../src/client.ts";
 import { type Host, openHost } from "../src/host.ts";
@@ -191,6 +191,57 @@ describe("tau server", () => {
 		assert.equal(dialogs[0].conversation.id, id, "most recent first");
 		assert.equal(dialogs[0].title, "list me");
 		await client.close();
+	});
+
+	test("the client picks a conversation's cwd by browsing the server", async () => {
+		const project = mkdtempSync(join(tmpdir(), "tau-project-"));
+		mkdirSync(join(project, "repo", ".git"), { recursive: true });
+		writeFileSync(join(project, "notes.txt"), "hi");
+		mkdirSync(join(project, ".hidden"));
+		try {
+			const client = await TauClient.connect(server.url);
+			const hello = await client.request("hello", { protocol: 1 });
+			assert.equal(hello.home, homedir());
+			assert.equal((await client.request("fs.list")).path, homedir());
+
+			const listing = await client.request("fs.list", { path: project });
+			assert.equal(listing.path, project);
+			assert.deepEqual(listing.entries, [
+				{ name: "repo", kind: "dir", git: true },
+				{ name: "notes.txt", kind: "file" },
+			]);
+			assert.ok((await client.request("fs.list", { path: project, hidden: true })).entries.some((e: { name: string }) => e.name === ".hidden"));
+			assert.equal(listing.parent, dirname(project));
+			await assert.rejects(client.request("fs.list", { path: join(project, "nope") }), (e: RequestError) => e.code === "bad_request");
+			await assert.rejects(client.request("fs.list", { path: "relative/dir" }), (e: RequestError) => e.code === "bad_request");
+
+			// Create in the picked directory; the tools run there.
+			const repo = join(project, "repo");
+			const { dialog } = await client.request("conversation.create", { agent: { cwd: repo } });
+			assert.equal(dialog.agent.cwd, repo);
+			const replica = new ConversationReplica(dialog.conversation.id);
+			await replica.sync(client);
+			await chat(client, replica, "$ pwd", "pwd");
+			assert.equal(realpathSync(assistantText(replica.ordered().at(-1)).match(/```\n(.*)\n```/)![1]!), realpathSync(repo));
+
+			// A missing directory is refused; a change shows in the dialog.
+			await assert.rejects(
+				client.request("conversation.configure", { conversationId: replica.id, agent: { cwd: join(project, "gone") } }),
+				(e: RequestError) => e.code === "bad_request",
+			);
+			const pushed = new Promise<{ agent: { cwd: string } }>((resolve) =>
+				client.on((push) => {
+					const d = push.dialog as { conversation: { id: number }; agent: { cwd: string } } | undefined;
+					if (push.event === "dialog" && d?.conversation.id === replica.id) resolve(d);
+				}),
+			);
+			await client.request("dialogs.subscribe");
+			await client.request("conversation.configure", { conversationId: replica.id, agent: { cwd: project } });
+			assert.equal((await pushed).agent.cwd, project);
+			await client.close();
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
 	});
 
 	test("whenBusy reject, steer, and abort", async () => {

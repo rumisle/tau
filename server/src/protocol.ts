@@ -24,6 +24,8 @@ export type Dialog = {
 	title?: string;
 	createdAt?: number;
 	last?: EntrySummary;
+	/** Effective model and working directory. */
+	agent: { model?: { provider: string; modelId: string }; cwd: string };
 	busy: boolean;
 };
 

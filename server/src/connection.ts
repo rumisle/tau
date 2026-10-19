@@ -14,7 +14,9 @@ import {
 	type EntryRecord,
 	type SubmissionId,
 } from "@earendil-works/pi-durable";
+import { homedir } from "node:os";
 import type { Dialogs } from "./dialogs.ts";
+import { directory, listDirectory } from "./fs.ts";
 import { type Host, MetaDoc } from "./host.ts";
 import {
 	type AgentPatch,
@@ -122,6 +124,13 @@ export class Connection {
 		switch (method) {
 			case "models.list":
 				return this.#models();
+			case "fs.list": {
+				const hidden = params.hidden;
+				if (hidden !== undefined && typeof hidden !== "boolean") {
+					throw new ProtocolError("bad_request", "hidden must be a boolean");
+				}
+				return listDirectory(str(params, "path", true) ?? homedir(), { hidden: hidden === true });
+			}
 			case "dialogs.subscribe":
 				this.#stopDialogs ??= this.#dialogs.onDialog((dialog) => this.#push({ event: "dialog", dialog }));
 				return { dialogs: await this.#dialogs.list(context) };
@@ -131,7 +140,7 @@ export class Connection {
 				const conversation = await harness.createConversation(
 					{
 						ownership: { kind: "ownerless" },
-						agent: agentChange({ model: this.#host.defaultModel, ...patch }),
+						agent: await agentChange({ model: this.#host.defaultModel, ...patch }),
 						init: async (tx, id) => {
 							if (title !== undefined) (await tx.doc(MetaDoc, id)).title = title;
 						},
@@ -157,7 +166,7 @@ export class Connection {
 			}
 			case "conversation.configure": {
 				const conversation = await this.#conversation(params);
-				await conversation.configure(agentChange(obj(params, "agent") ?? {}), context);
+				await conversation.configure(await agentChange(obj(params, "agent") ?? {}), context);
 				return {};
 			}
 			case "conversation.rename": {
@@ -209,7 +218,13 @@ export class Connection {
 			throw new ProtocolError("bad_request", `Unsupported protocol ${protocol}; server speaks ${PROTOCOL_VERSION}`);
 		}
 		this.#hello = true;
-		return { protocol: PROTOCOL_VERSION, serverId: this.#host.serverId, defaultModel: this.#host.defaultModel };
+		return {
+			protocol: PROTOCOL_VERSION,
+			serverId: this.#host.serverId,
+			defaultModel: this.#host.defaultModel,
+			defaultCwd: this.#host.cwd,
+			home: homedir(),
+		};
 	}
 
 	async #models(): Promise<unknown> {
@@ -455,7 +470,8 @@ function tail<P extends readonly (string | number)[]>(path: P): [string | number
 	return path.slice(1) as [string | number, ...(string | number)[]];
 }
 
-function agentChange(patch: Record<string, unknown> & AgentPatch): AgentChange {
+/** A client agent patch as an AgentChange; a `cwd` must name an existing directory and is stored absolute. */
+async function agentChange(patch: Record<string, unknown> & AgentPatch): Promise<AgentChange> {
 	const change: {
 		model?: AgentChange["model"];
 		thinkingLevel?: AgentChange["thinkingLevel"];
@@ -486,7 +502,7 @@ function agentChange(patch: Record<string, unknown> & AgentPatch): AgentChange {
 		if (value !== null && typeof value !== "string") {
 			throw new ProtocolError("bad_request", `agent.${key} must be a string or null`);
 		}
-		change[key] = value;
+		change[key] = key === "cwd" && value !== null ? await directory(value) : value;
 	}
 	return change;
 }

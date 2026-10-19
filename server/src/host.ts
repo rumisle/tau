@@ -1,6 +1,7 @@
 // The Harness tau serves: storage, models, tools, and tau's own documents.
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { CredentialStore, MutableModels } from "@earendil-works/pi-ai";
@@ -14,6 +15,7 @@ import {
 	type HarnessSettings,
 	type ModelRef,
 	MemoryStorage,
+	type ReportInfo,
 	type Storage,
 	section,
 } from "@earendil-works/pi-durable";
@@ -46,12 +48,12 @@ export type HostOptions = {
 	database?: string;
 	/** Default model for new conversations. */
 	model?: ModelRef;
-	/** Working directory of conversations that set none. */
+	/** Working directory of conversations that set none; default the home directory. */
 	cwd?: string;
 	credentials?: CredentialStore;
 	/** Speed of the dev model, for tests. */
 	devTokensPerSecond?: number;
-	onReport?: (error: unknown) => void;
+	onReport?: (error: unknown, info: ReportInfo) => void;
 };
 
 export type Host = {
@@ -69,7 +71,7 @@ Use the tools to inspect and change files and run commands in the working direct
 
 export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const context = BACKGROUND_CONTEXT;
-	const cwd = options.cwd ?? process.cwd();
+	const cwd = options.cwd ?? homedir();
 	const defaultModel = options.model ?? DEV_MODEL;
 
 	const models = createModels({ credentials: options.credentials });
@@ -107,9 +109,9 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 				const meta = await tx.doc(MetaDoc, conversation.id);
 				meta.createdAt ??= Date.now();
 			},
-			onReport: (error) => {
-				if (options.onReport !== undefined) options.onReport(error);
-				else console.error("[durable]", error);
+			onReport: (error, info) => {
+				if (options.onReport !== undefined) options.onReport(error, info);
+				else console.error(`[durable] ${info.type}:`, error);
 			},
 		},
 		context,
