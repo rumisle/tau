@@ -256,4 +256,25 @@ final class TauUITests: XCTestCase {
         sleep(2)
         self.shot("caption-keyboard")
     }
+
+    /// Against a running tau server: edit the last user message; the chat continues in a fork.
+    func testServerEdit() {
+        self.launch(["-theme", "light", "-openChat", "3"])
+        sleep(2)
+        self.shot("server-edit-before")
+        // The user bubble near the bottom.
+        self.point(0.75, 0.77).press(forDuration: 1.0)
+        sleep(1)
+        let edit = self.app.descendants(matching: .any)["Edit"].firstMatch
+        guard edit.waitForExistence(timeout: 2) else {
+            self.shot("server-edit-nomenu")
+            return
+        }
+        edit.tap()
+        sleep(1)
+        self.app.typeText(" Also, is 1003?")
+        self.app.buttons["send"].firstMatch.tap()
+        sleep(10)
+        self.shot("server-edit-after")
+    }
 }

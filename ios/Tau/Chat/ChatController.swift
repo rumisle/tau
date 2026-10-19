@@ -207,11 +207,15 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private func send(text: String, attachments: [MessageAttachment]) {
         if let messageId = self.editingMessageId {
             // The conversation continues from a fork before the edited message; show the fork in this chat's place.
+            // The keyboard goes down first, while this chat is still on screen to take the layout change.
+            self.controllerNode.inputPanelNode.deactivateInput()
             self.context.store.edit(messageId: messageId, text: text, in: self.conversationId, completion: { [weak self] newId in
                 guard let self, newId != self.conversationId, let navigationController = self.navigationController as? NavigationController else {
                     return
                 }
-                navigationController.replaceTopController(ChatController(context: self.context, conversationId: newId), animated: false)
+                Queue.mainQueue().after(0.3) {
+                    navigationController.replaceTopController(ChatController(context: self.context, conversationId: newId), animated: false)
+                }
             })
             self.endEditing(clearText: false)
         } else {
