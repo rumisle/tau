@@ -574,18 +574,23 @@ final class ChatMessageItemNode: ListViewItemNode {
 
                 // Body: the end of the output, which is where a command says how it went.
                 let body = NSMutableAttributedString()
+                if tool?.childConversationId != nil {
+                    // A subagent links to its own transcript first; its answer follows.
+                    body.append(NSAttributedString(string: isActive ? "Working… Open subagent ›\n" : "Open subagent ›\n", font: Font.medium(14.0), textColor: item.theme.accentColor))
+                }
                 let output = (tool?.output ?? message.text).trimmingCharacters(in: .whitespacesAndNewlines)
                 if !output.isEmpty {
                     let lines = output.components(separatedBy: "\n")
-                    let shown = item.isExpanded ? lines.suffix(80) : lines.suffix(isActive ? 4 : 6)
-                    body.append(NSAttributedString(string: (shown.count < lines.count ? "…\n" : "") + shown.joined(separator: "\n"), font: toolFont, textColor: theme.toolCardTextColor))
+                    // Commands say how they went at the end; files and answers are read from the start.
+                    let fromStart = name == "read" || name == "subagent"
+                    let count = item.isExpanded ? 80 : (isActive ? 4 : 6)
+                    let shown = fromStart ? Array(lines.prefix(count)) : Array(lines.suffix(count))
+                    let elided = shown.count < lines.count
+                    let text = fromStart ? shown.joined(separator: "\n") + (elided ? "\n…" : "") : (elided ? "…\n" : "") + shown.joined(separator: "\n")
+                    body.append(NSAttributedString(string: text, font: toolFont, textColor: theme.toolCardTextColor))
                 }
-                if let child = tool?.childConversationId {
-                    _ = child
-                    if body.length > 0 {
-                        body.append(NSAttributedString(string: "\n"))
-                    }
-                    body.append(NSAttributedString(string: "Open subagent ›", font: Font.medium(14.0), textColor: item.theme.accentColor))
+                if body.length > 0, body.string.hasSuffix("\n") {
+                    body.deleteCharacters(in: NSRange(location: body.length - 1, length: 1))
                 }
                 let (textLayout, textApply) = makeToolTextLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? 90 : 8, truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), lineSpacing: 0.1))
 

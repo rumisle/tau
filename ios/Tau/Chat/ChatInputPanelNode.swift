@@ -22,17 +22,35 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     private let micIconView: UIImageView
     private let sendBackgroundView: GlassBackgroundView
     private let sendIconView: UIImageView
+    /// Stops the agent; takes the microphone's place while it works and the field is empty.
+    private let stopBackgroundView: GlassBackgroundView
+    private let stopIconView: UIImageView
     private let accessoryView: EditAccessoryView
 
     var sendMessage: ((String) -> Void)?
     var attachPressed: (() -> Void)?
     var micPressed: (() -> Void)?
+    var stopPressed: (() -> Void)?
+
+    /// The agent is working: the empty field's action is Stop.
+    var isBusy: Bool = false {
+        didSet {
+            if self.isBusy != oldValue {
+                self.requestLayout?(.animated(duration: 0.25, curve: .spring))
+            }
+        }
+    }
     var cancelEditing: (() -> Void)?
     /// The text changed height, the send button appeared, or editing began; the owner lays out again.
     var requestLayout: ((ContainedViewLayoutTransition) -> Void)?
 
     private var currentTextHeight: CGFloat = 0.0
-    private var displaysSend = false
+    private enum Action {
+        case microphone
+        case send
+        case stop
+    }
+    private var action: Action = .microphone
     private var validWidth: CGFloat?
     private(set) var editingText: String?
 
@@ -51,6 +69,9 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.fieldBackgroundView = GlassBackgroundView()
         self.micBackgroundView = GlassBackgroundView()
         self.sendBackgroundView = GlassBackgroundView()
+        self.stopBackgroundView = GlassBackgroundView()
+        self.stopIconView = UIImageView()
+        self.stopIconView.contentMode = .center
         self.attachIconView = UIImageView()
         self.attachIconView.contentMode = .center
         self.micIconView = UIImageView()
@@ -88,6 +109,10 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.micBackgroundView.contentView.addSubview(self.micIconView)
         content.addSubview(self.sendBackgroundView)
         self.sendBackgroundView.contentView.addSubview(self.sendIconView)
+        content.addSubview(self.stopBackgroundView)
+        self.stopBackgroundView.contentView.addSubview(self.stopIconView)
+        self.stopBackgroundView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.stopTapped)))
+        self.stopBackgroundView.alpha = 0.0
 
         self.textView.delegate = self
         self.attachBackgroundView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.attachTapped)))
@@ -98,7 +123,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         }
         self.sendBackgroundView.alpha = 0.0
         self.accessoryView.alpha = 0.0
-        for (view, identifier) in [(self.attachBackgroundView, "attach"), (self.micBackgroundView, "microphone"), (self.sendBackgroundView, "send")] as [(UIView, String)] {
+        for (view, identifier) in [(self.attachBackgroundView, "attach"), (self.micBackgroundView, "microphone"), (self.sendBackgroundView, "send"), (self.stopBackgroundView, "stop")] as [(UIView, String)] {
             view.isAccessibilityElement = true
             view.accessibilityIdentifier = identifier
             view.accessibilityLabel = identifier.capitalized
@@ -119,6 +144,12 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.attachIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconAttachment"), color: chat.panelControlColor)
         self.micIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconMicrophone"), color: chat.panelControlColor)
         self.sendIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/SendIcon"), color: chat.actionControlForegroundColor)
+        self.stopIconView.image = generateImage(CGSize(width: 14.0, height: 14.0), rotatedContext: { size, context in
+            context.clear(CGRect(origin: CGPoint(), size: size))
+            context.setFillColor(chat.actionControlForegroundColor.cgColor)
+            context.addPath(UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: size), cornerRadius: 3.0).cgPath)
+            context.fillPath()
+        })
         self.textView.textColor = chat.inputTextColor
         self.textView.tintColor = self.theme.accentColor
         self.textView.keyboardAppearance = self.theme.overallDarkAppearance ? .dark : .default
@@ -150,6 +181,10 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.requestLayout?(.animated(duration: 0.4, curve: .spring))
     }
 
+    @objc private func stopTapped() {
+        self.stopPressed?()
+    }
+
     @objc private func attachTapped() {
         self.attachPressed?()
     }
@@ -170,11 +205,11 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
 
     func textViewDidChange(_ textView: UITextView) {
         self.placeholderLabel.isHidden = !textView.text.isEmpty
-        let displaysSend = !self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasText = !self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard let width = self.validWidth else {
             return
         }
-        if displaysSend != self.displaysSend || self.measureTextHeight(width: width) != self.currentTextHeight {
+        if hasText != (self.action == .send) || self.measureTextHeight(width: width) != self.currentTextHeight {
             self.requestLayout?(.animated(duration: 0.4, curve: .spring))
         }
     }
@@ -197,9 +232,10 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     /// Lays the panel out in `width` and returns its height.
     func updateLayout(width: CGFloat, transition: ContainedViewLayoutTransition) -> CGFloat {
         self.validWidth = width
-        let displaysSend = !self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let sendChanged = displaysSend != self.displaysSend
-        self.displaysSend = displaysSend
+        let hasText = !self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let action: Action = hasText ? .send : (self.isBusy ? .stop : .microphone)
+        let previousAction = self.action
+        self.action = action
         let size = ChatInputPanelNode.controlSize
         let spacing = ChatInputPanelNode.spacing
         let insets = ChatInputPanelNode.textInsets
@@ -237,17 +273,18 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         // The microphone and the send button share a spot; one replaces the other with Telegram's scale and fade
         // (ChatTextInputActionButtonsNode).
         let actionFrame = CGRect(origin: CGPoint(x: width - size, y: controlsY), size: CGSize(width: size, height: size))
-        for view in [self.micBackgroundView, self.sendBackgroundView] {
+        for view in [self.micBackgroundView, self.sendBackgroundView, self.stopBackgroundView] {
             view.center = actionFrame.center
             view.bounds = CGRect(origin: CGPoint(), size: actionFrame.size)
         }
         self.micBackgroundView.update(size: actionFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .panel), isInteractive: true, transition: componentTransition)
         self.sendBackgroundView.update(size: actionFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .custom(style: .default, color: self.theme.chat.actionControlFillColor)), isInteractive: true, transition: componentTransition)
+        self.stopBackgroundView.update(size: actionFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .custom(style: .default, color: self.theme.chat.actionControlFillColor)), isInteractive: true, transition: componentTransition)
         self.micIconView.frame = CGRect(origin: CGPoint(), size: actionFrame.size)
         self.sendIconView.frame = CGRect(origin: CGPoint(), size: actionFrame.size)
-        if sendChanged && transition.isAnimated {
-            let shown = displaysSend ? self.sendBackgroundView : self.micBackgroundView
-            let hidden = displaysSend ? self.micBackgroundView : self.sendBackgroundView
+        self.stopIconView.frame = CGRect(origin: CGPoint(), size: actionFrame.size)
+        let views: [Action: UIView] = [.microphone: self.micBackgroundView, .send: self.sendBackgroundView, .stop: self.stopBackgroundView]
+        if action != previousAction && transition.isAnimated, let shown = views[action], let hidden = views[previousAction] {
             shown.alpha = 1.0
             hidden.alpha = 0.0
             shown.layer.animateScale(from: 0.2, to: 1.0, duration: 0.25, timingFunction: kCAMediaTimingFunctionSpring)
@@ -255,8 +292,9 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             hidden.layer.animateScale(from: 1.0, to: 0.2, duration: 0.2)
             hidden.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.15)
         } else {
-            self.sendBackgroundView.alpha = displaysSend ? 1.0 : 0.0
-            self.micBackgroundView.alpha = displaysSend ? 0.0 : 1.0
+            for (key, view) in views {
+                view.alpha = key == action ? 1.0 : 0.0
+            }
         }
 
         return panelSize.height

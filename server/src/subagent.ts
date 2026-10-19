@@ -12,6 +12,15 @@ import {
 	type Extension,
 	type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
+import { MetaDoc } from "./host.ts";
+
+function taskTitle(task: string): string {
+	const line = task.replace(/\s+/g, " ").trim();
+	if (line.length <= 48) return line;
+	const cut = line.slice(0, 49);
+	const space = cut.lastIndexOf(" ");
+	return `${(space > 24 ? cut.slice(0, space) : line.slice(0, 48)).replace(/[,;:.\s]+$/, "")}…`;
+}
 
 async function answerText(api: ToolExecutionApi, answer: EntryId, context: Context): Promise<string> {
 	const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);
@@ -36,6 +45,8 @@ export const Subagent: Extension = defineExtension({
 					// A copy of this conversation's agent, without subagents of its own.
 					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
 					await configure(tx, created.id, { extensions: { remove: [Subagent] } });
+					// Named after its task, for the chat that opens it.
+					(await tx.doc(MetaDoc, created.id)).title = taskTitle(args.task);
 					return created.id;
 				}, context);
 				await api.details({ conversationId: child }, context);

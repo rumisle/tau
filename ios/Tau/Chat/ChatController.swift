@@ -120,6 +120,12 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         node.inputPanelNode.micPressed = { [weak self] in
             self?.controllerNode.showToast("Voice input is coming soon")
         }
+        node.inputPanelNode.stopPressed = { [weak self] in
+            guard let self else {
+                return
+            }
+            self.context.store.abort(self.conversationId)
+        }
         node.inputPanelNode.cancelEditing = { [weak self] in
             self?.endEditing(clearText: true)
         }
@@ -134,6 +140,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             }
             self.lastState = state
             self.controllerNode.update(state: state)
+            self.controllerNode.inputPanelNode.isBusy = state.busy
             self.updateTitle(busy: state.busy)
         }))
         self.displayNodeDidLoad()
@@ -410,11 +417,32 @@ final class ChatTitleView: UIView {
 
     func update(title: String, subtitle: String?, isActive: Bool = false) {
         let status: Status? = subtitle.map { isActive ? .working($0) : .info($0) }
-        self.update(titleItems: [AnimatedTextComponent.Item(id: AnyHashable("title"), content: .text(title))], status: status, animated: true)
+        self.fullTitle = title
+        self.update(titleItems: [AnimatedTextComponent.Item(id: AnyHashable("title"), content: .text(self.fitted(title)))], status: status, animated: true)
+    }
+
+    private var fullTitle: String?
+
+    /// AnimatedTextComponent does not truncate; a long conversation title is cut to the capsule's width here.
+    private func fitted(_ title: String) -> String {
+        let maxWidth = max(40.0, self.bounds.width - 24.0)
+        let font = Font.semibold(16.0)
+        func width(_ text: String) -> CGFloat {
+            return ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        }
+        if width(title) <= maxWidth {
+            return title
+        }
+        var characters = Array(title)
+        while !characters.isEmpty && width(String(characters) + "…") > maxWidth {
+            characters.removeLast()
+        }
+        return String(characters).trimmingCharacters(in: .whitespaces) + "…"
     }
 
     /// "N Selected", with N rolling as Telegram's counters do.
     func update(selectedCount: Int) {
+        self.fullTitle = nil
         self.update(titleItems: [
             AnimatedTextComponent.Item(id: AnyHashable("count"), content: .number(selectedCount, minDigits: 1)),
             AnimatedTextComponent.Item(id: AnyHashable("label"), content: .text(" Selected")),
@@ -442,6 +470,9 @@ final class ChatTitleView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if let title = self.fullTitle, self.titleItems.count == 1 {
+            self.titleItems = [AnimatedTextComponent.Item(id: AnyHashable("title"), content: .text(self.fitted(title)))]
+        }
         self.layoutContent(transition: .immediate)
     }
 

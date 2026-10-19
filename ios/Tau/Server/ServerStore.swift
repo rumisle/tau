@@ -341,7 +341,8 @@ final class ServerStore: TauStore {
         }
         draft.isCreating = true
         self.drafts[draftId] = draft
-        var params: JSONObject = ["title": title]
+        // The first message stands in as the title until the server names the conversation after the first answer.
+        var params: JSONObject = ["title": title, "autoTitle": true]
         if let cwd = draft.cwd {
             params["agent"] = ["cwd": cwd]
         }

@@ -6,6 +6,7 @@ import MergeLists
 import ComponentFlow
 import ComponentDisplayAdapters
 import EdgeEffect
+import ActivityIndicator
 import ContextUI
 import TelegramPresentationData
 
@@ -31,6 +32,8 @@ final class ChatListController: ViewController {
     private let context: AppContext
     private var theme: TauTheme
     private let dialogsDisposable = MetaDisposable()
+    private var statusDisposable: Disposable?
+    private let titleView = ChatListTitleView()
     private var themeDisposable: Disposable?
 
     private var controllerNode: ChatListControllerNode {
@@ -43,6 +46,26 @@ final class ChatListController: ViewController {
         // iOS 26 Telegram: glass buttons and a blurred edge instead of a bar.
         super.init(navigationBarPresentationData: context.theme.navigationBarPresentationData())
         self.title = "Chats"
+        self.titleView.update(theme: self.theme)
+        // As Telegram's chat list: the title says when the list may be stale.
+        self.statusDisposable = (context.store.connectionStatus |> deliverOnMainQueue).start(next: { [weak self] status in
+            guard let self else {
+                return
+            }
+            switch status {
+            case .online:
+                self.title = "Chats"
+                self.navigationItem.titleView = nil
+            case .connecting:
+                self.title = ""
+                self.titleView.text = "Connecting…"
+                self.navigationItem.titleView = self.titleView
+            case .updating:
+                self.title = ""
+                self.titleView.text = "Updating…"
+                self.navigationItem.titleView = self.titleView
+            }
+        })
         self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "square.and.pencil")?.withRenderingMode(.alwaysTemplate), style: .plain, target: self, action: #selector(self.composePressed))
         self.statusBar.statusBarStyle = self.theme.statusBarStyleValue
         self.themeDisposable = (context.themeContext.theme |> deliverOnMainQueue).start(next: { [weak self] theme in
@@ -57,6 +80,7 @@ final class ChatListController: ViewController {
     deinit {
         self.dialogsDisposable.dispose()
         self.themeDisposable?.dispose()
+        self.statusDisposable?.dispose()
     }
 
     override func loadDisplayNode() {
@@ -78,6 +102,7 @@ final class ChatListController: ViewController {
         self.theme = theme
         self.statusBar.statusBarStyle = theme.statusBarStyleValue
         self.navigationBar?.updatePresentationData(theme.navigationBarPresentationData(), transition: .immediate)
+        self.titleView.update(theme: theme)
         if self.isNodeLoaded {
             self.controllerNode.updateTheme(theme)
         }
@@ -266,5 +291,43 @@ private final class ChatListContextControllerContentSource: ContextControllerCon
     }
 
     func animatedIn() {
+    }
+}
+
+/// "Connecting…" with Telegram's spinner, in place of the title while the list may be stale (ChatListTitleView).
+final class ChatListTitleView: UIView {
+    private let label = UILabel()
+    private let indicator = ActivityIndicator(type: .custom(.black, 16.0, 1.5, false))
+
+    var text: String = "" {
+        didSet {
+            self.label.text = self.text
+            self.setNeedsLayout()
+        }
+    }
+
+    init() {
+        super.init(frame: CGRect(x: 0.0, y: 0.0, width: 200.0, height: 44.0))
+        self.label.font = Font.semibold(17.0)
+        self.addSubview(self.label)
+        self.addSubview(self.indicator.view)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(theme: TauTheme) {
+        self.label.textColor = theme.navigationBar.primaryTextColor
+        self.indicator.type = .custom(theme.navigationBar.secondaryTextColor, 16.0, 1.5, false)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let labelSize = self.label.sizeThatFits(CGSize(width: self.bounds.width - 30.0, height: 30.0))
+        let total = 16.0 + 8.0 + labelSize.width
+        let x = floor((self.bounds.width - total) / 2.0)
+        self.indicator.view.frame = CGRect(x: x, y: floor((self.bounds.height - 16.0) / 2.0), width: 16.0, height: 16.0)
+        self.label.frame = CGRect(x: x + 24.0, y: floor((self.bounds.height - labelSize.height) / 2.0), width: labelSize.width, height: labelSize.height)
     }
 }
