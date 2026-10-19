@@ -114,10 +114,10 @@ private struct ThemeBox: Equatable {
 
 /// What every screen needs: the data store and the theme.
 final class AppContext {
-    let store: MockStore
+    let store: TauStore
     let themeContext: ThemeContext
 
-    init(store: MockStore, themeContext: ThemeContext) {
+    init(store: TauStore, themeContext: ThemeContext) {
         self.store = store
         self.themeContext = themeContext
     }

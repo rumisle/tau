@@ -195,10 +195,10 @@ final class ChatListItemNode: ListViewItemNode {
                 switch last.role {
                 case .user:
                     prefix = "You: "
-                case .assistant:
+                case .assistant, .thinking:
                     prefix = ""
                 case let .tool(name):
-                    prefix = "\(name): "
+                    prefix = name.isEmpty ? "" : "\(name): "
                 }
                 let flat = (prefix + plainPreview(last.text)).replacingOccurrences(of: "\n", with: " ")
                 textString = NSAttributedString(string: flat, font: textFont, textColor: theme.messageTextColor)

@@ -30,7 +30,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         let themeContext = ThemeContext()
         themeContext.observeSystemStyle(hostView.systemUserInterfaceStyle)
-        let context = AppContext(store: MockStore(), themeContext: themeContext)
+        let context = AppContext(store: makeStore(), themeContext: themeContext)
         self.context = context
 
         let chatList = ChatListController(context: context)
@@ -194,4 +194,15 @@ private final class ApplicationStatusBarHost: StatusBarHost {
         }
         return nil
     }
+}
+
+/// The server from Settings, or canned data with `-mock YES` (UI tests and screenshots).
+private func makeStore() -> TauStore {
+    let defaults = UserDefaults.standard
+    if defaults.bool(forKey: "mock") {
+        return MockStore()
+    }
+    let address = defaults.string(forKey: "server.url") ?? "ws://127.0.0.1:7878"
+    let url = URL(string: address) ?? URL(string: "ws://127.0.0.1:7878")!
+    return ServerStore(url: url, token: defaults.string(forKey: "server.token"))
 }

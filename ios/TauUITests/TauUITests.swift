@@ -27,7 +27,7 @@ final class TauUITests: XCTestCase {
     }
 
     func testChatListPreview() {
-        self.launch(["-theme", "light"])
+        self.launch(["-mock", "YES", "-theme", "light"])
         self.point(0.5, 0.17).press(forDuration: 1.2)
         sleep(1)
         self.shot("list-preview")
@@ -48,7 +48,7 @@ final class TauUITests: XCTestCase {
     }
 
     func testMessageMenuAndSelection() {
-        self.launch(["-theme", "light", "-openChat", "4"])
+        self.launch(["-mock", "YES", "-theme", "light", "-openChat", "4"])
         // The "Compare the three storage backends" bubble.
         self.point(0.75, 0.47).press(forDuration: 1.0)
         sleep(1)
@@ -71,7 +71,7 @@ final class TauUITests: XCTestCase {
     }
 
     func testEdit() {
-        self.launch(["-theme", "dark", "-openChat", "4"])
+        self.launch(["-mock", "YES", "-theme", "dark", "-openChat", "4"])
         self.point(0.75, 0.47).press(forDuration: 1.0)
         sleep(1)
         self.shot("edit-menu")
@@ -85,7 +85,7 @@ final class TauUITests: XCTestCase {
     }
 
     func testAttachmentPicker() {
-        self.launch(["-theme", "light", "-openChat", "1"])
+        self.launch(["-mock", "YES", "-theme", "light", "-openChat", "1"])
         self.app.buttons["attach"].firstMatch.tap()
         sleep(2)
         // The photo library permission prompt, on first run.
@@ -106,7 +106,7 @@ final class TauUITests: XCTestCase {
     }
 
     func testTabsAndSettings() {
-        self.launch(["-theme", "light"])
+        self.launch(["-mock", "YES", "-theme", "light"])
         self.point(0.72, 0.945).tap()
         sleep(1)
         self.shot("tab-settings")
@@ -122,7 +122,7 @@ final class TauUITests: XCTestCase {
     }
 
     func testScrollMemory() {
-        self.launch(["-theme", "light", "-openChat", "5"])
+        self.launch(["-mock", "YES", "-theme", "light", "-openChat", "5"])
         for _ in 0 ..< 3 {
             self.point(0.5, 0.3).press(forDuration: 0.05, thenDragTo: self.point(0.5, 0.85))
         }
@@ -137,14 +137,14 @@ final class TauUITests: XCTestCase {
     }
 
     func testMicrophone() {
-        self.launch(["-theme", "light", "-openChat", "2"])
+        self.launch(["-mock", "YES", "-theme", "light", "-openChat", "2"])
         self.app.buttons["microphone"].firstMatch.tap()
         sleep(1)
         self.shot("microphone")
     }
 
     func testComposeDiscard() {
-        self.launch(["-theme", "light"])
+        self.launch(["-mock", "YES", "-theme", "light"])
         // The compose button, top right.
         self.point(0.9, 0.08).tap()
         sleep(1)
@@ -163,5 +163,21 @@ final class TauUITests: XCTestCase {
         self.point(0.1, 0.08).tap()
         sleep(1)
         self.shot("compose-kept")
+    }
+
+    /// Against a running tau server (no -mock): send, then watch the run stream in.
+    func testServerLive() {
+        self.launch(["-theme", "light", "-openChat", "3"])
+        sleep(2)
+        self.point(0.5, 0.955).tap()
+        sleep(1)
+        self.app.typeText("Count the Swift files under ios/Tau with a shell command, then name the three largest.")
+        self.app.buttons["send"].firstMatch.tap()
+        for step in 0 ..< 8 {
+            usleep(1_200_000)
+            self.shot("live-\(step)")
+        }
+        sleep(6)
+        self.shot("live-done")
     }
 }

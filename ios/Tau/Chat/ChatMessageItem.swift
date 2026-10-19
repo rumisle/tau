@@ -5,6 +5,7 @@ import SwiftSignalKit
 import InteractiveTextComponent
 import StreamingTextReveal
 import ChatMessageSelectionNode
+import ActivityIndicator
 
 /// What a message's neighbors need to know about it: who wrote it, so consecutive user bubbles merge.
 private enum ChatHistoryNeighbor: Equatable {
@@ -19,11 +20,14 @@ final class ChatMessageItemInteraction {
     let toggleSelection: (Int) -> Void
     /// A long press on a message: open Telegram's context menu with the message lifted out of the list.
     let openContextMenu: (Int, ChatMessageItemNode, ContextGesture?) -> Void
+    /// A tap on a tool card: open a subagent's conversation, or show more of the output.
+    let openTool: (ChatMessage) -> Void
 
-    init(requestRelayout: @escaping (Int) -> Void, toggleSelection: @escaping (Int) -> Void, openContextMenu: @escaping (Int, ChatMessageItemNode, ContextGesture?) -> Void) {
+    init(requestRelayout: @escaping (Int) -> Void, toggleSelection: @escaping (Int) -> Void, openContextMenu: @escaping (Int, ChatMessageItemNode, ContextGesture?) -> Void, openTool: @escaping (ChatMessage) -> Void) {
         self.requestRelayout = requestRelayout
         self.toggleSelection = toggleSelection
         self.openContextMenu = openContextMenu
+        self.openTool = openTool
     }
 }
 
@@ -36,13 +40,16 @@ final class ChatMessageItem: ListViewItem {
     let isStreaming: Bool
     /// Nil outside selection mode; otherwise whether this message is selected.
     let selection: Bool?
+    /// A tool card showing its whole output.
+    let isExpanded: Bool
     let interaction: ChatMessageItemInteraction
 
-    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, interaction: ChatMessageItemInteraction) {
+    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, interaction: ChatMessageItemInteraction) {
         self.theme = theme
         self.message = message
         self.isStreaming = isStreaming
         self.selection = selection
+        self.isExpanded = isExpanded
         self.interaction = interaction
     }
 
@@ -50,7 +57,7 @@ final class ChatMessageItem: ListViewItem {
         switch self.message.role {
         case .user:
             return AnyEquatable(ChatHistoryNeighbor.user)
-        case .assistant:
+        case .assistant, .thinking:
             return AnyEquatable(ChatHistoryNeighbor.assistant)
         case .tool:
             return AnyEquatable(ChatHistoryNeighbor.tool)
@@ -62,12 +69,16 @@ final class ChatMessageItem: ListViewItem {
     }
 
     var selectable: Bool {
-        return self.selection != nil
+        return self.selection != nil || self.message.tool != nil
     }
 
     func selected(listView: ListView) {
         listView.clearHighlightAnimated(false)
-        self.interaction.toggleSelection(self.message.id)
+        if self.selection != nil {
+            self.interaction.toggleSelection(self.message.id)
+        } else if self.message.tool != nil {
+            self.interaction.openTool(self.message)
+        }
     }
 
     func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
@@ -452,11 +463,17 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                 })
 
-            case .assistant:
+            case .assistant, .thinking:
                 let mergedTop = above == .assistant || above == .tool
                 let maxTextWidth = contentWidth - freeTextInset * 2.0 - leftShift
-                let style = MarkdownStyle(fontSize: messageFontSize, textColor: theme.freeTextColor, linkColor: theme.linkTextColor, accentColor: item.theme.accentColor)
-                let blocks = MarkdownText.blocks(message.text, style: style)
+                let isThinking = message.role == .thinking
+                // Reasoning is dimmer and smaller, and folds to its start once the answer is written.
+                let style = MarkdownStyle(fontSize: isThinking ? 15.0 : messageFontSize, textColor: isThinking ? theme.freeSecondaryTextColor : theme.freeTextColor, linkColor: theme.linkTextColor, accentColor: item.theme.accentColor)
+                var sourceText = message.text
+                if isThinking && !item.isStreaming && !item.isExpanded && sourceText.count > 240 {
+                    sourceText = String(sourceText.prefix(240)) + "…"
+                }
+                let blocks = MarkdownText.blocks(sourceText, style: style)
                 let tableStyle = ChatTableStyle(borderColor: theme.tableBorderColor, headerBackgroundColor: theme.tableHeaderBackgroundColor)
 
                 var laidOut: [LaidOutBlock] = []
@@ -544,15 +561,42 @@ final class ChatMessageItemNode: ListViewItemNode {
 
             case let .tool(name):
                 let maxWidth = contentWidth - freeTextInset * 2.0 - 24.0 - leftShift
-                let (titleLayout, titleApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: name, font: toolTitleFont, textColor: theme.toolCardTitleColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: 40.0)))
-                let (textLayout, textApply) = makeToolTextLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: message.text, font: toolFont, textColor: theme.toolCardTextColor), maximumNumberOfLines: 6, truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), lineSpacing: 0.1))
+                let tool = message.tool
+                let status = tool?.status ?? .done
+                let isActive = status == .preparing || status == .pending || status == .running
+                // Title: the tool, then what it works on, as a terminal agent prints a call.
+                let title = NSMutableAttributedString(string: name, font: toolTitleFont, textColor: status == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTitleColor)
+                if let summary = tool?.summary, !summary.isEmpty {
+                    title.append(NSAttributedString(string: "  " + summary, font: Font.monospace(13.0), textColor: theme.toolCardTextColor))
+                }
+                let titleWidth = maxWidth - (isActive ? 22.0 : 0.0)
+                let (titleLayout, titleApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: title, maximumNumberOfLines: item.isExpanded ? 6 : 1, truncationType: .end, constrainedSize: CGSize(width: titleWidth, height: .greatestFiniteMagnitude)))
+
+                // Body: the end of the output, which is where a command says how it went.
+                let body = NSMutableAttributedString()
+                let output = (tool?.output ?? message.text).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !output.isEmpty {
+                    let lines = output.components(separatedBy: "\n")
+                    let shown = item.isExpanded ? lines.suffix(80) : lines.suffix(isActive ? 4 : 6)
+                    body.append(NSAttributedString(string: (shown.count < lines.count ? "…\n" : "") + shown.joined(separator: "\n"), font: toolFont, textColor: theme.toolCardTextColor))
+                }
+                if let child = tool?.childConversationId {
+                    _ = child
+                    if body.length > 0 {
+                        body.append(NSAttributedString(string: "\n"))
+                    }
+                    body.append(NSAttributedString(string: "Open subagent ›", font: Font.medium(14.0), textColor: item.theme.accentColor))
+                }
+                let (textLayout, textApply) = makeToolTextLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? 90 : 8, truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), lineSpacing: 0.1))
 
                 let cardInsets = UIEdgeInsets(top: 9.0, left: 12.0, bottom: 10.0, right: 12.0)
+                let bodyHeight = body.length > 0 ? textLayout.size.height + 3.0 : 0.0
                 let cardSize = CGSize(
-                    width: max(titleLayout.size.width, textLayout.size.width) + cardInsets.left + cardInsets.right,
-                    height: titleLayout.size.height + 2.0 + textLayout.size.height + cardInsets.top + cardInsets.bottom
+                    width: max(titleLayout.size.width + (isActive ? 22.0 : 0.0), body.length > 0 ? textLayout.size.width : 0.0) + cardInsets.left + cardInsets.right,
+                    height: titleLayout.size.height + bodyHeight + cardInsets.top + cardInsets.bottom
                 )
-                let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: cardSize.height), insets: UIEdgeInsets(top: 6.0, left: 0.0, bottom: 6.0, right: 0.0))
+                let mergedTop = above == .tool
+                let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: cardSize.height), insets: UIEdgeInsets(top: mergedTop ? 3.0 : 6.0, left: 0.0, bottom: 3.0, right: 0.0))
 
                 return (layout, { animation in
                     guard let self else {
@@ -566,6 +610,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.setTextNodes([])
                     self.setTableNodes([])
                     self.setToolVisible(true)
+                    self.toolTextNode.isHidden = body.length == 0
 
                     self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
                     let cardFrame = CGRect(origin: CGPoint(x: params.leftInset + freeTextInset - 4.0 + leftShift, y: 0.0), size: cardSize)
@@ -575,7 +620,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                     let _ = titleApply()
                     animation.animator.updateFrame(layer: self.toolTitleNode.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top), size: titleLayout.size), completion: nil)
                     let _ = textApply()
-                    animation.animator.updateFrame(layer: self.toolTextNode.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top + titleLayout.size.height + 2.0), size: textLayout.size), completion: nil)
+                    animation.animator.updateFrame(layer: self.toolTextNode.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top + titleLayout.size.height + 3.0), size: textLayout.size), completion: nil)
+                    self.updateToolActivity(isActive: isActive, color: theme.toolCardTextColor, frame: CGRect(x: cardFrame.maxX - cardInsets.right - 14.0, y: cardFrame.minY + cardInsets.top + 1.0, width: 14.0, height: 14.0))
                     self.layoutContainers(size: layout.contentSize)
                     self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                 })
@@ -583,7 +629,32 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
     }
 
+    private var toolActivityNode: ActivityIndicator?
+
+    /// Telegram's activity spinner on a call that is still running.
+    private func updateToolActivity(isActive: Bool, color: UIColor, frame: CGRect) {
+        if isActive {
+            let node: ActivityIndicator
+            if let current = self.toolActivityNode {
+                node = current
+            } else {
+                node = ActivityIndicator(type: .custom(color, 14.0, 1.5, true))
+                self.toolActivityNode = node
+                self.contentNode.addSubnode(node)
+            }
+            node.type = .custom(color, 14.0, 1.5, true)
+            node.frame = frame
+        } else if let node = self.toolActivityNode {
+            self.toolActivityNode = nil
+            node.removeFromSupernode()
+        }
+    }
+
     private func setToolVisible(_ visible: Bool) {
+        if !visible, let node = self.toolActivityNode {
+            self.toolActivityNode = nil
+            node.removeFromSupernode()
+        }
         self.toolBackgroundNode.isHidden = !visible
         self.toolTitleNode.isHidden = !visible
         self.toolTextNode.isHidden = !visible

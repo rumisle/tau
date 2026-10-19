@@ -93,7 +93,7 @@ final class ChatListController: ViewController {
     }
 
     func compose() {
-        let id = self.context.store.createConversation(cwd: "~/work/tau")
+        let id = self.context.store.createConversation(cwd: nil)
         self.open(conversationId: id)
     }
 

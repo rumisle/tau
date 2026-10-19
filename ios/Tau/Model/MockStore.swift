@@ -3,7 +3,7 @@ import SwiftSignalKit
 
 /// In-memory stand-in for the tau server. Sending a message streams a canned answer the way the server does: a partial
 /// message that grows every ~100 ms (one `pi.live` commit each), then a final entry.
-final class MockStore {
+final class MockStore: TauStore {
     private var dialogs: [Int: DialogModel] = [:]
     private var conversations: [Int: ConversationState] = [:]
     private var nextId = 10_000
@@ -85,7 +85,38 @@ final class MockStore {
         return self.promise(id).get()
     }
 
-    func createConversation(cwd: String) -> Int {
+    var connectionStatus: Signal<ConnectionStatus, NoError> {
+        return .single(.online)
+    }
+
+    var serverDescription: String {
+        return "Mock data"
+    }
+
+    func abort(_ id: Int) {
+        self.streams[id]?.invalidate()
+        self.streams[id] = nil
+        if var state = self.conversations[id] {
+            if let streaming = state.streaming {
+                state.messages.append(streaming)
+            }
+            state.streaming = nil
+            state.busy = false
+            self.conversations[id] = state
+            self.publish(id)
+        }
+    }
+
+    func loadOlder(_ id: Int) {
+    }
+
+    func edit(messageId: Int, text: String, in id: Int, completion: @escaping (Int) -> Void) {
+        self.edit(messageId: messageId, text: text, in: id)
+        completion(id)
+    }
+
+    func createConversation(cwd: String?) -> Int {
+        let cwd = cwd ?? "~/work/tau"
         let id = (self.dialogs.keys.max() ?? 0) + 1
         self.conversations[id] = ConversationState(messages: [], streaming: nil, busy: false)
         self.dialogs[id] = DialogModel(id: id, title: "New chat", cwd: cwd, model: "claude-opus-5-5", last: nil, busy: false)
@@ -166,7 +197,7 @@ final class MockStore {
         self.send(text, attachments: attachments, to: id)
     }
 
-    func send(_ text: String, attachments: [MessageAttachment] = [], to id: Int) {
+    func send(_ text: String, attachments: [MessageAttachment], to id: Int) {
         guard var state = self.conversations[id] else {
             return
         }

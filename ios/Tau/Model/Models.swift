@@ -4,6 +4,8 @@ import UIKit
 struct DialogModel: Equatable {
     var id: Int
     var title: String
+    /// A subagent's conversation, owned by a tool call in another one.
+    var parentConversationId: Int? = nil
     /// The conversation's working directory on the server.
     var cwd: String
     var model: String
@@ -26,6 +28,30 @@ enum MessageRole: Equatable {
     case user
     case assistant
     case tool(name: String)
+    /// The model's reasoning before an answer, shown dimmed and folded.
+    case thinking
+}
+
+/// A tool call and, once it finished, its result: one card in the transcript.
+struct ToolCallInfo: Equatable {
+    enum Status: Equatable {
+        /// The model is still writing the arguments.
+        case preparing
+        case pending
+        case running
+        case done
+        case failed
+    }
+
+    var callId: String
+    var name: String
+    /// One line saying what the call does: the command, the file, the subagent's task.
+    var summary: String
+    var status: Status
+    /// The end of the output, while running or once done.
+    var output: String?
+    /// A subagent's conversation, which the card opens.
+    var childConversationId: Int?
 }
 
 /// Something sent with a message: a photo or a file. Images are sent to the model as image content blocks.
@@ -51,6 +77,13 @@ struct ChatMessage: Equatable {
     var text: String
     var date: Date
     var attachments: [MessageAttachment] = []
+    var tool: ToolCallInfo?
+    /// Still being written by the model (`pi.live`).
+    var isStreaming: Bool = false
+    /// A sent message the server has not put in the transcript yet.
+    var isPending: Bool = false
+    /// The entry this row comes from, for forking at it.
+    var entryId: Int?
 }
 
 /// What a chat screen renders: committed entries plus the answer still streaming (`pi.live.generation`).
@@ -59,6 +92,8 @@ struct ConversationState: Equatable {
     /// The partial assistant message while the model streams; replaced by an entry when it finishes.
     var streaming: ChatMessage?
     var busy: Bool
+    /// More history exists before the first message.
+    var hasOlder: Bool = false
 }
 
 /// Where the user left a chat: the message at the bottom of the screen and how far it was scrolled past, as Telegram's

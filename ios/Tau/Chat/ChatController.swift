@@ -97,6 +97,23 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         node.openContextMenu = { [weak self] message, itemNode, gesture in
             self?.openContextMenu(message: message, itemNode: itemNode, gesture: gesture)
         }
+        node.openTool = { [weak self] message in
+            guard let self else {
+                return
+            }
+            if let child = message.tool?.childConversationId {
+                // A subagent's own conversation, live, as any chat.
+                (self.navigationController as? NavigationController)?.pushViewController(ChatController(context: self.context, conversationId: child))
+            } else {
+                self.controllerNode.toggleExpanded(message.id)
+            }
+        }
+        node.loadOlder = { [weak self] in
+            guard let self else {
+                return
+            }
+            self.context.store.loadOlder(self.conversationId)
+        }
         node.inputPanelNode.attachPressed = { [weak self] in
             self?.openAttachments()
         }
@@ -159,7 +176,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
     private func send(text: String, attachments: [MessageAttachment]) {
         if let messageId = self.editingMessageId {
-            self.context.store.edit(messageId: messageId, text: text, in: self.conversationId)
+            // The conversation continues from a fork before the edited message; show the fork in this chat's place.
+            self.context.store.edit(messageId: messageId, text: text, in: self.conversationId, completion: { [weak self] newId in
+                guard let self, newId != self.conversationId, let navigationController = self.navigationController as? NavigationController else {
+                    return
+                }
+                navigationController.replaceTopController(ChatController(context: self.context, conversationId: newId), animated: false)
+            })
             self.endEditing(clearText: false)
         } else {
             self.context.store.send(text, attachments: attachments, to: self.conversationId)

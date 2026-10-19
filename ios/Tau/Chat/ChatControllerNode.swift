@@ -11,19 +11,22 @@ import GlassBackgroundComponent
 /// A transcript row as the list diffs it. List index 0 is the newest message, at the bottom of the inverted list.
 struct ChatHistoryEntry: Comparable, Identifiable {
     let message: ChatMessage
+    /// Position in the transcript; row IDs are stable but not ordered.
+    let index: Int
     let isStreaming: Bool
     let selection: Bool?
+    let isExpanded: Bool
 
     var stableId: Int {
         return self.message.id
     }
 
     static func < (lhs: ChatHistoryEntry, rhs: ChatHistoryEntry) -> Bool {
-        return lhs.message.id > rhs.message.id
+        return lhs.index > rhs.index
     }
 
     static func == (lhs: ChatHistoryEntry, rhs: ChatHistoryEntry) -> Bool {
-        return lhs.message == rhs.message && lhs.isStreaming == rhs.isStreaming && lhs.selection == rhs.selection
+        return lhs.message == rhs.message && lhs.index == rhs.index && lhs.isStreaming == rhs.isStreaming && lhs.selection == rhs.selection && lhs.isExpanded == rhs.isExpanded
     }
 }
 
@@ -59,6 +62,9 @@ final class ChatControllerNode: ASDisplayNode {
     var sendMessage: ((String) -> Void)?
     var messageAction: ((ChatMessage, ChatMessageAction) -> Void)?
     var openContextMenu: ((ChatMessage, ChatMessageItemNode, ContextGesture?) -> Void)?
+    var openTool: ((ChatMessage) -> Void)?
+    /// Scrolled near the oldest loaded message.
+    var loadOlder: (() -> Void)?
     var selectionAction: ((ChatMessageAction) -> Void)?
     var selectionChanged: ((Set<Int>?) -> Void)?
 
@@ -83,6 +89,15 @@ final class ChatControllerNode: ASDisplayNode {
         // Dragging the history away puts the keyboard down, as in Telegram.
         self.historyNode.beganInteractiveDragging = { [weak self] _ in
             self?.inputPanelNode.deactivateInput()
+        }
+        // The list is inverted: the highest visible index is the oldest message on screen.
+        self.historyNode.displayedItemRangeChanged = { [weak self] range, _ in
+            guard let self, let visible = range.visibleRange, let state = self.state, state.hasOlder else {
+                return
+            }
+            if visible.lastIndex >= self.entries.count - 8 {
+                self.loadOlder?()
+            }
         }
         self.inputPanelNode.sendMessage = { [weak self] text in
             self?.sendMessage?(text)
@@ -163,9 +178,15 @@ final class ChatControllerNode: ASDisplayNode {
             return
         }
         let selectedIds = self.selectedIds
-        var entries = state.messages.map { message in ChatHistoryEntry(message: message, isStreaming: false, selection: selectedIds.map { $0.contains(message.id) }) }
+        let expanded = self.expandedIds
+        var messages = state.messages
         if let streaming = state.streaming {
-            entries.append(ChatHistoryEntry(message: streaming, isStreaming: true, selection: nil))
+            var streaming = streaming
+            streaming.isStreaming = true
+            messages.append(streaming)
+        }
+        var entries = messages.enumerated().map { index, message in
+            ChatHistoryEntry(message: message, index: index, isStreaming: message.isStreaming, selection: message.isStreaming ? nil : selectedIds.map { $0.contains(message.id) }, isExpanded: expanded.contains(message.id))
         }
         entries.sort()
 
@@ -212,10 +233,26 @@ final class ChatControllerNode: ASDisplayNode {
             return
         }
         self.openContextMenu?(message, node, gesture)
+    }, openTool: { [weak self] message in
+        self?.openTool?(message)
     })
 
+    /// Tool cards showing their whole output.
+    private(set) var expandedIds = Set<Int>()
+
+    func toggleExpanded(_ id: Int) {
+        if self.expandedIds.contains(id) {
+            self.expandedIds.remove(id)
+        } else {
+            self.expandedIds.insert(id)
+        }
+        if let state = self.state {
+            self.update(state: state)
+        }
+    }
+
     private func item(for entry: ChatHistoryEntry) -> ListViewItem {
-        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, interaction: self.interaction)
+        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, interaction: self.interaction)
     }
 
     /// Re-lays out one row with its current item, animating its height.
