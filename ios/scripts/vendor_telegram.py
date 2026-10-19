@@ -228,6 +228,21 @@ def referenced_images() -> list[str]:
     return sorted(names)
 
 
+def referenced_animations(directory: str) -> list[str]:
+    """ANIMATIONS, plus every bundled Lottie file a copied source names in a string literal."""
+    import re
+    available = {os.path.splitext(f)[0]: f for f in os.listdir(directory) if f.endswith((".json", ".tgs"))}
+    names = set(ANIMATIONS)
+    literal = re.compile(r'"([A-Za-z0-9_]+)"')
+    for root, _, filenames in os.walk(DEST):
+        for filename in filenames:
+            if filename.endswith((".swift", ".m")):
+                for token in literal.findall(open(os.path.join(root, filename), errors="ignore").read()):
+                    if token in available:
+                        names.add(available[token])
+    return sorted(names)
+
+
 def copy_images() -> None:
     catalog = os.path.join(SOURCE, "submodules", "TelegramUI", "Images.xcassets")
     target_catalog = os.path.join(DEST, "Images.xcassets")
@@ -456,8 +471,9 @@ let package = Package(
         f.write(package)
     copy_images()
     os.makedirs(os.path.join(DEST, "Animations"))
-    for name in ANIMATIONS:
-        shutil.copy2(os.path.join(SOURCE, "submodules", "TelegramUI", "Resources", "Animations", name), os.path.join(DEST, "Animations", name))
+    animations_dir = os.path.join(SOURCE, "submodules", "TelegramUI", "Resources", "Animations")
+    for name in referenced_animations(animations_dir):
+        shutil.copy2(os.path.join(animations_dir, name), os.path.join(DEST, "Animations", name))
     # Bundle resources the modules load at runtime: the strings table PresentationStrings reads.
     resources = os.path.join(DEST, "Resources")
     os.makedirs(os.path.join(resources, "en.lproj"))
