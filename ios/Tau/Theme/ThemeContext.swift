@@ -2,43 +2,46 @@ import UIKit
 import Display
 import SwiftSignalKit
 
-/// The app's current theme: Day or Night, following the system unless the user picked one in Settings > Appearance.
+/// The app's current theme, as Telegram picks it: the theme chosen in Settings > Appearance (Classic by default), and
+/// when Auto-Night follows the system, a night theme (Tinted Night by default) while the phone is in dark mode.
 /// Screens subscribe to `theme` and restyle in place, as Telegram's controllers follow `presentationData`.
 final class ThemeContext {
-    enum Mode: String, CaseIterable {
-        case system
-        case light
-        case dark
+    struct Settings: Equatable {
+        var theme: TauTheme.Builtin
+        var autoNight: Bool
+        var nightTheme: TauTheme.Builtin
 
-        var title: String {
-            switch self {
-            case .system:
-                return "System"
-            case .light:
-                return "Day"
-            case .dark:
-                return "Night"
-            }
-        }
+        static let `default` = Settings(theme: .classic, autoNight: true, nightTheme: .tintedNight)
     }
 
-    private static let modeKey = "appearance.mode"
+    private static let settingsKey = "appearance.settings"
 
     private let themePromise: ValuePromise<ThemeBox>
-    private let modePromise: ValuePromise<Mode>
+    private let settingsPromise: ValuePromise<Settings>
     private var systemStyle: WindowUserInterfaceStyle = .light
     private var systemStyleDisposable: Disposable?
 
-    private(set) var mode: Mode
+    private(set) var settings: Settings
     private(set) var current: TauTheme
 
     init() {
-        let mode = Mode(rawValue: UserDefaults.standard.string(forKey: ThemeContext.modeKey) ?? "") ?? .system
-        self.mode = mode
-        let current = ThemeContext.resolve(mode: mode, system: .light)
+        var settings = Settings.default
+        if let stored = UserDefaults.standard.dictionary(forKey: ThemeContext.settingsKey) {
+            if let value = (stored["theme"] as? String).flatMap(TauTheme.Builtin.init(rawValue:)) {
+                settings.theme = value
+            }
+            if let value = stored["autoNight"] as? Bool {
+                settings.autoNight = value
+            }
+            if let value = (stored["nightTheme"] as? String).flatMap(TauTheme.Builtin.init(rawValue:)), value.isDark {
+                settings.nightTheme = value
+            }
+        }
+        self.settings = settings
+        let current = ThemeContext.resolve(settings, system: .light)
         self.current = current
         self.themePromise = ValuePromise(ThemeBox(current), ignoreRepeated: true)
-        self.modePromise = ValuePromise(mode, ignoreRepeated: true)
+        self.settingsPromise = ValuePromise(settings, ignoreRepeated: true)
     }
 
     deinit {
@@ -49,8 +52,8 @@ final class ThemeContext {
         return self.themePromise.get() |> map { $0.theme }
     }
 
-    var modeSignal: Signal<Mode, NoError> {
-        return self.modePromise.get()
+    var settingsSignal: Signal<Settings, NoError> {
+        return self.settingsPromise.get()
     }
 
     /// Follow the window's light/dark appearance.
@@ -64,30 +67,36 @@ final class ThemeContext {
         })
     }
 
-    func setMode(_ mode: Mode) {
-        self.mode = mode
-        UserDefaults.standard.set(mode.rawValue, forKey: ThemeContext.modeKey)
-        self.modePromise.set(mode)
+    func update(_ f: (inout Settings) -> Void) {
+        var settings = self.settings
+        f(&settings)
+        self.settings = settings
+        UserDefaults.standard.set(["theme": settings.theme.rawValue, "autoNight": settings.autoNight, "nightTheme": settings.nightTheme.rawValue], forKey: ThemeContext.settingsKey)
+        self.settingsPromise.set(settings)
         self.apply()
     }
 
+    /// Debug override from the `-theme` launch argument.
+    func force(_ builtin: TauTheme.Builtin) {
+        self.update { settings in
+            settings.theme = builtin
+            settings.autoNight = false
+        }
+    }
+
     private func apply() {
-        let theme = ThemeContext.resolve(mode: self.mode, system: self.systemStyle)
+        let theme = ThemeContext.resolve(self.settings, system: self.systemStyle)
         if theme !== self.current {
             self.current = theme
             self.themePromise.set(ThemeBox(theme))
         }
     }
 
-    private static func resolve(mode: Mode, system: WindowUserInterfaceStyle) -> TauTheme {
-        switch mode {
-        case .system:
-            return system == .dark ? .night : .day
-        case .light:
-            return .day
-        case .dark:
-            return .night
+    private static func resolve(_ settings: Settings, system: WindowUserInterfaceStyle) -> TauTheme {
+        if settings.autoNight, system == .dark, !settings.theme.isDark {
+            return .builtin(settings.nightTheme)
         }
+        return .builtin(settings.theme)
     }
 }
 

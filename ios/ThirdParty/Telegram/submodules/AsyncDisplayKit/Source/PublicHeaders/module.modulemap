@@ -62,4 +62,5 @@ module AsyncDisplayKit {
     header "AsyncDisplayKit/_ASDisplayLayer.h"
     header "AsyncDisplayKit/_ASDisplayView.h"
     header "AsyncDisplayKit/_ASTransitionContext.h"
+    export *
 }

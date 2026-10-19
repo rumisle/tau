@@ -1,3 +1,4 @@
 module MeshTransformApi {
     header "MeshTransformApi/MeshTransformApi.h"
+    export *
 }

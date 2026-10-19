@@ -6,6 +6,8 @@ import MergeLists
 import ComponentFlow
 import ComponentDisplayAdapters
 import EdgeEffect
+import ContextUI
+import TelegramPresentationData
 
 private struct ChatListEntry: Comparable, Identifiable {
     let dialog: DialogModel
@@ -60,11 +62,8 @@ final class ChatListController: ViewController {
     override func loadDisplayNode() {
         self.displayNode = ChatListControllerNode(context: self.context, theme: self.theme, openDialog: { [weak self] dialog in
             self?.open(conversationId: dialog.id)
-        }, previewController: { [weak self] dialog in
-            guard let self else {
-                return nil
-            }
-            return ChatController(context: self.context, conversationId: dialog.id, isPreview: true)
+        }, contextAction: { [weak self] dialog, sourceNode, gesture in
+            self?.openContextMenu(dialog: dialog, sourceNode: sourceNode, gesture: gesture)
         })
         self.dialogsDisposable.set((self.context.store.dialogsSignal() |> deliverOnMainQueue).start(next: { [weak self] dialogs in
             self?.controllerNode.update(dialogs: dialogs)
@@ -102,13 +101,47 @@ final class ChatListController: ViewController {
         let controller = ChatController(context: self.context, conversationId: conversationId)
         (self.navigationController as? NavigationController)?.pushViewController(controller)
     }
+
+    /// Telegram's chat list preview: the chat itself grows out of the row, with actions under it. Tapping the preview
+    /// opens the chat, as ChatListControllerImpl's peerContextAction does.
+    private func openContextMenu(dialog: DialogModel, sourceNode: ContextControllerSourceNode, gesture: ContextGesture?) {
+        let store = self.context.store
+        let strings = self.theme.presentationStrings
+        let chat = ChatController(context: self.context, conversationId: dialog.id, isPreview: true)
+        var items: [ContextMenuItem] = []
+        items.append(.action(ContextMenuActionItem(text: strings.ChatList_Context_MarkAsRead, icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/MarkAsRead"), color: theme.contextMenu.primaryColor)
+        }, action: { _, f in
+            f(.default)
+        })))
+        items.append(.action(ContextMenuActionItem(text: "Duplicate", icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Copy"), color: theme.contextMenu.primaryColor)
+        }, action: { _, f in
+            f(.default)
+            let _ = store.duplicateConversation(dialog.id)
+        })))
+        items.append(.action(ContextMenuActionItem(text: strings.Common_Delete, textColor: .destructive, icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Delete"), color: theme.contextMenu.destructiveColor)
+        }, action: { _, f in
+            f(.default)
+            store.deleteConversation(dialog.id)
+        })))
+        let navigationController = self.navigationController as? NavigationController
+        let source = ChatListContextControllerContentSource(controller: chat, sourceNode: sourceNode, navigationController: navigationController)
+        let contextController = makeContextController(presentationData: self.theme.presentationData, source: .controller(source), items: .single(ContextController.Items(content: .list(items))), gesture: gesture)
+        chat.previewTapped = { [weak self, weak contextController] in
+            contextController?.dismiss(result: .dismissWithoutContent, completion: nil)
+            self?.open(conversationId: dialog.id)
+        }
+        self.presentInGlobalOverlay(contextController)
+    }
 }
 
-final class ChatListControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate {
+final class ChatListControllerNode: ASDisplayNode {
     private let context: AppContext
     private var theme: TauTheme
     private let openDialog: (DialogModel) -> Void
-    private let previewController: (DialogModel) -> ChatController?
+    private let contextAction: (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void
     private let listNode: ListViewImpl
     private let bottomEdgeEffectView = EdgeEffectView()
 
@@ -116,11 +149,11 @@ final class ChatListControllerNode: ASDisplayNode, UIContextMenuInteractionDeleg
     private var pendingDialogs: [DialogModel]?
     private var validLayout: (layout: ContainerViewLayout, navigationHeight: CGFloat)?
 
-    init(context: AppContext, theme: TauTheme, openDialog: @escaping (DialogModel) -> Void, previewController: @escaping (DialogModel) -> ChatController?) {
+    init(context: AppContext, theme: TauTheme, openDialog: @escaping (DialogModel) -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void) {
         self.context = context
         self.theme = theme
         self.openDialog = openDialog
-        self.previewController = previewController
+        self.contextAction = contextAction
         self.listNode = ListViewImpl()
         super.init()
         self.backgroundColor = theme.chatList.backgroundColor
@@ -131,8 +164,6 @@ final class ChatListControllerNode: ASDisplayNode, UIContextMenuInteractionDeleg
         super.didLoad()
         self.bottomEdgeEffectView.isUserInteractionEnabled = false
         self.view.addSubview(self.bottomEdgeEffectView)
-        // Long press a row: a live preview of the chat with actions, as Telegram's chat list context menu.
-        self.listNode.view.addInteraction(UIContextMenuInteraction(delegate: self))
     }
 
     func updateTheme(_ theme: TauTheme) {
@@ -145,7 +176,7 @@ final class ChatListControllerNode: ASDisplayNode, UIContextMenuInteractionDeleg
     }
 
     private func makeItem(_ entry: ChatListEntry) -> ListViewItem {
-        return ChatListItem(theme: self.theme, dialog: entry.dialog, action: self.openDialog)
+        return ChatListItem(theme: self.theme, dialog: entry.dialog, action: self.openDialog, contextAction: self.contextAction)
     }
 
     private func reloadAllItems() {
@@ -193,100 +224,32 @@ final class ChatListControllerNode: ASDisplayNode, UIContextMenuInteractionDeleg
             self.update(dialogs: dialogs)
         }
     }
+}
 
-    // MARK: - Long press preview
+/// As ChatListController.swift's ContextControllerContentSourceImpl: a live controller as the context menu's content,
+/// growing from the row it was opened on.
+private final class ChatListContextControllerContentSource: ContextControllerContentSource {
+    let controller: ViewController
+    weak var sourceNode: ASDisplayNode?
+    let navigationController: NavigationController?
+    let passthroughTouches: Bool = true
 
-    private func dialog(at point: CGPoint, in view: UIView) -> (DialogModel, ChatListItemNode)? {
-        var result: (DialogModel, ChatListItemNode)?
-        self.listNode.forEachItemNode { itemNode in
-            guard result == nil, let itemNode = itemNode as? ChatListItemNode, itemNode.isNodeLoaded, let dialog = itemNode.dialog else {
-                return
-            }
-            if itemNode.bounds.contains(itemNode.view.convert(point, from: view)) {
-                result = (dialog, itemNode)
-            }
-        }
-        return result
+    init(controller: ViewController, sourceNode: ASDisplayNode?, navigationController: NavigationController?) {
+        self.controller = controller
+        self.sourceNode = sourceNode
+        self.navigationController = navigationController
     }
 
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-        guard let view = interaction.view, let (dialog, _) = self.dialog(at: location, in: view) else {
+    func transitionInfo() -> ContextControllerTakeControllerInfo? {
+        let sourceNode = self.sourceNode
+        return ContextControllerTakeControllerInfo(contentAreaInScreenSpace: CGRect(origin: CGPoint(), size: CGSize(width: 10.0, height: 10.0)), sourceNode: { [weak sourceNode] in
+            if let sourceNode {
+                return (sourceNode.view, sourceNode.bounds)
+            }
             return nil
-        }
-        let store = self.context.store
-        return UIContextMenuConfiguration(identifier: NSNumber(value: dialog.id), previewProvider: { [weak self] in
-            guard let self, let chat = self.previewController(dialog) else {
-                return nil
-            }
-            return ChatPreviewHostController(chat: chat, size: CGSize(width: self.bounds.width - 32.0, height: floor(self.bounds.height * 0.62)))
-        }, actionProvider: { _ in
-            let pin = UIAction(title: "Mark as Read", image: UIImage(systemName: "checkmark.message")) { _ in }
-            let duplicate = UIAction(title: "Duplicate", image: UIImage(systemName: "plus.square.on.square")) { _ in
-                let _ = store.duplicateConversation(dialog.id)
-            }
-            let delete = UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
-                store.deleteConversation(dialog.id)
-            }
-            return UIMenu(children: [pin, duplicate, delete])
         })
     }
 
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-        guard let id = configuration.identifier as? NSNumber else {
-            return nil
-        }
-        var target: UITargetedPreview?
-        self.listNode.forEachItemNode { itemNode in
-            if let itemNode = itemNode as? ChatListItemNode, itemNode.dialog?.id == id.intValue {
-                let parameters = UIPreviewParameters()
-                parameters.visiblePath = UIBezierPath(roundedRect: itemNode.view.bounds, cornerRadius: 16.0)
-                target = UITargetedPreview(view: itemNode.view, parameters: parameters)
-            }
-        }
-        return target
-    }
-
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionCommitAnimating) {
-        guard let id = configuration.identifier as? NSNumber, let dialog = self.entries.first(where: { $0.dialog.id == id.intValue })?.dialog else {
-            return
-        }
-        animator.preferredCommitStyle = .pop
-        animator.addCompletion { [weak self] in
-            self?.openDialog(dialog)
-        }
-    }
-}
-
-/// Hosts a chat screen as a context menu preview: Display's ViewController lays out from a ContainerViewLayout, which
-/// nothing provides inside a preview, so this computes one from its own bounds.
-final class ChatPreviewHostController: UIViewController {
-    private let chat: ChatController
-
-    init(chat: ChatController, size: CGSize) {
-        self.chat = chat
-        super.init(nibName: nil, bundle: nil)
-        self.preferredContentSize = size
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        self.addChild(self.chat)
-        self.view.addSubview(self.chat.view)
-        self.chat.didMove(toParent: self)
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        let size = self.view.bounds.size
-        guard size.width > 0.0 else {
-            return
-        }
-        self.chat.view.frame = CGRect(origin: CGPoint(), size: size)
-        let layout = ContainerViewLayout(size: size, metrics: LayoutMetrics(), deviceMetrics: .unknown(screenSize: size, statusBarHeight: 0.0, onScreenNavigationHeight: nil, screenCornerRadius: 0.0), intrinsicInsets: UIEdgeInsets(), safeInsets: UIEdgeInsets(), additionalInsets: UIEdgeInsets(), statusBarHeight: nil, inputHeight: nil, inputHeightIsInteractivellyChanging: false, inVoiceOver: false, presentedInFormSheet: false)
-        self.chat.containerLayoutUpdated(layout, transition: .immediate)
+    func animatedIn() {
     }
 }

@@ -1,0 +1,4 @@
+module NumberPluralizationForm {
+    header "NumberPluralizationForm/NumberPluralizationForm.h"
+    export *
+}

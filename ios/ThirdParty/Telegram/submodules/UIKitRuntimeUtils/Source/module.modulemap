@@ -9,4 +9,5 @@ module UIKitRuntimeUtils {
     header "UIKitRuntimeUtils/UINavigationItem+Proxy.h"
     header "UIKitRuntimeUtils/UIViewController+Navigation.h"
     header "UIKitRuntimeUtils/UIWindow+OrientationChange.h"
+    export *
 }

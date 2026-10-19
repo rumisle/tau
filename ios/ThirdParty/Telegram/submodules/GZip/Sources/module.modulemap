@@ -1,3 +1,4 @@
 module GZip {
     header "GZip.h"
+    export *
 }

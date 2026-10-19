@@ -31,6 +31,20 @@ final class TauUITests: XCTestCase {
         self.point(0.5, 0.17).press(forDuration: 1.2)
         sleep(1)
         self.shot("list-preview")
+        // Tapping the preview opens the chat.
+        self.point(0.5, 0.3).tap()
+        sleep(1)
+        self.shot("list-preview-open")
+        // Dismiss a second preview by tapping outside.
+        self.point(0.12, 0.08).tap()
+        sleep(1)
+        self.point(0.5, 0.27).press(forDuration: 1.2)
+        sleep(1)
+        self.point(0.5, 0.97).tap()
+        usleep(100_000)
+        self.shot("list-preview-dismissing")
+        sleep(1)
+        self.shot("list-preview-dismissed")
     }
 
     func testMessageMenuAndSelection() {
@@ -39,12 +53,20 @@ final class TauUITests: XCTestCase {
         self.point(0.75, 0.47).press(forDuration: 1.0)
         sleep(1)
         self.shot("message-menu")
-        if self.app.buttons["Select"].waitForExistence(timeout: 2) {
-            self.app.buttons["Select"].tap()
+        let select = self.app.descendants(matching: .any)["Select"].firstMatch
+        if select.waitForExistence(timeout: 2) {
+            select.tap()
+            usleep(150_000)
+            self.shot("selection-entering")
             sleep(1)
+            self.shot("selection-one")
             self.point(0.5, 0.25).tap()
             sleep(1)
             self.shot("selection")
+            // Cancel, where the back button was.
+            self.point(0.1, 0.08).tap()
+            sleep(1)
+            self.shot("selection-cancelled")
         }
     }
 
@@ -54,8 +76,9 @@ final class TauUITests: XCTestCase {
         sleep(1)
         self.shot("edit-menu")
         sleep(1)
-        if self.app.buttons["Edit"].waitForExistence(timeout: 2) {
-            self.app.buttons["Edit"].tap()
+        let edit = self.app.descendants(matching: .any)["Edit"].firstMatch
+        if edit.waitForExistence(timeout: 2) {
+            edit.tap()
             sleep(2)
             self.shot("edit")
         }

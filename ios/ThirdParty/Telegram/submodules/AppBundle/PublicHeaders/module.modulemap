@@ -1,3 +1,4 @@
 module AppBundle {
     header "AppBundle/AppBundle.h"
+    export *
 }

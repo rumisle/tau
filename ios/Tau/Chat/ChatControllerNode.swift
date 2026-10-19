@@ -27,23 +27,24 @@ struct ChatHistoryEntry: Comparable, Identifiable {
     }
 }
 
-/// Actions on a message, from its context menu.
+/// Actions on a message, from its context menu or the selection panel.
 enum ChatMessageAction {
     case copy
     case edit
     case select
-    case delete
+    case share
 }
 
 /// The inverted history list, input panel and selection panel, laid out around the keyboard the way Telegram's
 /// ChatControllerNode does: the list's top inset (its visual bottom, as the list is rotated) clears the input panel.
-final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate {
+final class ChatControllerNode: ASDisplayNode {
     private var theme: TauTheme
     let historyNode: ListViewImpl
     let inputPanelNode: ChatInputPanelNode
     private let selectionPanel = SelectionPanelView()
     /// Blurs messages as they scroll under the input panel.
     private let bottomEdgeEffectView = EdgeEffectView()
+    let wallpaperNode = WallpaperNode()
     private let toastView = ToastView()
     private let isPreview: Bool
 
@@ -57,6 +58,7 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
 
     var sendMessage: ((String) -> Void)?
     var messageAction: ((ChatMessage, ChatMessageAction) -> Void)?
+    var openContextMenu: ((ChatMessage, ChatMessageItemNode, ContextGesture?) -> Void)?
     var selectionAction: ((ChatMessageAction) -> Void)?
     var selectionChanged: ((Set<Int>?) -> Void)?
 
@@ -70,6 +72,8 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
         super.init()
 
         self.backgroundColor = theme.chat.backgroundColor
+        self.wallpaperNode.update(wallpaper: theme.wallpaper, animated: false)
+        self.addSubnode(self.wallpaperNode)
         self.addSubnode(self.historyNode)
         if !isPreview {
             self.addSubnode(self.inputPanelNode)
@@ -101,12 +105,12 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
         }
         self.view.addSubview(self.selectionPanel)
         self.view.addSubview(self.toastView)
-        self.historyNode.view.addInteraction(UIContextMenuInteraction(delegate: self))
     }
 
     func updateTheme(_ theme: TauTheme) {
         self.theme = theme
         self.backgroundColor = theme.chat.backgroundColor
+        self.wallpaperNode.update(wallpaper: theme.wallpaper, animated: true)
         self.inputPanelNode.updateTheme(theme)
         self.selectionPanel.update(theme: theme)
         self.toastView.update(theme: theme)
@@ -127,13 +131,15 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
 
     // MARK: - Selection
 
-    func setSelection(_ ids: Set<Int>?) {
+    /// Enters, updates or leaves selection mode. Rows animate their checks in; the input panel gives way to the
+    /// selection panel with `transition`, which the context menu reuses to put a lifted message back.
+    func setSelection(_ ids: Set<Int>?, transition: ContainedViewLayoutTransition = .animated(duration: 0.3, curve: .spring)) {
         self.selectedIds = ids
         self.selectionChanged?(ids)
         if let state = self.state {
             self.update(state: state)
         }
-        self.relayout(.animated(duration: 0.3, curve: .easeInOut))
+        self.relayout(transition)
     }
 
     private func toggleSelection(_ id: Int) {
@@ -201,6 +207,11 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
         self?.relayout(messageId: id)
     }, toggleSelection: { [weak self] id in
         self?.toggleSelection(id)
+    }, openContextMenu: { [weak self] id, node, gesture in
+        guard let self, let message = self.entries.first(where: { $0.message.id == id })?.message else {
+            return
+        }
+        self.openContextMenu?(message, node, gesture)
     })
 
     private func item(for entry: ChatHistoryEntry) -> ListViewItem {
@@ -260,13 +271,32 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
             panelFrame = CGRect(origin: CGPoint(x: layout.safeInsets.left + panelSideInset, y: size.height - bottomInset - panelBottomGap - panelHeight), size: CGSize(width: panelWidth, height: panelHeight))
             transition.updateFrame(node: self.inputPanelNode, frame: panelFrame)
             let isSelecting = self.selectedIds != nil
-            transition.updateAlpha(node: self.inputPanelNode, alpha: isSelecting ? 0.0 : 1.0)
+            let inputAlpha: CGFloat = isSelecting ? 0.0 : 1.0
+            if self.inputPanelNode.view.alpha != inputAlpha {
+                if transition.isAnimated {
+                    UIView.animate(withDuration: 0.25, animations: {
+                        self.inputPanelNode.view.alpha = inputAlpha
+                    })
+                } else {
+                    self.inputPanelNode.view.alpha = inputAlpha
+                }
+            }
             self.inputPanelNode.isUserInteractionEnabled = !isSelecting
 
             let selectionFrame = CGRect(x: panelFrame.minX, y: size.height - max(layout.intrinsicInsets.bottom, 8.0) - 48.0, width: panelWidth, height: 48.0)
             transition.updateFrame(view: self.selectionPanel, frame: selectionFrame)
             self.selectionPanel.layout(size: selectionFrame.size, theme: self.theme, count: self.selectedIds?.count ?? 0, transition: ComponentTransition(transition))
-            transition.updateAlpha(layer: self.selectionPanel.layer, alpha: isSelecting ? 1.0 : 0.0)
+            // View alpha, not layer opacity: glass renders wrongly under a layer opacity.
+            let selectionAlpha: CGFloat = isSelecting ? 1.0 : 0.0
+            if self.selectionPanel.alpha != selectionAlpha {
+                if transition.isAnimated {
+                    UIView.animate(withDuration: 0.25, animations: {
+                        self.selectionPanel.alpha = selectionAlpha
+                    })
+                } else {
+                    self.selectionPanel.alpha = selectionAlpha
+                }
+            }
             self.selectionPanel.isUserInteractionEnabled = isSelecting
 
             let toastSize = self.toastView.sizeThatFits(CGSize(width: size.width - 80.0, height: 44.0))
@@ -276,6 +306,8 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
             let edgeEffectFrame = CGRect(origin: CGPoint(x: 0.0, y: size.height - edgeEffectHeight), size: CGSize(width: size.width, height: edgeEffectHeight))
             transition.updateFrame(view: self.bottomEdgeEffectView, frame: edgeEffectFrame)
             // A color fade, not a variable blur: a blur re-samples what is behind it on every frame of a swipe back.
+            // On a wallpaper the panel floats over it without a fade, as in Telegram.
+            self.bottomEdgeEffectView.isHidden = !self.theme.wallpaper.isPlainColor
             self.bottomEdgeEffectView.update(content: self.theme.chat.backgroundColor, blur: false, alpha: 0.85, rect: edgeEffectFrame, edge: .bottom, edgeSize: min(edgeEffectHeight, 48.0), transition: ComponentTransition(transition))
         }
 
@@ -287,6 +319,8 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
             bottom: navigationHeight + 6.0,
             right: layout.safeInsets.left
         )
+        transition.updateFrame(node: self.wallpaperNode, frame: CGRect(origin: CGPoint(), size: size))
+        self.wallpaperNode.updateLayout(size: size, transition: transition)
         transition.updateFrame(node: self.historyNode, frame: CGRect(origin: CGPoint(), size: size))
         let (duration, curve) = listViewAnimationDurationAndCurve(transition: transition)
         self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: nil, updateSizeAndInsets: ListViewUpdateSizeAndInsets(size: size, insets: historyInsets, duration: duration, curve: curve), stationaryItemRange: nil, updateOpaqueState: nil)
@@ -298,25 +332,7 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
 
     // MARK: - Context menu
 
-    /// The row under `point` in `view`'s coordinates. Rows sit in the list's own containers and both are rotated, so the
-    /// point is converted into each row rather than compared with frames.
-    private func itemNode(at point: CGPoint, in view: UIView) -> ChatMessageItemNode? {
-        var result: ChatMessageItemNode?
-        self.historyNode.forEachItemNode { node in
-            guard result == nil, let node = node as? ChatMessageItemNode, node.isNodeLoaded, node.item?.isStreaming == false else {
-                return
-            }
-            let local = node.view.convert(point, from: view)
-            if node.contentFrame.insetBy(dx: -4.0, dy: -4.0).contains(local) {
-                result = node
-            }
-        }
-        return result
-    }
-
-    private var hiddenMenuNode: ChatMessageItemNode?
-
-    private func itemNode(messageId: Int) -> ChatMessageItemNode? {
+    func itemNode(messageId: Int) -> ChatMessageItemNode? {
         var result: ChatMessageItemNode?
         self.historyNode.forEachItemNode { node in
             if let node = node as? ChatMessageItemNode, node.messageId == messageId {
@@ -326,108 +342,33 @@ final class ChatControllerNode: ASDisplayNode, UIContextMenuInteractionDelegate 
         return result
     }
 
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-        guard self.selectedIds == nil, let view = interaction.view, let node = self.itemNode(at: location, in: view), let message = node.item?.message else {
-            return nil
+    /// The part of the screen messages show in, between the navigation bar and the input panel, for the context menu to
+    /// keep a lifted message within.
+    func frameForVisibleArea() -> CGRect {
+        guard let (layout, navigationHeight) = self.validLayout else {
+            return self.bounds
         }
-        return UIContextMenuConfiguration(identifier: NSNumber(value: message.id), previewProvider: nil, actionProvider: { [weak self] _ in
-            let perform: (ChatMessageAction) -> Void = { action in
-                self?.messageAction?(message, action)
-            }
-            var actions: [UIMenuElement] = []
-            if !message.text.isEmpty {
-                actions.append(UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in perform(.copy) })
-            }
-            if message.role == .user {
-                actions.append(UIAction(title: "Edit", image: UIImage(systemName: "pencil")) { _ in perform(.edit) })
-            }
-            actions.append(UIAction(title: "Select", image: UIImage(systemName: "checkmark.circle")) { _ in perform(.select) })
-            actions.append(UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in perform(.delete) })
-            return UIMenu(children: actions)
-        })
-    }
-
-    /// The list and its rows are both rotated, so preview an image of the row placed upright on this view. The row's
-    /// layer renders in its own coordinates, which the two rotations make upright.
-    private func targetedPreview(for configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-        guard let id = configuration.identifier as? NSNumber, let node = self.itemNode(messageId: id.intValue), node.bounds.width > 0.0 else {
-            return nil
-        }
-        // Only the message itself, so the lifted preview stays where the message is.
-        let contentFrame = node.contentFrame.intersection(node.bounds)
-        guard !contentFrame.isEmpty else {
-            return nil
-        }
-        let wasHidden = node.isHidden
-        node.isHidden = false
-        let image = UIGraphicsImageRenderer(bounds: contentFrame).image { context in
-            node.layer.render(in: context.cgContext)
-        }
-        node.isHidden = wasHidden
-        let snapshot = UIImageView(image: image)
-        snapshot.frame = CGRect(origin: CGPoint(), size: contentFrame.size)
-        let parameters = UIPreviewParameters()
-        parameters.backgroundColor = .clear
-        let isBubble = node.item?.message.role == .user
-        parameters.visiblePath = UIBezierPath(roundedRect: snapshot.bounds, cornerRadius: isBubble ? 17.0 : 14.0)
-        let center = node.view.convert(CGPoint(x: contentFrame.midX, y: contentFrame.midY), to: self.view)
-        return UITargetedPreview(view: snapshot, parameters: parameters, target: UIPreviewTarget(container: self.view, center: center))
-    }
-
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-        return self.targetedPreview(for: configuration)
-    }
-
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-        return self.targetedPreview(for: configuration)
-    }
-
-    // The preview is a snapshot, so the row itself is hidden while the menu shows it lifted.
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
-        guard let id = configuration.identifier as? NSNumber, let node = self.itemNode(messageId: id.intValue) else {
-            return
-        }
-        self.hiddenMenuNode = node
-        node.isHidden = true
-    }
-
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willEndFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
-        let node = self.hiddenMenuNode
-        self.hiddenMenuNode = nil
-        if let animator {
-            animator.addCompletion {
-                node?.isHidden = false
-            }
-        } else {
-            node?.isHidden = false
-        }
+        let bottom = self.isPreview ? layout.size.height : self.inputPanelNode.frame.minY
+        return CGRect(x: 0.0, y: navigationHeight, width: layout.size.width, height: max(0.0, bottom - navigationHeight))
     }
 }
 
-/// The bar that replaces the input panel in selection mode: Copy and Delete in glass, as Telegram's selection panel.
+/// The bar that replaces the input panel in selection mode, as Telegram's ChatMessageSelectionInputPanelNode: round
+/// glass buttons spread across the width. tau's actions are Copy and Share.
 private final class SelectionPanelView: UIView {
+    private let copyButton = SelectionGlassButtonView(icon: "Chat/Context Menu/Copy", label: "Copy")
+    private let shareButton = SelectionGlassButtonView(icon: "Chat/Input/Accessory Panels/MessageSelectionAction", label: "Share")
+    /// Glass needs a container to render in, as the input panels have in Telegram's chat.
     private let container = GlassBackgroundContainerView()
-    private let copyBackground = GlassBackgroundView()
-    private let deleteBackground = GlassBackgroundView()
-    private let copyLabel = UILabel()
-    private let deleteLabel = UILabel()
     var action: ((ChatMessageAction) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         self.addSubview(self.container)
-        self.container.contentView.addSubview(self.copyBackground)
-        self.container.contentView.addSubview(self.deleteBackground)
-        self.copyBackground.contentView.addSubview(self.copyLabel)
-        self.deleteBackground.contentView.addSubview(self.deleteLabel)
-        for label in [self.copyLabel, self.deleteLabel] {
-            label.font = Font.semibold(17.0)
-            label.textAlignment = .center
-        }
-        self.copyLabel.text = "Copy"
-        self.deleteLabel.text = "Delete"
-        self.copyBackground.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.copyTapped)))
-        self.deleteBackground.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.deleteTapped)))
+        self.container.contentView.addSubview(self.copyButton)
+        self.container.contentView.addSubview(self.shareButton)
+        self.copyButton.button.addTarget(self, action: #selector(self.copyTapped), for: .touchUpInside)
+        self.shareButton.button.addTarget(self, action: #selector(self.shareTapped), for: .touchUpInside)
     }
 
     required init?(coder: NSCoder) {
@@ -438,31 +379,66 @@ private final class SelectionPanelView: UIView {
         self.action?(.copy)
     }
 
-    @objc private func deleteTapped() {
-        self.action?(.delete)
+    @objc private func shareTapped() {
+        self.action?(.share)
     }
 
     func update(theme: TauTheme) {
-        self.copyLabel.textColor = theme.chat.panelControlColor
-        self.deleteLabel.textColor = theme.list.itemDestructiveColor
     }
 
     func layout(size: CGSize, theme: TauTheme, count: Int, transition: ComponentTransition) {
-        self.update(theme: theme)
-        self.copyLabel.alpha = count > 0 ? 1.0 : 0.4
-        self.deleteLabel.alpha = count > 0 ? 1.0 : 0.4
         transition.setFrame(view: self.container, frame: CGRect(origin: CGPoint(), size: size))
         self.container.update(size: size, isDark: theme.overallDarkAppearance, transition: transition)
-        let spacing: CGFloat = 8.0
-        let width = floor((size.width - spacing) / 2.0)
-        let copyFrame = CGRect(x: 0.0, y: 0.0, width: width, height: size.height)
-        let deleteFrame = CGRect(x: size.width - width, y: 0.0, width: width, height: size.height)
-        transition.setFrame(view: self.copyBackground, frame: copyFrame)
-        transition.setFrame(view: self.deleteBackground, frame: deleteFrame)
-        self.copyBackground.update(size: copyFrame.size, cornerRadius: size.height / 2.0, isDark: theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, transition: transition)
-        self.deleteBackground.update(size: deleteFrame.size, cornerRadius: size.height / 2.0, isDark: theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, transition: transition)
-        self.copyLabel.frame = CGRect(origin: CGPoint(), size: copyFrame.size)
-        self.deleteLabel.frame = CGRect(origin: CGPoint(), size: deleteFrame.size)
+        let buttonSize = CGSize(width: 40.0, height: 40.0)
+        let y = floor((size.height - buttonSize.height) / 2.0)
+        let buttons = [self.copyButton, self.shareButton]
+        for (index, button) in buttons.enumerated() {
+            let x = index == buttons.count - 1 ? size.width - buttonSize.width : 0.0
+            transition.setFrame(view: button, frame: CGRect(origin: CGPoint(x: x, y: y), size: buttonSize))
+            button.isEnabled = count > 0
+            button.update(theme: theme, size: buttonSize, transition: transition)
+        }
+    }
+}
+
+/// ChatMessageSelectionInputPanelNode's GlassButtonView: an icon in a round interactive glass background.
+private final class SelectionGlassButtonView: UIView {
+    private let backgroundView = GlassBackgroundView()
+    let button = HighlightTrackingButton()
+    private let iconView = GlassBackgroundView.ContentImageView()
+    private var theme: TauTheme?
+
+    var isEnabled: Bool = true {
+        didSet {
+            self.iconView.alpha = self.isEnabled ? 1.0 : 0.5
+            self.iconView.tintMask.alpha = self.iconView.alpha
+            self.button.isEnabled = self.isEnabled
+        }
+    }
+
+    init(icon: String, label: String) {
+        super.init(frame: CGRect())
+        self.iconView.image = UIImage(bundleImageName: icon)?.withRenderingMode(.alwaysTemplate)
+        self.backgroundView.contentView.addSubview(self.iconView)
+        self.backgroundView.contentView.addSubview(self.button)
+        self.addSubview(self.backgroundView)
+        self.button.isAccessibilityElement = true
+        self.button.accessibilityLabel = label
+        self.button.accessibilityIdentifier = label.lowercased()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(theme: TauTheme, size: CGSize, transition: ComponentTransition) {
+        self.iconView.tintColor = theme.chat.panelControlColor
+        if let image = self.iconView.image {
+            transition.setFrame(view: self.iconView, frame: image.size.centered(in: CGRect(origin: CGPoint(), size: size)))
+        }
+        transition.setFrame(view: self.button, frame: CGRect(origin: CGPoint(), size: size))
+        transition.setFrame(view: self.backgroundView, frame: CGRect(origin: CGPoint(), size: size))
+        self.backgroundView.update(size: size, cornerRadius: size.height * 0.5, isDark: theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, transition: transition)
     }
 }
 

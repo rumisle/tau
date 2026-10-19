@@ -1,11 +1,49 @@
 import UIKit
 import Display
+import TelegramCore
+import TelegramUIPreferences
 import TelegramPresentationData
 
-/// The parts of Telegram's presentation theme tau uses. `day` and `night` are Telegram-iOS's Day and Night themes
-/// (TelegramPresentationData/Sources/DefaultDayPresentationTheme.swift with `day: true`, DefaultDarkPresentationTheme.swift)
-/// on a plain background instead of a wallpaper.
+/// One of Telegram-iOS's four built-in themes (TelegramPresentationData/Sources/Default*PresentationTheme.swift, copied
+/// verbatim), plus the values tau's own screens read from it. Every color here comes from Telegram's theme object.
 final class TauTheme {
+    enum Builtin: String, CaseIterable {
+        case classic
+        case day
+        case night
+        case tintedNight
+
+        var reference: PresentationBuiltinThemeReference {
+            switch self {
+            case .classic:
+                return .dayClassic
+            case .day:
+                return .day
+            case .night:
+                return .night
+            case .tintedNight:
+                return .nightAccent
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .classic:
+                return "Classic"
+            case .day:
+                return "Day"
+            case .night:
+                return "Night"
+            case .tintedNight:
+                return "Tinted Night"
+            }
+        }
+
+        var isDark: Bool {
+            return self == .night || self == .tintedNight
+        }
+    }
+
     struct ChatList {
         var backgroundColor: UIColor
         var itemSeparatorColor: UIColor
@@ -15,6 +53,9 @@ final class TauTheme {
         var messageTextColor: UIColor
         var authorNameColor: UIColor
         var activityTextColor: UIColor
+        var unreadBadgeBackgroundColor: UIColor
+        var unreadBadgeTextColor: UIColor
+        var checkmarkColor: UIColor
     }
 
     struct RootNavigationBar {
@@ -33,6 +74,7 @@ final class TauTheme {
     /// Telegram's grouped item lists (settings).
     struct List {
         var blocksBackgroundColor: UIColor
+        var plainBackgroundColor: UIColor
         var itemBlocksBackgroundColor: UIColor
         var itemHighlightedBackgroundColor: UIColor
         var itemBlocksSeparatorColor: UIColor
@@ -46,17 +88,20 @@ final class TauTheme {
     }
 
     struct Bubble {
-        /// Top and bottom of the gradient, which spans the screen: a bubble's color depends on where it is.
+        /// The bubble gradient, top to bottom of the screen: a bubble's color depends on where it is, as in Telegram.
         var fillColors: [UIColor]
         var primaryTextColor: UIColor
         var secondaryTextColor: UIColor
         var linkTextColor: UIColor
+        var accentTextColor: UIColor
     }
 
     struct Chat {
+        /// The wallpaper's base color, shown before the wallpaper renders and behind transitions.
         var backgroundColor: UIColor
         var outgoing: Bubble
-        /// The assistant's text, which has no bubble.
+        var incoming: Bubble
+        /// The assistant's text, which sits on the wallpaper without a bubble.
         var freeTextColor: UIColor
         var freeSecondaryTextColor: UIColor
         var linkTextColor: UIColor
@@ -71,6 +116,9 @@ final class TauTheme {
         var inputPlaceholderColor: UIColor
         var actionControlFillColor: UIColor
         var actionControlForegroundColor: UIColor
+        /// Date headers and other service pills on the wallpaper.
+        var serviceFillColor: UIColor
+        var serviceTextColor: UIColor
     }
 
     struct TabBar {
@@ -79,7 +127,11 @@ final class TauTheme {
         var iconColor: UIColor
     }
 
-    let name: String
+    let builtin: Builtin
+    let presentationTheme: PresentationTheme
+    let presentationStrings: PresentationStrings
+    let presentationData: PresentationData
+    let wallpaper: TelegramWallpaper
     let overallDarkAppearance: Bool
     let accentColor: UIColor
     let chatList: ChatList
@@ -89,196 +141,141 @@ final class TauTheme {
     let tabBar: TabBar
     let statusBarStyle: NavigationStatusBarStyle
 
-    init(name: String, overallDarkAppearance: Bool, accentColor: UIColor, chatList: ChatList, navigationBar: RootNavigationBar, list: List, chat: Chat, tabBar: TabBar, statusBarStyle: NavigationStatusBarStyle) {
-        self.name = name
-        self.overallDarkAppearance = overallDarkAppearance
-        self.accentColor = accentColor
-        self.chatList = chatList
-        self.navigationBar = navigationBar
-        self.list = list
-        self.chat = chat
-        self.tabBar = tabBar
-        self.statusBarStyle = statusBarStyle
+    var name: String {
+        return self.builtin.rawValue
     }
 
-    static let day: TauTheme = {
-        let accent = UIColor(rgb: 0x0088ff)
-        return TauTheme(
-            name: "day",
-            overallDarkAppearance: false,
-            accentColor: accent,
-            chatList: ChatList(
-                backgroundColor: UIColor(rgb: 0xffffff),
-                itemSeparatorColor: UIColor(rgb: 0xc8c7cc),
-                itemHighlightedBackgroundColor: UIColor(rgb: 0xe5e5ea),
-                titleColor: UIColor(rgb: 0x000000),
-                dateTextColor: UIColor(rgb: 0x8e8e93),
-                messageTextColor: UIColor(rgb: 0x8e8e93),
-                authorNameColor: UIColor(rgb: 0x000000),
-                activityTextColor: accent
-            ),
-            navigationBar: RootNavigationBar(
-                buttonColor: accent,
-                disabledButtonColor: UIColor(rgb: 0xd0d0d0),
-                primaryTextColor: UIColor(rgb: 0x000000),
-                secondaryTextColor: UIColor(rgb: 0x787878),
-                accentTextColor: accent,
-                blurredBackgroundColor: UIColor(rgb: 0xf2f2f2, alpha: 0.9),
-                opaqueBackgroundColor: UIColor(rgb: 0xf7f7f7).mixedWith(.white, alpha: 0.14),
-                separatorColor: UIColor(rgb: 0xc8c7cc),
-                badgeBackgroundColor: UIColor(rgb: 0xff3b30),
-                badgeTextColor: UIColor(rgb: 0xffffff)
-            ),
-            list: List(
-                blocksBackgroundColor: UIColor(rgb: 0xefeff4),
-                itemBlocksBackgroundColor: UIColor(rgb: 0xffffff),
-                itemHighlightedBackgroundColor: UIColor(rgb: 0xe5e5ea),
-                itemBlocksSeparatorColor: UIColor(rgb: 0xc8c7cc),
-                itemPrimaryTextColor: UIColor(rgb: 0x000000),
-                itemSecondaryTextColor: UIColor(rgb: 0x8e8e93),
-                itemAccentColor: accent,
-                itemDestructiveColor: UIColor(rgb: 0xff3b30),
-                disclosureArrowColor: UIColor(rgb: 0xbab9be),
-                sectionHeaderTextColor: UIColor(rgb: 0x6d6d72),
-                freeTextColor: UIColor(rgb: 0x6d6d72)
-            ),
-            chat: Chat(
-                backgroundColor: UIColor(rgb: 0xffffff),
-                outgoing: Bubble(
-                    fillColors: [UIColor(rgb: 0x57b2e0), accent],
-                    primaryTextColor: UIColor(rgb: 0xffffff),
-                    secondaryTextColor: UIColor(rgb: 0xffffff, alpha: 0.65),
-                    linkTextColor: UIColor(rgb: 0xffffff)
-                ),
-                freeTextColor: UIColor(rgb: 0x000000),
-                freeSecondaryTextColor: UIColor(rgb: 0x8e8e93),
-                linkTextColor: UIColor(rgb: 0x004bad),
-                toolCardBackgroundColor: UIColor(rgb: 0xf1f1f4),
-                toolCardTitleColor: UIColor(rgb: 0x000000),
-                toolCardTextColor: UIColor(rgb: 0x000000, alpha: 0.6),
-                tableBorderColor: UIColor(rgb: 0x000000, alpha: 0.12),
-                tableHeaderBackgroundColor: UIColor(rgb: 0x000000, alpha: 0.04),
-                selectionCheckColor: accent,
-                panelControlColor: UIColor(rgb: 0x000000),
-                inputTextColor: UIColor(rgb: 0x000000),
-                inputPlaceholderColor: UIColor(rgb: 0x000000, alpha: 0.4),
-                actionControlFillColor: accent,
-                actionControlForegroundColor: UIColor(rgb: 0xffffff)
-            ),
-            tabBar: TabBar(textColor: UIColor(rgb: 0x000000, alpha: 0.8), selectedTextColor: accent, iconColor: UIColor(rgb: 0x959595)),
-            statusBarStyle: .black
-        )
-    }()
+    private static var cache: [Builtin: TauTheme] = [:]
 
-    static let night: TauTheme = {
-        let accent = UIColor(rgb: 0x3e88f7)
-        return TauTheme(
-            name: "night",
-            overallDarkAppearance: true,
-            accentColor: accent,
-            chatList: ChatList(
-                backgroundColor: UIColor(rgb: 0x000000),
-                itemSeparatorColor: UIColor(rgb: 0x545458, alpha: 0.55),
-                itemHighlightedBackgroundColor: UIColor(rgb: 0x121212),
-                titleColor: UIColor(rgb: 0xffffff),
-                dateTextColor: UIColor(rgb: 0x8d8e93),
-                messageTextColor: UIColor(rgb: 0x8d8e93),
-                authorNameColor: UIColor(rgb: 0xffffff),
-                activityTextColor: UIColor(rgb: 0xffffff)
-            ),
-            navigationBar: RootNavigationBar(
-                buttonColor: UIColor(rgb: 0xffffff),
-                disabledButtonColor: UIColor(rgb: 0x525252),
-                primaryTextColor: UIColor(rgb: 0xffffff),
-                secondaryTextColor: UIColor(rgb: 0xffffff, alpha: 0.5),
-                accentTextColor: UIColor(rgb: 0xffffff),
-                blurredBackgroundColor: UIColor(rgb: 0x1d1d1d, alpha: 0.9),
-                opaqueBackgroundColor: UIColor(rgb: 0x1d1d1d).mixedWith(UIColor(rgb: 0x000000), alpha: 0.1),
-                separatorColor: UIColor(rgb: 0x545458, alpha: 0.55),
-                badgeBackgroundColor: UIColor(rgb: 0xffffff),
-                badgeTextColor: UIColor(rgb: 0x000000)
-            ),
-            list: List(
-                blocksBackgroundColor: UIColor(rgb: 0x000000),
-                itemBlocksBackgroundColor: UIColor(rgb: 0x1c1c1d),
-                itemHighlightedBackgroundColor: UIColor(rgb: 0x313135),
-                itemBlocksSeparatorColor: UIColor(rgb: 0x545458, alpha: 0.55),
-                itemPrimaryTextColor: UIColor(rgb: 0xffffff),
-                itemSecondaryTextColor: UIColor(rgb: 0x98989e),
-                itemAccentColor: accent,
-                itemDestructiveColor: UIColor(rgb: 0xeb5545),
-                disclosureArrowColor: UIColor(rgb: 0xffffff, alpha: 0.28),
-                sectionHeaderTextColor: UIColor(rgb: 0x8d8e93),
-                freeTextColor: UIColor(rgb: 0x8d8e93)
-            ),
-            chat: Chat(
-                backgroundColor: UIColor(rgb: 0x000000),
-                outgoing: Bubble(
-                    fillColors: [UIColor(rgb: 0x61bcf9), UIColor(rgb: 0x0088ff)],
-                    primaryTextColor: UIColor(rgb: 0xffffff),
-                    secondaryTextColor: UIColor(rgb: 0xffffff, alpha: 0.5),
-                    linkTextColor: UIColor(rgb: 0xffffff)
-                ),
-                freeTextColor: UIColor(rgb: 0xffffff),
-                freeSecondaryTextColor: UIColor(rgb: 0x8d8e93),
-                linkTextColor: UIColor(rgb: 0x6ab4ff),
-                toolCardBackgroundColor: UIColor(rgb: 0x1d1d1d),
-                toolCardTitleColor: UIColor(rgb: 0xffffff),
-                toolCardTextColor: UIColor(rgb: 0xffffff, alpha: 0.6),
-                tableBorderColor: UIColor(rgb: 0xffffff, alpha: 0.16),
-                tableHeaderBackgroundColor: UIColor(rgb: 0xffffff, alpha: 0.06),
-                selectionCheckColor: accent,
-                panelControlColor: UIColor(rgb: 0xffffff),
-                inputTextColor: UIColor(rgb: 0xffffff),
-                inputPlaceholderColor: UIColor(rgb: 0xffffff, alpha: 0.48),
-                actionControlFillColor: UIColor(rgb: 0xffffff),
-                actionControlForegroundColor: UIColor(rgb: 0x000000)
-            ),
-            tabBar: TabBar(textColor: UIColor(rgb: 0xffffff), selectedTextColor: UIColor(rgb: 0xffffff), iconColor: UIColor(rgb: 0xffffff)),
-            statusBarStyle: .white
-        )
-    }()
-
-    /// Mirrors `NavigationBarTheme(rootControllerTheme:...)` in TelegramPresentationData/Sources/ComponentsThemes.swift:
-    /// glass bars draw their buttons in the input panel's control color.
-    func navigationBarTheme(style: NavigationBar.Style = .glass, edgeEffectColor edgeEffectOverride: UIColor? = nil) -> NavigationBarTheme {
-        let theme = self.navigationBar
-        let buttonColor: UIColor
-        let disabledButtonColor: UIColor
-        var edgeEffectColor: UIColor?
-        if case .glass = style {
-            buttonColor = self.chat.panelControlColor
-            disabledButtonColor = buttonColor.withMultipliedAlpha(0.5)
-            edgeEffectColor = edgeEffectOverride ?? self.chatList.backgroundColor
-        } else {
-            buttonColor = theme.buttonColor
-            disabledButtonColor = theme.disabledButtonColor
+    static func builtin(_ builtin: Builtin) -> TauTheme {
+        if let theme = TauTheme.cache[builtin] {
+            return theme
         }
-        return NavigationBarTheme(
-            overallDarkAppearance: self.overallDarkAppearance,
-            buttonColor: buttonColor,
-            disabledButtonColor: disabledButtonColor,
-            primaryTextColor: theme.primaryTextColor,
-            backgroundColor: theme.blurredBackgroundColor,
-            opaqueBackgroundColor: theme.opaqueBackgroundColor,
-            enableBackgroundBlur: true,
-            separatorColor: theme.separatorColor,
-            badgeBackgroundColor: theme.badgeBackgroundColor,
-            badgeStrokeColor: .clear,
-            badgeTextColor: theme.badgeTextColor,
-            edgeEffectColor: edgeEffectColor,
-            accentButtonColor: self.chat.actionControlFillColor,
-            accentDisabledButtonColor: self.chat.panelControlColor.withMultipliedAlpha(0.5),
-            accentForegroundColor: self.chat.actionControlForegroundColor,
-            style: style,
-            glassStyle: .default
+        let theme = TauTheme(builtin: builtin)
+        TauTheme.cache[builtin] = theme
+        return theme
+    }
+
+    private init(builtin: Builtin) {
+        let theme = makeDefaultPresentationTheme(reference: builtin.reference, serviceBackgroundColor: nil)
+        let base = defaultPresentationData()
+        self.builtin = builtin
+        self.presentationTheme = theme
+        self.presentationStrings = base.strings
+        self.wallpaper = theme.chat.defaultWallpaper
+        self.presentationData = base.withUpdated(theme: theme).withUpdated(chatWallpaper: theme.chat.defaultWallpaper)
+        self.overallDarkAppearance = theme.overallDarkAppearance
+        self.accentColor = theme.list.itemAccentColor
+
+        let chatListTheme = theme.chatList
+        self.chatList = ChatList(
+            backgroundColor: chatListTheme.backgroundColor,
+            itemSeparatorColor: chatListTheme.itemSeparatorColor,
+            itemHighlightedBackgroundColor: chatListTheme.itemHighlightedBackgroundColor,
+            titleColor: chatListTheme.titleColor,
+            dateTextColor: chatListTheme.dateTextColor,
+            messageTextColor: chatListTheme.messageTextColor,
+            authorNameColor: chatListTheme.authorNameColor,
+            activityTextColor: theme.list.itemAccentColor,
+            unreadBadgeBackgroundColor: chatListTheme.unreadBadgeActiveBackgroundColor,
+            unreadBadgeTextColor: chatListTheme.unreadBadgeActiveTextColor,
+            checkmarkColor: chatListTheme.checkmarkColor
         )
+
+        let bar = theme.rootController.navigationBar
+        self.navigationBar = RootNavigationBar(
+            buttonColor: bar.buttonColor,
+            disabledButtonColor: bar.disabledButtonColor,
+            primaryTextColor: bar.primaryTextColor,
+            secondaryTextColor: bar.secondaryTextColor,
+            accentTextColor: bar.accentTextColor,
+            blurredBackgroundColor: bar.blurredBackgroundColor,
+            opaqueBackgroundColor: bar.opaqueBackgroundColor,
+            separatorColor: bar.separatorColor,
+            badgeBackgroundColor: bar.badgeBackgroundColor,
+            badgeTextColor: bar.badgeTextColor
+        )
+
+        let list = theme.list
+        self.list = List(
+            blocksBackgroundColor: list.blocksBackgroundColor,
+            plainBackgroundColor: list.plainBackgroundColor,
+            itemBlocksBackgroundColor: list.itemBlocksBackgroundColor,
+            itemHighlightedBackgroundColor: list.itemHighlightedBackgroundColor,
+            itemBlocksSeparatorColor: list.itemBlocksSeparatorColor,
+            itemPrimaryTextColor: list.itemPrimaryTextColor,
+            itemSecondaryTextColor: list.itemSecondaryTextColor,
+            itemAccentColor: list.itemAccentColor,
+            itemDestructiveColor: list.itemDestructiveColor,
+            disclosureArrowColor: list.disclosureArrowColor,
+            sectionHeaderTextColor: list.sectionHeaderTextColor,
+            freeTextColor: list.freeTextColor
+        )
+
+        let message = theme.chat.message
+        func bubble(_ colors: PresentationThemePartedColors) -> Bubble {
+            let fill = colors.bubble.withWallpaper.fill
+            return Bubble(
+                fillColors: fill.count >= 2 ? fill : [fill.first ?? .white, fill.first ?? .white],
+                primaryTextColor: colors.primaryTextColor,
+                secondaryTextColor: colors.secondaryTextColor,
+                linkTextColor: colors.linkTextColor,
+                accentTextColor: colors.accentTextColor
+            )
+        }
+        let incoming = bubble(message.incoming)
+        let input = theme.chat.inputPanel
+        let service = theme.chat.serviceMessage.components.withDefaultWallpaper
+        let dark = theme.overallDarkAppearance
+        self.chat = Chat(
+            backgroundColor: TauTheme.baseColor(of: theme.chat.defaultWallpaper) ?? list.plainBackgroundColor,
+            outgoing: bubble(message.outgoing),
+            incoming: incoming,
+            freeTextColor: message.incoming.primaryTextColor,
+            freeSecondaryTextColor: message.incoming.secondaryTextColor,
+            linkTextColor: message.incoming.linkTextColor,
+            toolCardBackgroundColor: message.incoming.bubble.withWallpaper.fill.first ?? list.itemBlocksBackgroundColor,
+            toolCardTitleColor: message.incoming.primaryTextColor,
+            toolCardTextColor: message.incoming.secondaryTextColor,
+            tableBorderColor: message.incoming.primaryTextColor.withMultipliedAlpha(dark ? 0.16 : 0.12),
+            tableHeaderBackgroundColor: message.incoming.primaryTextColor.withMultipliedAlpha(dark ? 0.06 : 0.04),
+            selectionCheckColor: message.selectionControlColors.fillColor,
+            panelControlColor: input.panelControlColor,
+            inputTextColor: input.inputTextColor,
+            inputPlaceholderColor: input.inputPlaceholderColor,
+            actionControlFillColor: input.actionControlFillColor,
+            actionControlForegroundColor: input.actionControlForegroundColor,
+            serviceFillColor: service.fill,
+            serviceTextColor: service.primaryText
+        )
+
+        let tabBar = theme.rootController.tabBar
+        self.tabBar = TabBar(textColor: tabBar.textColor, selectedTextColor: tabBar.selectedTextColor, iconColor: tabBar.iconColor)
+        self.statusBarStyle = theme.rootController.statusBarStyle == .white ? .white : .black
+    }
+
+    /// The single color a wallpaper is closest to: its color, or its gradient's first color.
+    static func baseColor(of wallpaper: TelegramWallpaper) -> UIColor? {
+        switch wallpaper {
+        case let .color(color):
+            return UIColor(rgb: color)
+        case let .gradient(gradient):
+            return gradient.colors.first.flatMap { UIColor(rgb: $0) }
+        case let .file(file):
+            return file.settings.colors.first.flatMap { UIColor(rgb: $0) }
+        default:
+            return nil
+        }
+    }
+
+    func navigationBarTheme(style: NavigationBar.Style = .glass, edgeEffectColor: UIColor? = nil) -> NavigationBarTheme {
+        return NavigationBarTheme(rootControllerTheme: self.presentationTheme, edgeEffectColor: edgeEffectColor, style: style)
     }
 
     func navigationBarPresentationData(style: NavigationBar.Style = .glass, edgeEffectColor: UIColor? = nil) -> NavigationBarPresentationData {
         return NavigationBarPresentationData(
             theme: self.navigationBarTheme(style: style, edgeEffectColor: edgeEffectColor),
-            strings: NavigationBarStrings(back: "Back", close: "Close")
+            strings: NavigationBarStrings(presentationStrings: self.presentationStrings)
         )
     }
 
@@ -289,49 +286,4 @@ final class TauTheme {
     var statusBarStyleValue: StatusBarStyle {
         return self.overallDarkAppearance ? .White : .Black
     }
-
-    /// The theme copied Telegram components read (the TelegramPresentationData shim), from the same values.
-    lazy var presentationTheme: PresentationTheme = {
-        let dark = self.overallDarkAppearance
-        return PresentationTheme(
-            overallDarkAppearance: dark,
-            rootController: PresentationThemeRootController(
-                tabBar: PresentationThemeRootTabBar(
-                    backgroundColor: self.navigationBar.blurredBackgroundColor,
-                    separatorColor: self.navigationBar.separatorColor,
-                    iconColor: self.tabBar.iconColor,
-                    selectedIconColor: self.tabBar.selectedTextColor,
-                    textColor: self.tabBar.textColor,
-                    selectedTextColor: self.tabBar.selectedTextColor,
-                    badgeBackgroundColor: UIColor(rgb: 0xff3b30),
-                    badgeStrokeColor: UIColor(rgb: 0xff3b30),
-                    badgeTextColor: UIColor(rgb: 0xffffff)
-                ),
-                navigationSearchBar: PresentationThemeNavigationSearchBar(
-                    backgroundColor: self.chatList.backgroundColor,
-                    accentColor: self.accentColor,
-                    inputFillColor: dark ? UIColor(rgb: 0x0f0f0f) : UIColor(rgb: 0x000000, alpha: 0.06),
-                    inputTextColor: self.navigationBar.primaryTextColor,
-                    inputPlaceholderTextColor: self.chatList.dateTextColor,
-                    inputIconColor: self.chatList.dateTextColor,
-                    inputClearButtonColor: self.chatList.dateTextColor
-                ),
-                keyboardColor: dark ? .dark : .light
-            ),
-            chat: PresentationThemeChat(inputPanel: PresentationThemeChatInputPanel(
-                panelControlAccentColor: self.accentColor,
-                panelControlColor: self.chat.panelControlColor,
-                panelControlDisabledColor: self.chat.panelControlColor.withMultipliedAlpha(0.5),
-                inputBackgroundColor: self.chat.backgroundColor,
-                inputStrokeColor: self.list.itemBlocksSeparatorColor,
-                inputPlaceholderColor: self.chat.inputPlaceholderColor,
-                inputTextColor: self.chat.inputTextColor,
-                inputControlColor: self.chat.panelControlColor.withMultipliedAlpha(0.5),
-                actionControlFillColor: self.chat.actionControlFillColor,
-                actionControlForegroundColor: self.chat.actionControlForegroundColor
-            ))
-        )
-    }()
-
-    let presentationStrings = PresentationStrings()
 }

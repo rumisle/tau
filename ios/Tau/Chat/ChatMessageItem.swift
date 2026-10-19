@@ -4,6 +4,7 @@ import Display
 import SwiftSignalKit
 import InteractiveTextComponent
 import StreamingTextReveal
+import ChatMessageSelectionNode
 
 /// What a message's neighbors need to know about it: who wrote it, so consecutive user bubbles merge.
 private enum ChatHistoryNeighbor: Equatable {
@@ -16,10 +17,13 @@ final class ChatMessageItemInteraction {
     /// Lay a row out again, for example when revealed streaming text wraps to a new line.
     let requestRelayout: (Int) -> Void
     let toggleSelection: (Int) -> Void
+    /// A long press on a message: open Telegram's context menu with the message lifted out of the list.
+    let openContextMenu: (Int, ChatMessageItemNode, ContextGesture?) -> Void
 
-    init(requestRelayout: @escaping (Int) -> Void, toggleSelection: @escaping (Int) -> Void) {
+    init(requestRelayout: @escaping (Int) -> Void, toggleSelection: @escaping (Int) -> Void, openContextMenu: @escaping (Int, ChatMessageItemNode, ContextGesture?) -> Void) {
         self.requestRelayout = requestRelayout
         self.toggleSelection = toggleSelection
+        self.openContextMenu = openContextMenu
     }
 }
 
@@ -174,7 +178,14 @@ final class ChatMessageItemNode: ListViewItemNode {
     private let toolBackgroundNode = ASDisplayNode()
     private let toolTitleNode = TextNode()
     private let toolTextNode = TextNode()
-    private let checkNode = ASImageNode()
+    /// As in ChatMessageBubbleItemNode: the long-press source wraps the extractable container, whose content node the
+    /// context menu lifts out of the list and puts back.
+    let containerNode = ContextControllerSourceNode()
+    let contextSourceNode = ContextExtractedContentContainingNode()
+    private var contentNode: ContextExtractedContentNode {
+        return self.contextSourceNode.contentNode
+    }
+    private var selectionNode: ChatMessageSelectionNode?
 
     private(set) var item: ChatMessageItem?
     private var laidOutBlocks: [LaidOutBlock] = []
@@ -196,16 +207,38 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.dateNode.isUserInteractionEnabled = false
         self.toolBackgroundNode.isLayerBacked = true
         self.toolBackgroundNode.cornerRadius = 14.0
-        self.checkNode.isLayerBacked = true
-        self.checkNode.displaysAsynchronously = false
-        self.checkNode.alpha = 0.0
 
-        self.addSubnode(self.bubbleNode)
-        self.addSubnode(self.toolBackgroundNode)
-        self.addSubnode(self.toolTitleNode)
-        self.addSubnode(self.toolTextNode)
-        self.addSubnode(self.dateNode)
-        self.addSubnode(self.checkNode)
+        self.addSubnode(self.containerNode)
+        self.containerNode.addSubnode(self.contextSourceNode)
+        self.containerNode.targetNodeForActivationProgress = self.contextSourceNode.contentNode
+        self.contentNode.addSubnode(self.bubbleNode)
+        self.contentNode.addSubnode(self.toolBackgroundNode)
+        self.contentNode.addSubnode(self.toolTitleNode)
+        self.contentNode.addSubnode(self.toolTextNode)
+        self.contentNode.addSubnode(self.dateNode)
+
+        self.containerNode.shouldBegin = { [weak self] point in
+            guard let self, let item = self.item, item.selection == nil, !item.isStreaming else {
+                return false
+            }
+            return self.contentFrame.insetBy(dx: -4.0, dy: -4.0).contains(point)
+        }
+        self.containerNode.activated = { [weak self] gesture, _ in
+            guard let self, let item = self.item else {
+                return
+            }
+            item.interaction.openContextMenu(item.message.id, self, gesture)
+        }
+    }
+
+    /// Sizes the context containers to the row and marks the message's extent for the context menu.
+    private func layoutContainers(size: CGSize) {
+        let bounds = CGRect(origin: CGPoint(), size: size)
+        self.containerNode.frame = bounds
+        self.contextSourceNode.frame = bounds
+        self.contentNode.frame = bounds
+        self.contextSourceNode.contentRect = self.contentFrame
+        self.containerNode.targetNodeForActivationProgressContentRect = self.contentFrame
     }
 
     override func layoutForParams(_ params: ListViewItemLayoutParams, item: ListViewItem, neighbors: ListViewItemNeighbors) {
@@ -279,7 +312,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 }
 
                 // Telegram's ChatMessageItemWidthFill: phones leave 36 pt beside a bubble.
-                let fillWidth = (contentWidth <= 500.0 ? contentWidth - 36.0 : floor(contentWidth * 0.85)) - leftShift
+                let fillWidth = contentWidth <= 500.0 ? contentWidth - 36.0 : floor(contentWidth * 0.85)
                 let maxContentWidth = fillWidth - bubbleEdgeInset * 2.0 - bubbleTailInset
                 let maxTextWidth = maxContentWidth - textInsets.left - textInsets.right
 
@@ -361,7 +394,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         imageNode.cornerRadius = 14.0
                         imageNode.displaysAsynchronously = false
                         self.imageNodes.append(imageNode)
-                        self.addSubnode(imageNode)
+                        self.contentNode.addSubnode(imageNode)
                     }
                     var y = mediaInset
                     var imageIndex = 0
@@ -383,7 +416,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     while self.fileNodes.count < files.count {
                         let fileNode = FileAttachmentNode()
                         self.fileNodes.append(fileNode)
-                        self.addSubnode(fileNode)
+                        self.contentNode.addSubnode(fileNode)
                     }
                     for (index, file) in files.enumerated() {
                         let fileNode = self.fileNodes[index]
@@ -408,7 +441,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                     let dateFrame = CGRect(origin: CGPoint(x: backgroundFrame.maxX - bubbleTailInset - textInsets.right - dateLayout.size.width, y: backgroundFrame.maxY - textInsets.bottom - dateLayout.size.height + 1.0), size: dateLayout.size)
                     animation.animator.updateFrame(layer: self.dateNode.layer, frame: dateFrame, completion: nil)
 
-                    self.updateCheck(item: item, anchorY: backgroundFrame.maxY - 26.0, animation: animation)
+                    self.layoutContainers(size: layout.contentSize)
+                    self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                 })
 
             case .assistant:
@@ -497,7 +531,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                     }
                     self.contentFrame = CGRect(x: x - 8.0, y: -4.0, width: maxTextWidth + 16.0, height: height + 8.0)
                     self.updateReveal(item: item, totalLength: totalLength)
-                    self.updateCheck(item: item, anchorY: max(0.0, height - 24.0), animation: animation)
+                    self.layoutContainers(size: layout.contentSize)
+                    self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                 })
 
             case let .tool(name):
@@ -534,7 +569,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                     animation.animator.updateFrame(layer: self.toolTitleNode.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top), size: titleLayout.size), completion: nil)
                     let _ = textApply()
                     animation.animator.updateFrame(layer: self.toolTextNode.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top + titleLayout.size.height + 2.0), size: textLayout.size), completion: nil)
-                    self.updateCheck(item: item, anchorY: max(0.0, cardSize.height / 2.0 - 11.0), animation: animation)
+                    self.layoutContainers(size: layout.contentSize)
+                    self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                 })
             }
         }
@@ -552,7 +588,7 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
         for node in nodes where node.supernode == nil {
             node.isUserInteractionEnabled = false
-            self.insertSubnode(node, belowSubnode: self.dateNode)
+            self.contentNode.insertSubnode(node, belowSubnode: self.dateNode)
         }
         self.textNodes = nodes
     }
@@ -562,20 +598,45 @@ final class ChatMessageItemNode: ListViewItemNode {
             node.removeFromSupernode()
         }
         for node in nodes where node.supernode == nil {
-            self.insertSubnode(node, belowSubnode: self.dateNode)
+            self.contentNode.insertSubnode(node, belowSubnode: self.dateNode)
         }
         self.tableNodes = nodes
     }
 
-    /// Telegram's selection check: a ring at the left edge that fills when the message is selected.
-    private func updateCheck(item: ChatMessageItem, anchorY: CGFloat, animation: ListViewItemUpdateAnimation) {
-        let selected = item.selection ?? false
-        self.checkNode.image = selectionCheckImage(selected: selected, color: item.theme.chat.selectionCheckColor, strokeColor: item.theme.chat.freeSecondaryTextColor)
-        let frame = CGRect(x: 12.0, y: anchorY, width: 24.0, height: 24.0)
-        animation.animator.updateFrame(layer: self.checkNode.layer, frame: frame, completion: nil)
-        let alpha: CGFloat = item.selection == nil ? 0.0 : 1.0
-        if self.checkNode.alpha != alpha {
-            animation.transition.updateAlpha(node: self.checkNode, alpha: alpha)
+    /// Telegram's selection check (ChatMessageSelectionNode, copied): it covers the row, so a tap anywhere toggles the
+    /// message, and slides in from the left as in ChatMessageBubbleItemNode.updateSelectionState.
+    private func updateSelection(item: ChatMessageItem, size: CGSize, animation: ListViewItemUpdateAnimation) {
+        let frame = CGRect(origin: CGPoint(), size: size)
+        if let selected = item.selection {
+            if let selectionNode = self.selectionNode {
+                selectionNode.updateSelected(selected, animated: animation.isAnimated)
+                animation.animator.updateFrame(layer: selectionNode.layer, frame: frame, completion: nil)
+                selectionNode.updateLayout(size: size, leftInset: 0.0)
+            } else {
+                let messageId = item.message.id
+                let selectionNode = ChatMessageSelectionNode(wallpaper: item.theme.wallpaper, theme: item.theme.presentationTheme, toggle: { [weak self] _ in
+                    self?.item?.interaction.toggleSelection(messageId)
+                })
+                selectionNode.frame = frame
+                selectionNode.updateLayout(size: size, leftInset: 0.0)
+                selectionNode.updateSelected(selected, animated: false)
+                self.addSubnode(selectionNode)
+                self.selectionNode = selectionNode
+                if animation.isAnimated {
+                    selectionNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
+                    selectionNode.layer.animatePosition(from: CGPoint(x: -42.0, y: 0.0), to: CGPoint(), duration: 0.2, timingFunction: CAMediaTimingFunctionName.easeOut.rawValue, additive: true)
+                }
+            }
+        } else if let selectionNode = self.selectionNode {
+            self.selectionNode = nil
+            if animation.isAnimated {
+                selectionNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { [weak selectionNode] _ in
+                    selectionNode?.removeFromSupernode()
+                })
+                selectionNode.layer.animatePosition(from: CGPoint(), to: CGPoint(x: -42.0, y: 0.0), duration: 0.2, timingFunction: CAMediaTimingFunctionName.easeOut.rawValue, removeOnCompletion: false, additive: true)
+            } else {
+                selectionNode.removeFromSupernode()
+            }
         }
     }
 
@@ -773,38 +834,6 @@ final class FileAttachmentNode: ASDisplayNode {
         self.nameNode.frame = CGRect(origin: CGPoint(x: 52.0, y: 3.0), size: nameSize)
         self.sizeNode.frame = CGRect(origin: CGPoint(x: 52.0, y: 24.0), size: sizeSize)
     }
-}
-
-private var selectionCheckImages: [String: UIImage] = [:]
-
-/// Telegram's message selection check: an empty ring, or a filled circle with a checkmark.
-private func selectionCheckImage(selected: Bool, color: UIColor, strokeColor: UIColor) -> UIImage? {
-    let key = "\(selected)|\(color.argb)|\(strokeColor.argb)"
-    if let image = selectionCheckImages[key] {
-        return image
-    }
-    let image = generateImage(CGSize(width: 24.0, height: 24.0), rotatedContext: { size, context in
-        let bounds = CGRect(origin: CGPoint(), size: size)
-        context.clear(bounds)
-        if selected {
-            context.setFillColor(color.cgColor)
-            context.fillEllipse(in: bounds)
-            context.setStrokeColor(UIColor.white.cgColor)
-            context.setLineWidth(1.8)
-            context.setLineCap(.round)
-            context.setLineJoin(.round)
-            context.move(to: CGPoint(x: 7.0, y: 12.5))
-            context.addLine(to: CGPoint(x: 10.5, y: 16.0))
-            context.addLine(to: CGPoint(x: 17.0, y: 8.5))
-            context.strokePath()
-        } else {
-            context.setStrokeColor(strokeColor.cgColor)
-            context.setLineWidth(1.5)
-            context.strokeEllipse(in: bounds.insetBy(dx: 1.0, dy: 1.0))
-        }
-    })
-    selectionCheckImages[key] = image
-    return image
 }
 
 func messageTimeString(_ date: Date) -> String {

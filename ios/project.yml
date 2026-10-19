@@ -17,6 +17,10 @@ targets:
       - path: ThirdParty/Telegram/Images.xcassets
       - path: ThirdParty/Telegram/Animations
         buildPhase: resources
+      - path: ThirdParty/Telegram/Resources
+        buildPhase: resources
+      - path: ThirdParty/tdesktop/background.tgv
+        buildPhase: resources
     dependencies:
       - package: TelegramFoundation
         products:
@@ -38,6 +42,17 @@ targets:
           - TelegramPresentationData
           - LottieComponent
           - LottieSettings
+          - TelegramCore
+          - TelegramUIPreferences
+          - ContextUI
+          - ContextControllerImpl
+          - CheckNode
+          - ChatMessageSelectionNode
+          - AccountContext
+          - LegacyComponents
+          - Svg
+          - AnimatedTextComponent
+          - ChatTitleActivityNode
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau

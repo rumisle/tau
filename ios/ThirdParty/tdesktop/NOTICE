@@ -1,0 +1,4 @@
+background.tgv is Telegram's default chat wallpaper pattern (the pattern of the Classic theme's default wallpaper,
+slug fqv01SQemVIBAAAApND8LDRUhRU), a gzipped SVG. Telegram-iOS downloads it from Telegram's servers; tau bundles the
+copy Telegram Desktop ships at Telegram/Resources/art/background.tgv (https://github.com/telegramdesktop/tdesktop,
+GPLv3 with an OpenSSL exception).

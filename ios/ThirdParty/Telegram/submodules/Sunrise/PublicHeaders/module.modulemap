@@ -1,0 +1,4 @@
+module Sunrise {
+    header "Sunrise/EDSunriseSet.h"
+    export *
+}

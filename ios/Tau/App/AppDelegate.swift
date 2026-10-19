@@ -18,6 +18,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         defaultNavigationBarImpl = { presentationData in
             return NavigationBarImpl(presentationData: presentationData)
         }
+        installTelegramComponentFactories()
 
         // Telegram's window stack: a native window hosting Display's Window1, which drives layout (keyboard, status bar,
         // safe areas) for every ViewController as a ContainerViewLayout.
@@ -44,7 +45,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         self.themeDisposable = (themeContext.theme |> deliverOnMainQueue).start(next: { theme in
             hostView.containerView.backgroundColor = theme.chatList.backgroundColor
             navigationController.updateTheme(theme.navigationControllerTheme)
-            window.overrideUserInterfaceStyle = themeContext.mode == .system ? .unspecified : (theme.overallDarkAppearance ? .dark : .light)
+            // System controls (keyboard, menus) follow the theme; with Auto-Night they follow the phone, which drives it.
+            window.overrideUserInterfaceStyle = themeContext.settings.autoNight ? .unspecified : (theme.overallDarkAppearance ? .dark : .light)
         })
 
         window.makeKeyAndVisible()
@@ -56,8 +58,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     /// `xcrun simctl launch booted com.rumisle.tau -openChat 2 -send "hello"`.
     private func applyDebugLaunchArguments(context: AppContext, chatList: ChatListController, root: RootTabController, navigationController: NavigationController) {
         let defaults = UserDefaults.standard
-        if let mode = defaults.string(forKey: "theme").flatMap(ThemeContext.Mode.init(rawValue:)) {
-            context.themeContext.setMode(mode)
+        // -theme classic|day|night|tintedNight (light and dark map to Classic and Tinted Night).
+        if let name = defaults.string(forKey: "theme") {
+            let aliases: [String: TauTheme.Builtin] = ["light": .classic, "dark": .tintedNight]
+            if let builtin = aliases[name] ?? TauTheme.Builtin(rawValue: name) {
+                context.themeContext.force(builtin)
+            }
         }
         if defaults.object(forKey: "tab") != nil {
             Queue.mainQueue().after(0.3) {

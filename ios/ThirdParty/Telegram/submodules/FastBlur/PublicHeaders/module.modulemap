@@ -1,0 +1,5 @@
+module FastBlur {
+    header "FastBlur/ApplyScreenshotEffect.h"
+    header "FastBlur/FastBlur.h"
+    export *
+}

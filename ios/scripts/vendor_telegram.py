@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Copy Telegram-iOS foundation modules verbatim into ios/ThirdParty/Telegram and generate a SwiftPM package for them.
+"""Copy Telegram-iOS modules verbatim into ios/ThirdParty/Telegram and generate a SwiftPM package for them.
 
 Usage: uv run ios/scripts/vendor_telegram.py [path to a Telegram-iOS checkout, default vendor/Telegram-iOS]
 
-Modules keep their Telegram-iOS paths, so `diff -r` against a checkout shows every local change. The module table below
-mirrors each module's Bazel BUILD file (sources, public headers, include roots, defines, deps); keep it in sync when
-adding a module. Modeled on Telegram's own build-system/generate_spm.py.
+ROOTS lists the modules tau uses. Everything they depend on is copied too, read from Telegram's Bazel BUILD files
+(sources, public headers, include roots, defines, deps), except modules in SHIMS: those are tau's stand-ins, with
+the module's name and only the API the copied code uses, for modules bound to Telegram's account, network and
+database layers. Modules keep their Telegram-iOS paths, so `diff -r` against a checkout shows every local change.
 """
 import glob
 import os
@@ -13,283 +14,92 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from telegram_build import OBJC, SWIFT, Glob, Workspace, compile_flags, label_name, normalize_label  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SOURCE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "vendor", "Telegram-iOS")
 DEST = os.path.join(ROOT, "ios", "ThirdParty", "Telegram")
 
-# name: (type, path, srcs globs, hdrs globs, include root, defines, deps)
-MODULES = {
-    "SwiftSignalKit": ("swift", "submodules/SSignalKit/SwiftSignalKit", ["Source/**/*.swift"], [], None, [], []),
-    "AsyncDisplayKit": (
-        "objc",
-        "submodules/AsyncDisplayKit",
-        ["Source/**/*.m", "Source/**/*.mm", "Source/*.h"],
-        ["Source/PublicHeaders/AsyncDisplayKit/*.h"],
-        "Source/PublicHeaders",
-        ["MINIMAL_ASDK"],
-        [],
-    ),
-    "ObjCRuntimeUtils": (
-        "objc",
-        "submodules/ObjCRuntimeUtils",
-        ["Source/ObjCRuntimeUtils/*.m"],
-        ["Source/ObjCRuntimeUtils/*.h"],
-        "Source",
-        [],
-        [],
-    ),
-    "UIKitRuntimeUtils": (
-        "objc",
-        "submodules/UIKitRuntimeUtils",
-        ["Source/UIKitRuntimeUtils/*.m"],
-        ["Source/UIKitRuntimeUtils/*.h"],
-        "Source",
-        [],
-        ["AsyncDisplayKit", "ObjCRuntimeUtils"],
-    ),
-    "AppBundle": (
-        "objc",
-        "submodules/AppBundle",
-        ["Sources/**/*.m", "Sources/**/*.h"],
-        ["PublicHeaders/**/*.h"],
-        "PublicHeaders",
-        [],
-        [],
-    ),
-    "Markdown": ("swift", "submodules/Markdown", ["Source/**/*.swift"], [], None, [], []),
-    "Display": (
-        "swift",
-        "submodules/Display",
-        ["Source/**/*.swift"],
-        [],
-        None,
-        [],
-        ["ObjCRuntimeUtils", "UIKitRuntimeUtils", "AppBundle", "SwiftSignalKit", "Markdown", "AsyncDisplayKit"],
-    ),
-    "ComponentFlow": ("swift", "submodules/ComponentFlow", ["Source/**/*.swift"], [], None, [], ["Display", "UIKitRuntimeUtils"]),
-    "MergeLists": ("swift", "submodules/MergeLists", ["Sources/**/*.swift"], [], None, [], []),
-    "GradientBackground": (
-        "swift",
-        "submodules/GradientBackground",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["AsyncDisplayKit", "Display", "SwiftSignalKit"],
-    ),
-    "ActivityIndicator": ("swift", "submodules/ActivityIndicator", ["Sources/**/*.swift"], [], None, [], ["Display", "AsyncDisplayKit"]),
-    "ComponentDisplayAdapters": (
-        "swift",
-        "submodules/Components/ComponentDisplayAdapters",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["Display", "ComponentFlow"],
-    ),
-    "MultilineTextComponent": (
-        "swift",
-        "submodules/Components/MultilineTextComponent",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["Display", "ComponentFlow", "Markdown"],
-    ),
-    "MeshTransformApi": (
-        "objc",
-        "submodules/TelegramUI/Components/MeshTransform/MeshTransformApi",
-        ["Sources/*.m"],
-        ["PublicHeaders/**/*.h"],
-        "PublicHeaders",
-        [],
-        [],
-    ),
-    "MeshTransform": (
-        "swift",
-        "submodules/TelegramUI/Components/MeshTransform",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["MeshTransformApi"],
-    ),
-    "GlassBackgroundComponent": (
-        "swift",
-        "submodules/TelegramUI/Components/GlassBackgroundComponent",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["Display", "ComponentFlow", "ComponentDisplayAdapters", "UIKitRuntimeUtils", "AppBundle", "MeshTransform"],
-    ),
-    "EdgeEffect": (
-        "swift",
-        "submodules/TelegramUI/Components/EdgeEffect",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["Display", "ComponentFlow", "ComponentDisplayAdapters", "GlassBackgroundComponent"],
-    ),
-    "NavigationBarImpl": (
-        "swift",
-        "submodules/TelegramUI/Components/NavigationBarImpl",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        [
-            "AsyncDisplayKit",
-            "Display",
-            "ComponentFlow",
-            "GlassBackgroundComponent",
-            "EdgeEffect",
-            "ComponentDisplayAdapters",
-            "MultilineTextComponent",
-            "AppBundle",
-        ],
-    ),
-    "HierarchyTrackingLayer": ("swift", "submodules/Components/HierarchyTrackingLayer", ["Sources/**/*.swift"], [], None, [], []),
-    # Lottie: rlottie (C++, the submodule at submodules/rlottie/rlottie) behind Telegram's bindings. tlottie (Rust) is
-    # a shim; LottieRenderingSettings.noAccountFallback, which tau uses, selects rlottie.
-    "RLottieBinding": (
-        "objc",
-        "submodules/rlottie",
-        ["rlottie/src/**/*.cpp", "rlottie/src/**/*.h", "rlottie/inc/**/*.h", "RLottieInstance.mm", "config.h"],
-        ["PublicHeaders/**/*.h"],
-        "PublicHeaders",
-        ["pixman_region_selfcheck(x)=1", "LOTTIE_DISABLE_ARM_NEON=1", "LOTTIE_THREAD_SAFE=1", "LOTTIE_IMAGE_MODULE_DISABLED=1"],
-        [],
-        {
-            "exclude": ["rlottie/src/vector/vdrawhelper_neon.cpp", "rlottie/src/vector/stb/**/*", "rlottie/src/lottie/rapidjson/msinttypes/**/*"],
-            "header_paths": [".", "rlottie/inc", "rlottie/src/vector", "rlottie/src/vector/pixman", "rlottie/src/vector/freetype"],
-        },
-    ),
-    "LottieBinding": ("swift", "submodules/LottieBinding", ["Sources/**/*.swift"], [], None, [], ["LottieSettings", "RLottieBinding", "TLottieBinding"]),
-    "GZip": ("objc", "submodules/GZip", ["Sources/**/*.m"], ["Sources/**/*.h"], "Sources", [], [], {"links": ["z"]}),
-    "GenerateStickerPlaceholderImage": (
-        "swift",
-        "submodules/TelegramUI/Components/Utils/GenerateStickerPlaceholderImage",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["Display"],
-    ),
-    "LottieComponent": (
-        "swift",
-        "submodules/TelegramUI/Components/LottieComponent",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["Display", "ComponentFlow", "HierarchyTrackingLayer", "LottieBinding", "LottieSettings", "SwiftSignalKit", "AppBundle", "GZip", "GenerateStickerPlaceholderImage"],
-    ),
-    # Patched (see PATCHES): custom emoji pattern support removed.
-    "MessageInlineBlockBackgroundView": (
-        "swift",
-        "submodules/TelegramUI/Components/Chat/MessageInlineBlockBackgroundView",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["Display", "HierarchyTrackingLayer", "SwiftSignalKit"],
-    ),
-    # Patched: custom emoji and spoiler dust removed. Only the text engine, not its TelegramCore-bound wrapper.
-    "InteractiveTextComponent": (
-        "swift",
-        "submodules/TelegramUI/Components/InteractiveTextComponent",
-        ["Sources/InteractiveTextComponent.swift"],
-        [],
-        None,
-        [],
-        ["AsyncDisplayKit", "Display", "ComponentFlow", "AppBundle", "MessageInlineBlockBackgroundView"],
-    ),
-    "LiquidLens": (
-        "swift",
-        "submodules/TelegramUI/Components/LiquidLens",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["Display", "ComponentFlow", "GlassBackgroundComponent"],
-    ),
-    "BundleIconComponent": (
-        "swift",
-        "submodules/Components/BundleIconComponent",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["ComponentFlow", "AppBundle", "Display"],
-    ),
-    "TextBadgeComponent": (
-        "swift",
-        "submodules/TelegramUI/Components/TextBadgeComponent",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        ["Display", "ComponentFlow"],
-    ),
-    "TabSelectionRecognizer": (
-        "swift",
-        "submodules/TelegramUI/Components/TabSelectionRecognizer",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        [],
-    ),
-    "LottieSettings": ("swift", "submodules/LottieSettings", ["Sources/**/*.swift"], [], None, [], []),
-    # The iOS 26 floating tab bar. Its TelegramPresentationData, SearchBarNode and LottieComponent deps are shims.
-    "TabBarComponent": (
-        "swift",
-        "submodules/TelegramUI/Components/TabBarComponent",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        [
-            "Display",
-            "LottieSettings",
-            "TelegramPresentationData",
-            "ComponentFlow",
-            "ComponentDisplayAdapters",
-            "MultilineTextComponent",
-            "GlassBackgroundComponent",
-            "LottieComponent",
-            "BundleIconComponent",
-            "TextBadgeComponent",
-            "UIKitRuntimeUtils",
-            "LiquidLens",
-            "AppBundle",
-            "SearchBarNode",
-            "TabSelectionRecognizer",
-        ],
-    ),
-    "StreamingTextReveal": (
-        "swift",
-        "submodules/TelegramUI/Components/StreamingTextReveal",
-        ["Sources/**/*.swift"],
-        [],
-        None,
-        [],
-        [],
-    ),
-}
+# What tau imports. Their dependencies are found from the BUILD files.
+ROOTS = [
+    "//submodules/Display",
+    "//submodules/ComponentFlow",
+    "//submodules/MergeLists",
+    "//submodules/GradientBackground",
+    "//submodules/ActivityIndicator",
+    "//submodules/Components/MultilineTextComponent",
+    "//submodules/TelegramUI/Components/GlassBackgroundComponent",
+    "//submodules/TelegramUI/Components/EdgeEffect",
+    "//submodules/TelegramUI/Components/NavigationBarImpl",
+    "//submodules/TelegramUI/Components/LottieComponent",
+    "//submodules/TelegramUI/Components/Chat/MessageInlineBlockBackgroundView",
+    "//submodules/TelegramUI/Components/InteractiveTextComponent",
+    "//submodules/TelegramUI/Components/TabBarComponent",
+    "//submodules/TelegramUI/Components/StreamingTextReveal",
+    "//submodules/TelegramPresentationData",
+    "//submodules/ContextUI",
+    "//submodules/TelegramUI/Components/ContextControllerImpl",
+    "//submodules/CheckNode",
+    "//submodules/TelegramUI/Components/Chat/ChatMessageSelectionNode",
+    "//submodules/LegacyComponents",
+    "//submodules/Svg",
+    "//submodules/ChatTitleActivityNode",
+    "//submodules/TelegramUI/Components/AnimatedTextComponent",
+]
 
-
-# tau's stand-ins for Telegram modules too heavy to copy (TelegramCore-bound or needing rlottie). Each has the
-# module's name and only the API the copied modules use. They live in ios/ThirdParty/telegram-shims/<name> and are
-# copied to tau-shims/<name>. name: deps
+# tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
 SHIMS = {
-    "TelegramPresentationData": ["Display"],
+    "TelegramCore": ["Postbox", "SwiftSignalKit"],
+    "Postbox": ["SwiftSignalKit"],
+    "TelegramUIPreferences": ["TelegramCore", "Postbox", "Display"],
+    "MediaResources": ["TelegramCore", "Postbox", "SwiftSignalKit"],
+    "TinyThumbnail": [],
+    "AccountContext": ["TelegramCore", "Postbox", "SwiftSignalKit", "Display", "TelegramPresentationData", "LottieSettings", "AnimationCache", "MultiAnimationRenderer", "TextFormat"],
+    "AnimationCache": ["SwiftSignalKit"],
+    "MultiAnimationRenderer": ["AnimationCache"],
+    "EmojiTextAttachmentView": ["Display", "TelegramCore", "AccountContext", "AnimationCache", "MultiAnimationRenderer", "TextFormat"],
+    "AnimatedStickerNode": ["Display", "AsyncDisplayKit", "SwiftSignalKit"],
+    "EmojiStatusComponent": ["Display", "ComponentFlow", "TelegramCore", "AccountContext", "AnimationCache", "MultiAnimationRenderer"],
+    "EntityKeyboard": ["Display", "ComponentFlow", "TelegramCore", "AccountContext", "AnimationCache", "MultiAnimationRenderer"],
+    "ReactionSelectionNode": ["AsyncDisplayKit", "Display", "TelegramCore", "AccountContext", "AnimationCache", "MultiAnimationRenderer", "EntityKeyboard", "SwiftSignalKit", "TelegramPresentationData"],
+    "TopMessageReactions": ["TelegramCore", "AccountContext", "ReactionSelectionNode"],
+    "UndoUI": ["Display", "AsyncDisplayKit", "TelegramCore", "AccountContext", "TelegramPresentationData"],
+    "TextFormat": ["TelegramCore"],
     "SearchBarNode": ["Display", "AsyncDisplayKit", "TelegramPresentationData"],
     "TLottieBinding": [],
 }
 SHIMS_SOURCE = os.path.join(ROOT, "ios", "ThirdParty", "telegram-shims")
+
+# Per-module changes to what the BUILD file says.
+OVERRIDES = {
+    # Only the text engine, not its TelegramCore-bound wrapper.
+    "InteractiveTextComponent": {"srcs": ["Sources/InteractiveTextComponent.swift"]},
+    # Loading and coding themes and wallpapers from Telegram's cloud. tau uses the built-in themes.
+    "TelegramPresentationData": {
+        "exclude": [
+            "Sources/ChatControllerBackgroundNode.swift",
+            "Sources/PresentationThemeCoder.swift",
+            "Sources/PresentationThemeCodable.swift",
+        ],
+    },
+}
+
+# Generated at build time in Telegram: label -> function(module dir) that writes the sources.
+def generate_presentation_strings(directory: str) -> None:
+    os.makedirs(os.path.join(directory, "GeneratedPresentationStrings", "Sources"), exist_ok=True)
+    os.makedirs(os.path.join(directory, "GeneratedPresentationStrings", "PublicHeaders", "PresentationStrings"), exist_ok=True)
+    os.makedirs(os.path.join(directory, "GeneratedPresentationStrings", "Resources"), exist_ok=True)
+    subprocess.check_call([
+        sys.executable, os.path.join(SOURCE, "build-system", "GenerateStrings", "GenerateStrings.py"),
+        "--source=" + os.path.join(SOURCE, "Telegram", "Telegram-iOS", "en.lproj", "Localizable.strings"),
+        "--outImplementation=" + os.path.join(directory, "GeneratedPresentationStrings", "Sources", "PresentationStrings.m"),
+        "--outHeader=" + os.path.join(directory, "GeneratedPresentationStrings", "PublicHeaders", "PresentationStrings", "PresentationStrings.h"),
+        "--outData=" + os.path.join(directory, "GeneratedPresentationStrings", "Resources", "PresentationStrings.data"),
+    ], stdout=subprocess.DEVNULL)
+
+
+GENERATED = {"//Telegram:PresentationStrings": generate_presentation_strings}
 
 # Telegram images the modules load with UIImage(bundleImageName:), from submodules/TelegramUI/Images.xcassets.
 IMAGES = [
@@ -314,6 +124,38 @@ IMAGES = [
     "Item List/Icons/Privacy",
     "Item List/Icons/Folder",
     "Chat/Attach Menu/Camera",
+    "Chat/Context Menu/Copy",
+    "Chat/Context Menu/Edit",
+    "Chat/Context Menu/Select",
+    "Chat/Context Menu/Delete",
+    "Chat/Context Menu/Forward",
+    "Chat/Context Menu/Share",
+    "Chat/Context Menu/Reply",
+    "Chat/Context Menu/Read",
+    "Chat/Context Menu/Unread",
+    "Chat/Context Menu/Pin",
+    "Chat/Context Menu/Unpin",
+    "Chat/Context Menu/Archive",
+    "Chat/Context Menu/Info",
+    "Chat/Context Menu/Settings",
+    "Chat/Context Menu/Clear",
+    "Chat/Input/Accessory Panels/MessageSelectionAction",
+    "Chat/Input/Accessory Panels/MessageSelectionForward",
+    "Chat/Input/Accessory Panels/MessageSelectionTrash",
+    "Chat/Input/Accessory Panels/EditIcon",
+    "Chat/Input/Accessory Panels/CloseIcon",
+    "Chat/Context Menu/Translate",
+    "Chat/Context Menu/MarkAsRead",
+    "Chat/Context Menu/MarkAsUnread",
+    "Chat/Context Menu/Reload",
+    "Chat/Context Menu/Pencil",
+    "Chat/Context Menu/Quote",
+    "Chat/Context Menu/SelectAll",
+    "Chat/Context Menu/Resend",
+    "Chat/Context Menu/Message",
+    "Chat/Context Menu/Folder",
+    "Chat/Context Menu/Pause",
+    "Chat/Context Menu/More",
 ]
 
 # Lottie animations LottieComponent.AppBundleContent loads by name, from submodules/TelegramUI/Resources/Animations.
@@ -341,6 +183,9 @@ def copy_images() -> None:
     with open(os.path.join(target_catalog, "Contents.json"), "w") as f:
         f.write('{\n  "info" : {\n    "author" : "xcode",\n    "version" : 1\n  }\n}\n')
     for name in IMAGES:
+        if not os.path.isdir(os.path.join(catalog, name + ".imageset")):
+            print(f"warning: no image {name}")
+            continue
         # Namespace folders carry a Contents.json that makes "Chat/Message/X" a valid image name.
         parts = name.split("/")
         for depth in range(1, len(parts)):
@@ -361,9 +206,14 @@ def apply_patches() -> None:
             print(f"applied {patch}")
 
 
-def files(base: str, patterns: list[str], exclude: list[str] = []) -> list[str]:
+def expand(base: str, spec) -> list[str]:
+    if spec is None:
+        return []
+    include, exclude = (spec.include, spec.exclude) if isinstance(spec, Glob) else (list(spec), [])
     found = set()
-    for pattern in patterns:
+    for pattern in include:
+        if pattern.startswith(":") or pattern.startswith("//"):
+            continue
         for path in glob.glob(os.path.join(base, pattern), recursive=True):
             if os.path.isfile(path):
                 found.add(os.path.relpath(path, base))
@@ -371,6 +221,46 @@ def files(base: str, patterns: list[str], exclude: list[str] = []) -> list[str]:
         for path in glob.glob(os.path.join(base, pattern), recursive=True):
             found.discard(os.path.relpath(path, base))
     return sorted(found)
+
+
+def closure(ws: Workspace):
+    """The rules to copy, in dependency-first order, and for each the module names it depends on."""
+    order, deps_of, seen = [], {}, {}
+    def visit(label, chain):
+        label = normalize_label(label)
+        name = label_name(label)
+        if name in SHIMS:
+            return name
+        if label in seen:
+            return seen[label]
+        rule = ws.rule(label)
+        if rule is None:
+            sys.exit(f"no rule for {label} (via {' -> '.join(chain)})")
+        if rule.kind not in SWIFT | OBJC:
+            sys.exit(f"{label} is a {rule.kind} (via {' -> '.join(chain)})")
+        seen[label] = rule.name
+        names = []
+        for dep in rule.attrs.get("deps", []) or []:
+            if not isinstance(dep, str):
+                continue
+            if dep.startswith(":"):
+                dep = f"//{rule.path}{dep}"
+            names.append(visit(dep, chain + [rule.name]))
+        deps_of[rule.name] = sorted(set(names))
+        order.append(rule)
+        return rule.name
+    for root in ROOTS:
+        visit(root, [])
+    return order, deps_of
+
+
+def relative_include(path: str, module_path: str) -> str:
+    """A -I path from Telegram's copts (workspace-relative) as a path relative to the module directory."""
+    if path == module_path:
+        return "."
+    if path.startswith(module_path + "/"):
+        return path[len(module_path) + 1 :]
+    return os.path.relpath(path, module_path)
 
 
 def main() -> None:
@@ -387,58 +277,84 @@ def main() -> None:
     with open(os.path.join(DEST, "REVISION"), "w") as f:
         f.write(revision + "\n")
 
+    ws = Workspace(SOURCE)
+    rules, deps_of = closure(ws)
+    module_paths = {rule.path for rule in rules}
     targets = []
-    for name, (kind, path, srcs, hdrs, include, defines, deps, *rest) in MODULES.items():
-        # Optional extras: exclude (globs), header_paths, links (libraries).
-        extra = rest[0] if rest else {}
+    total = 0
+    for rule in rules:
+        name, path, attrs = rule.name, rule.path, rule.attrs
+        override = OVERRIDES.get(name, {})
         base = os.path.join(SOURCE, path)
-        sources = files(base, srcs, extra.get("exclude", []))
-        headers = files(base, hdrs)
-        if not sources:
-            sys.exit(f"{name}: no sources under {base}")
-        for rel in sources + headers + [p for p in ("LICENSE",) if os.path.exists(os.path.join(base, p))]:
-            target = os.path.join(DEST, path, rel)
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            shutil.copy2(os.path.join(base, rel), target)
-        compiled = [rel for rel in sources if not rel.endswith(".h")]
+        out = os.path.join(DEST, path)
+        if rule.label in GENERATED:
+            GENERATED[rule.label](out)
+            base = out
+        srcs = override.get("srcs", attrs.get("srcs"))
+        if "exclude" in override:
+            srcs = (srcs if isinstance(srcs, Glob) else Glob(list(srcs))) + Glob([], override["exclude"])
+        sources = expand(base, srcs)
+        headers = expand(base, attrs.get("hdrs"))
+        if base != out:
+            for rel in sources + headers + [p for p in ("LICENSE",) if os.path.exists(os.path.join(base, p))]:
+                target = os.path.join(out, rel)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copy2(os.path.join(base, rel), target)
+        compiled = [rel for rel in sources if not rel.endswith((".h", ".hpp", ".inc"))]
+        defines, includes = compile_flags([c for c in attrs.get("copts", []) or [] if isinstance(c, str)])
+        defines += [d for d in attrs.get("defines", []) or [] if isinstance(d, str)]
+        if rule.kind in OBJC and not compiled:
+            # A header-only library still needs one source file to be a target.
+            with open(os.path.join(out, "tau-empty.c"), "w") as f:
+                f.write("")
+            compiled = ["tau-empty.c"]
         lines = [
-            f'        .target(',
+            "        .target(",
             f'            name: "{name}",',
-            f'            dependencies: [{", ".join(f"{dep!r}".replace(chr(39), chr(34)) for dep in deps)}],',
+            f'            dependencies: [{", ".join(chr(34) + d + chr(34) for d in deps_of[name])}],',
             f'            path: "{path}",',
         ]
         # A module nested in this one's directory (MeshTransform/MeshTransformApi) must not be part of it.
-        nested = [other[1][len(path) + 1 :] for other in MODULES.values() if other[1].startswith(path + "/")]
+        nested = sorted(other[len(path) + 1 :] for other in module_paths if other.startswith(path + "/"))
         if nested:
             lines.append(f'            exclude: [{", ".join(chr(34) + n + chr(34) for n in nested)}],')
-        lines += [
-            f'            sources: [',
-            *[f'                "{rel}",' for rel in compiled],
-            f'            ],',
-        ]
-        if kind == "objc":
-            public = [os.path.relpath(rel, include) for rel in headers]
-            with open(os.path.join(DEST, path, include, "module.modulemap"), "w") as f:
-                f.write(f"module {name} {{\n" + "".join(f'    header "{header}"\n' for header in public) + "}\n")
-            lines.append(f'            publicHeadersPath: "{include}",')
-            def define(value: str) -> str:
+        lines += ["            sources: [", *[f'                "{rel}",' for rel in compiled], "            ],"]
+        if rule.kind in OBJC:
+            roots = attrs.get("includes") or []
+            include = roots[0] if roots else "tau-include"
+            os.makedirs(os.path.join(out, include), exist_ok=True)
+            public = [os.path.relpath(rel, include) for rel in headers if not os.path.relpath(rel, include).startswith("..")]
+            # Swift imports the module through this map; C++-only headers stay out of it.
+            listed = [h for h in public if h.endswith(".h")]
+            with open(os.path.join(out, include, "module.modulemap"), "w") as f:
+                f.write(f"module {name} {{\n" + "".join(f'    header "{h}"\n' for h in listed) + "    export *\n}\n")
+            settings = []
+            for value in defines:
                 if "=" in value:
                     key, val = value.split("=", 1)
-                    return f'.define("{key}", to: "{val}")'
-                return f'.define("{value}")'
-            settings = [define(d) for d in defines] + [f'.headerSearchPath("{h}")' for h in extra.get("header_paths", [])]
+                    settings.append(f'.define("{key}", to: "{val}")')
+                else:
+                    settings.append(f'.define("{value}")')
+            header_paths = [relative_include(i, path) for i in includes] + list(roots[1:])
+            settings += [f'.headerSearchPath("{h}")' for h in dict.fromkeys(header_paths) if h != include]
+            lines.append(f'            publicHeadersPath: "{include}",')
             lines.append(f"            cSettings: [{', '.join(settings)}],")
             lines.append(f"            cxxSettings: [{', '.join(settings)}],")
-            links = ", ".join(f'.linkedLibrary("{lib}")' for lib in extra.get("links", []))
-            lines.append(f"            linkerSettings: [{links}]")
+            links = [f'.linkedLibrary("{lib.removeprefix("lib")}")' for lib in attrs.get("sdk_dylibs", []) or []]
+            links += [f'.linkedFramework("{fw}")' for fw in attrs.get("sdk_frameworks", []) or [] if fw.lower() != "uikit" or fw == "UIKit"]
+            lines.append(f"            linkerSettings: [{', '.join(links)}]")
         else:
-            lines.append("            swiftSettings: [.swiftLanguageMode(.v5)]")
+            settings = [".swiftLanguageMode(.v5)"] + [f'.define("{d}")' for d in defines]
+            lines.append(f"            swiftSettings: [{', '.join(settings)}]")
         lines.append("        ),")
         targets.append("\n".join(lines))
-        print(f"{name}: {len(compiled)} sources, {len(headers)} public headers")
+        total += len(compiled)
+        print(f"{name}: {len(compiled)} sources, {len(headers)} headers")
 
     for name, deps in SHIMS.items():
         source = os.path.join(SHIMS_SOURCE, name)
+        if not os.path.isdir(source):
+            sys.exit(f"missing shim {source}")
         shutil.copytree(source, os.path.join(DEST, "tau-shims", name))
         compiled = sorted(f for f in os.listdir(source) if f.endswith(".swift"))
         targets.append("\n".join([
@@ -452,7 +368,7 @@ def main() -> None:
         ]))
         print(f"{name}: shim, {len(compiled)} sources")
 
-    products = "\n".join(f'        .library(name: "{name}", targets: ["{name}"]),' for name in [*MODULES, *SHIMS])
+    products = "\n".join(f'        .library(name: "{name}", targets: ["{name}"]),' for name in [*(r.name for r in rules), *SHIMS])
     package = f"""// swift-tools-version: 6.0
 // Generated by ios/scripts/vendor_telegram.py from Telegram-iOS {revision}. Do not edit.
 // The modules below are Telegram-iOS code, GPLv2 (see NOTICE).
@@ -476,8 +392,13 @@ let package = Package(
     os.makedirs(os.path.join(DEST, "Animations"))
     for name in ANIMATIONS:
         shutil.copy2(os.path.join(SOURCE, "submodules", "TelegramUI", "Resources", "Animations", name), os.path.join(DEST, "Animations", name))
+    # Bundle resources the modules load at runtime: the strings table PresentationStrings reads.
+    resources = os.path.join(DEST, "Resources")
+    os.makedirs(os.path.join(resources, "en.lproj"))
+    shutil.copy2(os.path.join(SOURCE, "Telegram", "Telegram-iOS", "en.lproj", "Localizable.strings"), os.path.join(resources, "en.lproj", "Localizable.strings"))
+    shutil.move(os.path.join(DEST, "Telegram", "GeneratedPresentationStrings", "Resources", "PresentationStrings.data"), os.path.join(resources, "PresentationStrings.data"))
     apply_patches()
-    print(f"Telegram-iOS {revision} -> {os.path.relpath(DEST, ROOT)}")
+    print(f"{len(rules)} modules, {total} sources, {len(SHIMS)} shims. Telegram-iOS {revision} -> {os.path.relpath(DEST, ROOT)}")
 
 
 main()

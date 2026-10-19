@@ -1,0 +1,4 @@
+module LegacyImpl {
+    header "Svg/Svg.h"
+    export *
+}

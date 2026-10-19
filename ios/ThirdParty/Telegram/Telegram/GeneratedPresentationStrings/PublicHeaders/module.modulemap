@@ -1,0 +1,4 @@
+module PresentationStrings {
+    header "PresentationStrings/PresentationStrings.h"
+    export *
+}

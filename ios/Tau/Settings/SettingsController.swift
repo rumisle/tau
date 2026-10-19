@@ -116,7 +116,7 @@ final class SettingsController: SettingsListController {
 
     init(context: AppContext) {
         super.init(context: context, title: "Settings")
-        self.modeDisposable = (context.themeContext.modeSignal |> deliverOnMainQueue).start(next: { [weak self] _ in
+        self.modeDisposable = (context.themeContext.settingsSignal |> deliverOnMainQueue).start(next: { [weak self] _ in
             self?.reload()
         })
     }
@@ -143,7 +143,7 @@ final class SettingsController: SettingsListController {
             SettingsRowItem(theme: theme, icon: SettingsIcon.model, title: "Default Model", accessory: .disclosure(label: "claude-opus-5-5"), position: middle, action: {}),
             SettingsRowItem(theme: theme, icon: SettingsIcon.projects, title: "Projects", accessory: .disclosure(label: ""), position: last, action: {}),
             SettingsTextItem(theme: theme, text: "Preferences", kind: .header),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.appearance, title: "Appearance", accessory: .disclosure(label: context.themeContext.mode.title), position: first, action: { [weak self] in
+            SettingsRowItem(theme: theme, icon: SettingsIcon.appearance, title: "Appearance", accessory: .disclosure(label: context.themeContext.settings.theme.title), position: first, action: { [weak self] in
                 guard let self else {
                     return
                 }
@@ -163,7 +163,7 @@ final class AppearanceController: SettingsListController {
 
     init(context: AppContext) {
         super.init(context: context, title: "Appearance")
-        self.modeDisposable = (context.themeContext.modeSignal |> deliverOnMainQueue).start(next: { [weak self] _ in
+        self.modeDisposable = (context.themeContext.settingsSignal |> deliverOnMainQueue).start(next: { [weak self] _ in
             self?.reload()
         })
     }
@@ -178,15 +178,33 @@ final class AppearanceController: SettingsListController {
 
     override func items(theme: TauTheme) -> [ListViewItem] {
         let themeContext = self.context.themeContext
-        let modes = ThemeContext.Mode.allCases
+        let settings = themeContext.settings
+        let themes = TauTheme.Builtin.allCases
         var items: [ListViewItem] = [SettingsTextItem(theme: theme, text: "Color Theme", kind: .header)]
-        for (index, mode) in modes.enumerated() {
-            let position = SettingsRowPosition(isFirst: index == 0, isLast: index == modes.count - 1)
-            items.append(SettingsRowItem(theme: theme, icon: nil, title: mode.title, accessory: .checkmark(themeContext.mode == mode), position: position, action: {
-                themeContext.setMode(mode)
+        for (index, builtin) in themes.enumerated() {
+            let position = SettingsRowPosition(isFirst: index == 0, isLast: index == themes.count - 1)
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: builtin.title, accessory: .checkmark(settings.theme == builtin), position: position, action: {
+                themeContext.update { $0.theme = builtin }
             }))
         }
-        items.append(SettingsTextItem(theme: theme, text: "System switches between Day and Night with your iPhone's appearance.", kind: .footer))
+        items.append(SettingsTextItem(theme: theme, text: "Auto-Night Mode", kind: .header))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Disabled", accessory: .checkmark(!settings.autoNight), position: SettingsRowPosition(isFirst: true, isLast: false), action: {
+            themeContext.update { $0.autoNight = false }
+        }))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "System", accessory: .checkmark(settings.autoNight), position: SettingsRowPosition(isFirst: false, isLast: true), action: {
+            themeContext.update { $0.autoNight = true }
+        }))
+        if settings.autoNight {
+            items.append(SettingsTextItem(theme: theme, text: "Preferred Theme", kind: .header))
+            let nightThemes = themes.filter(\.isDark)
+            for (index, builtin) in nightThemes.enumerated() {
+                let position = SettingsRowPosition(isFirst: index == 0, isLast: index == nightThemes.count - 1)
+                items.append(SettingsRowItem(theme: theme, icon: nil, title: builtin.title, accessory: .checkmark(settings.nightTheme == builtin), position: position, action: {
+                    themeContext.update { $0.nightTheme = builtin }
+                }))
+            }
+            items.append(SettingsTextItem(theme: theme, text: "Switches to the preferred night theme while your iPhone is in dark mode.", kind: .footer))
+        }
         return items
     }
 }

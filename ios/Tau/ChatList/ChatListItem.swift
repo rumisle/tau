@@ -10,11 +10,14 @@ final class ChatListItem: ListViewItem {
     let theme: TauTheme
     let dialog: DialogModel
     let action: (DialogModel) -> Void
+    /// A long press: Telegram's chat preview with actions.
+    let contextAction: (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void
 
-    init(theme: TauTheme, dialog: DialogModel, action: @escaping (DialogModel) -> Void) {
+    init(theme: TauTheme, dialog: DialogModel, action: @escaping (DialogModel) -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void) {
         self.theme = theme
         self.dialog = dialog
         self.action = action
+        self.contextAction = contextAction
     }
 
     var neighborDescriptor: AnyEquatable {
@@ -72,6 +75,10 @@ private let textFont = Font.regular(15.0)
 private let dateFont = Font.regular(14.0)
 
 final class ChatListItemNode: ListViewItemNode {
+    /// As in Telegram's ChatListItemNode: the row's content sits in a context source, which shrinks it under the finger
+    /// and is where the preview grows from.
+    private let contextContainer = ContextControllerSourceNode()
+    private let mainContentContainerNode = ASDisplayNode()
     private let highlightedBackgroundNode: ASDisplayNode
     private let avatarNode: ASImageNode
     private let titleNode: TextNode
@@ -114,12 +121,22 @@ final class ChatListItemNode: ListViewItemNode {
 
         self.addSubnode(self.highlightedBackgroundNode)
         self.addSubnode(self.separatorNode)
-        self.addSubnode(self.avatarNode)
-        self.addSubnode(self.titleNode)
-        self.addSubnode(self.authorNode)
-        self.addSubnode(self.textNode)
-        self.addSubnode(self.dateNode)
-        self.addSubnode(self.busyIndicatorNode)
+        self.addSubnode(self.contextContainer)
+        self.contextContainer.addSubnode(self.mainContentContainerNode)
+        self.mainContentContainerNode.addSubnode(self.avatarNode)
+        self.mainContentContainerNode.addSubnode(self.titleNode)
+        self.mainContentContainerNode.addSubnode(self.authorNode)
+        self.mainContentContainerNode.addSubnode(self.textNode)
+        self.mainContentContainerNode.addSubnode(self.dateNode)
+        self.mainContentContainerNode.addSubnode(self.busyIndicatorNode)
+
+        self.contextContainer.activated = { [weak self] gesture, _ in
+            guard let self, let item = self.item else {
+                gesture.cancel()
+                return
+            }
+            item.contextAction(item.dialog, self.contextContainer, gesture)
+        }
     }
 
     override func layoutForParams(_ params: ListViewItemLayoutParams, item: ListViewItem, neighbors: ListViewItemNeighbors) {
@@ -253,6 +270,9 @@ final class ChatListItemNode: ListViewItemNode {
                 let separatorX = leftInset + rawContentRect.origin.x
                 transition.updateFrame(node: strongSelf.separatorNode, frame: CGRect(origin: CGPoint(x: separatorX, y: itemHeight - separatorHeight), size: CGSize(width: params.width - separatorX, height: separatorHeight)))
                 strongSelf.highlightedBackgroundNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -separatorHeight), size: CGSize(width: params.width, height: itemHeight + separatorHeight))
+                let rowFrame = CGRect(origin: CGPoint(), size: CGSize(width: params.width, height: itemHeight))
+                strongSelf.contextContainer.frame = rowFrame
+                strongSelf.mainContentContainerNode.frame = rowFrame
             })
         }
     }

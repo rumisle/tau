@@ -1,3 +1,4 @@
 module RLottieBinding {
     header "RLottieBinding/RLottieInstance.h"
+    export *
 }
