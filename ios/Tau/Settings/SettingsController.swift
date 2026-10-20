@@ -181,8 +181,8 @@ final class SettingsController: SettingsListController {
         let defaults = UserDefaults.standard
         let alert = UIAlertController(title: "Server", message: "The tau server's WebSocket address, and its TAU_TOKEN if it has one.", preferredStyle: .alert)
         alert.addTextField { field in
-            field.placeholder = "ws://127.0.0.1:7878"
-            field.text = defaults.string(forKey: "server.url") ?? "ws://127.0.0.1:7878"
+            field.placeholder = defaultServerURL
+            field.text = defaults.string(forKey: "server.url") ?? defaultServerURL
             field.keyboardType = .URL
             field.autocapitalizationType = .none
             field.autocorrectionType = .no

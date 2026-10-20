@@ -17,10 +17,16 @@ ignored by git; edit `project.yml`.
 
 ## Server
 
-The app connects to `ws://127.0.0.1:7878` (the simulator reaches the Mac's server there); Settings > Server sets
-another address and the `TAU_TOKEN`, e.g. the Mac's LAN address or Tailscale name for a phone. "Use Demo Data" in the
-same dialog, or the `-mock YES` launch argument, switches to canned conversations (`Model/MockStore.swift`), which the UI
-tests use.
+The app connects to `wss://tau.example.ts.net`: the Mac's server published to the tailnet as a Tailscale service,
+which terminates TLS and proxies WebSockets to the local port:
+
+```bash
+tailscale serve --service=svc:tau --https=443 http://127.0.0.1:7878   # once; the tailnet admin approves the host
+```
+
+Settings > Server sets another address and the `TAU_TOKEN`. The UI tests pass `-server.url ws://127.0.0.1:7878` to reach
+the local server directly. "Use Demo Data" in the same dialog, or the `-mock YES` launch argument, switches to canned
+conversations (`Model/MockStore.swift`).
 
 `Server/` is the client side of the protocol, after `server/src/client.ts`:
 
