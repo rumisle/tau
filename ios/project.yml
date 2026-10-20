@@ -60,6 +60,7 @@ targets:
           - SSignalKit
           - ChatPresentationInterfaceState
           - GalleryUI
+          - libprisma
           - ItemListUI
     settings:
       base:

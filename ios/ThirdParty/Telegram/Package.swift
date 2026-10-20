@@ -88,6 +88,8 @@ let package = Package(
         .library(name: "ItemListUI", targets: ["ItemListUI"]),
         .library(name: "SwipeToDismissGesture", targets: ["SwipeToDismissGesture"]),
         .library(name: "GalleryUI", targets: ["GalleryUI"]),
+        .library(name: "boost_regex", targets: ["boost_regex"]),
+        .library(name: "libprisma", targets: ["libprisma"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -1912,6 +1914,34 @@ let package = Package(
                 "Sources/ZoomableContentGalleryItemNode.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "boost_regex",
+            dependencies: [],
+            path: "third-party/boost_regex",
+            sources: [
+                "tau-empty.c",
+            ],
+            publicHeadersPath: "include",
+            cSettings: [],
+            cxxSettings: [],
+            linkerSettings: []
+        ),
+        .target(
+            name: "libprisma",
+            dependencies: ["boost_regex"],
+            path: "third-party/libprisma",
+            sources: [
+                "Sources/Highlight.cpp",
+                "Sources/LanguageTree.cpp",
+                "Sources/SyntaxHighlighter.cpp",
+                "Sources/Syntaxer.mm",
+                "Sources/TokenList.cpp",
+            ],
+            publicHeadersPath: "include",
+            cSettings: [],
+            cxxSettings: [],
+            linkerSettings: [.linkedFramework("Foundation"), .linkedFramework("UIKit")]
         ),
         .target(
             name: "TelegramCore",

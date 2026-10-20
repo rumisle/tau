@@ -55,6 +55,7 @@ ROOTS = [
     "//submodules/TelegramUI/Components/GlassControls",
     "//submodules/ItemListUI",
     "//submodules/GalleryUI",
+    "//third-party/libprisma",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
@@ -543,6 +544,9 @@ let package = Package(
     legacy = os.path.join(SOURCE, "submodules", "LegacyComponents")
     shutil.copytree(os.path.join(legacy, "Resources", "LegacyComponentsResources.bundle"), os.path.join(resources, "LegacyComponentsResources.bundle"), ignore=shutil.ignore_patterns(".*"))
     shutil.copytree(os.path.join(legacy, "LegacyImages.xcassets"), os.path.join(DEST, "LegacyImages.xcassets"))
+    # libprisma's Syntaxer reads its grammars from LibprismaBundle.bundle next to its class, here the app bundle.
+    os.makedirs(os.path.join(resources, "LibprismaBundle.bundle"))
+    shutil.copy2(os.path.join(SOURCE, "third-party", "libprisma", "Resources", "grammars.dat"), os.path.join(resources, "LibprismaBundle.bundle", "grammars.dat"))
     apply_patches()
     print(f"{len(rules)} modules, {total} sources, {len(SHIMS)} shims. Telegram-iOS {revision} -> {os.path.relpath(DEST, ROOT)}")
 

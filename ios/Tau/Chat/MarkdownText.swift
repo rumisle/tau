@@ -1,4 +1,5 @@
 import UIKit
+import libprisma
 import Display
 
 /// Styles for one surface: a bubble, or the assistant's bubble-less text.
@@ -7,6 +8,13 @@ struct MarkdownStyle {
     var textColor: UIColor
     var linkColor: UIColor
     var accentColor: UIColor
+
+    /// Light text: a dark theme.
+    var isDark: Bool {
+        var white: CGFloat = 0.0
+        self.textColor.getWhite(&white, alpha: nil)
+        return white > 0.5
+    }
 }
 
 /// A rendered table: header cells, then body rows, each cell already styled.
@@ -127,16 +135,33 @@ enum MarkdownText {
             guard end > quote.start else {
                 return
             }
+            // StringWithAppliedEntities.swift: a code block is titled with its language; colors as
+            // ChatMessageTextBubbleContentNode gives an incoming message's blocks.
+            var title: NSAttributedString?
+            var backgroundColor = style.accentColor.withMultipliedAlpha(0.1)
+            if case let .code(language) = quote.kind {
+                if let language, !language.isEmpty {
+                    title = NSAttributedString(string: language.capitalized, font: fonts.bold.withSize(round(fonts.bold.pointSize * 0.8235294117647058)), textColor: style.accentColor)
+                }
+                backgroundColor = style.isDark ? UIColor(white: 0.0, alpha: 0.65) : UIColor(white: 0.0, alpha: 0.05)
+            }
             let data = TextNodeBlockQuoteData(
                 kind: quote.kind,
-                title: nil,
+                title: title,
                 color: style.accentColor,
                 secondaryColor: nil,
                 tertiaryColor: nil,
-                backgroundColor: style.accentColor.withMultipliedAlpha(0.1),
+                backgroundColor: backgroundColor,
                 isCollapsible: false
             )
-            current.addAttribute(blockQuoteKey, value: data, range: NSRange(location: quote.start, length: end - quote.start))
+            let range = NSRange(location: quote.start, length: end - quote.start)
+            current.addAttribute(blockQuoteKey, value: data, range: range)
+            if case let .code(language) = quote.kind {
+                if let language {
+                    highlight(current, range: range, language: language, style: style, fonts: fonts)
+                }
+                keepIndentation(current, range: range)
+            }
         }
 
         func flushText() {
@@ -211,6 +236,48 @@ enum MarkdownText {
         flushTable()
         flushText()
         return blocks
+    }
+
+    /// Telegram's code block highlighting: libprisma (copied), Prism's grammars in C++, colors a fenced block by its
+    /// language, as StringWithAppliedEntities.swift applies its `MessageSyntaxHighlight` entities.
+    private static let syntaxer = Syntaxer()
+    private static let syntaxerLock = NSLock()
+
+    private static func highlight(_ string: NSMutableAttributedString, range: NSRange, language: String, style: MarkdownStyle, fonts: Fonts) {
+        let language = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !language.isEmpty, let syntaxer = self.syntaxer else {
+            return
+        }
+        let code = (string.string as NSString).substring(with: range)
+        let theme = SyntaxterTheme(dark: style.isDark, textColor: style.textColor, textFont: fonts.monospace, italicFont: fonts.monospace, mediumFont: fonts.monospace)
+        self.syntaxerLock.lock()
+        let highlighted = syntaxer.syntax(code, language: language, theme: theme)
+        self.syntaxerLock.unlock()
+        guard let highlighted, highlighted.length == range.length else {
+            return
+        }
+        highlighted.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: highlighted.length), using: { value, subRange, _ in
+            if let color = value as? UIColor {
+                string.addAttribute(.foregroundColor, value: color, range: NSRange(location: range.location + subRange.location, length: subRange.length))
+            }
+        })
+    }
+
+    /// InteractiveTextNode drops the spaces a line starts with, which in code is indentation. No-break spaces in their
+    /// place keep it; spaces inside a line stay, so long lines still wrap between words.
+    private static func keepIndentation(_ string: NSMutableAttributedString, range: NSRange) {
+        let text = string.string as NSString
+        var atLineStart = true
+        for index in range.location ..< range.location + range.length {
+            let character = text.character(at: index)
+            if character == 0x0a {
+                atLineStart = true
+            } else if atLineStart && character == 0x20 {
+                string.replaceCharacters(in: NSRange(location: index, length: 1), with: "\u{00A0}")
+            } else {
+                atLineStart = false
+            }
+        }
     }
 
     private struct Fonts {

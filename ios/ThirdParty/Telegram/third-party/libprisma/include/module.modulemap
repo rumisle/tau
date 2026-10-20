@@ -1,0 +1,4 @@
+module libprisma {
+    header "libprisma/Syntaxer.h"
+    export *
+}
