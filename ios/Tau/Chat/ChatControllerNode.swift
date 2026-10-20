@@ -201,7 +201,15 @@ final class ChatControllerNode: ASDisplayNode {
     // MARK: - History
 
     func update(state: ConversationState) {
+        // Messages leaving the queue for the transcript rise from the panel.
+        let left = (self.state?.queued ?? []).filter { old in old.mode != .newContext && !state.queued.contains(where: { $0.id == old.id }) }
+        if !left.isEmpty, let source = self.inputPanelNode.accessoryFrameInWindow() {
+            for queued in left {
+                self.riseSources[queued.text] = source
+            }
+        }
         self.state = state
+        self.inputPanelNode.setQueue(state.queued)
         guard self.validLayout != nil else {
             // The list cannot lay items out before it has a size.
             return
@@ -235,6 +243,7 @@ final class ChatControllerNode: ASDisplayNode {
         let deletions = deleteIndices.map { ListViewDeleteItem(index: $0, directionHint: nil) }
         let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: self.item(for: $0.1), directionHint: nil) }
         let updates = updateIndices.map { ListViewUpdateItem(index: $0.0, previousIndex: $0.2, item: self.item(for: $0.1), directionHint: nil) }
+        self.riseSources.removeAll()
 
         var options = ListViewDeleteAndInsertOptions()
         var scrollToItem: ListViewScrollToItem?
@@ -356,8 +365,15 @@ final class ChatControllerNode: ASDisplayNode {
         }
     }
 
+    /// Panel positions of messages that just left the queue, by text, for their rows' first layout.
+    private var riseSources: [String: CGRect] = [:]
+
     private func item(for entry: ChatHistoryEntry) -> ListViewItem {
-        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, wrapCode: self.wrapCode, interaction: self.interaction)
+        var riseFrom: CGRect?
+        if entry.message.role == .user, !self.riseSources.isEmpty {
+            riseFrom = self.riseSources.removeValue(forKey: entry.message.text)
+        }
+        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, wrapCode: self.wrapCode, riseFrom: riseFrom, interaction: self.interaction)
     }
 
     /// Settings > Appearance > Wrap Lines in Code.

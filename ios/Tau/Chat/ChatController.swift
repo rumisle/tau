@@ -16,6 +16,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private let isPreview: Bool
     private var theme: TauTheme
     private let stateDisposable = MetaDisposable()
+    private let eventsDisposable = MetaDisposable()
     private var themeDisposable: Disposable?
     private var settingsDisposable: Disposable?
     private let titleView: ChatTitleView
@@ -54,6 +55,15 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.themeDisposable = (context.themeContext.theme |> deliverOnMainQueue).start(next: { [weak self] theme in
             self?.updateTheme(theme)
         })
+        if !isPreview {
+            self.connectionDisposable = (context.store.connectionStatus |> deliverOnMainQueue).start(next: { [weak self] status in
+                guard let self else {
+                    return
+                }
+                self.connectionStatus = status
+                self.updateTitle(busy: self.lastState?.busy ?? false)
+            })
+        }
         self.settingsDisposable = (context.themeContext.settingsSignal |> deliverOnMainQueue).start(next: { [weak self] settings in
             self?.controllerNode.wrapCode = settings.wrapCode
         })
@@ -65,6 +75,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
     deinit {
         self.stateDisposable.dispose()
+        self.eventsDisposable.dispose()
+        self.connectionDisposable?.dispose()
         self.themeDisposable?.dispose()
         self.settingsDisposable?.dispose()
     }
@@ -91,8 +103,21 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             return
         }
         let model = self.context.store.agent(self.conversationId).modelId ?? dialog.model
-        self.titleView.update(title: dialog.title, subtitle: busy ? "working" : "\(dialog.projectName) · \(model)", isActive: busy)
+        // As Telegram's chat title, the connection's state takes the title's place until it is back.
+        let title: String
+        switch self.connectionStatus {
+        case .connecting:
+            title = "Connecting…"
+        case .updating:
+            title = "Updating…"
+        case .online:
+            title = dialog.title
+        }
+        self.titleView.update(title: title, subtitle: busy ? "working" : "\(dialog.projectName) · \(model)", isActive: busy)
     }
+
+    private var connectionStatus: ConnectionStatus = .online
+    private var connectionDisposable: Disposable?
 
     override func loadDisplayNode() {
         self.displayNode = ChatControllerNode(theme: self.theme, isPreview: self.isPreview)
@@ -155,7 +180,19 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             guard let self else {
                 return
             }
-            self.context.store.abort(self.conversationId)
+            self.context.store.stop(self.conversationId)
+        }
+        node.inputPanelNode.sendLongPressed = { [weak self] view in
+            self?.openSendMenu(sourceView: view)
+        }
+        node.inputPanelNode.queueTapped = { [weak self] view in
+            self?.openQueueMenu(sourceView: view)
+        }
+        node.inputPanelNode.queueClosed = { [weak self] queued in
+            guard let self else {
+                return
+            }
+            self.context.store.withdraw(queued, in: self.conversationId, restore: false)
         }
         node.inputPanelNode.cancelEditing = { [weak self] in
             self?.endEditing(clearText: true)
@@ -177,6 +214,19 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self.controllerNode.inputPanelNode.isBusy = state.busy
             self.updateTitle(busy: state.busy)
         }))
+        if !self.isPreview {
+            self.eventsDisposable.set((self.context.store.chatEvents(self.conversationId) |> deliverOnMainQueue).start(next: { [weak self] event in
+                guard let self else {
+                    return
+                }
+                switch event {
+                case let .restoreInput(text):
+                    self.controllerNode.inputPanelNode.appendText(text)
+                case let .notice(text):
+                    self.controllerNode.showToast(text)
+                }
+            }))
+        }
         self.displayNodeDidLoad()
     }
 
@@ -314,6 +364,137 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.view.window?.rootViewController?.present(activity, animated: true)
     }
 
+    // MARK: - Sending modes and the queue
+
+    private func menuIcon(_ name: String) -> (PresentationTheme) -> UIImage? {
+        return { theme in generateTintedImage(image: UIImage(bundleImageName: name), color: theme.contextMenu.primaryColor) }
+    }
+
+    /// Telegram's stop glyph for menus: a rounded square in a circle, drawn as its 24 pt line icons are.
+    private static func stopIcon(_ theme: PresentationTheme) -> UIImage? {
+        return generateImage(CGSize(width: 24.0, height: 24.0), rotatedContext: { size, context in
+            context.clear(CGRect(origin: CGPoint(), size: size))
+            context.setStrokeColor(theme.contextMenu.primaryColor.cgColor)
+            context.setFillColor(theme.contextMenu.primaryColor.cgColor)
+            context.setLineWidth(1.33)
+            context.strokeEllipse(in: CGRect(x: 2.665, y: 2.665, width: 18.67, height: 18.67))
+            context.addPath(UIBezierPath(roundedRect: CGRect(x: 8.5, y: 8.5, width: 7.0, height: 7.0), cornerRadius: 1.5).cgPath)
+            context.fillPath()
+        })
+    }
+
+    /// A long press on Send while the agent works, as Telegram's send button opens Schedule Message: send after the
+    /// run instead of at its next step, or stop it and send now.
+    private func openSendMenu(sourceView: UIView) {
+        guard !self.isPreview, self.lastState?.busy == true, self.editingMessageId == nil else {
+            return
+        }
+        let id = self.conversationId
+        let store = self.context.store
+        let take: () -> String? = { [weak self] in
+            guard let self else {
+                return nil
+            }
+            let text = self.controllerNode.inputPanelNode.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                return nil
+            }
+            self.controllerNode.inputPanelNode.setText("")
+            return text
+        }
+        let items: [ContextMenuItem] = [
+            .action(ContextMenuActionItem(text: "Send as Follow-up", icon: self.menuIcon("Chat/Input/Menu/ScheduleIcon"), action: { [weak self] _, f in
+                f(.default)
+                if let text = take() {
+                    store.send(text, attachments: [], to: id, mode: .followUp)
+                    self?.controllerNode.wallpaperNode.animateEvent()
+                }
+            })),
+            .action(ContextMenuActionItem(text: "Stop and Send", icon: { theme in ChatController.stopIcon(theme) }, action: { [weak self] _, f in
+                f(.default)
+                if let text = take() {
+                    store.stopAndSend(text, attachments: [], in: id)
+                    self?.controllerNode.wallpaperNode.animateEvent()
+                }
+            }))
+        ]
+        let source = ChatViewContextReferenceSource(view: sourceView)
+        let controller = makeContextController(presentationData: self.theme.presentationData, source: .reference(source), items: .single(ContextController.Items(content: .list(items))), gesture: nil)
+        self.presentInGlobalOverlay(controller)
+    }
+
+    /// A tap on the queue panel: what can be done with a queued message before the agent has it. Several queued
+    /// messages are listed first, each opening its actions.
+    private func openQueueMenu(sourceView: UIView) {
+        guard !self.isPreview, let queue = self.lastState?.queued, !queue.isEmpty else {
+            return
+        }
+        var items: [ContextMenuItem]
+        if queue.count == 1 {
+            items = self.queueActions(queue[0], back: false)
+        } else {
+            items = []
+            for queued in queue {
+                let title: String
+                switch queued.mode {
+                case .steer:
+                    title = "Steer"
+                case .followUp:
+                    title = "Follow-up"
+                case .newContext:
+                    title = "New Context"
+                }
+                let text = queued.mode == .newContext ? "The model forgets this chat" : (queued.text.isEmpty ? "Photo" : queued.text.replacingOccurrences(of: "\n", with: " "))
+                items.append(.action(ContextMenuActionItem(text: text, textLayout: .secondLineWithValue(title), icon: { _ in nil }, action: { [weak self] controller, _ in
+                    guard let self else {
+                        return
+                    }
+                    controller?.pushItems(items: .single(ContextController.Items(content: .list(self.queueActions(queued, back: true)))))
+                })))
+            }
+        }
+        let source = ChatViewContextReferenceSource(view: sourceView)
+        let controller = makeContextController(presentationData: self.theme.presentationData, source: .reference(source), items: .single(ContextController.Items(content: .list(items))), gesture: nil)
+        self.presentInGlobalOverlay(controller)
+    }
+
+    private func queueActions(_ queued: QueuedMessage, back: Bool) -> [ContextMenuItem] {
+        let id = self.conversationId
+        let store = self.context.store
+        var items: [ContextMenuItem] = []
+        if back {
+            items.append(.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: self.menuIcon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
+                controller?.popItems()
+            })))
+            items.append(.separator)
+        }
+        if queued.mode != .newContext {
+            // pi's dequeue: the message comes back to the field to change and send again.
+            items.append(.action(ContextMenuActionItem(text: self.theme.presentationStrings.Conversation_MessageDialogEdit, icon: self.menuIcon("Chat/Context Menu/Edit"), action: { [weak self] _, f in
+                f(.default)
+                store.withdraw(queued, in: id, restore: true)
+                self?.controllerNode.inputPanelNode.activateInput()
+            })))
+            let other: SendMode = queued.mode == .steer ? .followUp : .steer
+            items.append(.action(ContextMenuActionItem(text: other == .followUp ? "Send as Follow-up" : "Send as Steer", icon: self.menuIcon(other == .followUp ? "Chat/Input/Menu/ScheduleIcon" : "Chat/Context Menu/Forward"), action: { _, f in
+                f(.default)
+                store.move(queued, in: id, to: other)
+            })))
+            items.append(.action(ContextMenuActionItem(text: "Send Now", textLayout: .secondLineWithValue("Stops the agent"), icon: self.menuIcon("Chat/Context Menu/Resend"), action: { _, f in
+                f(.default)
+                store.sendNow(queued, in: id)
+            })))
+            items.append(.separator)
+        }
+        items.append(.action(ContextMenuActionItem(text: self.theme.presentationStrings.Conversation_ContextMenuDelete, textColor: .destructive, icon: { theme in
+            generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Delete"), color: theme.contextMenu.destructiveColor)
+        }, action: { _, f in
+            f(.default)
+            store.withdraw(queued, in: id, restore: false)
+        })))
+        return items
+    }
+
     // MARK: - Title menu
 
     /// A tap on the title: the conversation's settings in Telegram's context menu, as Telegram's title opens a peer's
@@ -420,6 +601,43 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.controllerNode.inputPanelNode.deactivateInput()
         let strings = self.theme.presentationStrings
         var items: [ContextMenuItem] = []
+        if message.role == .user, let outgoingId = message.outgoingId, message.delivery != .delivered {
+            // As Telegram's menu for a message that did not go: Resend and Delete; one on its way can be deleted.
+            let store = self.context.store
+            let id = self.conversationId
+            if case let .failed(reason) = message.delivery {
+                items.append(.action(ContextMenuActionItem(text: reason, textLayout: .multiline, textFont: .small, icon: { _ in nil }, action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)))
+                items.append(.separator)
+                items.append(.action(ContextMenuActionItem(text: strings.Conversation_MessageDialogRetry, icon: { theme in
+                    generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Resend"), color: theme.actionSheet.primaryTextColor)
+                }, action: { _, f in
+                    f(.dismissWithoutContent)
+                    store.resend(outgoingId, in: id)
+                })))
+            }
+            if !message.text.isEmpty {
+                items.append(.action(ContextMenuActionItem(text: strings.Conversation_ContextMenuCopy, icon: { theme in
+                    generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Copy"), color: theme.actionSheet.primaryTextColor)
+                }, action: { [weak self] _, f in
+                    f(.default)
+                    self?.perform(.copy, on: message)
+                })))
+            }
+            items.append(.action(ContextMenuActionItem(text: strings.Conversation_ContextMenuDelete, textColor: .destructive, icon: { theme in
+                generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Delete"), color: theme.actionSheet.destructiveActionTextColor)
+            }, action: { _, f in
+                f(.dismissWithoutContent)
+                if case .failed = message.delivery {
+                    store.discard(outgoingId, in: id)
+                } else {
+                    store.withdraw(QueuedMessage(id: outgoingId, mode: .steer, text: message.text, imageCount: 0, isSending: true, outgoingId: outgoingId, submissionId: nil), in: id, restore: false)
+                }
+            })))
+            let source = ChatMessageContextExtractedContentSource(chatNode: self.controllerNode, messageId: message.id)
+            let controller = makeContextController(presentationData: self.theme.presentationData, source: .extracted(source), items: .single(ContextController.Items(content: .list(items))), recognizer: nil, gesture: gesture)
+            self.presentInGlobalOverlay(controller)
+            return
+        }
         if !message.text.isEmpty {
             items.append(.action(ContextMenuActionItem(text: strings.Conversation_ContextMenuCopy, icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Copy"), color: theme.actionSheet.primaryTextColor)
@@ -738,6 +956,32 @@ private final class ChatTitleContextReferenceSource: ContextReferenceContentSour
     init(view: UIView, contentArea: CGRect) {
         self.view = view
         self.contentArea = contentArea
+    }
+
+    var shouldBeDismissed: Signal<Bool, NoError> {
+        return .single(false)
+    }
+
+    var forceDisplayBelowKeyboard: Bool {
+        return false
+    }
+
+    func transitionInfo() -> ContextControllerReferenceViewInfo? {
+        guard let view = self.view else {
+            return nil
+        }
+        return ContextControllerReferenceViewInfo(referenceView: view, contentAreaInScreenSpace: UIScreen.main.bounds)
+    }
+}
+
+/// A view in the input panel as a context menu's anchor: the send button, the queue panel. The menu stays above the
+/// keyboard, as Telegram's send menu does.
+private final class ChatViewContextReferenceSource: ContextReferenceContentSource {
+    let keepInPlace: Bool = false
+    private weak var view: UIView?
+
+    init(view: UIView) {
+        self.view = view
     }
 
     var shouldBeDismissed: Signal<Bool, NoError> {

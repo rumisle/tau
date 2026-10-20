@@ -60,20 +60,13 @@ final class ConversationReplica {
     }
 
     var isBusy: Bool {
-        return self.live["run"] != nil || !(self.docs.object("pi.inbox")?.objects("items").isEmpty ?? true)
+        return self.live["run"] != nil || !self.inboxItems.isEmpty
     }
-}
 
-/// A message the user sent that the server has not confirmed yet. It shows at once, as Telegram shows an outgoing
-/// message with a clock, and keeps its row ID once it becomes an entry.
-struct PendingSend {
-    let rowId: Int
-    let requestId: String
-    let text: String
-    let attachments: [MessageAttachment]
-    let date: Date
-    var submissionId: Int?
-    var entryId: Int?
+    /// What waits for a boundary (`pi.inbox`): steers, follow-ups, and writes such as a queued reset.
+    var inboxItems: [JSONObject] {
+        return self.docs.object("pi.inbox")?.objects("items") ?? []
+    }
 }
 
 /// Turns entries and live docs into chat rows. Row IDs stay stable across the switch from streaming to committed: an
@@ -84,7 +77,75 @@ enum TranscriptBuilder {
         return base * 64 + block
     }
 
-    static func build(replica: ConversationReplica, pending: [PendingSend], rowIdForUserEntry: [Int: Int], images: ImageDecoder) -> ConversationState {
+    /// A sent message as a chat row: with the clock while on its way, red once refused, with two checks once it is in
+    /// the transcript but its entry has not reached the replica yet.
+    static func row(for item: OutgoingMessage, outbox: Outbox) -> ChatMessage {
+        let delivery: ChatMessage.Delivery
+        switch item.state {
+        case let .failed(_, message):
+            delivery = .failed(reason: message)
+        case .placed:
+            delivery = .delivered
+        default:
+            delivery = .sending
+        }
+        return ChatMessage(id: item.rowId, role: .user, text: item.text, date: item.date, attachments: outbox.attachments(item), delivery: delivery, outgoingId: item.requestId)
+    }
+
+    /// The input panel's queue: the inbox in its order, this device's messages matched to their items, then this
+    /// device's messages still on their way to it.
+    static func queue(replica: ConversationReplica, items: [OutgoingMessage]) -> [QueuedMessage] {
+        var result: [QueuedMessage] = []
+        var shown = Set<String>()
+        let bySubmission = Dictionary(items.compactMap { item in item.submissionId.map { ($0, item) } }, uniquingKeysWith: { first, _ in first })
+        for raw in replica.inboxItems {
+            guard let submissionId = raw.int("id") else {
+                continue
+            }
+            let mode: QueuedMessage.Mode
+            switch raw.string("mode") {
+            case "steer":
+                mode = .steer
+            case "followUp":
+                mode = .followUp
+            default:
+                // Of the writes only a reset is something the user asked for.
+                guard raw.object("entry")?.string("kind") == "pi.reset" else {
+                    continue
+                }
+                mode = .newContext
+            }
+            if let item = bySubmission[submissionId] {
+                shown.insert(item.requestId)
+                if case .withdrawing = item.state {
+                    continue
+                }
+                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.imageFiles.count, isSending: false, outgoingId: item.requestId, submissionId: submissionId))
+            } else {
+                let (text, images) = self.userContent(raw["content"])
+                result.append(QueuedMessage(id: "s\(submissionId)", mode: mode, text: text, imageCount: images.count, isSending: false, outgoingId: nil, submissionId: submissionId))
+            }
+        }
+        for item in items.sorted(by: { $0.seq < $1.seq }) where !shown.contains(item.requestId) {
+            switch item.state {
+            case let .queued(submissionId):
+                // Synced and not in the inbox: it left it, for the transcript or withdrawn, and its record is on the
+                // way; showing it queued meanwhile would be stale.
+                if replica.isSynced && !item.needsRefresh {
+                    continue
+                }
+                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.imageFiles.count, isSending: false, outgoingId: item.requestId, submissionId: submissionId))
+            case .pending where item.showsInQueue:
+                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.imageFiles.count, isSending: true, outgoingId: item.requestId, submissionId: nil))
+            default:
+                break
+            }
+        }
+        return result
+    }
+
+    static func build(replica: ConversationReplica, outbox: Outbox, rowIdForUserEntry: [Int: Int], images: ImageDecoder) -> ConversationState {
+        let items = outbox.items(for: replica.id)
         var rows: [ChatMessage] = []
         var toolRowIndex: [String: Int] = [:]
 
@@ -188,13 +249,23 @@ enum TranscriptBuilder {
             rows[index].tool = tool
         }
 
-        // Sent, not yet in the transcript: queued in the inbox, or not acknowledged.
-        let placedEntries = Set(replica.entries.keys)
-        for send in pending where send.entryId.map({ !placedEntries.contains($0) }) ?? true {
-            rows.append(ChatMessage(id: send.rowId, role: .user, text: send.text, date: send.date, attachments: send.attachments, isPending: true))
+        // Sent and not in the replica's transcript yet, in the order sent: on their way (not those the queue shows),
+        // refused, or placed with the entry still to come.
+        for item in items.sorted(by: { $0.seq < $1.seq }) {
+            switch item.state {
+            case .failed:
+                rows.append(self.row(for: item, outbox: outbox))
+            case .pending where !item.showsInQueue:
+                rows.append(self.row(for: item, outbox: outbox))
+            case let .placed(entryId) where replica.entries[entryId] == nil:
+                rows.append(self.row(for: item, outbox: outbox))
+            default:
+                break
+            }
         }
-
-        return ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !pending.isEmpty, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
+        let queue = self.queue(replica: replica, items: items)
+        // The agent works, or something waits for it: a message on its way is not that.
+        return ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !queue.isEmpty, queued: queue, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
     }
 
     /// A user message's text and its image blocks.

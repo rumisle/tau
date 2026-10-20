@@ -17,6 +17,7 @@ struct RequestError: Error, CustomStringConvertible {
     }
 
     static let disconnected = RequestError(code: "disconnected", message: "Not connected to the server")
+    static let timeout = RequestError(code: "timeout", message: "The server did not answer")
 }
 
 /// One WebSocket to a tau server (docs/protocol.md): JSON requests answered by id, pushes without one. Reconnects with
@@ -39,6 +40,20 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     private var retryDelay: Double = 0.5
     private var isClosed = false
     private(set) var hello: Hello?
+    private var pingTimer: SwiftSignalKit.Timer?
+    /// Requests with a big frame, not answered yet.
+    private var largeRequests: Set<Int> = []
+
+    /// No answer this long after a request is out means the socket is dead without knowing it (a half-open TCP
+    /// connection after a network change): reconnect, and callers resend idempotently.
+    private static let responseTimeout: Double = 45.0
+    private static let pingInterval: Double = 15.0
+    private static let pongTimeout: Double = 10.0
+
+    /// Connected and greeted: requests go out now.
+    var isReady: Bool {
+        return self.task != nil && self.hello != nil
+    }
 
     private let statusPromise = ValuePromise<ConnectionStatus>(.connecting, ignoreRepeated: true)
     var status: Signal<ConnectionStatus, NoError> {
@@ -103,9 +118,51 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                     home: value.string("home") ?? "~"
                 )
                 self.hello = hello
+                self.startPinging(generation: generation)
                 self.onConnected?(hello)
             case .failure:
                 self.reconnect(generation: generation)
+            }
+        }
+    }
+
+    /// URLSession does not notice a connection that died quietly; a ping that gets no pong in time does.
+    private func startPinging(generation: Int) {
+        self.pingTimer?.invalidate()
+        let timer = SwiftSignalKit.Timer(timeout: TauConnection.pingInterval, repeat: true, completion: { [weak self] in
+            self?.ping(generation: generation)
+        }, queue: Queue.mainQueue())
+        self.pingTimer = timer
+        timer.start()
+    }
+
+    /// Check the socket now, as when the app comes back to the foreground.
+    func checkAlive() {
+        if self.isReady {
+            self.ping(generation: self.generation)
+        }
+    }
+
+    private func ping(generation: Int) {
+        guard generation == self.generation, let task = self.task else {
+            return
+        }
+        // A pong cannot overtake a big frame still going out; the response timeout covers that socket instead.
+        if !self.largeRequests.isEmpty {
+            return
+        }
+        var answered = false
+        task.sendPing { [weak self] error in
+            Queue.mainQueue().async {
+                answered = true
+                if error != nil {
+                    self?.reconnect(generation: generation)
+                }
+            }
+        }
+        Queue.mainQueue().after(TauConnection.pongTimeout) { [weak self] in
+            if !answered {
+                self?.reconnect(generation: generation)
             }
         }
     }
@@ -114,6 +171,10 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         guard generation == self.generation, !self.isClosed else {
             return
         }
+        // Later callbacks of this socket are stale.
+        self.generation += 1
+        self.pingTimer?.invalidate()
+        self.pingTimer = nil
         self.task?.cancel(with: .goingAway, reason: nil)
         self.task = nil
         self.hello = nil
@@ -121,8 +182,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         self.statusPromise.set(.connecting)
         let delay = self.retryDelay
         self.retryDelay = min(8.0, self.retryDelay * 2.0)
+        let next = self.generation
         Queue.mainQueue().after(delay) { [weak self] in
-            guard let self, generation == self.generation else {
+            guard let self, next == self.generation else {
                 return
             }
             self.connect()
@@ -132,6 +194,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     private func failPending() {
         let pending = self.pending
         self.pending.removeAll()
+        self.largeRequests.removeAll()
         for completion in pending.values {
             completion(.failure(.disconnected))
         }
@@ -171,6 +234,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         guard let id = message.int("id"), let completion = self.pending.removeValue(forKey: id) else {
             return
         }
+        self.largeRequests.remove(id)
         if let error = message.object("error") {
             completion(.failure(RequestError(code: error.string("code") ?? "internal", message: error.string("message") ?? "")))
         } else {
@@ -213,12 +277,30 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
             return
         }
         self.pending[id] = completion
+        let generation = self.generation
+        // A big frame (photos) takes a while on a slow link: its answer may come later, and pings wait behind it.
+        let bytes = text.utf8.count
+        let timeout = TauConnection.responseTimeout + Double(bytes) / 50_000.0
+        if bytes > 256 * 1024 {
+            self.largeRequests.insert(id)
+        }
         task.send(.string(text)) { [weak self] error in
-            if error != nil {
-                Queue.mainQueue().async {
-                    if let completion = self?.pending.removeValue(forKey: id) {
+            Queue.mainQueue().async {
+                guard let self else {
+                    return
+                }
+                if error != nil {
+                    if let completion = self.pending.removeValue(forKey: id) {
                         completion(.failure(.disconnected))
                     }
+                    return
+                }
+                // Written: from now on the answer is due.
+                Queue.mainQueue().after(timeout) { [weak self] in
+                    guard let self, generation == self.generation, self.pending[id] != nil else {
+                        return
+                    }
+                    self.reconnect(generation: generation)
                 }
             }
         }

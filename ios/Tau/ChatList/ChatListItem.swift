@@ -192,6 +192,7 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
     private let authorNode: TextNode
     private let textNode: TextNode
     private let dateNode: TextNode
+    private let statusNode = ChatListStatusNode()
     private let badgeNode: ChatListBadgeNode
     private let separatorNode: ASDisplayNode
     private let busyIndicatorNode: BusyDotsNode
@@ -238,6 +239,7 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
         self.mainContentContainerNode.addSubnode(self.authorNode)
         self.mainContentContainerNode.addSubnode(self.textNode)
         self.mainContentContainerNode.addSubnode(self.dateNode)
+        self.mainContentContainerNode.addSubnode(self.statusNode)
         self.mainContentContainerNode.addSubnode(self.badgeNode)
         self.mainContentContainerNode.addSubnode(self.busyIndicatorNode)
 
@@ -363,7 +365,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
 
             let title: String
             let author: String
-            let date: Date?
+            var date: Date?
+            var statusState: ChatListStatusNodeState = .none
             let busy: Bool
             let badgeContent: ChatListBadgeContent
             let badgeImage: UIImage?
@@ -385,9 +388,19 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                     badgeContent = .none
                 }
                 badgeImage = badgeContent.isEmpty ? nil : PresentationResourcesChatList.badgeBackgroundActive(presentationTheme, diameter: badgeDiameter)
-                if dialog.busy {
+                if let outgoing = dialog.outgoing {
+                    // As Telegram's list shows an outgoing message from the moment it is sent: the clock, or the red
+                    // badge once refused.
+                    date = outgoing.date
+                    statusState = outgoing.failed ? .failed(presentationTheme.chatList.failedFillColor, presentationTheme.chatList.failedForegroundColor) : .clock(PresentationResourcesChatList.clockFrameImage(presentationTheme), PresentationResourcesChatList.clockMinImage(presentationTheme))
+                    textString = NSAttributedString(string: "You: " + outgoing.text.replacingOccurrences(of: "\n", with: " "), font: textFont, textColor: theme.messageTextColor)
+                } else if dialog.busy {
                     textString = NSAttributedString(string: "working", font: textFont, textColor: theme.activityTextColor)
                 } else if let last = dialog.last {
+                    if last.role == .user {
+                        // The agent reads at once: two checks, as a bot chat shows.
+                        statusState = .read(presentationTheme.chatList.checkmarkColor)
+                    }
                     let prefix: String
                     switch last.role {
                     case .user:
@@ -425,7 +438,9 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
             let (badgeSize, badgeApply) = makeBadgeLayout(CGSize(width: rawContentWidth, height: .greatestFiniteMagnitude), badgeDiameter, badgeFont, badgeImage, badgeContent)
             let badgeInset: CGFloat = badgeContent.isEmpty ? 0.0 : badgeSize.width + 5.0
 
-            let titleRectWidth = rawContentWidth - dateLayout.size.width - 10.0
+            // ChatListItem.swift: 24 pt for the status before the date.
+            let statusWidth: CGFloat = statusState == .none ? 0.0 : 24.0
+            let titleRectWidth = rawContentWidth - dateLayout.size.width - 10.0 - statusWidth
             let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: title, font: titleFont, textColor: theme.titleColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(10.0, titleRectWidth), height: .greatestFiniteMagnitude)))
 
             // The project directory reads like the author line of a group chat.
@@ -502,6 +517,10 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
 
                 let dateFrame = CGRect(origin: CGPoint(x: contentRect.maxX - dateLayout.size.width, y: contentRect.origin.y + 2.0), size: dateLayout.size)
                 transition.updateFrame(node: strongSelf.dateNode, frame: dateFrame)
+                let statusSize = CGSize(width: 24.0, height: 24.0)
+                strongSelf.statusNode.frame = CGRect(origin: CGPoint(x: contentRect.maxX - dateLayout.size.width - statusSize.width, y: contentRect.origin.y + 2.0 - UIScreenPixel + floor((dateLayout.size.height - statusSize.height) / 2.0)), size: statusSize)
+                strongSelf.statusNode.fontSize = 17.0
+                let _ = strongSelf.statusNode.transitionToState(statusState, animated: previousItem != nil && animation.isAnimated)
 
                 // ChatListItem.swift: the badge sits at the bottom right, raised by rightAccessoryVerticalOffset.
                 let badgeFrame = CGRect(x: contentRect.maxX - badgeSize.width, y: contentRect.maxY - badgeSize.height - 4.0, width: badgeSize.width, height: badgeSize.height)

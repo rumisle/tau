@@ -108,10 +108,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 chatList.open(conversationId: id)
             }
         }
-        guard defaults.object(forKey: "openChat") != nil else {
+        // -newChat YES: a fresh draft chat in the server's default directory, as New Chat makes.
+        let isNewChat = defaults.bool(forKey: "newChat")
+        guard defaults.object(forKey: "openChat") != nil || isNewChat else {
             return
         }
-        let conversationId = defaults.integer(forKey: "openChat")
+        let conversationId = isNewChat ? context.store.createConversation(cwd: nil) : defaults.integer(forKey: "openChat")
         let chat = ChatController(context: context, conversationId: conversationId)
         navigationController.pushViewController(chat, animated: false)
         if let draft = defaults.string(forKey: "draft") {

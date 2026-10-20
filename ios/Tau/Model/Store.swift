@@ -31,11 +31,28 @@ protocol TauStore: AnyObject {
     /// The model new conversations get, for every client of the server.
     func setDefaultModel(_ model: ModelInfo)
 
-    func send(_ text: String, attachments: [MessageAttachment], to id: Int)
+    /// Sends a message (docs/sending.md). While the agent works, a steer reaches it after its current step and a
+    /// follow-up once its run ends; idle, both start a run.
+    func send(_ text: String, attachments: [MessageAttachment], to id: Int, mode: SendMode)
     /// Rewrites a user message: the conversation continues from a fork just before it. Returns the conversation the
     /// chat should show from now on.
     func edit(messageId: Int, text: String, in id: Int, completion: @escaping (Int) -> Void)
-    func abort(_ id: Int)
+    /// Stops the agent. Queued messages come back to the input field, as pi's Escape returns them to the editor.
+    func stop(_ id: Int)
+    /// Stops the agent, as `stop`, and sends a new message at once.
+    func stopAndSend(_ text: String, attachments: [MessageAttachment], in id: Int)
+    /// Stops the agent and sends this queued message at once; the others come back to the input field.
+    func sendNow(_ queued: QueuedMessage, in id: Int)
+    /// Takes a queued message back before the agent gets it; `restore` puts its text in the input field (Edit).
+    func withdraw(_ queued: QueuedMessage, in id: Int, restore: Bool)
+    /// Queues a message again as a steer or a follow-up.
+    func move(_ queued: QueuedMessage, in id: Int, to mode: SendMode)
+    /// A refused message, sent again as a new one.
+    func resend(_ outgoingId: String, in id: Int)
+    /// Drops a refused message.
+    func discard(_ outgoingId: String, in id: Int)
+    /// What the chat must act on: withdrawn text for the input field, and notices.
+    func chatEvents(_ id: Int) -> Signal<ChatEvent, NoError>
     func loadOlder(_ id: Int)
 
     /// Models the server has credentials for.
@@ -58,9 +75,24 @@ protocol TauStore: AnyObject {
     func mintAttachmentId() -> Int
 }
 
+enum SendMode: Equatable {
+    case steer
+    case followUp
+}
+
+enum ChatEvent: Equatable {
+    /// A withdrawn message's text, for the input field.
+    case restoreInput(String)
+    case notice(String)
+}
+
 extension TauStore {
     func send(_ text: String, to id: Int) {
-        self.send(text, attachments: [], to: id)
+        self.send(text, attachments: [], to: id, mode: .steer)
+    }
+
+    func send(_ text: String, attachments: [MessageAttachment], to id: Int) {
+        self.send(text, attachments: attachments, to: id, mode: .steer)
     }
 }
 

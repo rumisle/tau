@@ -31,9 +31,13 @@ client marks that ID range unknown (a *hole*) and fills it with `conversation.hi
 { "event": "conv.entries", ... }   // push, no id
 ```
 
-Requests may run concurrently; responses carry the request's `id`.
+Requests may run concurrently; responses carry the request's `id`. Those that change a conversation (`submit`,
+`submission.withdraw`, `submission.abort`, `conversation.abort`, `reset`, `compact`, `configure`) run one at a time
+per conversation, in the order they arrived, across connections; creates run one at a time.
 
-Error codes: `bad_request`, `not_found`, `busy`, `unauthorized`, `internal`.
+Error codes: `bad_request`, `not_found`, `busy`, `unauthorized`, `too_large`, `unsupported`, `withdrawn`, `internal`.
+Only `internal` may pass on a retry; the others are final for that request. A frame larger than 96 MB closes the
+socket, so a client must not send one (content limits below are far under it).
 
 ## Methods
 
@@ -90,7 +94,9 @@ runs, the `pi.tool-result` entry's `details` after): `{ conversationId }`. Subsc
 the subagent's own transcript.
 
 ### `conversation.create`
-`{ title?, autoTitle?: boolean, agent?: AgentPatch }` -> `{ dialog: Dialog }`
+`{ requestId?: string, title?, autoTitle?: boolean, agent?: AgentPatch }` -> `{ dialog: Dialog }`
+
+With `requestId`, a repeated create (after a lost response) returns the conversation the first one made.
 
 With `autoTitle`, the server names the conversation in a few words after its first answer (with the conversation's
 model) and pushes the new title as a `dialog` event; `title` stands in until then.
@@ -166,8 +172,9 @@ After the response, the server pushes one frame per commit that touched the conv
 Apply a frame as a whole before rendering: when a run ends, the frame that removes `pi.live.run` also carries the
 answer entry.
 
-Separately, `{ event: "submission", record: SubmissionRecord }` reports a status change of one of the conversation's
-submissions. It is sent when the change commits and may arrive before the `conv.commit` with the entry it references.
+Separately, `{ event: "submission", record: SubmissionRecord }` reports a status change of a submission: of every
+conversation once `dialogs.subscribe` was called, else of the subscribed ones. It is sent when the change commits and
+may arrive before or after the `conv.commit` with the entry it references.
 
 Subscribing again replaces the previous subscription of that conversation.
 
@@ -189,6 +196,18 @@ the existing submission instead of sending twice. Persist it with the outgoing m
 
 `SubmissionRecord.status`: `queued` (in the inbox) -> `placed` (in the transcript, `entry` set) -> `done` (`answer` set)
 or `unanswered` (`reason`: `aborted`, `model_error`, `stale`, ...).
+
+Content is refused before admission, with nothing written: `too_large` over 1,000,000 characters of text, 20 images,
+or 5 MB per image; `unsupported` for an image type other than JPEG, PNG, GIF and WebP, or any image when the
+conversation's model takes none; `withdrawn` when `submission.withdraw` named the request ID first.
+
+### `submission.withdraw`
+`{ conversationId, requestId }` -> `{ result: "withdrawn" | "aborted" | "already_placed" | "settled", submission? }`
+
+Takes back a message by its request ID, whether or not its submit has arrived: `aborted` it left the inbox,
+`already_placed` it is in the transcript, `settled` it had ended before (see `submission`), `withdrawn` no submit had
+arrived, and one that arrives later is refused with `withdrawn`. This is what makes cancelling a message whose submit
+is in flight safe (docs/sending.md).
 
 ### `submission.abort`
 `{ conversationId, submissionId }` -> `{ result: "aborted" | "already_placed" | "settled" | "not_found" }`

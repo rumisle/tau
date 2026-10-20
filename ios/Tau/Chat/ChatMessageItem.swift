@@ -7,6 +7,7 @@ import StreamingTextReveal
 import ChatMessageSelectionNode
 import ActivityIndicator
 import TextSelectionNode
+import TelegramPresentationData
 
 /// What a message's neighbors need to know about it: who wrote it, so consecutive user bubbles merge.
 private enum ChatHistoryNeighbor: Equatable {
@@ -54,9 +55,12 @@ final class ChatMessageItem: ListViewItem {
     let isExpanded: Bool
     /// Long code lines wrap; otherwise each code block scrolls sideways.
     let wrapCode: Bool
+    /// Where a message the agent just got from the queue was, in window coordinates: its bubble rises from there.
+    let riseFrom: CGRect?
     let interaction: ChatMessageItemInteraction
 
-    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, wrapCode: Bool = true, interaction: ChatMessageItemInteraction) {
+    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, wrapCode: Bool = true, riseFrom: CGRect? = nil, interaction: ChatMessageItemInteraction) {
+        self.riseFrom = riseFrom
         self.theme = theme
         self.message = message
         self.isStreaming = isStreaming
@@ -195,6 +199,14 @@ private func contentHeight(_ blocks: [LaidOutBlock], revealed: Int?) -> CGFloat 
 final class ChatMessageItemNode: ListViewItemNode {
     private let bubbleNode = GradientBubbleNode()
     private let dateNode = TextNode()
+    /// Telegram's status after the time: the turning clock while on its way, two checks once the model has it.
+    private let clockFrameNode = ASImageNode()
+    private let clockMinNode = ASImageNode()
+    private let checkSentNode = ASImageNode()
+    private let checkReadNode = ASImageNode()
+    /// ChatMessageDeliveryFailedNode: the red badge beside a refused message.
+    private let failedNode = ASImageNode()
+    private var statusImagesKey: String?
     private var textNodes: [InteractiveTextNode] = []
     private var tableNodes: [ChatTableNode] = []
     private var imageNodes: [ASImageNode] = []
@@ -244,6 +256,19 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.contentNode.addSubnode(self.toolTitleNode)
         self.contentNode.addSubnode(self.toolTextNode)
         self.contentNode.addSubnode(self.dateNode)
+        for node in [self.clockFrameNode, self.clockMinNode, self.checkSentNode, self.checkReadNode] {
+            node.isLayerBacked = true
+            node.displaysAsynchronously = false
+            node.isHidden = true
+            self.contentNode.addSubnode(node)
+        }
+        self.failedNode.displaysAsynchronously = false
+        self.failedNode.isHidden = true
+        self.failedNode.isAccessibilityElement = true
+        self.failedNode.accessibilityIdentifier = "deliveryFailed"
+        self.failedNode.accessibilityLabel = "Not sent"
+        self.failedNode.accessibilityTraits = .button
+        self.addSubnode(self.failedNode)
 
         self.containerNode.shouldBegin = { [weak self] point in
             guard let self, let item = self.item, item.selection == nil, !item.isStreaming else {
@@ -271,6 +296,11 @@ final class ChatMessageItemNode: ListViewItemNode {
 
     @objc private func tapGesture(_ recognizer: UITapGestureRecognizer) {
         guard let item = self.item, item.selection == nil else {
+            return
+        }
+        if !self.failedNode.isHidden, self.failedNode.frame.insetBy(dx: -8.0, dy: -8.0).contains(recognizer.location(in: self.view)) {
+            // As ChatMessageDeliveryFailedNode's tap: the message's menu, with Resend.
+            item.interaction.openContextMenu(item.message.id, self, nil)
             return
         }
         let point = recognizer.location(in: self.contentNode.view)
@@ -414,8 +444,16 @@ final class ChatMessageItemNode: ListViewItemNode {
         super.animateInsertion(currentTimestamp, duration: duration, options: options)
         self.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
         if case .user = self.item?.message.role {
-            // A sent message rises from the input field, as in Telegram.
-            self.layer.animatePosition(from: CGPoint(x: 0.0, y: -40.0), to: CGPoint(), duration: duration, timingFunction: kCAMediaTimingFunctionSpring, additive: true)
+            if let source = self.item?.riseFrom, let superview = self.view.superview {
+                // From the queue panel to its place in the transcript.
+                let bubble = self.view.convert(self.contentFrame, to: nil)
+                let from = superview.convert(CGPoint(x: source.midX, y: source.midY), from: nil)
+                let to = superview.convert(CGPoint(x: bubble.midX, y: bubble.midY), from: nil)
+                self.layer.animatePosition(from: CGPoint(x: 0.0, y: from.y - to.y), to: CGPoint(), duration: 0.4, timingFunction: kCAMediaTimingFunctionSpring, additive: true)
+            } else {
+                // A sent message rises from the input field, as in Telegram.
+                self.layer.animatePosition(from: CGPoint(x: 0.0, y: -40.0), to: CGPoint(), duration: duration, timingFunction: kCAMediaTimingFunctionSpring, additive: true)
+            }
         }
     }
 
@@ -497,14 +535,23 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: messageTimeString(message.date), font: dateFont, textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 100.0, height: 20.0)))
                 let fileLayouts = files.map { FileAttachmentNode.measure(name: $0.name, size: $0.size, maxWidth: maxTextWidth) }
 
-                // The time shares the last line when it fits, as ChatMessageDateAndStatusNode's trailing layout does.
+                // The time and status share the last line when they fit, as ChatMessageDateAndStatusNode's trailing
+                // layout does. Its status takes 5 pt plus 13 pt after the time; a refused message has none.
+                let isFailed: Bool
+                if case .failed = message.delivery {
+                    isFailed = true
+                } else {
+                    isFailed = false
+                }
+                let statusWidth: CGFloat = isFailed ? 0.0 : 18.0
+                let dateAreaWidth = dateLayout.size.width + statusWidth
                 let dateSpacing: CGFloat = 6.0
                 var textAreaSize = hasText ? textLayout.size : CGSize()
-                let trailingWidth = (hasText ? textLayout.trailingLineWidth : 0.0) + dateSpacing + dateLayout.size.width
+                let trailingWidth = (hasText ? textLayout.trailingLineWidth : 0.0) + dateSpacing + dateAreaWidth
                 if hasText && trailingWidth <= maxTextWidth {
                     textAreaSize.width = max(textAreaSize.width, trailingWidth)
                 } else {
-                    textAreaSize.width = max(textAreaSize.width, dateLayout.size.width)
+                    textAreaSize.width = max(textAreaSize.width, dateAreaWidth)
                     textAreaSize.height += dateLayout.size.height
                 }
                 for fileSize in fileLayouts {
@@ -544,7 +591,9 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.dateNode.isHidden = false
                     self.bubbleNode.isHidden = false
 
-                    let backgroundFrame = CGRect(origin: CGPoint(x: params.width - params.rightInset - bubbleEdgeInset - bubbleSize.width, y: 0.0), size: bubbleSize)
+                    // ChatMessageBubbleItemNode: a refused message moves 24 pt left for its red badge.
+                    let failedInset: CGFloat = isFailed ? 24.0 : 0.0
+                    let backgroundFrame = CGRect(origin: CGPoint(x: params.width - params.rightInset - bubbleEdgeInset - bubbleSize.width - failedInset, y: 0.0), size: bubbleSize)
                     self.contentFrame = backgroundFrame
                     if let solidImage {
                         self.bubbleNode.update(solid: solidImage)
@@ -611,8 +660,9 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.setTableNodes([])
 
                     let _ = dateApply()
-                    let dateFrame = CGRect(origin: CGPoint(x: backgroundFrame.maxX - bubbleTailInset - textInsets.right - dateLayout.size.width, y: backgroundFrame.maxY - textInsets.bottom - dateLayout.size.height + 1.0), size: dateLayout.size)
+                    let dateFrame = CGRect(origin: CGPoint(x: backgroundFrame.maxX - bubbleTailInset - textInsets.right - dateAreaWidth, y: backgroundFrame.maxY - textInsets.bottom - dateLayout.size.height + 1.0), size: dateLayout.size)
                     animation.animator.updateFrame(layer: self.dateNode.layer, frame: dateFrame, completion: nil)
+                    self.updateStatus(item: item, dateFrame: dateFrame, backgroundFrame: backgroundFrame, failedInset: failedInset, animation: animation)
 
                     self.layoutContainers(size: layout.contentSize)
                     self.updateSelection(item: item, size: layout.contentSize, animation: animation)
@@ -682,6 +732,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.laidOutBlocks = laidOut
                     self.bubbleNode.isHidden = true
                     self.dateNode.isHidden = true
+                    self.hideStatus()
                     self.setToolVisible(false)
                     for node in self.imageNodes {
                         node.isHidden = true
@@ -777,6 +828,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.laidOutBlocks = []
                     self.bubbleNode.isHidden = true
                     self.dateNode.isHidden = true
+                    self.hideStatus()
                     self.setTextNodes([])
                     self.setTableNodes([])
                     self.setToolVisible(true)
@@ -882,6 +934,81 @@ final class ChatMessageItemNode: ListViewItemNode {
         for (key, scroller) in self.codeScrollers where !kept.contains(key) {
             scroller.removeFromSupernode()
             self.codeScrollers[key] = nil
+        }
+    }
+
+    // MARK: - Status
+
+    private func hideStatus() {
+        for node in [self.clockFrameNode, self.clockMinNode, self.checkSentNode, self.checkReadNode, self.failedNode] {
+            node.isHidden = true
+        }
+    }
+
+    /// ChatMessageDateAndStatusNode's outgoing status, placed as it places it after the time, and the failed badge.
+    private func updateStatus(item: ChatMessageItem, dateFrame: CGRect, backgroundFrame: CGRect, failedInset: CGFloat, animation: ListViewItemUpdateAnimation) {
+        let theme = item.theme.presentationTheme
+        let key = "\(theme.chat.message.outgoingCheckColor.argb)-\(theme.chat.message.outgoing.pendingActivityColor.argb)"
+        if self.statusImagesKey != key {
+            self.statusImagesKey = key
+            self.checkSentNode.image = generateCheckImage(partial: false, color: theme.chat.message.outgoingCheckColor, width: 11.0)
+            self.checkReadNode.image = generateCheckImage(partial: true, color: theme.chat.message.outgoingCheckColor, width: 11.0)
+            self.clockFrameNode.image = generateClockFrameImage(color: theme.chat.message.outgoing.pendingActivityColor)
+            self.clockMinNode.image = generateClockMinImage(color: theme.chat.message.outgoing.pendingActivityColor)
+            self.failedNode.image = PresentationResourcesChat.chatBubbleDeliveryFailedIcon(theme)
+        }
+        let wasFailed = !self.failedNode.isHidden
+        switch item.message.delivery {
+        case .sending:
+            for node in [self.checkSentNode, self.checkReadNode, self.failedNode] {
+                node.isHidden = true
+            }
+            let center = CGPoint(x: dateFrame.minX + dateFrame.width + 8.5, y: dateFrame.minY + 7.5)
+            for node in [self.clockFrameNode, self.clockMinNode] {
+                node.isHidden = false
+                node.bounds = CGRect(origin: CGPoint(), size: CGSize(width: 11.0, height: 11.0))
+                node.position = center
+            }
+            addClockAnimation(self.clockFrameNode.layer, duration: 6.0)
+            addClockAnimation(self.clockMinNode.layer, duration: 1.0)
+        case .delivered:
+            let showChecks = !self.checkSentNode.isHidden
+            for node in [self.clockFrameNode, self.clockMinNode, self.failedNode] {
+                node.isHidden = true
+                node.layer.removeAllAnimations()
+            }
+            let checkSize = CGSize(width: 11.0, height: 9.0)
+            let sentFrame = CGRect(origin: CGPoint(x: dateFrame.maxX + 1.0, y: dateFrame.minY + 3.0), size: checkSize)
+            let readFrame = CGRect(origin: CGPoint(x: dateFrame.maxX + 7.0, y: dateFrame.minY + 3.0), size: checkSize)
+            self.checkSentNode.isHidden = false
+            self.checkReadNode.isHidden = false
+            if showChecks {
+                animation.animator.updateFrame(layer: self.checkSentNode.layer, frame: sentFrame, completion: nil)
+                animation.animator.updateFrame(layer: self.checkReadNode.layer, frame: readFrame, completion: nil)
+            } else {
+                self.checkSentNode.frame = sentFrame
+                self.checkReadNode.frame = readFrame
+                if animation.isAnimated {
+                    // The checks pop in, as Telegram's do when a message is read.
+                    for node in [self.checkSentNode, self.checkReadNode] {
+                        node.layer.animateScale(from: 1.3, to: 1.0, duration: 0.1)
+                        node.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.1)
+                    }
+                }
+            }
+        case .failed:
+            for node in [self.clockFrameNode, self.clockMinNode, self.checkSentNode, self.checkReadNode] {
+                node.isHidden = true
+                node.layer.removeAllAnimations()
+            }
+            let size = CGSize(width: 22.0, height: 22.0)
+            let frame = CGRect(origin: CGPoint(x: backgroundFrame.maxX + failedInset - size.width, y: backgroundFrame.maxY - size.height), size: size)
+            self.failedNode.isHidden = false
+            self.failedNode.frame = frame
+            if !wasFailed && animation.isAnimated {
+                self.failedNode.layer.animatePosition(from: CGPoint(x: failedInset, y: 0.0), to: CGPoint(), duration: 0.3, additive: true)
+                self.failedNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
+            }
         }
     }
 

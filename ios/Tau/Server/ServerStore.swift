@@ -3,7 +3,7 @@ import SwiftSignalKit
 
 /// Conversations synced with a tau server (docs/protocol.md). Keeps the dialog list subscribed, subscribes to a
 /// conversation while a screen shows it, caches entries on disk so a reopened chat shows at once and a reconnect only
-/// fetches what is new, and resends unacknowledged messages with their request IDs after a reconnect.
+/// fetches what is new. Messages go through the outbox (Outbox.swift, docs/sending.md).
 final class ServerStore: TauStore {
     let connection: TauConnection
     private let cache: EntryCache
@@ -18,23 +18,24 @@ final class ServerStore: TauStore {
     private var replicas: [Int: ConversationReplica] = [:]
     private var watchers: [Int: Int] = [:]
     private var statePromises: [Int: ValuePromise<ConversationState>] = [:]
-    private var pending: [Int: [PendingSend]] = [:]
+    let outbox: Outbox
+    /// Row IDs of sent messages by the entry each became, so a row does not change identity when it is placed.
     private var rowIdForUserEntry: [Int: [Int: Int]] = [:]
-    private var nextLocalId = 1_000_000_000
     private var nextAttachmentId = 1
 
     /// Drafts: local negative IDs until the first message creates the conversation on the server.
     private struct Draft {
         var cwd: String?
         var realId: Int?
-        var queued: [(String, [MessageAttachment])] = []
-        var isCreating = false
+        /// Set by the first message: the create request, idempotent, in the outbox.
+        var createRequestId: String?
     }
     private var drafts: [Int: Draft] = [:]
     private var nextDraftId = -1
 
     init(url: URL, token: String?) {
         self.connection = TauConnection(url: url, token: token)
+        self.outbox = Outbox(connection: self.connection, namespace: url.absoluteString)
         self.cache = EntryCache(namespace: url.absoluteString)
         self.scroll = ScrollStateStorage(namespace: url.absoluteString)
         self.hiddenDialogs = Set(UserDefaults.standard.array(forKey: "hidden.\(url.absoluteString)") as? [Int] ?? [])
@@ -49,7 +50,133 @@ final class ServerStore: TauStore {
         self.connection.onConnected = { [weak self] hello in
             self?.connected(hello)
         }
+        self.setUpOutbox()
         self.connection.start()
+        NotificationCenter.default.addObserver(self, selector: #selector(self.didBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+    }
+
+    /// Back in the foreground: a socket that died while suspended is found out at once, not at the next ping.
+    @objc private func didBecomeActive() {
+        self.connection.checkAlive()
+        self.outbox.pump()
+    }
+
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+
+    /// Leaving with messages on their way: as Telegram does, keep running a little to send them.
+    @objc private func didEnterBackground() {
+        guard self.outbox.hasWork, self.backgroundTask == .invalid else {
+            return
+        }
+        self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "tau.send") { [weak self] in
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        if self.backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(self.backgroundTask)
+            self.backgroundTask = .invalid
+        }
+    }
+
+    private func setUpOutbox() {
+        let outbox = self.outbox
+        outbox.mintAttachmentId = { [weak self] in
+            return self?.mintAttachmentId() ?? 0
+        }
+        outbox.changed = { [weak self] id in
+            guard let self else {
+                return
+            }
+            if self.backgroundTask != .invalid && !outbox.hasWork {
+                self.endBackgroundTask()
+            }
+            if let id {
+                self.publish(id)
+            } else {
+                for (draftId, draft) in self.drafts where draft.realId == nil {
+                    self.statePromises[draftId]?.set(self.state(for: draftId))
+                }
+            }
+            self.publishDialogs()
+        }
+        outbox.placedEntry = { [weak self] requestId, entryId in
+            guard let self, let item = outbox.item(requestId), let id = item.conversationId else {
+                return
+            }
+            // One row per message: a guess the submission record corrected leaves no second entry with this row.
+            var map = self.rowIdForUserEntry[id] ?? [:]
+            for (key, value) in map where value == item.rowId {
+                map[key] = nil
+            }
+            map[entryId] = item.rowId
+            self.rowIdForUserEntry[id] = map
+        }
+        outbox.restored = { [weak self] id, text in
+            self?.emit(id, .restoreInput(text))
+        }
+        outbox.notice = { [weak self] id, text in
+            self?.emit(id, .notice(text))
+        }
+        outbox.created = { [weak self] create, raw in
+            guard let self, let dialog = self.dialogModel(raw) else {
+                return
+            }
+            self.dialogs[dialog.id] = dialog
+            self.publishDialogs()
+            for (draftId, var draft) in self.drafts where draft.createRequestId == create.requestId {
+                draft.realId = dialog.id
+                self.drafts[draftId] = draft
+                if self.statePromises[draftId] != nil {
+                    self.watch(dialog.id)
+                }
+            }
+            self.publish(dialog.id)
+        }
+    }
+
+    // MARK: - Chat events
+
+    private var eventSubscribers: [Int: Bag<(ChatEvent) -> Void>] = [:]
+    /// Events for a conversation no chat shows, delivered to the next one that does.
+    private var bufferedEvents: [Int: [ChatEvent]] = [:]
+
+    private func emit(_ realId: Int, _ event: ChatEvent) {
+        var keys = [realId]
+        keys.append(contentsOf: self.drafts.filter { $0.value.realId == realId }.map(\.key))
+        var delivered = false
+        for key in keys {
+            for subscriber in self.eventSubscribers[key]?.copyItems() ?? [] {
+                subscriber(event)
+                delivered = true
+            }
+        }
+        if !delivered, case .restoreInput = event {
+            self.bufferedEvents[realId, default: []].append(event)
+        }
+    }
+
+    func chatEvents(_ id: Int) -> Signal<ChatEvent, NoError> {
+        return Signal { [weak self] subscriber in
+            guard let self else {
+                return EmptyDisposable
+            }
+            let bag = self.eventSubscribers[id] ?? Bag()
+            self.eventSubscribers[id] = bag
+            let index = bag.add { subscriber.putNext($0) }
+            if let realId = self.resolve(id), let buffered = self.bufferedEvents.removeValue(forKey: realId) {
+                for event in buffered {
+                    subscriber.putNext(event)
+                }
+            }
+            return ActionDisposable { [weak bag] in
+                Queue.mainQueue().async {
+                    bag?.remove(index)
+                }
+            }
+        } |> runOn(Queue.mainQueue())
     }
 
     var connectionStatus: Signal<ConnectionStatus, NoError> {
@@ -110,11 +237,7 @@ final class ServerStore: TauStore {
         for id in self.replicas.keys where (self.watchers[id] ?? 0) > 0 {
             self.subscribe(id)
         }
-        for (id, sends) in self.pending {
-            for send in sends where send.submissionId == nil {
-                self.submit(send, to: id)
-            }
-        }
+        self.outbox.connected(serverId: hello.serverId)
     }
 
     private func handlePush(_ push: JSONObject) {
@@ -128,15 +251,32 @@ final class ServerStore: TauStore {
             guard let id = push.int("conversationId"), let replica = self.replicas[id], replica.isSynced else {
                 return
             }
+            let inboxBefore = Set(replica.inboxItems.filter { $0.string("mode") != "write" }.compactMap { $0.int("id") })
+            let maxBefore = replica.maxId ?? 0
             replica.apply(commit: push)
-            self.settlePending(id)
+            let inboxAfter = Set(replica.inboxItems.compactMap { $0.int("id") })
+            let users = replica.entries.filter { $0.key > maxBefore && $0.value.string("kind") == "pi.user" }.map { entry -> (id: Int, text: String, images: Int) in
+                let (text, images) = TranscriptBuilder.userContent(entry.value.objects("model").first?["content"])
+                return (entry.key, text, images.count)
+            }
+            if !users.isEmpty {
+                self.outbox.matchPlacements(conversationId: id, removedSubmissions: Array(inboxBefore.subtracting(inboxAfter)), newUserEntries: users)
+            }
+            self.outbox.settle(conversationId: id, entries: Set(replica.entries.keys))
             self.publish(id)
             self.cache.scheduleSave(replica)
         case "submission":
             guard let record = push.object("record"), let id = record.int("conversationId") else {
                 return
             }
-            self.updateSubmission(record, in: id)
+            if let submissionId = record.int("id") {
+                self.replicas[id]?.submissions[submissionId] = record
+            }
+            self.outbox.apply(record: record)
+            if let replica = self.replicas[id] {
+                self.outbox.settle(conversationId: id, entries: Set(replica.entries.keys))
+            }
+            self.publish(id)
         default:
             break
         }
@@ -177,6 +317,8 @@ final class ServerStore: TauStore {
             markedUnread: raw.bool("markedUnread") ?? false,
             archived: raw.bool("archived") ?? false
         )
+        dialog.hasFailedMessage = self.hasFailedMessage(id)
+        dialog.outgoing = self.outgoingSummary(id)
         // A read this device sent and the server has not reflected yet.
         if let sent = self.readSent[id], let last, sent >= last.id {
             dialog.unreadCount = 0
@@ -185,7 +327,40 @@ final class ServerStore: TauStore {
         return dialog
     }
 
+    private func hasFailedMessage(_ id: Int) -> Bool {
+        return self.outbox.items(for: id).contains { item in
+            if case .failed = item.state {
+                return true
+            }
+            return false
+        }
+    }
+
+    /// The latest message on its way to a conversation, or refused, for its chat list row.
+    private func outgoingSummary(_ id: Int) -> DialogModel.Outgoing? {
+        let items = self.outbox.items(for: id).filter { item in
+            switch item.state {
+            case .pending, .queued, .withdrawing, .failed:
+                return true
+            case .placed:
+                return false
+            }
+        }
+        guard let latest = items.max(by: { $0.seq < $1.seq }) else {
+            return nil
+        }
+        var text = latest.text
+        if text.isEmpty {
+            text = latest.imageFiles.count > 1 ? "\(latest.imageFiles.count) Photos" : "Photo"
+        }
+        return DialogModel.Outgoing(text: text, date: latest.date, failed: self.hasFailedMessage(id))
+    }
+
     private func publishDialogs() {
+        for id in Array(self.dialogs.keys) {
+            self.dialogs[id]?.hasFailedMessage = self.hasFailedMessage(id)
+            self.dialogs[id]?.outgoing = self.outgoingSummary(id)
+        }
         let visible = self.dialogs.values.filter { $0.parentConversationId == nil && !self.hiddenDialogs.contains($0.id) }
         let sorted = visible.sorted { lhs, rhs in
             let l = lhs.last?.id ?? self.dialogOrder[lhs.id] ?? lhs.id
@@ -253,12 +428,13 @@ final class ServerStore: TauStore {
 
     private func state(for id: Int) -> ConversationState {
         guard let realId = self.resolve(id) else {
-            let queued = self.drafts[id]?.queued ?? []
-            let rows = queued.enumerated().map { ChatMessage(id: -1000 - $0.offset, role: .user, text: $0.element.0, date: Date(), attachments: $0.element.1, isPending: true) }
-            return ConversationState(messages: rows, streaming: nil, busy: !rows.isEmpty)
+            // A draft: its messages wait for the conversation to be created.
+            let items = self.drafts[id]?.createRequestId.map { self.outbox.items(forCreate: $0) } ?? []
+            let rows = items.map { TranscriptBuilder.row(for: $0, outbox: self.outbox) }
+            return ConversationState(messages: rows, streaming: nil, busy: false)
         }
         let replica = self.replica(realId)
-        return TranscriptBuilder.build(replica: replica, pending: self.pending[realId] ?? [], rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], images: self.images)
+        return TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], images: self.images)
     }
 
     private func replica(_ id: Int) -> ConversationReplica {
@@ -319,9 +495,12 @@ final class ServerStore: TauStore {
                 if let submissionId = record.int("id") {
                     replica.submissions[submissionId] = record
                 }
+                self.outbox.apply(record: record)
             }
+            // Queued here but no longer unsettled there: it settled while this chat was not subscribed.
+            self.outbox.refreshSettled(conversationId: id, unsettled: Set(replica.submissions.keys))
             replica.isSynced = true
-            self.settlePending(id)
+            self.outbox.settle(conversationId: id, entries: Set(replica.entries.keys))
             self.publish(id)
             self.cache.scheduleSave(replica)
         }
@@ -360,152 +539,185 @@ final class ServerStore: TauStore {
     }
 
     func discardIfDraft(_ id: Int) {
-        if let draft = self.drafts[id], draft.realId == nil, draft.queued.isEmpty {
-            self.drafts.removeValue(forKey: id)
-            self.statePromises.removeValue(forKey: id)
-        }
-    }
-
-    private func createDraftConversation(_ draftId: Int, title: String) {
-        guard var draft = self.drafts[draftId], draft.realId == nil, !draft.isCreating else {
+        guard let draft = self.drafts[id], draft.realId == nil else {
             return
         }
-        draft.isCreating = true
-        self.drafts[draftId] = draft
-        // The first message stands in as the title until the server names the conversation after the first answer.
-        var params: JSONObject = ["title": title, "autoTitle": true]
-        if let cwd = draft.cwd {
-            params["agent"] = ["cwd": cwd]
+        if let create = draft.createRequestId, !self.outbox.items(forCreate: create).isEmpty {
+            return
         }
-        self.connection.request("conversation.create", params) { [weak self] result in
-            guard let self, var draft = self.drafts[draftId] else {
-                return
-            }
-            draft.isCreating = false
-            guard case let .success(value) = result, let raw = value.object("dialog"), let dialog = self.dialogModel(raw) else {
-                self.drafts[draftId] = draft
-                // Retry once connected again.
-                Queue.mainQueue().after(2.0) {
-                    self.createDraftConversation(draftId, title: title)
-                }
-                return
-            }
-            draft.realId = dialog.id
-            let queued = draft.queued
-            draft.queued = []
-            self.drafts[draftId] = draft
-            self.dialogs[dialog.id] = dialog
-            self.publishDialogs()
-            if (self.statePromises[draftId] != nil) {
-                self.watch(dialog.id)
-            }
-            for (text, attachments) in queued {
-                self.send(text, attachments: attachments, to: dialog.id)
-            }
-            self.publish(dialog.id)
-        }
+        self.drafts.removeValue(forKey: id)
+        self.statePromises.removeValue(forKey: id)
     }
 
     // MARK: - Sending
 
-    func send(_ text: String, attachments: [MessageAttachment], to id: Int) {
+    /// Whether a message sent now waits in the queue: the agent is working, or something is queued before it.
+    private func sendsToQueue(_ realId: Int) -> Bool {
+        if let replica = self.replicas[realId], replica.isBusy {
+            return true
+        }
+        return self.outbox.items(for: realId).contains { item in
+            switch item.state {
+            case .queued:
+                return true
+            case .pending:
+                return item.showsInQueue
+            default:
+                return false
+            }
+        }
+    }
+
+    func send(_ text: String, attachments: [MessageAttachment], to id: Int, mode: SendMode) {
+        let outboxMode: OutgoingMessage.Mode = mode == .steer ? .steer : .followUp
         if id < 0 {
             guard var draft = self.drafts[id] else {
                 return
             }
             if let realId = draft.realId {
-                self.send(text, attachments: attachments, to: realId)
+                self.send(text, attachments: attachments, to: realId, mode: mode)
                 return
             }
-            draft.queued.append((text, attachments))
-            self.drafts[id] = draft
+            let createRequestId = draft.createRequestId ?? UUID().uuidString
+            if draft.createRequestId == nil {
+                draft.createRequestId = createRequestId
+                self.drafts[id] = draft
+                // The first message stands in as the title until the server names the conversation after the first
+                // answer.
+                self.outbox.enqueueCreate(requestId: createRequestId, cwd: draft.cwd, title: String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)))
+            }
+            self.outbox.enqueue(text: text, attachments: attachments, conversationId: nil, createRequestId: createRequestId, mode: outboxMode, showsInQueue: false)
             self.statePromises[id]?.set(self.state(for: id))
-            self.createDraftConversation(id, title: String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)))
             return
         }
-        let send = PendingSend(rowId: self.nextLocalId, requestId: UUID().uuidString, text: text, attachments: attachments, date: Date())
-        self.nextLocalId += 1
-        self.pending[id, default: []].append(send)
-        self.publish(id)
-        self.submit(send, to: id)
+        self.outbox.enqueue(text: text, attachments: attachments, conversationId: id, createRequestId: nil, mode: outboxMode, showsInQueue: self.sendsToQueue(id))
     }
 
-    private func submit(_ send: PendingSend, to id: Int) {
-        let content: Any
-        let images = send.attachments.compactMap { attachment -> JSONObject? in
-            guard case let .image(image) = attachment.kind, let data = ImageEncoding.jpeg(image) else {
-                return nil
-            }
-            return ["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]
-        }
-        let files = send.attachments.compactMap { attachment -> String? in
-            guard case let .file(name, size) = attachment.kind else {
-                return nil
-            }
-            return "[Attached file: \(name), \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))]"
-        }
-        let text = ([send.text] + files).filter { !$0.isEmpty }.joined(separator: "\n")
-        if images.isEmpty {
-            content = text
-        } else {
-            content = (text.isEmpty ? [] : [["type": "text", "text": text]]) + images
-        }
-        self.connection.request("conversation.submit", ["conversationId": id, "requestId": send.requestId, "content": content, "whenBusy": "followUp"]) { [weak self] result in
-            guard let self, case let .success(value) = result, let record = value.object("submission") else {
-                // Resent with the same request ID on reconnect; the server answers with the existing submission.
-                return
-            }
-            if let index = self.pending[id]?.firstIndex(where: { $0.requestId == send.requestId }) {
-                self.pending[id]?[index].submissionId = record.int("id")
-            }
-            self.updateSubmission(record, in: id)
-        }
-    }
-
-    private func updateSubmission(_ record: JSONObject, in id: Int) {
-        guard let submissionId = record.int("id") else {
-            return
-        }
-        self.replicas[id]?.submissions[submissionId] = record
-        guard let index = self.pending[id]?.firstIndex(where: { $0.submissionId == submissionId || $0.requestId == record.string("requestId") }) else {
-            return
-        }
-        self.pending[id]?[index].submissionId = submissionId
-        if let entryId = record.int("entry") {
-            self.pending[id]?[index].entryId = entryId
-            self.rowIdForUserEntry[id, default: [:]][entryId] = self.pending[id]?[index].rowId
-        }
-        switch record.string("status") {
-        case "unanswered", "done":
-            if self.pending[id]?[index].entryId == nil {
-                self.pending[id]?.remove(at: index)
-            }
-        default:
-            break
-        }
-        self.settlePending(id)
-        self.publish(id)
-    }
-
-    /// Pending sends whose entry has arrived are now ordinary rows.
-    private func settlePending(_ id: Int) {
-        guard let replica = self.replicas[id], var sends = self.pending[id] else {
-            return
-        }
-        sends.removeAll { send in
-            guard let entryId = send.entryId else {
-                return false
-            }
-            return replica.entries[entryId] != nil
-        }
-        self.pending[id] = sends
-    }
-
-    func abort(_ id: Int) {
+    func stop(_ id: Int) {
         guard let realId = self.resolve(id) else {
             return
         }
-        self.connection.request("conversation.abort", ["conversationId": realId]) { _ in }
+        self.interrupt(realId, sendNow: nil)
+    }
+
+    func stopAndSend(_ text: String, attachments: [MessageAttachment], in id: Int) {
+        guard let realId = self.resolve(id) else {
+            self.send(text, attachments: attachments, to: id, mode: .steer)
+            return
+        }
+        self.interrupt(realId, sendNow: nil)
+        // After the abort in this conversation's order: the run is over, so it goes to the chat, not the queue.
+        self.outbox.enqueue(text: text, attachments: attachments, conversationId: realId, createRequestId: nil, mode: .steer, showsInQueue: false)
+    }
+
+    func sendNow(_ queued: QueuedMessage, in id: Int) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        if queued.outgoingId != nil {
+            self.interrupt(realId, sendNow: queued.outgoingId)
+        } else {
+            // Another device's message: taken back, then sent from here once the run is stopped.
+            self.withdrawOther(queued, in: realId, restore: false) { [weak self] withdrawn in
+                guard let self, withdrawn else {
+                    return
+                }
+                self.interrupt(realId, sendNow: nil)
+                self.outbox.enqueue(text: queued.text, attachments: [], conversationId: realId, createRequestId: nil, mode: .steer, showsInQueue: false)
+            }
+        }
+    }
+
+    /// Stop the run: this device's queued messages are withdrawn in order and return to the input field; the abort
+    /// withdraws the other devices' ones, which return too.
+    private func interrupt(_ realId: Int, sendNow: String?) {
+        let queue = self.state(for: realId).queued
+        let own = queue.compactMap(\.outgoingId)
+        let others = queue.filter { $0.outgoingId == nil && $0.mode != .newContext && !$0.text.isEmpty }
+        self.outbox.interrupt(conversationId: realId, restoring: own, sendNow: sendNow) { [weak self] result in
+            guard let self, case .success = result else {
+                return
+            }
+            let inbox = Set(self.replicas[realId]?.inboxItems.compactMap { $0.int("id") } ?? [])
+            for message in others where !inbox.contains(message.submissionId ?? -1) {
+                self.emit(realId, .restoreInput(message.text))
+            }
+        }
+    }
+
+    func withdraw(_ queued: QueuedMessage, in id: Int, restore: Bool) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        if let outgoingId = queued.outgoingId {
+            if !self.outbox.withdraw(outgoingId, restore: restore) {
+                self.emit(realId, .notice("Already delivered"))
+            }
+        } else {
+            self.withdrawOther(queued, in: realId, restore: restore, completion: { _ in })
+        }
+    }
+
+    func move(_ queued: QueuedMessage, in id: Int, to mode: SendMode) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        let outboxMode: OutgoingMessage.Mode = mode == .steer ? .steer : .followUp
+        if let outgoingId = queued.outgoingId {
+            self.outbox.move(outgoingId, to: outboxMode)
+        } else {
+            self.withdrawOther(queued, in: realId, restore: false) { [weak self] withdrawn in
+                if withdrawn {
+                    self?.outbox.enqueue(text: queued.text, attachments: [], conversationId: realId, createRequestId: nil, mode: outboxMode, showsInQueue: true)
+                }
+            }
+        }
+    }
+
+    /// Another device's queued message, by its submission ID, in this conversation's order.
+    private func withdrawOther(_ queued: QueuedMessage, in realId: Int, restore: Bool, completion: @escaping (Bool) -> Void) {
+        guard let submissionId = queued.submissionId else {
+            completion(false)
+            return
+        }
+        self.outbox.enqueueRequest("submission.abort", conversationId: realId, params: ["submissionId": submissionId], repeatable: true) { [weak self] result in
+            guard let self else {
+                return
+            }
+            let withdrawn: Bool
+            if case let .success(value) = result, value.string("result") == "aborted" {
+                withdrawn = true
+            } else {
+                withdrawn = false
+            }
+            if withdrawn {
+                if restore && !queued.text.isEmpty {
+                    self.emit(realId, .restoreInput(queued.text))
+                }
+            } else if case .success = result {
+                self.emit(realId, .notice("Already delivered"))
+            }
+            completion(withdrawn)
+        }
+    }
+
+    func resend(_ outgoingId: String, in id: Int) {
+        guard let item = self.outbox.item(outgoingId) else {
+            return
+        }
+        let attachments = self.outbox.attachments(item)
+        let target = item.conversationId ?? id
+        self.outbox.discard(outgoingId)
+        self.send(item.text, attachments: attachments, to: target, mode: item.mode == .steer ? .steer : .followUp)
+    }
+
+    func discard(_ outgoingId: String, in id: Int) {
+        self.outbox.discard(outgoingId)
+        if let realId = self.resolve(id) {
+            self.publish(realId)
+        } else {
+            self.statePromises[id]?.set(self.state(for: id))
+        }
     }
 
     // MARK: - Forks
@@ -688,7 +900,8 @@ final class ServerStore: TauStore {
         if let thinkingLevel {
             patch["thinkingLevel"] = thinkingLevel == "off" ? NSNull() : thinkingLevel
         }
-        self.connection.request("conversation.configure", ["conversationId": realId, "agent": patch]) { _ in }
+        // In order with the messages around it: a model chosen before a message is the one that answers it.
+        self.outbox.enqueueRequest("conversation.configure", conversationId: realId, params: ["agent": patch], repeatable: true)
     }
 
     func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError> {
@@ -708,13 +921,14 @@ final class ServerStore: TauStore {
 
     func compact(_ id: Int) {
         if let realId = self.resolve(id) {
-            self.connection.request("conversation.compact", ["conversationId": realId]) { _ in }
+            // Not repeated after a lost connection: two compactions in a row would summarize the summary.
+            self.outbox.enqueueRequest("conversation.compact", conversationId: realId, params: [:], repeatable: false)
         }
     }
 
     func resetContext(_ id: Int) {
         if let realId = self.resolve(id) {
-            self.connection.request("conversation.reset", ["conversationId": realId]) { _ in }
+            self.outbox.enqueueRequest("conversation.reset", conversationId: realId, params: [:], repeatable: false)
         }
     }
 

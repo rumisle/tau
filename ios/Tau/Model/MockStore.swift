@@ -131,7 +131,77 @@ final class MockStore: TauStore {
         }
     }
 
-    func abort(_ id: Int) {
+    func stop(_ id: Int) {
+        let queued = self.conversations[id]?.queued ?? []
+        self.conversations[id]?.queued = []
+        self.abortStream(id)
+        for message in queued {
+            self.emit(id, .restoreInput(message.text))
+        }
+    }
+
+    func stopAndSend(_ text: String, attachments: [MessageAttachment], in id: Int) {
+        self.stop(id)
+        self.send(text, attachments: attachments, to: id, mode: .steer)
+    }
+
+    func sendNow(_ queued: QueuedMessage, in id: Int) {
+        let others = (self.conversations[id]?.queued ?? []).filter { $0.id != queued.id }
+        self.conversations[id]?.queued = []
+        self.abortStream(id)
+        for message in others {
+            self.emit(id, .restoreInput(message.text))
+        }
+        self.send(queued.text, attachments: [], to: id, mode: .steer)
+    }
+
+    func withdraw(_ queued: QueuedMessage, in id: Int, restore: Bool) {
+        self.conversations[id]?.queued.removeAll { $0.id == queued.id }
+        self.publish(id)
+        if restore {
+            self.emit(id, .restoreInput(queued.text))
+        }
+    }
+
+    func move(_ queued: QueuedMessage, in id: Int, to mode: SendMode) {
+        guard let index = self.conversations[id]?.queued.firstIndex(where: { $0.id == queued.id }) else {
+            return
+        }
+        self.conversations[id]?.queued[index].mode = mode == .steer ? .steer : .followUp
+        self.publish(id)
+    }
+
+    func resend(_ outgoingId: String, in id: Int) {
+    }
+
+    func discard(_ outgoingId: String, in id: Int) {
+    }
+
+    private var eventSubscribers: [Int: Bag<(ChatEvent) -> Void>] = [:]
+
+    private func emit(_ id: Int, _ event: ChatEvent) {
+        for subscriber in self.eventSubscribers[id]?.copyItems() ?? [] {
+            subscriber(event)
+        }
+    }
+
+    func chatEvents(_ id: Int) -> Signal<ChatEvent, NoError> {
+        return Signal { [weak self] subscriber in
+            guard let self else {
+                return EmptyDisposable
+            }
+            let bag = self.eventSubscribers[id] ?? Bag()
+            self.eventSubscribers[id] = bag
+            let index = bag.add { subscriber.putNext($0) }
+            return ActionDisposable { [weak bag] in
+                Queue.mainQueue().async {
+                    bag?.remove(index)
+                }
+            }
+        } |> runOn(Queue.mainQueue())
+    }
+
+    private func abortStream(_ id: Int) {
         self.streams[id]?.invalidate()
         self.streams[id] = nil
         if var state = self.conversations[id] {
@@ -269,11 +339,18 @@ final class MockStore: TauStore {
         state.messages.removeSubrange(index...)
         state.streaming = nil
         self.conversations[id] = state
-        self.send(text, attachments: attachments, to: id)
+        self.send(text, attachments: attachments, to: id, mode: .steer)
     }
 
-    func send(_ text: String, attachments: [MessageAttachment], to id: Int) {
+    func send(_ text: String, attachments: [MessageAttachment], to id: Int, mode: SendMode) {
         guard var state = self.conversations[id] else {
+            return
+        }
+        if self.streams[id] != nil {
+            // Queued until the answer ends, as the server's inbox holds it.
+            state.queued.append(QueuedMessage(id: "mock\(self.mintId())", mode: mode == .steer ? .steer : .followUp, text: text, imageCount: 0, isSending: false, outgoingId: nil, submissionId: nil))
+            self.conversations[id] = state
+            self.publish(id)
             return
         }
         state.messages.append(ChatMessage(id: self.mintId(), role: .user, text: text, date: Date(), attachments: attachments))
@@ -310,6 +387,13 @@ final class MockStore: TauStore {
                 state.busy = false
                 self.streams[id]?.invalidate()
                 self.streams[id] = nil
+                if !state.queued.isEmpty {
+                    // The run's end delivers the next queued message.
+                    let next = state.queued.removeFirst()
+                    self.conversations[id] = state
+                    self.send(next.text, attachments: [], to: id, mode: .steer)
+                    return
+                }
             }
             self.conversations[id] = state
             self.publish(id)

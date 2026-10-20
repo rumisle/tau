@@ -28,7 +28,9 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 		host: options.host ?? "127.0.0.1",
 		port: options.port ?? 0,
 		perMessageDeflate: { threshold: 1024 },
-		maxPayload: 32 * 1024 * 1024,
+		// Above the content limits of conversation.submit, so too much content is refused with `too_large` instead
+		// of closing the socket, which the client would take for a network failure and retry forever.
+		maxPayload: 96 * 1024 * 1024,
 		verifyClient: ({ req }: { req: IncomingMessage }) => authorized(req, options.token),
 	});
 	wss.on("connection", (socket) => {

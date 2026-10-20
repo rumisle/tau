@@ -23,6 +23,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
+import { Serial } from "./serial.ts";
 import { Subagent } from "./subagent.ts";
 
 /** Per-conversation metadata the chat list shows. */
@@ -37,6 +38,11 @@ export type MetaState = {
 	markedUnread?: boolean;
 	/** Out of the main chat list, in Archived Chats. */
 	archived?: boolean;
+	/**
+	 * Request IDs withdrawn before any submission had them, newest last: a submit that arrives later with one is
+	 * refused, so a message cancelled while its submit was in flight can never be admitted.
+	 */
+	withdrawn?: string[];
 };
 export const MetaDoc = defineDoc<MetaState>({
 	kind: "tau.meta",
@@ -53,6 +59,14 @@ export const ServerDoc = defineDoc<{ id: string }>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ id: "" }),
+});
+
+/** Conversations created per client request ID, so a retried `conversation.create` returns the first one. */
+export const CreatesDoc = defineDoc<{ requests: Record<string, number>; order: string[] }>({
+	kind: "tau.creates",
+	version: 1,
+	scope: "session",
+	initial: () => ({ requests: {}, order: [] }),
 });
 
 /** Settings a client changes for the whole server. */
@@ -84,6 +98,8 @@ export type Host = {
 	/** The model new conversations get: the one set from a client, else `--model`. */
 	readonly defaultModel: ModelRef;
 	setDefaultModel(model: ModelRef): Promise<void>;
+	/** Orders the requests that change a conversation, across connections (src/serial.ts). */
+	readonly serial: Serial;
 	readonly cwd: string;
 	close(): Promise<void>;
 };
@@ -163,6 +179,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 			}, context);
 			defaultModel = model;
 		},
+		serial: new Serial(),
 		cwd,
 		close: () => harness.close(context),
 	};

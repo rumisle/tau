@@ -6,7 +6,19 @@ export const PROTOCOL_VERSION = 1;
 
 export type Request = { id: number | string; method: string; params?: Record<string, unknown> };
 
-export type ErrorCode = "bad_request" | "not_found" | "busy" | "unauthorized" | "internal";
+/**
+ * `internal` may pass on retry; every other code is final for the request. `too_large` and `unsupported` refuse
+ * content the conversation's model cannot take; `withdrawn` refuses a submit whose request ID was withdrawn.
+ */
+export type ErrorCode =
+	| "bad_request"
+	| "not_found"
+	| "busy"
+	| "unauthorized"
+	| "too_large"
+	| "unsupported"
+	| "withdrawn"
+	| "internal";
 
 export class ProtocolError extends Error {
 	readonly code: ErrorCode;

@@ -17,7 +17,7 @@ import {
 import { homedir } from "node:os";
 import type { Dialogs } from "./dialogs.ts";
 import { directory, listDirectory } from "./fs.ts";
-import { type Host, MetaDoc } from "./host.ts";
+import { CreatesDoc, type Host, MetaDoc } from "./host.ts";
 import {
 	type AgentPatch,
 	type ErrorCode,
@@ -33,6 +33,27 @@ import {
 /** Pause pushes while this much is unsent; the watch then coalesces, and a far-behind client gets a resync. */
 const HIGH_WATER_BYTES = 4 * 1024 * 1024;
 const TITLE_CHARS = 60;
+
+// What one message may carry. Anthropic takes images of up to 5 MB; larger content is refused at admission, where the
+// sender sees it as not sent, rather than failing the run after the message is in the transcript.
+const MAX_TEXT_CHARS = 1_000_000;
+const MAX_IMAGES = 20;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+/** Tombstones kept per conversation; a withdrawn submit arrives within seconds, if ever. */
+const MAX_WITHDRAWN = 100;
+const MAX_CREATES = 200;
+
+/** Requests that change a conversation run one at a time per conversation, in arrival order (src/serial.ts). */
+const SERIAL_METHODS = new Set([
+	"conversation.submit",
+	"submission.withdraw",
+	"submission.abort",
+	"conversation.abort",
+	"conversation.reset",
+	"conversation.compact",
+	"conversation.configure",
+]);
 
 /** What a connection needs from its socket. */
 export interface Socket {
@@ -70,7 +91,11 @@ export class Connection {
 		this.#cancel = () => cancel(new Error("connection closed"));
 		this.#cleanups.push(
 			dialogs.onSubmission((record) => {
-				if (this.#subscriptions.get(record.conversationId)?.live) this.#push({ event: "submission", record });
+				// Every conversation's, once the chat list is subscribed: a client learns what became of a message it
+				// sent even with that chat closed.
+				if (this.#stopDialogs !== undefined || this.#subscriptions.get(record.conversationId)?.live) {
+					this.#push({ event: "submission", record });
+				}
 			}),
 		);
 	}
@@ -97,7 +122,15 @@ export class Connection {
 				this.#start(id, subscription);
 				return;
 			}
-			this.#push({ id: request.id, result: await this.#dispatch(request.method, params) });
+			const method = request.method;
+			let result: Promise<unknown>;
+			if (SERIAL_METHODS.has(method) && typeof params.conversationId === "number") {
+				// Queued now, before any await, so this socket's requests keep their order.
+				result = this.#host.serial.run(`conversation:${params.conversationId}`, () => this.#dispatch(method, params));
+			} else if (method === "conversation.create") {
+				result = this.#host.serial.run("create", () => this.#dispatch(method, params));
+			} else result = this.#dispatch(method, params);
+			this.#push({ id: request.id, result: await result });
 		} catch (error) {
 			const { code, message } = describe(error);
 			if (code === "internal") console.error(`[tau] ${request.method} failed:`, error);
@@ -142,6 +175,11 @@ export class Connection {
 				this.#stopDialogs ??= this.#dialogs.onDialog((dialog) => this.#push({ event: "dialog", dialog }));
 				return { dialogs: await this.#dialogs.list(context) };
 			case "conversation.create": {
+				const requestId = str(params, "requestId", true);
+				if (requestId !== undefined) {
+					const existing = (await harness.snapshot(CreatesDoc, context))?.requests[requestId];
+					if (existing !== undefined) return { dialog: await this.#dialogOf(existing as ConversationId) };
+				}
 				const title = str(params, "title", true);
 				const autoTitle = params.autoTitle === true;
 				const patch = obj(params, "agent") ?? {};
@@ -153,6 +191,12 @@ export class Connection {
 							const meta = await tx.doc(MetaDoc, id);
 							if (title !== undefined) meta.title = title;
 							if (autoTitle) meta.autoTitle = true;
+							if (requestId !== undefined) {
+								const creates = await tx.doc(CreatesDoc);
+								creates.requests[requestId] = id;
+								creates.order.push(requestId);
+								while (creates.order.length > MAX_CREATES) delete creates.requests[creates.order.shift()!];
+							}
 						},
 					},
 					context,
@@ -226,6 +270,8 @@ export class Connection {
 				return this.#history(params);
 			case "conversation.submit":
 				return this.#submit(params);
+			case "submission.withdraw":
+				return this.#withdraw(params);
 			case "submission.abort": {
 				const conversationId = int(params, "conversationId") as ConversationId;
 				const id = int(params, "submissionId") as SubmissionId;
@@ -460,6 +506,10 @@ export class Connection {
 		}
 		const { harness } = this.#host;
 		const meta = await harness.snapshot(MetaDoc, conversation.id, this.#context);
+		if (meta?.withdrawn?.includes(requestId)) {
+			throw new ProtocolError("withdrawn", `Request ${requestId} was withdrawn`);
+		}
+		await this.#checkContent(conversation, content);
 		if (meta?.title === undefined) {
 			const title = titleFrom(content);
 			if (title !== "") {
@@ -470,6 +520,61 @@ export class Connection {
 		}
 		const submission = await conversation.submit({ type: "input", content, whenBusy, requestId }, this.#context);
 		return { submission: await submission.status(this.#context) };
+	}
+
+	/**
+	 * Withdraw a message by its request ID, whether or not its submit has arrived: a queued one leaves the inbox, and
+	 * an unknown ID is remembered so its submit is refused if it arrives later. Runs in the conversation's order
+	 * (SERIAL_METHODS), so no submit of the conversation is half done meanwhile.
+	 */
+	async #withdraw(params: Record<string, unknown>): Promise<unknown> {
+		const conversation = await this.#conversation(params);
+		const requestId = str(params, "requestId");
+		const context = this.#context;
+		const existing = await conversation.commit(async (tx) => {
+			const record = await tx.submissionByRequest(conversation.id, requestId);
+			if (record !== undefined) return record;
+			const meta = await tx.doc(MetaDoc, conversation.id);
+			// A draft copies what is assigned to it: push through the draft, not the array assigned.
+			meta.withdrawn ??= [];
+			if (!meta.withdrawn.includes(requestId)) meta.withdrawn.push(requestId);
+			while (meta.withdrawn.length > MAX_WITHDRAWN) meta.withdrawn.shift();
+			return undefined;
+		}, context);
+		if (existing === undefined) return { result: "withdrawn" };
+		const result = await this.#host.harness.abortSubmission(existing.id, context, conversation.id);
+		const submission = await (await this.#host.harness.submission(existing.id, context))?.status(context);
+		return { result, ...(submission === undefined ? {} : { submission }) };
+	}
+
+	/** Refuse content the conversation's model cannot take, before it is admitted. */
+	async #checkContent(conversation: Conversation, content: string | (TextContent | ImageContent)[]): Promise<void> {
+		const parts = typeof content === "string" ? [{ type: "text" as const, text: content }] : content;
+		let text = 0;
+		let images = 0;
+		for (const part of parts) {
+			if (part.type === "text") text += part.text.length;
+			else {
+				images += 1;
+				if (!IMAGE_TYPES.has(part.mimeType)) {
+					throw new ProtocolError("unsupported", `Images must be JPEG, PNG, GIF or WebP, not ${part.mimeType}`);
+				}
+				if (Math.floor((part.data.length * 3) / 4) > MAX_IMAGE_BYTES) {
+					throw new ProtocolError("too_large", "An image is larger than 5 MB");
+				}
+			}
+		}
+		if (text > MAX_TEXT_CHARS) throw new ProtocolError("too_large", "The message is longer than 1,000,000 characters");
+		if (images > MAX_IMAGES) throw new ProtocolError("too_large", `A message can carry at most ${MAX_IMAGES} images`);
+		if (images === 0) return;
+		const ref = (await conversation.agent(this.#context)).model;
+		if (ref === undefined) return;
+		const model = (await this.#host.models.getAvailable()).find(
+			(candidate) => candidate.provider === ref.provider && candidate.id === ref.modelId,
+		);
+		if (model !== undefined && !model.input.includes("image")) {
+			throw new ProtocolError("unsupported", `${model.name} does not take images`);
+		}
 	}
 
 	#push(message: unknown): void {

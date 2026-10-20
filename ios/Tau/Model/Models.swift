@@ -17,6 +17,17 @@ struct DialogModel: Equatable {
     var markedUnread: Bool = false
     /// In Archived Chats.
     var archived: Bool = false
+    /// A message to it was refused; Telegram marks the chat with a red badge.
+    var hasFailedMessage: Bool = false
+    /// This device's latest message to it that is not in the transcript yet: shown as the last message, with the clock
+    /// or the red badge.
+    var outgoing: Outgoing?
+
+    struct Outgoing: Equatable {
+        var text: String
+        var date: Date
+        var failed: Bool
+    }
 
     var isUnread: Bool {
         return self.unreadCount > 0 || self.markedUnread
@@ -102,10 +113,43 @@ struct ChatMessage: Equatable {
     var tool: ToolCallInfo?
     /// Still being written by the model (`pi.live`).
     var isStreaming: Bool = false
-    /// A sent message the server has not put in the transcript yet.
-    var isPending: Bool = false
+    /// A user message's status, as Telegram's clock, checks and red badge (docs/sending.md).
+    var delivery: Delivery = .delivered
+    /// The outgoing message a sending or failed row shows: its request ID, for Resend and Delete.
+    var outgoingId: String?
     /// The entry this row comes from, for forking at it.
     var entryId: Int?
+
+    enum Delivery: Equatable {
+        /// Not acknowledged by the server: the clock.
+        case sending
+        /// In the transcript: the model has it. Two checks.
+        case delivered
+        /// Refused by the server; Resend or Delete.
+        case failed(reason: String)
+    }
+}
+
+/// A message waiting for the agent's next step (steer) or the end of its run (follow-up), or a queued new context:
+/// what the input panel's queue shows. It is not in the transcript yet; the server's inbox (`pi.inbox`) holds it, or it
+/// is still on its way there.
+struct QueuedMessage: Equatable {
+    enum Mode: Equatable {
+        case steer
+        case followUp
+        case newContext
+    }
+
+    /// Stable across the switch from on its way to queued.
+    let id: String
+    var mode: Mode
+    var text: String
+    var imageCount: Int
+    /// On its way to the server: the clock; queued: one check.
+    var isSending: Bool
+    /// The outgoing message this device sent; nil when another device sent it.
+    var outgoingId: String?
+    var submissionId: Int?
 }
 
 /// What a chat screen renders: committed entries plus the answer still streaming (`pi.live.generation`).
@@ -114,6 +158,8 @@ struct ConversationState: Equatable {
     /// The partial assistant message while the model streams; replaced by an entry when it finishes.
     var streaming: ChatMessage?
     var busy: Bool
+    /// Waiting to reach the model, in the order they will.
+    var queued: [QueuedMessage] = []
     /// More history exists before the first message.
     var hasOlder: Bool = false
     /// False until the transcript is known (cached or synced), so a chat can wait before showing it.

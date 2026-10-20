@@ -16,6 +16,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 |---|---|
 | `ios/` | The iOS app: Telegram-iOS's own UI code (themes, context menus, attachment menu) around ported chat screens (see ios/README.md) |
 | `docs/protocol.md` | The wire protocol: sync model, methods, pushes, op format |
+| `docs/sending.md` | How a message reaches the model: steer and follow-up, refusals, the client's outbox state machine, and what the user sees |
 | `server/` | The server: `src/host.ts` (Harness setup), `src/connection.ts` (protocol), `src/dialogs.ts` (chat list), `src/subagent.ts` (the subagent tool), `src/titles.ts` (automatic titles) |
 | `server/src/client.ts` | Reference client in TypeScript: the state machine the iOS app implements (cache, holes, ops) |
 | `vendor/pi` | pi at the commit in `PI_REVISION` (gitignored); the server links durable, pi-ai, and chord from it |

@@ -10,6 +10,7 @@ wallpapers, the context menus, the selection mode, the attachment menu. It talks
 ios/scripts/build.sh --run     # xcodegen + xcodebuild, install and launch on the "iPhone 17 Pro" simulator
 ios/scripts/build.sh --device  # signed Release build on the connected iPhone (TAU_TEAM, default TEAMID)
 ios/scripts/uitest.sh          # UI walkthroughs in the simulator; screenshots of each step in /tmp/tau-ui
+ios/scripts/sending-tests.sh   # the sending state machine against the dev server (scripts/devserver.sh, port 7979)
 ```
 
 XcodeGen comes from nix when it is not installed (`nix shell nixpkgs#xcodegen`). `Tau.xcodeproj` is generated and
@@ -26,13 +27,20 @@ conversations (`Model/MockStore.swift`).
 
 | File | Role |
 |---|---|
-| `TauConnection.swift` | One WebSocket: requests by id, pushes, `hello`, reconnect with backoff; the chat list title shows Telegram's "Connecting…" / "Updating…" meanwhile |
+| `TauConnection.swift` | One WebSocket: requests by id, pushes, `hello`, reconnect with backoff, a ping that finds a dead socket, a response timeout; the chat list and chat titles show Telegram's "Connecting…" / "Updating…" meanwhile |
+| `Outbox.swift` | Messages on their way, on disk until the server has them: one request per conversation at a time, in order, idempotent retries, safe withdraws (`../docs/sending.md`) |
 | `ConversationReplica.swift` | A conversation's cached entries, docs kept current with ops, and `TranscriptBuilder`, which turns entries and `pi.live` into rows |
-| `ServerStore.swift` | The store: dialog list, subscriptions while a chat is open, drafts, sends with idempotent request IDs, fork-based edits, the entry cache in Caches |
+| `ServerStore.swift` | The store: dialog list, subscriptions while a chat is open, drafts, sending through the outbox, steer and follow-up, Stop that returns queued messages to the field, fork-based edits, the entry cache in Caches |
 | `JSONValue.swift` | The protocol's ops applied to JSON |
 
 Rows keep their IDs from streaming to committed: an assistant row is keyed by the generation task that writes it
-(`pi.live.run.taskId` while it streams, `byTaskId` on the entry), a sent message by its local ID until its entry arrives.
+(`pi.live.run.taskId` while it streams, `byTaskId` on the entry), a sent message by its outbox row ID, which its entry
+keeps once placed.
+
+A message shows Telegram's clock until the server has it and two checks once it is in the transcript; one refused gets
+the red badge with Resend and Delete. While the agent works, Send steers and a long press offers Send as Follow-up and
+Stop and Send; queued messages wait in Telegram's input accessory panel (`Chat/InputAccessoryPanelView.swift`), whose
+menu edits, moves, sends now or deletes them. See `../docs/sending.md`.
 A tool call and its result are one card; a `subagent` call links to the child conversation.
 
 ## Debug launch arguments

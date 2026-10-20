@@ -299,6 +299,100 @@ describe("tau server", () => {
 		assert.equal(settled?.status, "unanswered");
 		await client.close();
 	});
+
+	test("submits keep their order, even fired without waiting", async () => {
+		const client = await TauClient.connect(slow.server.url);
+		const { dialog } = await client.request("conversation.create", {});
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		const texts = ["one", "two", "three", "four", "five"];
+		await Promise.all(
+			texts.map((content, index) =>
+				client.request("conversation.submit", { conversationId: replica.id, requestId: `o${index}`, content, whenBusy: "followUp" }),
+			),
+		);
+		await until(replica, () => idle(replica) && replica.ordered().filter((entry) => entry.kind === "pi.user").length === 5, 30_000);
+		const users = replica.ordered().filter((entry) => entry.kind === "pi.user");
+		const sent = users.map((entry) => (entry as unknown as { model: { content: string }[] }).model[0]!.content);
+		assert.deepEqual(sent, texts);
+		await client.close();
+	});
+
+	test("withdraw: a queued message leaves, a placed one stays, an unknown one can never arrive", async () => {
+		const client = await TauClient.connect(slow.server.url);
+		const { dialog } = await client.request("conversation.create", {});
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		const id = replica.id;
+		await client.request("conversation.submit", { conversationId: id, requestId: "first", content: "a long one" });
+		await until(replica, () => !idle(replica));
+		const { submission: queued } = await client.request("conversation.submit", { conversationId: id, requestId: "later", content: "later", whenBusy: "followUp" });
+		assert.equal(queued.status, "queued");
+		const withdrawn = await client.request("submission.withdraw", { conversationId: id, requestId: "later" });
+		assert.equal(withdrawn.result, "aborted");
+		assert.equal(withdrawn.submission.status, "unanswered");
+		// Again: already settled, and still not in the transcript.
+		assert.equal((await client.request("submission.withdraw", { conversationId: id, requestId: "later" })).result, "settled");
+		// The running one is in the transcript.
+		assert.equal((await client.request("submission.withdraw", { conversationId: id, requestId: "first" })).result, "already_placed");
+		// Withdrawn before its submit arrived: the submit is refused.
+		assert.equal((await client.request("submission.withdraw", { conversationId: id, requestId: "ghost" })).result, "withdrawn");
+		await assert.rejects(
+			client.request("conversation.submit", { conversationId: id, requestId: "ghost", content: "boo" }),
+			(error: RequestError) => error.code === "withdrawn",
+		);
+		// A withdraw queued behind its submit on the same socket sees the submission.
+		const [submitted, raced] = await Promise.all([
+			client.request("conversation.submit", { conversationId: id, requestId: "race", content: "race", whenBusy: "followUp" }),
+			client.request("submission.withdraw", { conversationId: id, requestId: "race" }),
+		]);
+		assert.equal(submitted.submission.status, "queued");
+		assert.equal(raced.result, "aborted");
+		await client.request("conversation.abort", { conversationId: id });
+		await until(replica, () => idle(replica));
+		const users = replica.ordered().filter((entry) => entry.kind === "pi.user").map((entry) => (entry as unknown as { model: { content: string }[] }).model[0]!.content);
+		assert.deepEqual(users, ["a long one"]);
+		await client.close();
+	});
+
+	test("content the model cannot take is refused before admission", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", {});
+		const id = dialog.conversation.id;
+		await assert.rejects(
+			client.request("conversation.submit", { conversationId: id, requestId: "big", content: "x".repeat(1_000_001) }),
+			(error: RequestError) => error.code === "too_large",
+		);
+		const image = { type: "image", data: "A".repeat(8 * 1024 * 1024), mimeType: "image/jpeg" };
+		await assert.rejects(
+			client.request("conversation.submit", { conversationId: id, requestId: "img", content: [image] }),
+			(error: RequestError) => error.code === "too_large",
+		);
+		await assert.rejects(
+			client.request("conversation.submit", { conversationId: id, requestId: "tiff", content: [{ type: "image", data: "AAAA", mimeType: "image/tiff" }] }),
+			(error: RequestError) => error.code === "unsupported",
+		);
+		await assert.rejects(
+			client.request("conversation.submit", { conversationId: 999_999, requestId: "nowhere", content: "hi" }),
+			(error: RequestError) => error.code === "not_found",
+		);
+		// Nothing was admitted: the same request IDs still work.
+		const { submission } = await client.request("conversation.submit", { conversationId: id, requestId: "big", content: "small" });
+		assert.equal(submission.requestId, "big");
+		await client.close();
+	});
+
+	test("a create with a request ID happens once", async () => {
+		const client = await TauClient.connect(server.url);
+		const [a, b] = await Promise.all([
+			client.request("conversation.create", { requestId: "make-once", title: "Once" }),
+			client.request("conversation.create", { requestId: "make-once", title: "Once" }),
+		]);
+		assert.equal(a.dialog.conversation.id, b.dialog.conversation.id);
+		const again = await client.request("conversation.create", { requestId: "make-once" });
+		assert.equal(again.dialog.conversation.id, a.dialog.conversation.id);
+		await client.close();
+	});
 });
 
 describe("durability", () => {
