@@ -94,7 +94,71 @@ enum MarkdownText {
     private static var cache: [String: [MarkdownBlock]] = [:]
     private static var cacheOrder: [String] = []
 
+    /// The message's blocks. A long message is parsed in chunks split at paragraph breaks that cannot change how
+    /// either side reads: while an answer streams only its last chunk is new, so each step parses and lays out one
+    /// chunk, not the whole answer, and the finished chunks keep their cached parse and layout.
     static func blocks(_ text: String, style: MarkdownStyle) -> [MarkdownBlock] {
+        let chunks = self.chunks(text)
+        if chunks.count == 1 {
+            return self.chunkBlocks(text, style: style)
+        }
+        return chunks.flatMap { self.chunkBlocks($0, style: style) }
+    }
+
+    /// Chunks of about `chunkLength` characters or more. A break is a blank line outside a code fence whose next line
+    /// starts a heading, a fence or a plain paragraph: not a list item, quote, table row or indented line, which may
+    /// continue what came before (a list's numbering, a quote, a table).
+    private static let chunkLength = 1200
+
+    static func chunks(_ text: String) -> [String] {
+        let utf16 = text.utf16
+        guard utf16.count > chunkLength * 2 else {
+            return [text]
+        }
+        let lines = text.components(separatedBy: "\n")
+        var chunks: [String] = []
+        var current: [String] = []
+        var currentLength = 0
+        var inFence = false
+        var previousBlank = false
+        func startsSafely(_ line: String) -> Bool {
+            guard let first = line.first else {
+                return false
+            }
+            if line.hasPrefix("#") || line.hasPrefix("```") || line.hasPrefix("~~~") {
+                return true
+            }
+            if first == " " || first == "\t" || first == ">" || first == "|" || first == "-" || first == "*" || first == "+" || first == "$" || first == "\\" {
+                return false
+            }
+            // "1." or "1)" starts an ordered list item.
+            let digits = line.prefix(while: { $0.isNumber })
+            if !digits.isEmpty, let next = line.dropFirst(digits.count).first, next == "." || next == ")" {
+                return false
+            }
+            return true
+        }
+        for line in lines {
+            let isFence = line.hasPrefix("```") || line.hasPrefix("~~~")
+            if !inFence && previousBlank && currentLength >= chunkLength && startsSafely(line) {
+                chunks.append(current.joined(separator: "\n"))
+                current = []
+                currentLength = 0
+            }
+            current.append(line)
+            currentLength += line.utf16.count + 1
+            if isFence {
+                inFence.toggle()
+            }
+            previousBlank = line.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        if !current.isEmpty {
+            chunks.append(current.joined(separator: "\n"))
+        }
+        return chunks
+    }
+
+    private static func chunkBlocks(_ text: String, style: MarkdownStyle) -> [MarkdownBlock] {
         let key = "\(style.fontSize)|\(style.textColor.argb)|\(style.linkColor.argb)|\(style.accentColor.argb)|\(style.maxWidth)|\(style.math)|\(text)"
         self.cacheLock.lock()
         if let cached = self.cache[key] {
@@ -113,8 +177,24 @@ enum MarkdownText {
         return result
     }
 
+    /// GitHub's task list items, `- [ ]` and `- [x]`, which CommonMark reads as text: boxes in their place.
+    private static let taskPattern = try! NSRegularExpression(pattern: "^(\\s*[-*+] )\\[([ xX])\\] ", options: [.anchorsMatchLines])
+
+    private static func taskBoxes(_ text: String) -> String {
+        guard text.contains("] ") else {
+            return text
+        }
+        let mutable = NSMutableString(string: text)
+        for match in self.taskPattern.matches(in: text, range: NSRange(location: 0, length: mutable.length)).reversed() {
+            let checked = (text as NSString).substring(with: match.range(at: 2)) != " "
+            let prefix = (text as NSString).substring(with: match.range(at: 1))
+            mutable.replaceCharacters(in: match.range, with: prefix + (checked ? "☑︎ " : "☐ "))
+        }
+        return mutable as String
+    }
+
     private static func parseBlocks(_ rawText: String, style: MarkdownStyle) -> [MarkdownBlock] {
-        let (text, formulas) = style.math ? MathText.extract(rawText) : (rawText, [])
+        let (text, formulas) = style.math ? MathText.extract(self.taskBoxes(rawText)) : (self.taskBoxes(rawText), [])
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
         guard let parsed = try? AttributedString(markdown: text, options: options) else {
             return [.text(NSAttributedString(string: text, font: Font.regular(style.fontSize), textColor: style.textColor))]

@@ -413,7 +413,7 @@ final class ChatMessageItemNode: ListViewItemNode {
         let existingTableNodes = self.tableNodes
         let currentRevealCount = self.revealController.map { Int($0.revealedCount) }
 
-        return { [weak self] item, params, neighbors in
+        let layoutImpl: (ChatMessageItem, ListViewItemLayoutParams, ListViewItemNeighbors) -> (ListViewItemNodeLayout, (ListViewItemUpdateAnimation) -> Void) = { [weak self] item, params, neighbors in
             let theme = item.theme.chat
             let message = item.message
             let isSelecting = item.selection != nil
@@ -742,6 +742,15 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                 })
             }
+        }
+        guard TauTiming.isEnabled else {
+            return layoutImpl
+        }
+        return { item, params, neighbors in
+            let start = CACurrentMediaTime()
+            let result = layoutImpl(item, params, neighbors)
+            TauTiming.log(String(format: "layout %d chars %.1f ms", item.message.text.count, (CACurrentMediaTime() - start) * 1000.0))
+            return result
         }
     }
 
@@ -1091,8 +1100,26 @@ private func clippedLines(_ text: String, count: Int, fromStart: Bool) -> String
 /// output, a file's first lines highlighted by its language, a diff in red and green.
 private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, isExpanded: Bool, isActive: Bool, isDark: Bool, textColor: UIColor, titleColor: UIColor, accentColor: UIColor) -> (String, String, NSMutableAttributedString) {
     let body = NSMutableAttributedString()
-    let output = (tool?.output ?? fallbackText).trimmingCharacters(in: .whitespacesAndNewlines)
+    var output = (tool?.output ?? fallbackText).trimmingCharacters(in: .whitespacesAndNewlines)
     let codeFont = Font.monospace(12.0)
+    // pi wraps a tool's error in <harness> tags for the model; the card shows the message.
+    if output.hasPrefix("<harness>") {
+        output = output.replacingOccurrences(of: "<harness>", with: "").replacingOccurrences(of: "</harness>", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    if tool?.status == .failed, !output.isEmpty {
+        let errorColor = isDark ? diffRemovedDark : diffRemovedLight
+        switch tool?.detail ?? .none {
+        case let .read(path):
+            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 40 : 4, fromStart: true), font: codeFont, textColor: errorColor))
+            return ("Read", shortPath(tool?.summary ?? path, isExpanded: isExpanded), body)
+        case let .bash(command):
+            body.append(MarkdownText.code("$ " + clippedLines(command, count: isExpanded ? 40 : 3, fromStart: true), language: "bash", font: codeFont, textColor: titleColor))
+            body.append(NSAttributedString(string: "\n" + clippedLines(output, count: isExpanded ? 80 : 6, fromStart: false), font: codeFont, textColor: errorColor))
+            return ("Bash", "", body)
+        default:
+            break
+        }
+    }
     switch tool?.detail ?? .none {
     case let .bash(command):
         let shownCommand = clippedLines(command.trimmingCharacters(in: .whitespacesAndNewlines), count: isExpanded ? 40 : 3, fromStart: true)

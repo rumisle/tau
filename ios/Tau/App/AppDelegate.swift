@@ -14,6 +14,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     private var themeDisposable: Disposable?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        TauTiming.startFrameMonitor()
         // Display only knows the NavigationBar protocol; the app picks the implementation, as Telegram's AppDelegate does.
         defaultNavigationBarImpl = { presentationData in
             return NavigationBarImpl(presentationData: presentationData)

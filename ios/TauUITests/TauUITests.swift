@@ -343,4 +343,22 @@ final class TauUITests: XCTestCase {
         sleep(1)
         self.shot("textsel-selected")
     }
+
+    /// Against a running tau server: a chat with many tool calls keeps its scroll position when left and reopened,
+    /// and after a relaunch.
+    func testServerScrollMemory() {
+        self.launch(["-theme", "light", "-openChat", "370"])
+        sleep(2)
+        for _ in 0 ..< 4 {
+            self.point(0.5, 0.3).press(forDuration: 0.05, thenDragTo: self.point(0.5, 0.8))
+        }
+        sleep(2)
+        self.shot("scrollmem-left")
+        // Home saves the position; the next launch starts the app fresh.
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+        self.launch(["-theme", "light", "-openChat", "370"])
+        sleep(3)
+        self.shot("scrollmem-relaunched")
+    }
 }
