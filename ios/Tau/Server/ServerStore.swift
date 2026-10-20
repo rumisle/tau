@@ -89,6 +89,10 @@ final class ServerStore: TauStore {
             }
         }
         self.connection.setStatus(.updating)
+        // The usage row reads each model's context window from the list.
+        if self.modelsCache == nil {
+            let _ = self.models().start()
+        }
         self.connection.request("dialogs.subscribe") { [weak self] result in
             guard let self, case let .success(value) = result else {
                 return
@@ -617,7 +621,7 @@ final class ServerStore: TauStore {
         }
         return self.connection.request("models.list")
         |> map { value -> [ModelInfo] in
-            return value.objects("models").map { ModelInfo(provider: $0.string("provider") ?? "", id: $0.string("id") ?? "", name: $0.string("name") ?? $0.string("id") ?? "", reasoning: $0.bool("reasoning") ?? false) }
+            return value.objects("models").map { ModelInfo(provider: $0.string("provider") ?? "", id: $0.string("id") ?? "", name: $0.string("name") ?? $0.string("id") ?? "", reasoning: $0.bool("reasoning") ?? false, contextWindow: $0.int("contextWindow")) }
         }
         |> `catch` { _ -> Signal<[ModelInfo], NoError> in
             return .single([])
@@ -637,6 +641,40 @@ final class ServerStore: TauStore {
         }
         let model = agent.object("model")
         return AgentSettings(provider: model?.string("provider"), modelId: model?.string("modelId"), thinkingLevel: agent.string("thinkingLevel"))
+    }
+
+    func usage(_ id: Int) -> ConversationUsage {
+        let agent = self.agent(id)
+        let contextWindow = self.modelsCache?.first(where: { $0.provider == agent.provider && $0.id == agent.modelId })?.contextWindow
+        guard let realId = self.resolve(id), let replica = self.replicas[realId] else {
+            return ConversationUsage(models: [], contextTokens: nil, contextWindow: contextWindow)
+        }
+        func tokenUsage(_ object: JSONObject) -> TokenUsage {
+            return TokenUsage(input: object.int("input") ?? 0, output: object.int("output") ?? 0, cacheRead: object.int("cacheRead") ?? 0, cacheWrite: object.int("cacheWrite") ?? 0, cost: object.object("cost")?.double("total") ?? 0.0)
+        }
+        let ledger = replica.docs.object("pi.usage")?.object("models") ?? [:]
+        let models = ledger.compactMap { key, value in (value as? JSONObject).map { (model: key, usage: tokenUsage($0)) } }.sorted { $0.usage.cost > $1.usage.cost }
+        // The latest response since the newest reset or compaction; an aborted or failed one reports nothing.
+        var contextTokens: Int?
+        for entryId in replica.entries.keys.sorted(by: >) {
+            if let head = replica.head, entryId <= head {
+                break
+            }
+            let kind = replica.entries[entryId]?.string("kind")
+            if kind == "pi.reset" || kind == "pi.compaction" {
+                break
+            }
+            guard let entry = replica.entries[entryId], kind == "pi.assistant", let usage = entry.objects("model").first?.object("usage") else {
+                continue
+            }
+            let value = tokenUsage(usage)
+            let total = value.input + value.output + value.cacheRead + value.cacheWrite
+            if total > 0 {
+                contextTokens = total
+                break
+            }
+        }
+        return ConversationUsage(models: models, contextTokens: contextTokens, contextWindow: contextWindow)
     }
 
     func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?) {

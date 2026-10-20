@@ -47,6 +47,8 @@ protocol TauStore: AnyObject {
     func compact(_ id: Int)
     /// Starts a new context: the model forgets the conversation so far; the transcript stays.
     func resetContext(_ id: Int)
+    /// What the conversation has spent, and how full its context is.
+    func usage(_ id: Int) -> ConversationUsage
 
     /// One directory of the server's file system, for picking where a conversation runs.
     func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError>
@@ -67,6 +69,39 @@ struct ModelInfo: Equatable {
     var id: String
     var name: String
     var reasoning: Bool
+    /// Tokens the model takes in at most.
+    var contextWindow: Int? = nil
+}
+
+/// Tokens and dollars, as pi-ai's `Usage`.
+struct TokenUsage: Equatable {
+    var input = 0
+    var output = 0
+    var cacheRead = 0
+    var cacheWrite = 0
+    var cost = 0.0
+
+    static func + (lhs: TokenUsage, rhs: TokenUsage) -> TokenUsage {
+        return TokenUsage(input: lhs.input + rhs.input, output: lhs.output + rhs.output, cacheRead: lhs.cacheRead + rhs.cacheRead, cacheWrite: lhs.cacheWrite + rhs.cacheWrite, cost: lhs.cost + rhs.cost)
+    }
+}
+
+/// A conversation's spend (`pi.usage`) and how full its context is.
+struct ConversationUsage: Equatable {
+    /// Spend by `provider/modelId`, most expensive first.
+    var models: [(model: String, usage: TokenUsage)]
+    /// Tokens the model saw in the latest response of the current context, as pi's footer shows; nil before the
+    /// first response of a context.
+    var contextTokens: Int?
+    var contextWindow: Int?
+
+    var total: TokenUsage {
+        return self.models.reduce(TokenUsage()) { $0 + $1.usage }
+    }
+
+    static func == (lhs: ConversationUsage, rhs: ConversationUsage) -> Bool {
+        return lhs.models.map(\.model) == rhs.models.map(\.model) && lhs.models.map(\.usage) == rhs.models.map(\.usage) && lhs.contextTokens == rhs.contextTokens && lhs.contextWindow == rhs.contextWindow
+    }
 }
 
 struct DirectoryListing: Equatable {

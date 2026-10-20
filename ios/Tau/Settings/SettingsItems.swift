@@ -110,6 +110,8 @@ final class SettingsRowItem: ListViewItem {
         case none
         case disclosure(label: String)
         case checkmark(Bool)
+        /// Telegram's switch (Display's SwitchNode, as ItemListSwitchItem has); `toggled` gets the new value.
+        case toggle(Bool)
     }
 
     let theme: TauTheme
@@ -121,8 +123,10 @@ final class SettingsRowItem: ListViewItem {
     let accessory: Accessory
     let position: SettingsRowPosition
     let action: (() -> Void)?
+    let toggled: ((Bool) -> Void)?
 
-    init(theme: TauTheme, icon: UIImage?, title: String, subtitle: String? = nil, titleColor: UIColor? = nil, accessory: Accessory, position: SettingsRowPosition, action: (() -> Void)?) {
+    init(theme: TauTheme, icon: UIImage?, title: String, subtitle: String? = nil, titleColor: UIColor? = nil, accessory: Accessory, position: SettingsRowPosition, action: (() -> Void)?, toggled: ((Bool) -> Void)? = nil) {
+        self.toggled = toggled
         self.theme = theme
         self.icon = icon
         self.title = title
@@ -184,6 +188,7 @@ final class SettingsRowItemNode: ListViewItemNode {
     private let labelNode = TextNode()
     private let arrowNode = ASImageNode()
     private let separatorNode = ASDisplayNode()
+    private var switchNode: SwitchNode?
 
     private var item: SettingsRowItem?
 
@@ -235,7 +240,10 @@ final class SettingsRowItemNode: ListViewItemNode {
             var labelText = ""
             var showsArrow = false
             var showsCheck = false
+            var toggleValue: Bool?
             switch item.accessory {
+            case let .toggle(value):
+                toggleValue = value
             case .none:
                 break
             case let .disclosure(label):
@@ -244,7 +252,7 @@ final class SettingsRowItemNode: ListViewItemNode {
             case let .checkmark(value):
                 showsCheck = value
             }
-            let accessoryWidth: CGFloat = showsArrow || showsCheck ? 22.0 : 0.0
+            let accessoryWidth: CGFloat = toggleValue != nil ? 51.0 : (showsArrow || showsCheck ? 22.0 : 0.0)
             let (labelLayout, labelApply) = makeLabelLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: labelText, font: titleFont, textColor: theme.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: sectionWidth * 0.5, height: 30.0)))
             let maxTitleWidth = sectionLeft + sectionWidth - rightInset - accessoryWidth - labelLayout.size.width - 10.0 - contentLeft
             let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.title, font: titleFont, textColor: item.titleColor ?? theme.itemPrimaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: 30.0)))
@@ -312,6 +320,36 @@ final class SettingsRowItemNode: ListViewItemNode {
                 self.arrowNode.isHidden = !(showsArrow || showsCheck)
                 if let image = self.arrowNode.image {
                     self.arrowNode.frame = CGRect(x: accessoryX - image.size.width, y: floor((height - image.size.height) / 2.0), width: image.size.width, height: image.size.height)
+                }
+                if let toggleValue {
+                    let switchNode: SwitchNode
+                    if let current = self.switchNode {
+                        switchNode = current
+                    } else {
+                        switchNode = SwitchNode()
+                        switchNode.valueUpdated = { [weak self] value in
+                            self?.item?.toggled?(value)
+                        }
+                        self.switchNode = switchNode
+                        self.addSubnode(switchNode)
+                    }
+                    let colors = item.theme.presentationTheme.list.itemSwitchColors
+                    switchNode.frameColor = colors.frameColor
+                    switchNode.contentColor = colors.contentColor
+                    switchNode.handleColor = colors.handleColor
+                    if let switchView = switchNode.view as? UISwitch {
+                        if switchNode.bounds.size.width.isZero {
+                            switchView.sizeToFit()
+                        }
+                        let switchSize = switchView.bounds.size
+                        switchNode.frame = CGRect(x: accessoryX - switchSize.width + 4.0, y: floor((height - switchSize.height) / 2.0), width: switchSize.width, height: switchSize.height)
+                        if switchView.isOn != toggleValue {
+                            switchView.setOn(toggleValue, animated: true)
+                        }
+                    }
+                    switchNode.isHidden = false
+                } else {
+                    self.switchNode?.isHidden = true
                 }
                 let labelRight = accessoryX - (showsArrow ? 22.0 : 0.0)
                 self.labelNode.frame = CGRect(origin: CGPoint(x: labelRight - labelLayout.size.width, y: floor((height - labelLayout.size.height) / 2.0)), size: labelLayout.size)

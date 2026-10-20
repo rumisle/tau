@@ -77,6 +77,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 context.themeContext.force(builtin)
             }
         }
+        // -wrapCode YES|NO
+        if defaults.object(forKey: "wrapCode") != nil {
+            let value = defaults.bool(forKey: "wrapCode")
+            context.themeContext.update { $0.wrapCode = value }
+        }
         if defaults.object(forKey: "tab") != nil {
             Queue.mainQueue().after(0.3) {
                 root.select(index: defaults.integer(forKey: "tab"))

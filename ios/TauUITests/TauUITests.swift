@@ -13,7 +13,7 @@ final class TauUITests: XCTestCase {
     private func launch(_ arguments: [String] = []) {
         self.app = XCUIApplication()
         // Server tests talk to the local server directly, without the tailnet.
-        self.app.launchArguments = ["-server.url", "ws://127.0.0.1:7878"] + arguments
+        self.app.launchArguments = ["-server.url", "ws://127.0.0.1:7878"] + (arguments.contains("-wrapCode") ? [] : ["-wrapCode", "YES"]) + arguments
         self.app.launch()
         sleep(2)
     }
@@ -395,5 +395,38 @@ final class TauUITests: XCTestCase {
         self.point(0.4, 0.32).tap()
         usleep(300_000)
         self.shot("code-copied")
+    }
+
+    /// Against a running tau server: with wrapping off, a code block scrolls sideways.
+    func testCodeNoWrap() {
+        self.launch(["-theme", "dark", "-openChat", "304", "-wrapCode", "NO"])
+        sleep(2)
+        self.shot("code-nowrap")
+        self.point(0.8, 0.42).press(forDuration: 0.01, thenDragTo: self.point(0.1, 0.42))
+        sleep(1)
+        self.shot("code-nowrap-scrolled")
+    }
+
+    /// Against a running tau server: the title menu's usage row and its submenu.
+    func testUsageMenu() {
+        self.launch(["-theme", "dark", "-openChat", "304"])
+        sleep(2)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.shot("usage-menu")
+        self.app.descendants(matching: .any)["Usage"].firstMatch.tap()
+        sleep(1)
+        self.shot("usage-submenu")
+    }
+
+    /// Settings > Appearance: the night theme and the code wrapping switch.
+    func testAppearanceSettings() {
+        self.launch(["-theme", "dark", "-tab", "1"])
+        sleep(1)
+        self.app.descendants(matching: .any)["Appearance"].firstMatch.tap()
+        sleep(1)
+        self.app.swipeUp()
+        sleep(1)
+        self.shot("appearance")
     }
 }

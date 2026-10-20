@@ -52,14 +52,17 @@ final class ChatMessageItem: ListViewItem {
     let selection: Bool?
     /// A tool card showing its whole output.
     let isExpanded: Bool
+    /// Long code lines wrap; otherwise each code block scrolls sideways.
+    let wrapCode: Bool
     let interaction: ChatMessageItemInteraction
 
-    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, interaction: ChatMessageItemInteraction) {
+    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, wrapCode: Bool = true, interaction: ChatMessageItemInteraction) {
         self.theme = theme
         self.message = message
         self.isStreaming = isStreaming
         self.selection = selection
         self.isExpanded = isExpanded
+        self.wrapCode = wrapCode
         self.interaction = interaction
     }
 
@@ -278,9 +281,9 @@ final class ChatMessageItemNode: ListViewItemNode {
             }
         }
         // As ChatMessageTextBubbleContentNode's tap actions: a code block or inline code copies.
-        for textNode in self.textNodes where textNode.frame.contains(point) {
+        for textNode in self.textNodes {
             let local = self.contentNode.view.convert(point, to: textNode.view)
-            guard let (index, attributes) = textNode.attributesAtPoint(local, orNearest: false) else {
+            guard textNode.bounds.contains(local), let (index, attributes) = textNode.attributesAtPoint(local, orNearest: false) else {
                 continue
             }
             var code: String?
@@ -322,9 +325,15 @@ final class ChatMessageItemNode: ListViewItemNode {
                 })
                 selectionNode.enableQuote = false
                 selectionNode.enableTranslate = false
-                selectionNode.frame = textNode.frame
-                selectionNode.highlightAreaNode.frame = textNode.frame
-                self.contentNode.insertSubnode(selectionNode.highlightAreaNode, belowSubnode: textNode)
+                // A code block's node sits in its scroller.
+                let frame = textNode.view.convert(textNode.bounds, to: self.contentNode.view)
+                selectionNode.frame = frame
+                selectionNode.highlightAreaNode.frame = frame
+                if textNode.supernode === self.contentNode {
+                    self.contentNode.insertSubnode(selectionNode.highlightAreaNode, belowSubnode: textNode)
+                } else {
+                    self.contentNode.insertSubnode(selectionNode.highlightAreaNode, belowSubnode: self.dateNode)
+                }
                 self.contentNode.addSubnode(selectionNode)
                 self.textSelectionNodes.append(selectionNode)
             }
@@ -620,11 +629,13 @@ final class ChatMessageItemNode: ListViewItemNode {
                 if isThinking && !item.isStreaming && !item.isExpanded && sourceText.count > 240 {
                     sourceText = String(sourceText.prefix(240)) + "…"
                 }
-                let blocks = MarkdownText.blocks(sourceText, style: style)
+                let blocks = MarkdownText.blocks(sourceText, style: style, wrapCode: item.wrapCode)
                 let tableStyle = ChatTableStyle(borderColor: theme.tableBorderColor, headerBackgroundColor: theme.tableHeaderBackgroundColor)
 
                 var laidOut: [LaidOutBlock] = []
                 var textApplies: [(InteractiveTextNode.ApplyArguments) -> InteractiveTextNode] = []
+                /// Per text block: a code block that scrolls sideways.
+                var textScrolls: [Bool] = []
                 var tableApplies: [(ChatTableNode, () -> Void)] = []
                 var textIndex = 0
                 var tableIndex = 0
@@ -636,6 +647,15 @@ final class ChatMessageItemNode: ListViewItemNode {
                         let (layout, apply) = InteractiveTextNode.asyncLayout(existing)(InteractiveTextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
                         laidOut.append(.text(start: start, length: string.length, layout: layout))
                         textApplies.append(apply)
+                        textScrolls.append(false)
+                        textIndex += 1
+                    case let .code(string):
+                        // As wide as its longest line; the row shows it through a horizontal scroller.
+                        let existing = textIndex < existingTextNodes.count ? existingTextNodes[textIndex] : nil
+                        let (layout, apply) = InteractiveTextNode.asyncLayout(existing)(InteractiveTextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: 100_000.0, height: .greatestFiniteMagnitude)))
+                        laidOut.append(.text(start: start, length: string.length, layout: layout))
+                        textApplies.append(apply)
+                        textScrolls.append(true)
                         textIndex += 1
                     case let .table(table):
                         let node = tableIndex < existingTableNodes.count ? existingTableNodes[tableIndex] : ChatTableNode()
@@ -690,8 +710,20 @@ final class ChatMessageItemNode: ListViewItemNode {
                         switch block {
                         case let .text(_, _, layout):
                             let node = textNodes[textCursor]
+                            let scrolls = textScrolls[textCursor]
                             textCursor += 1
-                            animation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: x, y: y), size: layout.size), completion: nil)
+                            if scrolls {
+                                // The scroller spans the row, so code scrolls out to the screen's edges.
+                                let scroller = self.codeScroller(for: node)
+                                animation.animator.updateFrame(layer: scroller.layer, frame: CGRect(x: 0.0, y: y, width: params.width, height: layout.size.height), completion: nil)
+                                node.frame = CGRect(origin: CGPoint(x: x, y: 0.0), size: layout.size)
+                                scroller.view.contentSize = CGSize(width: max(params.width, x + layout.size.width + freeTextInset), height: layout.size.height)
+                            } else {
+                                if node.supernode !== self.contentNode {
+                                    self.contentNode.insertSubnode(node, belowSubnode: self.dateNode)
+                                }
+                                animation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: x, y: y), size: layout.size), completion: nil)
+                            }
                             y += layout.size.height
                         case let .table(_, _, size):
                             let node = tableApplies[tableCursor].0
@@ -700,6 +732,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                             y += size.height
                         }
                     }
+                    self.removeCodeScrollers(keeping: zip(textNodes, textScrolls).filter(\.1).map(\.0))
                     self.contentFrame = CGRect(x: x - 8.0, y: -4.0, width: maxTextWidth + 16.0, height: height + 8.0)
                     self.updateReveal(item: item, totalLength: totalLength)
                     self.layoutContainers(size: layout.contentSize)
@@ -815,6 +848,41 @@ final class ChatMessageItemNode: ListViewItemNode {
             self.contentNode.insertSubnode(node, belowSubnode: self.dateNode)
         }
         self.textNodes = nodes
+    }
+
+    /// Horizontal scrollers of code blocks that do not wrap, by the text node each holds.
+    private var codeScrollers: [ObjectIdentifier: ASScrollNode] = [:]
+
+    private func codeScroller(for node: InteractiveTextNode) -> ASScrollNode {
+        let key = ObjectIdentifier(node)
+        if let scroller = self.codeScrollers[key] {
+            if node.supernode !== scroller {
+                scroller.addSubnode(node)
+            }
+            return scroller
+        }
+        let scroller = ASScrollNode()
+        scroller.view.showsHorizontalScrollIndicator = false
+        scroller.view.showsVerticalScrollIndicator = false
+        scroller.view.alwaysBounceVertical = false
+        scroller.view.scrollsToTop = false
+        scroller.view.contentInsetAdjustmentBehavior = .never
+        // Swiping back still works while the block is scrolled to its start.
+        scroller.view.disablesInteractiveTransitionGestureRecognizerNow = { [weak scroller] in
+            return (scroller?.view.contentOffset.x ?? 0.0) > 0.0
+        }
+        self.contentNode.insertSubnode(scroller, belowSubnode: self.dateNode)
+        scroller.addSubnode(node)
+        self.codeScrollers[key] = scroller
+        return scroller
+    }
+
+    private func removeCodeScrollers(keeping nodes: [InteractiveTextNode]) {
+        let kept = Set(nodes.map(ObjectIdentifier.init))
+        for (key, scroller) in self.codeScrollers where !kept.contains(key) {
+            scroller.removeFromSupernode()
+            self.codeScrollers[key] = nil
+        }
     }
 
     private func setTableNodes(_ nodes: [ChatTableNode]) {

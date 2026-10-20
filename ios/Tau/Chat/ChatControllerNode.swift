@@ -357,7 +357,16 @@ final class ChatControllerNode: ASDisplayNode {
     }
 
     private func item(for entry: ChatHistoryEntry) -> ListViewItem {
-        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, interaction: self.interaction)
+        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, wrapCode: self.wrapCode, interaction: self.interaction)
+    }
+
+    /// Settings > Appearance > Wrap Lines in Code.
+    var wrapCode = true {
+        didSet {
+            if self.wrapCode != oldValue {
+                self.reloadItems()
+            }
+        }
     }
 
     /// Re-lays out one row with its current item, animating its height.

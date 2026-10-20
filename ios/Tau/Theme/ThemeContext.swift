@@ -3,16 +3,22 @@ import Display
 import SwiftSignalKit
 
 /// The app's current theme, as Telegram picks it: the theme chosen in Settings > Appearance (Classic by default), and
-/// when Auto-Night follows the system, a night theme (Tinted Night by default) while the phone is in dark mode.
+/// when Auto-Night follows the system, a night theme (Night by default, as Telegram's `AutomaticThemeSwitchSetting`)
+/// while the phone is in dark mode.
 /// Screens subscribe to `theme` and restyle in place, as Telegram's controllers follow `presentationData`.
 final class ThemeContext {
     struct Settings: Equatable {
         var theme: TauTheme.Builtin
         var autoNight: Bool
         var nightTheme: TauTheme.Builtin
+        /// Long lines in code blocks wrap; otherwise a block scrolls sideways.
+        var wrapCode: Bool
 
-        static let `default` = Settings(theme: .classic, autoNight: true, nightTheme: .tintedNight)
+        static let `default` = Settings(theme: .classic, autoNight: true, nightTheme: .night, wrapCode: true)
     }
+
+    /// Before version 2 the default night theme was Tinted Night; Telegram's is Night.
+    private static let settingsVersion = 2
 
     private static let settingsKey = "appearance.settings"
 
@@ -33,8 +39,11 @@ final class ThemeContext {
             if let value = stored["autoNight"] as? Bool {
                 settings.autoNight = value
             }
-            if let value = (stored["nightTheme"] as? String).flatMap(TauTheme.Builtin.init(rawValue:)), value.isDark {
+            if let value = (stored["nightTheme"] as? String).flatMap(TauTheme.Builtin.init(rawValue:)), value.isDark, (stored["version"] as? Int ?? 1) >= ThemeContext.settingsVersion || value != .tintedNight {
                 settings.nightTheme = value
+            }
+            if let value = stored["wrapCode"] as? Bool {
+                settings.wrapCode = value
             }
         }
         self.settings = settings
@@ -71,7 +80,7 @@ final class ThemeContext {
         var settings = self.settings
         f(&settings)
         self.settings = settings
-        UserDefaults.standard.set(["theme": settings.theme.rawValue, "autoNight": settings.autoNight, "nightTheme": settings.nightTheme.rawValue], forKey: ThemeContext.settingsKey)
+        UserDefaults.standard.set(["version": ThemeContext.settingsVersion, "theme": settings.theme.rawValue, "autoNight": settings.autoNight, "nightTheme": settings.nightTheme.rawValue, "wrapCode": settings.wrapCode], forKey: ThemeContext.settingsKey)
         self.settingsPromise.set(settings)
         self.apply()
     }

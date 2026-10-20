@@ -279,6 +279,11 @@ final class AppearanceController: SettingsListController {
             }
             items.append(SettingsTextItem(theme: theme, text: "Switches to the preferred night theme while your iPhone is in dark mode.", kind: .footer))
         }
+        items.append(SettingsTextItem(theme: theme, text: "Code Blocks", kind: .header))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Wrap Lines", accessory: .toggle(settings.wrapCode), position: SettingsRowPosition(isFirst: true, isLast: true), action: nil, toggled: { value in
+            themeContext.update { $0.wrapCode = value }
+        }))
+        items.append(SettingsTextItem(theme: theme, text: "When off, long lines stay whole and a code block scrolls sideways.", kind: .footer))
         return items
     }
 }

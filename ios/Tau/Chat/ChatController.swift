@@ -17,6 +17,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private var theme: TauTheme
     private let stateDisposable = MetaDisposable()
     private var themeDisposable: Disposable?
+    private var settingsDisposable: Disposable?
     private let titleView: ChatTitleView
     private var editingMessageId: Int?
     private var lastState: ConversationState?
@@ -53,6 +54,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.themeDisposable = (context.themeContext.theme |> deliverOnMainQueue).start(next: { [weak self] theme in
             self?.updateTheme(theme)
         })
+        self.settingsDisposable = (context.themeContext.settingsSignal |> deliverOnMainQueue).start(next: { [weak self] settings in
+            self?.controllerNode.wrapCode = settings.wrapCode
+        })
     }
 
     required init(coder aDecoder: NSCoder) {
@@ -62,6 +66,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     deinit {
         self.stateDisposable.dispose()
         self.themeDisposable?.dispose()
+        self.settingsDisposable?.dispose()
     }
 
     private func updateTheme(_ theme: TauTheme) {
@@ -356,6 +361,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             controller?.pushItems(items: .single(ContextController.Items(content: .list(levelItems))))
         })))
         items.append(.separator)
+        let usage = store.usage(id)
+        items.append(.action(ContextMenuActionItem(text: "Usage", textLayout: .secondLineWithValue(usageSummary(usage)), icon: icon("Chat/Context Menu/Info"), action: { [weak self] controller, _ in
+            guard let self else {
+                return
+            }
+            controller?.pushItems(items: .single(ContextController.Items(content: .list(self.usageItems(usage, icon: icon)))))
+        })))
         items.append(.action(ContextMenuActionItem(text: "Compact Context", icon: icon("Chat/Context Menu/Clear"), action: { [weak self] _, f in
             f(.default)
             store.compact(id)
@@ -370,6 +382,30 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         let source = ChatTitleContextReferenceSource(view: self.titleView, contentArea: self.controllerNode.view.convert(self.controllerNode.frameForVisibleArea(), to: nil))
         let controller = makeContextController(presentationData: self.theme.presentationData, source: .reference(source), items: .single(ContextController.Items(content: .list(items))), gesture: nil)
         self.presentInGlobalOverlay(controller)
+    }
+
+    /// The usage submenu: how full the context is, then the conversation's spend, by model when it used several.
+    private func usageItems(_ usage: ConversationUsage, icon: @escaping (String) -> (PresentationTheme) -> UIImage?) -> [ContextMenuItem] {
+        var items: [ContextMenuItem] = [.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
+            controller?.popItems()
+        })), .separator]
+        func row(_ title: String, _ value: String) {
+            items.append(.action(ContextMenuActionItem(text: title, textLayout: .secondLineWithValue(value), icon: { _ in nil }, action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)))
+        }
+        row("Context", contextDescription(usage))
+        let total = usage.total
+        row("Cost", formatCost(total.cost))
+        row("Input", formatTokens(total.input))
+        row("Output", formatTokens(total.output))
+        row("Cache Read", formatTokens(total.cacheRead))
+        row("Cache Write", formatTokens(total.cacheWrite))
+        if usage.models.count > 1 {
+            items.append(.separator)
+            for (model, value) in usage.models {
+                row(model.split(separator: "/").last.map(String.init) ?? model, "\(formatCost(value.cost)) · \(formatTokens(value.input + value.output + value.cacheRead + value.cacheWrite)) tokens")
+            }
+        }
+        return items
     }
 
     // MARK: - Context menu
@@ -718,4 +754,44 @@ private final class ChatTitleContextReferenceSource: ContextReferenceContentSour
         }
         return ContextControllerReferenceViewInfo(referenceView: view, contentAreaInScreenSpace: UIScreen.main.bounds)
     }
+}
+
+/// Tokens as pi's footer counts them: 950, 41.2k, 1.3M.
+func formatTokens(_ count: Int) -> String {
+    if count < 1_000 {
+        return "\(count)"
+    } else if count < 10_000 {
+        return String(format: "%.1fk", Double(count) / 1_000.0).replacingOccurrences(of: ".0k", with: "k")
+    } else if count < 1_000_000 {
+        return "\(Int((Double(count) / 1_000.0).rounded()))k"
+    } else {
+        return String(format: "%.1fM", Double(count) / 1_000_000.0).replacingOccurrences(of: ".0M", with: "M")
+    }
+}
+
+func formatCost(_ cost: Double) -> String {
+    if cost == 0.0 {
+        return "$0"
+    } else if cost < 0.01 {
+        return String(format: "$%.4f", cost)
+    } else {
+        return String(format: "$%.2f", cost)
+    }
+}
+
+/// "41k of 200k (21%)", or what is known of it.
+private func contextDescription(_ usage: ConversationUsage) -> String {
+    guard let tokens = usage.contextTokens else {
+        return "Empty"
+    }
+    guard let window = usage.contextWindow, window > 0 else {
+        return "\(formatTokens(tokens)) tokens"
+    }
+    let percent = Int((Double(tokens) / Double(window) * 100.0).rounded())
+    return "\(formatTokens(tokens)) of \(formatTokens(window)) (\(percent)%)"
+}
+
+/// The usage row's second line: the context's fill, then the spend.
+private func usageSummary(_ usage: ConversationUsage) -> String {
+    return "\(contextDescription(usage)) · \(formatCost(usage.total.cost))"
 }

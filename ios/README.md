@@ -48,6 +48,7 @@ For checking UI from the command line (`ios/scripts/shot.sh out.png 3 -- <args>`
 | `-openChat 2 -focus YES` | ...and focus the input field |
 | `-theme tintedNight` | Force a theme: `classic`, `day`, `night`, `tintedNight` (`light`, `dark` alias Classic and Tinted Night) |
 | `-tab 1` | Open the Settings tab |
+| `-wrapCode NO` | Code blocks scroll sideways instead of wrapping (Settings > Appearance > Wrap Lines) |
 | `-compose YES` | Open New Chat |
 
 `TAU_TIMING=1` in the environment (`SIMCTL_CHILD_TAU_TIMING=1 xcrun simctl launch ...`) logs each message row's layout
@@ -133,7 +134,9 @@ Not yet: Telegram's photo editor (LegacyMediaPickerGallery; its paint tab needs 
 The app differs from Telegram where an agent chat needs it: user messages are bubbles; assistant answers have no bubble
 and run the full width on the wallpaper, rendered as Markdown (`Chat/MarkdownText.swift`); tool calls are compact cards
 made for each tool (a command with the end of its output, a file highlighted by its language, an edit as a diff);
-thinking is dimmed and folded. A long answer is parsed and laid out in chunks split at safe paragraph breaks, so a
+thinking is dimmed and folded. With Settings > Appearance > Wrap Lines off, each code block is laid out on its own,
+unwrapped, in a horizontal scroller. The title menu shows the model, the thinking level, and Usage: how full the
+context is (the latest response's tokens against the model's context window) and the spend from `pi.usage`. A long answer is parsed and laid out in chunks split at safe paragraph breaks, so a
 streaming step costs one chunk rather than the whole answer. The chat list shows each conversation's project directory where
 Telegram shows a group message's author. A new chat starts from a project picker (`ChatList/ComposeController.swift`,
 recent projects and the server's folders through `fs.list`) and stays a draft until its first message.

@@ -169,6 +169,10 @@ final class MockStore: TauStore {
     func compact(_ id: Int) {
     }
 
+    func usage(_ id: Int) -> ConversationUsage {
+        return ConversationUsage(models: [("anthropic/claude-opus-5-5", TokenUsage(input: 1_204, output: 18_330, cacheRead: 412_900, cacheWrite: 38_200, cost: 0.87))], contextTokens: 41_200, contextWindow: 200_000)
+    }
+
     func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError> {
         let path = path ?? "/Users/you"
         let entries = ["work", "tau", "webapp", "engine", "notes"].map { DirectoryListing.Entry(name: $0, isDirectory: true, isRepository: $0 != "work" && $0 != "notes") }

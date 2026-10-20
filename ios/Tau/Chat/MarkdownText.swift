@@ -39,10 +39,12 @@ struct MarkdownTable {
 enum MarkdownBlock {
     case text(NSAttributedString)
     case table(MarkdownTable)
+    /// A code block on its own, laid out without wrapping: with code wrapping off, it scrolls sideways.
+    case code(NSAttributedString)
 
     var characterCount: Int {
         switch self {
-        case let .text(string):
+        case let .text(string), let .code(string):
             return string.length
         case let .table(table):
             return table.characterCount
@@ -69,7 +71,7 @@ enum MarkdownText {
                 result.append(NSAttributedString(string: "\n\n", font: Font.regular(style.fontSize), textColor: style.textColor))
             }
             switch block {
-            case let .text(string):
+            case let .text(string), let .code(string):
                 result.append(string)
             case let .table(table):
                 for (index, row) in ([table.header] + table.rows).enumerated() {
@@ -99,12 +101,50 @@ enum MarkdownText {
     /// The message's blocks. A long message is parsed in chunks split at paragraph breaks that cannot change how
     /// either side reads: while an answer streams only its last chunk is new, so each step parses and lays out one
     /// chunk, not the whole answer, and the finished chunks keep their cached parse and layout.
-    static func blocks(_ text: String, style: MarkdownStyle) -> [MarkdownBlock] {
+    static func blocks(_ text: String, style: MarkdownStyle, wrapCode: Bool = true) -> [MarkdownBlock] {
         let chunks = self.chunks(text)
-        if chunks.count == 1 {
-            return self.chunkBlocks(text, style: style)
+        let blocks = chunks.count == 1 ? self.chunkBlocks(text, style: style) : chunks.flatMap { self.chunkBlocks($0, style: style) }
+        return wrapCode ? blocks : blocks.flatMap(self.separateCode)
+    }
+
+    /// A text block split around its code blocks, each of which becomes a `.code` block. The newlines between the
+    /// pieces go; the blocks' own spacing replaces them.
+    private static func separateCode(_ block: MarkdownBlock) -> [MarkdownBlock] {
+        guard case let .text(string) = block else {
+            return [block]
         }
-        return chunks.flatMap { self.chunkBlocks($0, style: style) }
+        var codeRanges: [NSRange] = []
+        string.enumerateAttribute(blockQuoteKey, in: NSRange(location: 0, length: string.length), options: []) { value, range, _ in
+            if let data = value as? TextNodeBlockQuoteData, case .code = data.kind {
+                codeRanges.append(range)
+            }
+        }
+        guard !codeRanges.isEmpty else {
+            return [block]
+        }
+        let nsString = string.string as NSString
+        var result: [MarkdownBlock] = []
+        func appendText(_ range: NSRange) {
+            var start = range.location
+            var end = range.location + range.length
+            while start < end, nsString.character(at: start) == 0x0a {
+                start += 1
+            }
+            while end > start, nsString.character(at: end - 1) == 0x0a {
+                end -= 1
+            }
+            if end > start {
+                result.append(.text(string.attributedSubstring(from: NSRange(location: start, length: end - start))))
+            }
+        }
+        var cursor = 0
+        for range in codeRanges {
+            appendText(NSRange(location: cursor, length: range.location - cursor))
+            result.append(.code(string.attributedSubstring(from: range)))
+            cursor = range.location + range.length
+        }
+        appendText(NSRange(location: cursor, length: string.length - cursor))
+        return result
     }
 
     /// Chunks of about `chunkLength` characters or more. A break is a blank line outside a code fence whose next line
