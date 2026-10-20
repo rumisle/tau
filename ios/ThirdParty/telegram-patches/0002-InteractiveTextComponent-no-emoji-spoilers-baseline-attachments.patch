@@ -1,0 +1,77 @@
+--- a/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
++++ b/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
+@@ -5,10 +5,7 @@
+ import CoreText
+ import AppBundle
+ import ComponentFlow
+-import TextFormat
+ import MessageInlineBlockBackgroundView
+-import InvisibleInkDustNode
+-import EmojiTextAttachmentView
+ 
+ private let defaultFont = UIFont.systemFont(ofSize: 15.0)
+ 
+@@ -1989,6 +1986,18 @@
+                             var ascent: CGFloat = 0.0
+                             var descent: CGFloat = 0.0
+                             CTLineGetTypographicBounds(line.line, &ascent, &descent, nil)
++                            // tau: an attachment with its own size (a run delegate) sits on the baseline by its own
++                            // height above and below it, not the line's.
++                            for run in CTLineGetGlyphRuns(line.line) as! [CTRun] {
++                                let runRange = CTRunGetStringRange(run)
++                                if range.location >= runRange.location && range.location < runRange.location + runRange.length {
++                                    let runAttributes = CTRunGetAttributes(run) as NSDictionary
++                                    if runAttributes[kCTRunDelegateAttributeName as String] != nil {
++                                        CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), &ascent, &descent, nil)
++                                    }
++                                    break
++                                }
++                            }
+                             
+                             addAttachment(attachment: attachment, line: line, ascent: ascent, descent: descent, startIndex: range.location, endIndex: range.location + range.length)
+                         }
+@@ -2619,7 +2628,8 @@
+                         }
+                         if let textColor {
+                             if let tintedImage = generateTintedImage(image: image, color: textColor) {
+-                                let imageRect = CGRect(origin: CGPoint(x: attachment.frame.midX - tintedImage.size.width * 0.5, y: attachment.frame.midY - tintedImage.size.height * 0.5 + 1.0), size: tintedImage.size).offsetBy(dx: lineFrame.minX, dy: lineFrame.minY)
++                                // tau: the attachment's frame is relative to the baseline.
++                                let imageRect = CGRect(origin: CGPoint(x: attachment.frame.midX - tintedImage.size.width * 0.5, y: attachment.frame.midY - tintedImage.size.height * 0.5), size: tintedImage.size).offsetBy(dx: lineFrame.minX, dy: lineFrame.maxY - line.descent)
+                                 context.translateBy(x: imageRect.midX, y: imageRect.midY)
+                                 context.scaleBy(x: 1.0, y: -1.0)
+                                 context.translateBy(x: -imageRect.midX, y: -imageRect.midY)
+@@ -3406,11 +3416,8 @@
+                     copySublayer.opacity = sublayer.opacity
+                     copySublayer.isHidden = sublayer.isHidden
+                     
+-                    if let sublayer = sublayer as? InlineStickerItemLayer {
+-                        sublayer.mirrorLayer = copySublayer
+-                    } else {
+-                        copySublayer.contents = sublayer.contents
+-                    }
++                    // tau: no custom emoji layers to mirror.
++                    copySublayer.contents = sublayer.contents
+                     
+                     copyContentsLayer.addSublayer(copySublayer)
+                 }
+@@ -3570,3 +3577,20 @@
+     let endEndPoint = CGPoint(x: (gradientLayer.startPoint.x + radius.width) * 1.0, y: (gradientLayer.startPoint.y + radius.height) * 1.0)
+     gradientLayer.endPoint = endEndPoint
+ }
++
++// tau: spoiler dust (InvisibleInkDustNode) needs LegacyComponents. This stand-in has its interface and draws nothing,
++// so spoilers render as plain text.
++private final class InvisibleInkDustNode: ASDisplayNode {
++    init(textNode: ASDisplayNode?, enableAnimations: Bool) {
++        super.init()
++    }
++
++    func update(size: CGSize, color: UIColor, textColor: UIColor, rects: [CGRect], wordRects: [CGRect]) {
++    }
++
++    func update(revealed: Bool, animated: Bool) {
++    }
++
++    func revealWithoutMaskAtLocation(_ location: CGPoint) {
++    }
++}

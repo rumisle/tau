@@ -384,7 +384,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                 }
                 let maxTextWidth = imageSizes.isEmpty ? maxContentWidth - textInsets.left - textInsets.right : imageWidth + mediaInset * 2.0 - textInsets.left - textInsets.right
 
-                let style = MarkdownStyle(fontSize: messageFontSize, textColor: theme.outgoing.primaryTextColor, linkColor: theme.outgoing.linkTextColor, accentColor: theme.outgoing.primaryTextColor)
+                var style = MarkdownStyle(fontSize: messageFontSize, textColor: theme.outgoing.primaryTextColor, linkColor: theme.outgoing.linkTextColor, accentColor: theme.outgoing.primaryTextColor)
+                style.math = false
                 let textNode = existingTextNodes.first
                 let hasText = !message.text.isEmpty
                 let (textLayout, textApply) = InteractiveTextNode.asyncLayout(textNode)(InteractiveTextNodeLayoutArguments(attributedString: MarkdownText.render(message.text, style: style), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
@@ -517,7 +518,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let maxTextWidth = contentWidth - freeTextInset * 2.0 - leftShift
                 let isThinking = message.role == .thinking
                 // Reasoning is dimmer and smaller, and folds to its start once the answer is written.
-                let style = MarkdownStyle(fontSize: isThinking ? 15.0 : messageFontSize, textColor: isThinking ? theme.freeSecondaryTextColor : theme.freeTextColor, linkColor: theme.linkTextColor, accentColor: item.theme.accentColor)
+                var style = MarkdownStyle(fontSize: isThinking ? 15.0 : messageFontSize, textColor: isThinking ? theme.freeSecondaryTextColor : theme.freeTextColor, linkColor: theme.linkTextColor, accentColor: item.theme.accentColor)
+                style.maxWidth = maxTextWidth
                 var sourceText = message.text
                 if isThinking && !item.isStreaming && !item.isExpanded && sourceText.count > 240 {
                     sourceText = String(sourceText.prefix(240)) + "…"

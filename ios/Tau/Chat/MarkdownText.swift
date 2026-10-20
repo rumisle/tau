@@ -8,6 +8,10 @@ struct MarkdownStyle {
     var textColor: UIColor
     var linkColor: UIColor
     var accentColor: UIColor
+    /// The text column, which display formulas shrink to fit.
+    var maxWidth: CGFloat = 0.0
+    /// Typeset `$...$` LaTeX: in answers, not in what the user writes.
+    var math: Bool = true
 
     /// Light text: a dark theme.
     var isDark: Bool {
@@ -91,7 +95,7 @@ enum MarkdownText {
     private static var cacheOrder: [String] = []
 
     static func blocks(_ text: String, style: MarkdownStyle) -> [MarkdownBlock] {
-        let key = "\(style.fontSize)|\(style.textColor.argb)|\(style.linkColor.argb)|\(style.accentColor.argb)|\(text)"
+        let key = "\(style.fontSize)|\(style.textColor.argb)|\(style.linkColor.argb)|\(style.accentColor.argb)|\(style.maxWidth)|\(style.math)|\(text)"
         self.cacheLock.lock()
         if let cached = self.cache[key] {
             self.cacheLock.unlock()
@@ -109,7 +113,8 @@ enum MarkdownText {
         return result
     }
 
-    private static func parseBlocks(_ text: String, style: MarkdownStyle) -> [MarkdownBlock] {
+    private static func parseBlocks(_ rawText: String, style: MarkdownStyle) -> [MarkdownBlock] {
+        let (text, formulas) = style.math ? MathText.extract(rawText) : (rawText, [])
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
         guard let parsed = try? AttributedString(markdown: text, options: options) else {
             return [.text(NSAttributedString(string: text, font: Font.regular(style.fontSize), textColor: style.textColor))]
@@ -180,6 +185,37 @@ enum MarkdownText {
             blocks.append(.table(MarkdownTable(header: value.header, rows: value.rows)))
         }
 
+        /// A run's text, with formulas back in place of their placeholders.
+        func styled(_ string: String, attributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
+            guard !formulas.isEmpty else {
+                return NSAttributedString(string: string, attributes: attributes)
+            }
+            let result = NSMutableAttributedString()
+            let units = Array(string.utf16)
+            var start = 0
+            for (offset, unit) in units.enumerated() {
+                guard let index = MathText.placeholderIndex(unit), index < formulas.count else {
+                    continue
+                }
+                if offset > start {
+                    result.append(NSAttributedString(string: String(utf16CodeUnits: Array(units[start ..< offset]), count: offset - start), attributes: attributes))
+                }
+                let formula = formulas[index]
+                if let attachment = MathText.attachment(formula, fontSize: style.fontSize, attributes: attributes, maxWidth: style.maxWidth) {
+                    result.append(attachment)
+                } else {
+                    // What SwiftMath cannot typeset shows as written.
+                    let delimiter = formula.display ? "$$" : "$"
+                    result.append(NSAttributedString(string: delimiter + formula.latex + delimiter, attributes: attributes))
+                }
+                start = offset + 1
+            }
+            if start < units.count {
+                result.append(NSAttributedString(string: String(utf16CodeUnits: Array(units[start...]), count: units.count - start), attributes: attributes))
+            }
+            return result
+        }
+
         for run in parsed.runs {
             let intent = run.presentationIntent
             let attributes = self.inlineAttributes(run: run, intent: intent, style: style, fonts: fonts)
@@ -192,7 +228,7 @@ enum MarkdownText {
                     previousBlock = nil
                     table = (cell.tableIdentity, [], [])
                 }
-                let string = NSAttributedString(string: runText, attributes: attributes)
+                let string = styled(runText, attributes: attributes)
                 if cell.row == nil {
                     while table!.header.count <= cell.column {
                         table!.header.append(NSMutableAttributedString())
@@ -231,7 +267,7 @@ enum MarkdownText {
             if isCodeBlock(intent), runText.hasSuffix("\n") {
                 runText.removeLast()
             }
-            current.append(NSAttributedString(string: runText, attributes: attributes))
+            current.append(styled(runText, attributes: attributes))
         }
         flushTable()
         flushText()

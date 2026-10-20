@@ -1986,6 +1986,18 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
                             var ascent: CGFloat = 0.0
                             var descent: CGFloat = 0.0
                             CTLineGetTypographicBounds(line.line, &ascent, &descent, nil)
+                            // tau: an attachment with its own size (a run delegate) sits on the baseline by its own
+                            // height above and below it, not the line's.
+                            for run in CTLineGetGlyphRuns(line.line) as! [CTRun] {
+                                let runRange = CTRunGetStringRange(run)
+                                if range.location >= runRange.location && range.location < runRange.location + runRange.length {
+                                    let runAttributes = CTRunGetAttributes(run) as NSDictionary
+                                    if runAttributes[kCTRunDelegateAttributeName as String] != nil {
+                                        CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), &ascent, &descent, nil)
+                                    }
+                                    break
+                                }
+                            }
                             
                             addAttachment(attachment: attachment, line: line, ascent: ascent, descent: descent, startIndex: range.location, endIndex: range.location + range.length)
                         }
@@ -2616,7 +2628,8 @@ final class TextContentItemLayer: SimpleLayer {
                         }
                         if let textColor {
                             if let tintedImage = generateTintedImage(image: image, color: textColor) {
-                                let imageRect = CGRect(origin: CGPoint(x: attachment.frame.midX - tintedImage.size.width * 0.5, y: attachment.frame.midY - tintedImage.size.height * 0.5 + 1.0), size: tintedImage.size).offsetBy(dx: lineFrame.minX, dy: lineFrame.minY)
+                                // tau: the attachment's frame is relative to the baseline.
+                                let imageRect = CGRect(origin: CGPoint(x: attachment.frame.midX - tintedImage.size.width * 0.5, y: attachment.frame.midY - tintedImage.size.height * 0.5), size: tintedImage.size).offsetBy(dx: lineFrame.minX, dy: lineFrame.maxY - line.descent)
                                 context.translateBy(x: imageRect.midX, y: imageRect.midY)
                                 context.scaleBy(x: 1.0, y: -1.0)
                                 context.translateBy(x: -imageRect.midX, y: -imageRect.midY)

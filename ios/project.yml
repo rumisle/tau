@@ -8,6 +8,10 @@ options:
 packages:
   TelegramFoundation:
     path: ThirdParty/Telegram
+  # LaTeX in answers: iosMath's typesetter in Swift, with its math fonts (MIT).
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath
+    exactVersion: 1.7.3
 targets:
   Tau:
     type: application
@@ -23,6 +27,7 @@ targets:
       - path: ThirdParty/tdesktop/background.tgv
         buildPhase: resources
     dependencies:
+      - package: SwiftMath
       - package: TelegramFoundation
         products:
           - SwiftSignalKit
