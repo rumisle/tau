@@ -25,6 +25,8 @@ final class ChatMessageItemInteraction {
     let openTool: (ChatMessage) -> Void
     /// A tap on a photo: Telegram's media viewer, growing from it. Takes the attachment's id.
     let openImage: (Int) -> Void
+    /// A tap on a code block or inline code copied it (Telegram's `.copy` tap action); the chat says so.
+    var copied: (String) -> Void = { _ in }
     /// Shows a controller above everything, the context menu included: the menu over selected text.
     var presentInGlobalOverlay: (ViewController, Any?) -> Void = { _, _ in }
     /// The chat's view, which text selection keeps its knobs and menu inside.
@@ -272,6 +274,25 @@ final class ChatMessageItemNode: ListViewItemNode {
         for (index, id) in self.imageAttachmentIds.enumerated() where index < self.imageNodes.count {
             if self.imageNodes[index].frame.contains(point) {
                 item.interaction.openImage(id)
+                return
+            }
+        }
+        // As ChatMessageTextBubbleContentNode's tap actions: a code block or inline code copies.
+        for textNode in self.textNodes where textNode.frame.contains(point) {
+            let local = self.contentNode.view.convert(point, to: textNode.view)
+            guard let (index, attributes) = textNode.attributesAtPoint(local, orNearest: false) else {
+                continue
+            }
+            var code: String?
+            if attributes[MarkdownText.inlineCodeKey] != nil {
+                code = textNode.attributeSubstring(name: MarkdownText.inlineCodeKey.rawValue, index: index)?.1
+            } else if let quote = attributes[MarkdownText.blockQuoteKey] as? TextNodeBlockQuoteData, case .code = quote.kind {
+                code = textNode.attributeSubstring(name: MarkdownText.blockQuoteKey.rawValue, index: index)?.1
+            }
+            if let code {
+                let text = code.replacingOccurrences(of: "\u{00A0}", with: " ")
+                UIPasteboard.general.string = text
+                item.interaction.copied(text)
                 return
             }
         }

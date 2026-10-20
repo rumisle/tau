@@ -307,6 +307,9 @@ final class ChatControllerNode: ASDisplayNode {
             self.interaction.rootView = { [weak self] in
                 return self?.view
             }
+            self.interaction.copied = { [weak self] _ in
+                self?.showToast("Text copied to clipboard")
+            }
         }
     }
 

@@ -370,4 +370,13 @@ final class TauUITests: XCTestCase {
         sleep(2)
         self.shot("default-model")
     }
+
+    /// Against a running tau server: a tap on a code block copies it, as in Telegram.
+    func testCodeCopy() {
+        self.launch(["-theme", "light", "-openChat", "304"])
+        sleep(2)
+        self.point(0.4, 0.32).tap()
+        usleep(300_000)
+        self.shot("code-copied")
+    }
 }

@@ -58,6 +58,8 @@ enum MarkdownBlock {
 enum MarkdownText {
     static let blockQuoteKey = NSAttributedString.Key("Attribute__Blockquote")
     static let urlKey = NSAttributedString.Key("Attribute__Url")
+    /// Inline code's text, which a tap copies (Telegram's TelegramTextAttributes.Code).
+    static let inlineCodeKey = NSAttributedString.Key("TelegramCode")
 
     /// The whole message as one attributed string, tables included as plain rows.
     static func render(_ text: String, style: MarkdownStyle) -> NSAttributedString {
@@ -473,6 +475,7 @@ enum MarkdownText {
         } else if let inline = run.inlinePresentationIntent {
             if inline.contains(.code) {
                 font = fonts.monospace
+                attributes[inlineCodeKey] = "code"
             } else if inline.contains(.stronglyEmphasized) && inline.contains(.emphasized) {
                 font = fonts.boldItalic
             } else if inline.contains(.stronglyEmphasized) {
