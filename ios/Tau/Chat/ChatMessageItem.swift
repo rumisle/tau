@@ -22,12 +22,15 @@ final class ChatMessageItemInteraction {
     let openContextMenu: (Int, ChatMessageItemNode, ContextGesture?) -> Void
     /// A tap on a tool card: open a subagent's conversation, or show more of the output.
     let openTool: (ChatMessage) -> Void
+    /// A tap on a photo: Telegram's media viewer, growing from it. Takes the attachment's id.
+    let openImage: (Int) -> Void
 
-    init(requestRelayout: @escaping (Int) -> Void, toggleSelection: @escaping (Int) -> Void, openContextMenu: @escaping (Int, ChatMessageItemNode, ContextGesture?) -> Void, openTool: @escaping (ChatMessage) -> Void) {
+    init(requestRelayout: @escaping (Int) -> Void, toggleSelection: @escaping (Int) -> Void, openContextMenu: @escaping (Int, ChatMessageItemNode, ContextGesture?) -> Void, openTool: @escaping (ChatMessage) -> Void, openImage: @escaping (Int) -> Void) {
         self.requestRelayout = requestRelayout
         self.toggleSelection = toggleSelection
         self.openContextMenu = openContextMenu
         self.openTool = openTool
+        self.openImage = openImage
     }
 }
 
@@ -185,6 +188,10 @@ final class ChatMessageItemNode: ListViewItemNode {
     private var textNodes: [InteractiveTextNode] = []
     private var tableNodes: [ChatTableNode] = []
     private var imageNodes: [ASImageNode] = []
+    /// The attachment each visible image node shows.
+    private var imageAttachmentIds: [Int] = []
+    /// The photo open in the media viewer, hidden here meanwhile.
+    private var hiddenAttachmentId: Int?
     private var fileNodes: [FileAttachmentNode] = []
     private let toolBackgroundNode = ASDisplayNode()
     private let toolTitleNode = TextNode()
@@ -239,6 +246,42 @@ final class ChatMessageItemNode: ListViewItemNode {
                 return
             }
             item.interaction.openContextMenu(item.message.id, self, gesture)
+        }
+    }
+
+    override func didLoad() {
+        super.didLoad()
+        let tap = UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:)))
+        tap.cancelsTouchesInView = false
+        self.view.addGestureRecognizer(tap)
+    }
+
+    @objc private func tapGesture(_ recognizer: UITapGestureRecognizer) {
+        guard let item = self.item, item.selection == nil else {
+            return
+        }
+        let point = recognizer.location(in: self.contentNode.view)
+        for (index, id) in self.imageAttachmentIds.enumerated() where index < self.imageNodes.count {
+            if self.imageNodes[index].frame.contains(point) {
+                item.interaction.openImage(id)
+                return
+            }
+        }
+    }
+
+    /// The node showing a photo, for the media viewer's transitions.
+    func imageNode(attachmentId: Int) -> ASImageNode? {
+        guard let index = self.imageAttachmentIds.firstIndex(of: attachmentId), index < self.imageNodes.count else {
+            return nil
+        }
+        return self.imageNodes[index]
+    }
+
+    /// Hides the photo the media viewer shows, as Telegram hides a message's media while its gallery is open.
+    func setHiddenAttachment(_ id: Int?) {
+        self.hiddenAttachmentId = id
+        for (index, attachmentId) in self.imageAttachmentIds.enumerated() where index < self.imageNodes.count {
+            self.imageNodes[index].alpha = attachmentId == id ? 0.0 : 1.0
         }
     }
 
@@ -411,16 +454,22 @@ final class ChatMessageItemNode: ListViewItemNode {
                         imageNode.clipsToBounds = true
                         imageNode.cornerRadius = 14.0
                         imageNode.displaysAsynchronously = false
+                        imageNode.isAccessibilityElement = true
+                        imageNode.accessibilityIdentifier = "photo"
+                        imageNode.accessibilityTraits = .image
                         self.imageNodes.append(imageNode)
                         self.contentNode.addSubnode(imageNode)
                     }
                     var y = mediaInset
                     var imageIndex = 0
+                    self.imageAttachmentIds = []
                     for attachment in message.attachments {
                         if case let .image(image) = attachment.kind {
                             let imageNode = self.imageNodes[imageIndex]
                             imageNode.image = image
                             imageNode.isHidden = false
+                            imageNode.alpha = attachment.id == self.hiddenAttachmentId ? 0.0 : 1.0
+                            self.imageAttachmentIds.append(attachment.id)
                             imageNode.frame = CGRect(origin: CGPoint(x: backgroundFrame.minX + mediaInset, y: y), size: imageSizes[imageIndex])
                             y += imageSizes[imageIndex].height + mediaInset
                             imageIndex += 1

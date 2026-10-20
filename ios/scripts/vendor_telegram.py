@@ -54,6 +54,7 @@ ROOTS = [
     "//submodules/TelegramUI/Components/GlassBarButtonComponent",
     "//submodules/TelegramUI/Components/GlassControls",
     "//submodules/ItemListUI",
+    "//submodules/GalleryUI",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
@@ -63,7 +64,7 @@ SHIMS = {
     "TelegramUIPreferences": ["TelegramCore", "Postbox", "Display"],
     "MediaResources": ["TelegramCore", "Postbox", "SwiftSignalKit"],
     "TinyThumbnail": [],
-    "AccountContext": ["TelegramCore", "Postbox", "SwiftSignalKit", "Display", "TelegramPresentationData", "LottieSettings", "AnimationCache", "MultiAnimationRenderer", "TextFormat"],
+    "AccountContext": ["TelegramCore", "Postbox", "SwiftSignalKit", "Display", "AsyncDisplayKit", "TelegramPresentationData", "LottieSettings", "AnimationCache", "MultiAnimationRenderer", "TextFormat"],
     "AnimationCache": ["SwiftSignalKit"],
     "MultiAnimationRenderer": ["AnimationCache"],
     "EmojiTextAttachmentView": ["Display", "TelegramCore", "AccountContext", "AnimationCache", "MultiAnimationRenderer", "TextFormat"],
@@ -84,7 +85,7 @@ SHIMS = {
     "UniversalMediaPlayer": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
     "PhotoResources": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "TelegramCore", "Postbox", "AccountContext"],
     "OverlayStatusController": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
-    "TelegramStringFormatting": ["TelegramPresentationData"],
+    "TelegramStringFormatting": ["TelegramPresentationData", "TelegramCore", "TelegramUIPreferences"],
     "AnimatedStickerComponent": ["Display", "ComponentFlow", "TelegramCore", "LottieComponent", "LottieSettings"],
     "MediaEditor": ["Display"],
     "Camera": ["SwiftSignalKit"],
@@ -128,6 +129,39 @@ OVERRIDES = {
     },
     # The avatar editor's preview, and the full-screen gallery (LegacyMediaPickerUI, TGMediaPickerGalleryModel).
     "MediaPickerUI": {"exclude": ["Sources/AvatarEditorPreviewView.swift", "Sources/LegacyMediaPickerGallery.swift"]},
+    # The media viewer's frame (pager, zoomable page, swipe to dismiss, the open and close transitions), not the chat
+    # media items, which are bound to messages.
+    "GalleryUI": {
+        "srcs": [
+            "Sources/GalleryControllerNode.swift",
+            "Sources/GalleryControllerPresentationState.swift",
+            "Sources/GalleryFooterContentNode.swift",
+            "Sources/GalleryFooterNode.swift",
+            "Sources/GalleryItem.swift",
+            "Sources/GalleryItemNode.swift",
+            "Sources/GalleryItemTransitionNode.swift",
+            "Sources/GalleryPagerNode.swift",
+            "Sources/GalleryThumbnailContainerNode.swift",
+            "Sources/GalleryTitleView.swift",
+            "Sources/ZoomableContentGalleryItemNode.swift",
+        ],
+        "deps": [
+            "//submodules/Display",
+            "//submodules/AsyncDisplayKit",
+            "//submodules/SSignalKit/SwiftSignalKit",
+            "//submodules/SwipeToDismissGesture",
+            "//submodules/AccountContext",
+            "//submodules/UndoUI",
+            "//submodules/TelegramCore",
+            "//submodules/TelegramPresentationData",
+            "//submodules/TelegramStringFormatting",
+            "//submodules/ComponentFlow",
+            "//submodules/Components/ComponentDisplayAdapters",
+            "//submodules/Components/MultilineTextComponent",
+            "//submodules/TelegramUI/Components/EdgeEffect",
+            "//submodules/TelegramUI/Components/GlassBackgroundComponent",
+        ],
+    },
     # Loading and coding themes and wallpapers from Telegram's cloud. tau uses the built-in themes.
     "TelegramPresentationData": {
         "exclude": [

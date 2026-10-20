@@ -309,4 +309,26 @@ final class TauUITests: XCTestCase {
         sleep(1)
         self.shot("archive-folder")
     }
+
+    /// Against a running tau server: a sent photo opens in Telegram's media viewer and swipes away.
+    func testImageViewer() {
+        self.launch(["-theme", "light", "-openChat", "3"])
+        sleep(2)
+        // Scroll up to a photo.
+        let photo = self.app.descendants(matching: .any).matching(identifier: "photo").firstMatch
+        for _ in 0 ..< 6 where !(photo.exists && photo.isHittable) {
+            self.point(0.5, 0.35).press(forDuration: 0.05, thenDragTo: self.point(0.5, 0.75))
+            sleep(1)
+        }
+        photo.tap()
+        usleep(120_000)
+        self.shot("viewer-opening")
+        sleep(1)
+        self.shot("viewer-open")
+        self.point(0.5, 0.5).press(forDuration: 0.05, thenDragTo: self.point(0.5, 0.85))
+        usleep(150_000)
+        self.shot("viewer-closing")
+        sleep(1)
+        self.shot("viewer-closed")
+    }
 }

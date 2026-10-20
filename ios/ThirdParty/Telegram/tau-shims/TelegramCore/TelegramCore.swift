@@ -502,8 +502,13 @@ public enum EnginePeer: Equatable {
     }
 }
 
-public enum EngineMessage {
+public enum EngineMessage: Equatable {
     public typealias Id = MessageId
+
+    /// tau has no Telegram messages, so no value exists.
+    public var timestamp: Int32 {
+        switch self {}
+    }
 }
 
 extension EnginePeerIdValue {

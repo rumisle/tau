@@ -291,7 +291,40 @@ final class ChatControllerNode: ASDisplayNode {
         self.openContextMenu?(message, node, gesture)
     }, openTool: { [weak self] message in
         self?.openTool?(message)
+    }, openImage: { [weak self] attachmentId in
+        self?.openImage?(attachmentId)
     })
+
+    var openImage: ((Int) -> Void)?
+
+    /// Every photo in the transcript, oldest first, for the media viewer to page through.
+    func imageEntries() -> [ImageGalleryEntry] {
+        var result: [ImageGalleryEntry] = []
+        for entry in self.entries.reversed() {
+            for attachment in entry.message.attachments {
+                if case let .image(image) = attachment.kind {
+                    result.append(ImageGalleryEntry(attachmentId: attachment.id, image: image))
+                }
+            }
+        }
+        return result
+    }
+
+    func imageNode(attachmentId: Int) -> ASImageNode? {
+        var result: ASImageNode?
+        self.historyNode.forEachItemNode { node in
+            if result == nil, let node = node as? ChatMessageItemNode {
+                result = node.imageNode(attachmentId: attachmentId)
+            }
+        }
+        return result
+    }
+
+    func setHiddenAttachment(_ id: Int?) {
+        self.historyNode.forEachItemNode { node in
+            (node as? ChatMessageItemNode)?.setHiddenAttachment(id)
+        }
+    }
 
     /// Tool cards showing their whole output.
     private(set) var expandedIds = Set<Int>()

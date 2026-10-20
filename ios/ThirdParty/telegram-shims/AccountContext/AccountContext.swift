@@ -11,6 +11,7 @@ import AnimationCache
 import MultiAnimationRenderer
 import TextFormat
 import Display
+import AsyncDisplayKit
 
 public struct EnergyUsageSettings: Equatable {
     public var loopEmoji: Bool
@@ -274,4 +275,16 @@ public final class TelegramApplicationBindings {
     public init(openSettings: @escaping () -> Void) {
         self.openSettings = openSettings
     }
+}
+
+// As in AccountContext/Sources/UniversalVideoNode.swift; tau's media viewer shows images only, so no video decorates it.
+public protocol UniversalVideoDecoration: AnyObject {
+    var backgroundNode: ASDisplayNode? { get }
+    var contentContainerNode: ASDisplayNode { get }
+    var foregroundNode: ASDisplayNode? { get }
+}
+
+// As in AccountContext/Sources/ChatController.swift: the chat under a media viewer, which recedes while it shows.
+public protocol ChatController: ViewController {
+    func updatePushedTransition(_ fraction: CGFloat, transition: ContainedViewLayoutTransition)
 }

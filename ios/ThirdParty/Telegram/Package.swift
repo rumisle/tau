@@ -86,6 +86,8 @@ let package = Package(
         .library(name: "ImageBlur", targets: ["ImageBlur"]),
         .library(name: "ViewControllerComponent", targets: ["ViewControllerComponent"]),
         .library(name: "ItemListUI", targets: ["ItemListUI"]),
+        .library(name: "SwipeToDismissGesture", targets: ["SwipeToDismissGesture"]),
+        .library(name: "GalleryUI", targets: ["GalleryUI"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -1884,6 +1886,34 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "SwipeToDismissGesture",
+            dependencies: [],
+            path: "submodules/SwipeToDismissGesture",
+            sources: [
+                "Sources/SwipeToDismissGestureRecognizer.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "GalleryUI",
+            dependencies: ["AccountContext", "AsyncDisplayKit", "ComponentDisplayAdapters", "ComponentFlow", "Display", "EdgeEffect", "GlassBackgroundComponent", "MultilineTextComponent", "SwiftSignalKit", "SwipeToDismissGesture", "TelegramCore", "TelegramPresentationData", "TelegramStringFormatting", "UndoUI"],
+            path: "submodules/GalleryUI",
+            sources: [
+                "Sources/GalleryControllerNode.swift",
+                "Sources/GalleryControllerPresentationState.swift",
+                "Sources/GalleryFooterContentNode.swift",
+                "Sources/GalleryFooterNode.swift",
+                "Sources/GalleryItem.swift",
+                "Sources/GalleryItemNode.swift",
+                "Sources/GalleryItemTransitionNode.swift",
+                "Sources/GalleryPagerNode.swift",
+                "Sources/GalleryThumbnailContainerNode.swift",
+                "Sources/GalleryTitleView.swift",
+                "Sources/ZoomableContentGalleryItemNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "TelegramCore",
             dependencies: ["Postbox", "SwiftSignalKit"],
             path: "tau-shims/TelegramCore",
@@ -1920,7 +1950,7 @@ let package = Package(
         ),
         .target(
             name: "AccountContext",
-            dependencies: ["TelegramCore", "Postbox", "SwiftSignalKit", "Display", "TelegramPresentationData", "LottieSettings", "AnimationCache", "MultiAnimationRenderer", "TextFormat"],
+            dependencies: ["TelegramCore", "Postbox", "SwiftSignalKit", "Display", "AsyncDisplayKit", "TelegramPresentationData", "LottieSettings", "AnimationCache", "MultiAnimationRenderer", "TextFormat"],
             path: "tau-shims/AccountContext",
             sources: ["AccountContext.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
@@ -2067,7 +2097,7 @@ let package = Package(
         ),
         .target(
             name: "TelegramStringFormatting",
-            dependencies: ["TelegramPresentationData"],
+            dependencies: ["TelegramPresentationData", "TelegramCore", "TelegramUIPreferences"],
             path: "tau-shims/TelegramStringFormatting",
             sources: ["TelegramStringFormatting.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]

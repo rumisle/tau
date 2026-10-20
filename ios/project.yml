@@ -59,6 +59,8 @@ targets:
           - MediaPickerUI
           - SSignalKit
           - ChatPresentationInterfaceState
+          - GalleryUI
+          - ItemListUI
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau

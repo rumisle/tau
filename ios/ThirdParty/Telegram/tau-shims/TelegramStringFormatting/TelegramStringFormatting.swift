@@ -37,3 +37,19 @@ public func stringForMonth(strings: PresentationStrings, month: Int32, ofYear ye
 public func stringForMonth(strings: PresentationStrings, month: Int32) -> String {
     return DateFormatter().monthSymbols[Int(max(0, min(11, month)))]
 }
+
+// GalleryUI's title view names a message's author and date; tau's media viewer has no messages.
+import TelegramCore
+import TelegramUIPreferences
+
+public func stringForFullAuthorName(message: EngineMessage, strings: PresentationStrings, nameDisplayOrder: PresentationPersonNameOrder, accountPeerId: EnginePeer.Id) -> [String] {
+    return []
+}
+
+public struct RelativeTimestampFormatString {
+    public let string: String
+}
+
+public func humanReadableStringForTimestamp(strings: PresentationStrings, dateTimeFormat: PresentationDateTimeFormat, timestamp: Int32) -> RelativeTimestampFormatString {
+    return RelativeTimestampFormatString(string: stringForFullDate(timestamp: timestamp, strings: strings, dateTimeFormat: dateTimeFormat))
+}

@@ -128,6 +128,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 self.controllerNode.toggleExpanded(message.id)
             }
         }
+        node.openImage = { [weak self] attachmentId in
+            self?.openImage(attachmentId: attachmentId)
+        }
         node.loadOlder = { [weak self] in
             guard let self else {
                 return
@@ -167,6 +170,32 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self.updateTitle(busy: state.busy)
         }))
         self.displayNodeDidLoad()
+    }
+
+    private let hiddenMediaDisposable = MetaDisposable()
+
+    /// Telegram's media viewer over the chat, paging through the conversation's photos, from the tapped one.
+    private func openImage(attachmentId: Int) {
+        let entries = self.controllerNode.imageEntries()
+        guard let index = entries.firstIndex(where: { $0.attachmentId == attachmentId }) else {
+            return
+        }
+        self.view.endEditing(true)
+        let gallery = ImageGalleryController(context: self.context, entries: entries, centralIndex: index, baseNavigationController: self.navigationController as? NavigationController)
+        self.hiddenMediaDisposable.set((gallery.hiddenMedia |> deliverOnMainQueue).start(next: { [weak self] entry in
+            self?.controllerNode.setHiddenAttachment(entry?.attachmentId)
+        }))
+        let arguments = ImageGalleryControllerPresentationArguments(transitionArguments: { [weak self] entry in
+            guard let self, let node = self.controllerNode.imageNode(attachmentId: entry.attachmentId) else {
+                return nil
+            }
+            return ImageGalleryTransitionArguments(transitionNode: (node, node.bounds, { [weak node] in
+                return (node?.view.snapshotContentTree(unhide: true), nil)
+            }), addToTransitionSurface: { [weak self] view in
+                self?.controllerNode.view.addSubview(view)
+            })
+        })
+        self.present(gallery, in: .window(.root), with: arguments, blockInteraction: true)
     }
 
     @objc private func previewTapGesture() {
