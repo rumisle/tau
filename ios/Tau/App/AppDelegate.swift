@@ -207,9 +207,8 @@ private final class ApplicationStatusBarHost: StatusBarHost {
     }
 }
 
-/// The server unless Settings names another: the Mac's tau server, published to the tailnet with
-/// `tailscale serve --service=svc:tau --https=443 http://127.0.0.1:7878`.
-let defaultServerURL = "wss://tau.example.ts.net"
+/// The server unless Settings names another: the Mac's tau server, by its tailnet name.
+let defaultServerURL = "ws://nest.example.ts.net:7878"
 
 /// The server from Settings, or canned data with `-mock YES` (UI tests and screenshots).
 func makeStore() -> TauStore {
