@@ -58,6 +58,8 @@ ROOTS = [
     "//third-party/libprisma",
     "//submodules/TelegramUI/Components/ContextMenuScreen",
     "//submodules/TextSelectionNode",
+    "//submodules/SearchBarNode",
+    "//submodules/SearchUI",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
@@ -103,7 +105,7 @@ SHIMS = {
     "TelegramAnimatedStickerNode": ["AnimatedStickerNode", "LottieSettings"],
     "LegacyUI": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
     "DrawingUI": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
-    "SearchBarNode": ["Display", "AsyncDisplayKit", "TelegramPresentationData"],
+    "AvatarNode": ["Display", "AsyncDisplayKit", "TelegramCore", "AccountContext", "TelegramPresentationData"],
     "TLottieBinding": [],
 }
 SHIMS_SOURCE = os.path.join(ROOT, "ios", "ThirdParty", "telegram-shims")

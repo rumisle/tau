@@ -115,15 +115,18 @@ final class SettingsRowItem: ListViewItem {
     let theme: TauTheme
     let icon: UIImage?
     let title: String
+    /// A second line, as LocalizationListItem's localized name under a language.
+    let subtitle: String?
     let titleColor: UIColor?
     let accessory: Accessory
     let position: SettingsRowPosition
     let action: (() -> Void)?
 
-    init(theme: TauTheme, icon: UIImage?, title: String, titleColor: UIColor? = nil, accessory: Accessory, position: SettingsRowPosition, action: (() -> Void)?) {
+    init(theme: TauTheme, icon: UIImage?, title: String, subtitle: String? = nil, titleColor: UIColor? = nil, accessory: Accessory, position: SettingsRowPosition, action: (() -> Void)?) {
         self.theme = theme
         self.icon = icon
         self.title = title
+        self.subtitle = subtitle
         self.titleColor = titleColor
         self.accessory = accessory
         self.position = position
@@ -177,6 +180,7 @@ final class SettingsRowItemNode: ListViewItemNode {
     private let maskNode = ASImageNode()
     private let iconNode = ASImageNode()
     private let titleNode = TextNode()
+    private let subtitleNode = TextNode()
     private let labelNode = TextNode()
     private let arrowNode = ASImageNode()
     private let separatorNode = ASDisplayNode()
@@ -198,6 +202,7 @@ final class SettingsRowItemNode: ListViewItemNode {
         self.addSubnode(self.separatorNode)
         self.addSubnode(self.iconNode)
         self.addSubnode(self.titleNode)
+        self.addSubnode(self.subtitleNode)
         self.addSubnode(self.labelNode)
         self.addSubnode(self.arrowNode)
     }
@@ -217,6 +222,7 @@ final class SettingsRowItemNode: ListViewItemNode {
 
     func asyncLayout() -> (_ item: SettingsRowItem, _ params: ListViewItemLayoutParams) -> (ListViewItemNodeLayout, (ListViewItemUpdateAnimation) -> Void) {
         let makeTitleLayout = TextNode.asyncLayout(self.titleNode)
+        let makeSubtitleLayout = TextNode.asyncLayout(self.subtitleNode)
         let makeLabelLayout = TextNode.asyncLayout(self.labelNode)
 
         return { [weak self] item, params in
@@ -243,8 +249,11 @@ final class SettingsRowItemNode: ListViewItemNode {
             let maxTitleWidth = sectionLeft + sectionWidth - rightInset - accessoryWidth - labelLayout.size.width - 10.0 - contentLeft
             let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.title, font: titleFont, textColor: item.titleColor ?? theme.itemPrimaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: 30.0)))
 
-            let verticalInset: CGFloat = 15.0
-            let height = verticalInset * 2.0 + titleLayout.size.height
+            let (subtitleLayout, subtitleApply) = makeSubtitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.subtitle ?? "", font: Font.regular(14.0), textColor: theme.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: 30.0)))
+            let hasSubtitle = !(item.subtitle ?? "").isEmpty
+            // ItemListCheckboxItem's two-line metrics: 11 pt insets and 1 pt between the lines.
+            let verticalInset: CGFloat = hasSubtitle ? 11.0 : 15.0
+            let height = verticalInset * 2.0 + titleLayout.size.height + (hasSubtitle ? subtitleLayout.size.height + 1.0 : 0.0)
             let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets())
 
             return (layout, { _ in
@@ -257,6 +266,7 @@ final class SettingsRowItemNode: ListViewItemNode {
                 self.accessibilityIdentifier = item.title
                 self.accessibilityTraits = item.action == nil ? [] : .button
                 let _ = titleApply()
+                let _ = subtitleApply()
                 let _ = labelApply()
 
                 let sectionFrame = CGRect(x: sectionLeft, y: 0.0, width: sectionWidth, height: height)
@@ -285,7 +295,13 @@ final class SettingsRowItemNode: ListViewItemNode {
                 } else {
                     self.iconNode.isHidden = true
                 }
-                self.titleNode.frame = CGRect(origin: CGPoint(x: contentLeft, y: floor((height - titleLayout.size.height) / 2.0)), size: titleLayout.size)
+                if hasSubtitle {
+                    self.titleNode.frame = CGRect(origin: CGPoint(x: contentLeft, y: verticalInset), size: titleLayout.size)
+                    self.subtitleNode.frame = CGRect(origin: CGPoint(x: contentLeft, y: verticalInset + titleLayout.size.height + 1.0), size: subtitleLayout.size)
+                } else {
+                    self.titleNode.frame = CGRect(origin: CGPoint(x: contentLeft, y: floor((height - titleLayout.size.height) / 2.0)), size: titleLayout.size)
+                }
+                self.subtitleNode.isHidden = !hasSubtitle
 
                 let accessoryX = sectionFrame.maxX - rightInset
                 if showsArrow {

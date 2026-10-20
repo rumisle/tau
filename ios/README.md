@@ -67,7 +67,7 @@ SwiftPM package with one target per Bazel module. It reads Telegram's BUILD file
 sources, headers, defines and include paths, and stops at **shims**. It also generates `PresentationStrings` with
 Telegram's own script, and copies every image and Lottie file the copied sources name.
 
-**Copied** (84 modules), among them:
+**Copied** (86 modules), among them:
 
 | Modules | Used for |
 |---|---|
@@ -82,6 +82,7 @@ Telegram's own script, and copies every image and Lottie file the copied sources
 | ItemListUI (rows only), ChatListBadgeNode (in `Tau/ChatList`) | The chat list's swipe actions (Read / Unread, Archive, Delete) and unread badges |
 | GalleryUI (its frame: pager, zoom, swipe to dismiss, transitions) | The media viewer for sent photos (`Chat/ImageGalleryController.swift`, after InstantPageGalleryController) |
 | TextSelectionNode, ContextMenuScreen | Selecting text in a message lifted into its context menu, and the menu over the selection |
+| SearchBarNode, SearchUI | The model picker's search (`Settings/ModelPickerController.swift`, after LanguageSelectionScreen) |
 | libprisma (Prism's grammars in C++) | Syntax highlighting of code blocks and of the files tool cards show |
 | InteractiveTextComponent, StreamingTextReveal | Message text and the streaming reveal |
 

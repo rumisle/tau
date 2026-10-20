@@ -369,6 +369,23 @@ final class TauUITests: XCTestCase {
         self.app.descendants(matching: .any)["Default Model"].firstMatch.tap()
         sleep(2)
         self.shot("default-model")
+        // Telegram's search field under the title.
+        self.point(0.5, 0.176).tap()
+        sleep(1)
+        self.app.typeText("opus 4")
+        sleep(1)
+        self.shot("default-model-search")
+    }
+
+    /// Against a running tau server: the chat title's Model opens the picker.
+    func testChatModelPicker() {
+        self.launch(["-theme", "dark", "-openChat", "3"])
+        sleep(2)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Model"].firstMatch.tap()
+        sleep(2)
+        self.shot("chat-model-picker")
     }
 
     /// Against a running tau server: a tap on a code block copies it, as in Telegram.

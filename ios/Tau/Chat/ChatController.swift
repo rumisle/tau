@@ -330,22 +330,17 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
 
         var items: [ContextMenuItem] = []
-        items.append(.action(ContextMenuActionItem(text: "Model", textLayout: .secondLineWithValue(agent.modelId ?? "default"), icon: icon("Chat/Context Menu/Settings"), action: { controller, _ in
-            let models = store.models() |> map { models -> ContextController.Items in
-                var modelItems: [ContextMenuItem] = [.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
-                    controller?.popItems()
-                })), .separator]
-                for model in models {
-                    let selected = model.id == agent.modelId && model.provider == agent.provider
-                    modelItems.append(.action(ContextMenuActionItem(text: model.name, textLayout: .secondLineWithValue("\(model.provider)/\(model.id)"), icon: checkIcon(selected), action: { [weak self] _, f in
-                        f(.default)
-                        store.configure(id, model: model, thinkingLevel: nil)
-                        self?.controllerNode.showToast("Model: \(model.name)")
-                    })))
-                }
-                return ContextController.Items(content: .list(modelItems))
+        items.append(.action(ContextMenuActionItem(text: "Model", textLayout: .secondLineWithValue(agent.modelId ?? "default"), icon: icon("Chat/Context Menu/Settings"), action: { [weak self] _, f in
+            f(.default)
+            guard let self else {
+                return
             }
-            controller?.pushItems(items: models)
+            let current = agent.provider.flatMap { provider in agent.modelId.map { "\(provider)/\($0)" } }
+            let picker = ModelPickerController(context: self.context, title: "Model", current: current, select: { [weak self] model in
+                store.configure(id, model: model, thinkingLevel: nil)
+                self?.controllerNode.showToast("Model: \(model.name)")
+            })
+            (self.navigationController as? NavigationController)?.pushViewController(picker)
         })))
         items.append(.action(ContextMenuActionItem(text: "Thinking", textLayout: .secondLineWithValue(thinking.capitalized), icon: icon("Chat/Context Menu/Timer"), action: { controller, _ in
             var levelItems: [ContextMenuItem] = [.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in

@@ -46,6 +46,7 @@ let package = Package(
         .library(name: "BundleIconComponent", targets: ["BundleIconComponent"]),
         .library(name: "TextBadgeComponent", targets: ["TextBadgeComponent"]),
         .library(name: "LiquidLens", targets: ["LiquidLens"]),
+        .library(name: "SearchBarNode", targets: ["SearchBarNode"]),
         .library(name: "TabSelectionRecognizer", targets: ["TabSelectionRecognizer"]),
         .library(name: "TabBarComponent", targets: ["TabBarComponent"]),
         .library(name: "StreamingTextReveal", targets: ["StreamingTextReveal"]),
@@ -91,6 +92,7 @@ let package = Package(
         .library(name: "boost_regex", targets: ["boost_regex"]),
         .library(name: "libprisma", targets: ["libprisma"]),
         .library(name: "ContextMenuScreen", targets: ["ContextMenuScreen"]),
+        .library(name: "SearchUI", targets: ["SearchUI"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -132,7 +134,7 @@ let package = Package(
         .library(name: "TelegramAnimatedStickerNode", targets: ["TelegramAnimatedStickerNode"]),
         .library(name: "LegacyUI", targets: ["LegacyUI"]),
         .library(name: "DrawingUI", targets: ["DrawingUI"]),
-        .library(name: "SearchBarNode", targets: ["SearchBarNode"]),
+        .library(name: "AvatarNode", targets: ["AvatarNode"]),
         .library(name: "TLottieBinding", targets: ["TLottieBinding"]),
     ],
     targets: [
@@ -1285,6 +1287,16 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "SearchBarNode",
+            dependencies: ["AccountContext", "ActivityIndicator", "AppBundle", "AsyncDisplayKit", "AvatarNode", "ComponentDisplayAdapters", "ComponentFlow", "Display", "EmojiStatusComponent", "GlassBackgroundComponent", "SwiftSignalKit", "TelegramCore", "TelegramPresentationData"],
+            path: "submodules/SearchBarNode",
+            sources: [
+                "Sources/SearchBarNode.swift",
+                "Sources/SearchBarPlaceholderNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "TabSelectionRecognizer",
             dependencies: [],
             path: "submodules/TelegramUI/Components/TabSelectionRecognizer",
@@ -1956,6 +1968,18 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "SearchUI",
+            dependencies: ["ActivityIndicator", "AppBundle", "AsyncDisplayKit", "ComponentDisplayAdapters", "ComponentFlow", "Display", "GlassBackgroundComponent", "SearchBarNode", "SwiftSignalKit", "TelegramPresentationData"],
+            path: "submodules/SearchUI",
+            sources: [
+                "Sources/FixSearchableListNodeScrolling.swift",
+                "Sources/NavigationBarSearchContentNode.swift",
+                "Sources/SearchDisplayController.swift",
+                "Sources/SearchDisplayControllerContentNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "TelegramCore",
             dependencies: ["Postbox", "SwiftSignalKit"],
             path: "tau-shims/TelegramCore",
@@ -2243,10 +2267,10 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
-            name: "SearchBarNode",
-            dependencies: ["Display", "AsyncDisplayKit", "TelegramPresentationData"],
-            path: "tau-shims/SearchBarNode",
-            sources: ["SearchBarNode.swift"],
+            name: "AvatarNode",
+            dependencies: ["Display", "AsyncDisplayKit", "TelegramCore", "AccountContext", "TelegramPresentationData"],
+            path: "tau-shims/AvatarNode",
+            sources: ["AvatarNode.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(

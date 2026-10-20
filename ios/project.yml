@@ -67,6 +67,8 @@ targets:
           - GalleryUI
           - ContextMenuScreen
           - TextSelectionNode
+          - SearchUI
+          - SearchBarNode
           - libprisma
           - ItemListUI
     settings:
