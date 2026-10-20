@@ -128,6 +128,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 self.controllerNode.toggleExpanded(message.id)
             }
         }
+        node.presentInGlobalOverlay = { [weak self] controller, arguments in
+            self?.presentInGlobalOverlay(controller, with: arguments)
+        }
         node.openImage = { [weak self] attachmentId in
             self?.openImage(attachmentId: attachmentId)
         }
@@ -664,7 +667,8 @@ final class ChatTitleView: UIView {
 /// ChatMessageContextExtractedContentSource does.
 private final class ChatMessageContextExtractedContentSource: ContextExtractedContentSource {
     let keepInPlace: Bool = false
-    let ignoreContentTouches: Bool = true
+    // As Telegram's: touches reach the lifted message, for text selection.
+    let ignoreContentTouches: Bool = false
     let blurBackground: Bool = true
 
     private weak var chatNode: ChatControllerNode?

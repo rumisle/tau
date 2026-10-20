@@ -65,6 +65,8 @@ targets:
           - SSignalKit
           - ChatPresentationInterfaceState
           - GalleryUI
+          - ContextMenuScreen
+          - TextSelectionNode
           - libprisma
           - ItemListUI
     settings:

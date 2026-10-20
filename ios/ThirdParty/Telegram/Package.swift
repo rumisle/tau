@@ -90,6 +90,7 @@ let package = Package(
         .library(name: "GalleryUI", targets: ["GalleryUI"]),
         .library(name: "boost_regex", targets: ["boost_regex"]),
         .library(name: "libprisma", targets: ["libprisma"]),
+        .library(name: "ContextMenuScreen", targets: ["ContextMenuScreen"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -1942,6 +1943,17 @@ let package = Package(
             cSettings: [],
             cxxSettings: [],
             linkerSettings: [.linkedFramework("Foundation"), .linkedFramework("UIKit")]
+        ),
+        .target(
+            name: "ContextMenuScreen",
+            dependencies: ["AccountContext", "AppBundle", "AsyncDisplayKit", "ComponentFlow", "Display", "TelegramPresentationData", "ViewControllerComponent"],
+            path: "submodules/TelegramUI/Components/ContextMenuScreen",
+            sources: [
+                "Sources/ContextMenuActionNode.swift",
+                "Sources/ContextMenuController.swift",
+                "Sources/ContextMenuNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
             name: "TelegramCore",

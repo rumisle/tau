@@ -6,6 +6,7 @@ import InteractiveTextComponent
 import StreamingTextReveal
 import ChatMessageSelectionNode
 import ActivityIndicator
+import TextSelectionNode
 
 /// What a message's neighbors need to know about it: who wrote it, so consecutive user bubbles merge.
 private enum ChatHistoryNeighbor: Equatable {
@@ -24,6 +25,10 @@ final class ChatMessageItemInteraction {
     let openTool: (ChatMessage) -> Void
     /// A tap on a photo: Telegram's media viewer, growing from it. Takes the attachment's id.
     let openImage: (Int) -> Void
+    /// Shows a controller above everything, the context menu included: the menu over selected text.
+    var presentInGlobalOverlay: (ViewController, Any?) -> Void = { _, _ in }
+    /// The chat's view, which text selection keeps its knobs and menu inside.
+    var rootView: () -> UIView? = { nil }
 
     init(requestRelayout: @escaping (Int) -> Void, toggleSelection: @escaping (Int) -> Void, openContextMenu: @escaping (Int, ChatMessageItemNode, ContextGesture?) -> Void, openTool: @escaping (ChatMessage) -> Void, openImage: @escaping (Int) -> Void) {
         self.requestRelayout = requestRelayout
@@ -247,6 +252,9 @@ final class ChatMessageItemNode: ListViewItemNode {
             }
             item.interaction.openContextMenu(item.message.id, self, gesture)
         }
+        self.contextSourceNode.isExtractedToContextPreviewUpdated = { [weak self] value in
+            self?.updateIsExtractedToContextPreview(value)
+        }
     }
 
     override func didLoad() {
@@ -267,6 +275,73 @@ final class ChatMessageItemNode: ListViewItemNode {
                 return
             }
         }
+    }
+
+    /// Telegram's text selection in a message lifted into the context menu: a second long press on the text selects
+    /// it, with knobs and a Copy / Share / Look Up menu, while the menu's actions step aside
+    /// (ChatMessageTextBubbleContentNode.updateIsExtractedToContextPreview).
+    private var textSelectionNodes: [TextSelectionNode] = []
+
+    private func updateIsExtractedToContextPreview(_ value: Bool) {
+        if value {
+            guard self.textSelectionNodes.isEmpty, let item = self.item, item.message.tool == nil else {
+                return
+            }
+            let theme = item.theme.presentationTheme
+            let colors = item.message.role == .user ? theme.chat.message.outgoing : theme.chat.message.incoming
+            for textNode in self.textNodes {
+                let selectionNode = TextSelectionNode(theme: TextSelectionTheme(selection: colors.textSelectionColor, knob: colors.textSelectionKnobColor, isDark: theme.overallDarkAppearance), strings: item.theme.presentationStrings, textNodeOrView: .node(textNode), updateIsActive: { [weak self] value in
+                    self?.contextSourceNode.updateDistractionFreeMode?(value)
+                }, present: { [weak self] controller, arguments in
+                    self?.item?.interaction.presentInGlobalOverlay(controller, arguments)
+                }, rootView: { [weak self] in
+                    return self?.item?.interaction.rootView()
+                }, performAction: { [weak self] text, action in
+                    self?.performTextSelectionAction(text: text, action: action)
+                })
+                selectionNode.enableQuote = false
+                selectionNode.enableTranslate = false
+                selectionNode.frame = textNode.frame
+                selectionNode.highlightAreaNode.frame = textNode.frame
+                self.contentNode.insertSubnode(selectionNode.highlightAreaNode, belowSubnode: textNode)
+                self.contentNode.addSubnode(selectionNode)
+                self.textSelectionNodes.append(selectionNode)
+            }
+        } else {
+            let nodes = self.textSelectionNodes
+            self.textSelectionNodes = []
+            for node in nodes {
+                node.highlightAreaNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false)
+                node.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { [weak node] _ in
+                    node?.highlightAreaNode.removeFromSupernode()
+                    node?.removeFromSupernode()
+                })
+            }
+        }
+    }
+
+    private func performTextSelectionAction(text: NSAttributedString, action: TextSelectionAction) {
+        // Formulas copy as their LaTeX, kept indentation as plain spaces.
+        let plain = NSMutableString(string: text.string)
+        text.enumerateAttribute(MathText.latexKey, in: NSRange(location: 0, length: text.length), options: [.reverse]) { value, range, _ in
+            if let latex = value as? String {
+                plain.replaceCharacters(in: range, with: "$\(latex)$")
+            }
+        }
+        let string = (plain as String).replacingOccurrences(of: "\u{00A0}", with: " ")
+        switch action {
+        case .copy:
+            UIPasteboard.general.string = string
+        case .share:
+            let controller = UIActivityViewController(activityItems: [string], applicationActivities: nil)
+            self.view.window?.rootViewController?.present(controller, animated: true)
+        case .lookup:
+            let controller = UIReferenceLibraryViewController(term: string)
+            self.view.window?.rootViewController?.present(controller, animated: true)
+        default:
+            break
+        }
+        self.contextSourceNode.requestDismiss?()
     }
 
     /// The node showing a photo, for the media viewer's transitions.

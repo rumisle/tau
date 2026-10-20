@@ -3,10 +3,15 @@ import UIKit
 import Display
 import ContextUI
 import ContextControllerImpl
+import ContextMenuScreen
 
 /// Telegram's interface modules declare factories that the app fills in at launch, so interfaces (ContextUI) do not
 /// depend on implementations (ContextControllerImpl). As in TelegramUI/Sources/AppDelegate.swift.
 func installTelegramComponentFactories() {
+    // The dark pill menu over selected text (TextSelectionNode's Copy / Share / Look Up).
+    setContextMenuControllerProvider { arguments in
+        return ContextMenuControllerImpl(arguments)
+    }
     makeContextControllerImpl = { context, presentationData, configuration, recognizer, gesture, workaroundUseLegacyImplementation, disableScreenshots, hideReactionPanelTail in
         return ContextControllerImpl(
             context: context,

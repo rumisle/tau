@@ -56,6 +56,8 @@ ROOTS = [
     "//submodules/ItemListUI",
     "//submodules/GalleryUI",
     "//third-party/libprisma",
+    "//submodules/TelegramUI/Components/ContextMenuScreen",
+    "//submodules/TextSelectionNode",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).

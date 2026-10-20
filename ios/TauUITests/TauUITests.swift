@@ -331,4 +331,16 @@ final class TauUITests: XCTestCase {
         sleep(1)
         self.shot("viewer-closed")
     }
+
+    /// Telegram's text selection: long press a message for its menu, then long press its text.
+    func testTextSelection() {
+        self.launch(["-mock", "YES", "-theme", "light", "-openChat", "2"])
+        // The last answer, above the input.
+        self.point(0.4, 0.87).press(forDuration: 1.0)
+        sleep(1)
+        self.shot("textsel-menu")
+        self.point(0.45, 0.745).press(forDuration: 1.0)
+        sleep(1)
+        self.shot("textsel-selected")
+    }
 }

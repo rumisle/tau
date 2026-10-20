@@ -297,6 +297,19 @@ final class ChatControllerNode: ASDisplayNode {
 
     var openImage: ((Int) -> Void)?
 
+    /// Set by the controller: text selection's menu goes above the context menu.
+    var presentInGlobalOverlay: ((ViewController, Any?) -> Void)? {
+        didSet {
+            let present = self.presentInGlobalOverlay
+            self.interaction.presentInGlobalOverlay = { controller, arguments in
+                present?(controller, arguments)
+            }
+            self.interaction.rootView = { [weak self] in
+                return self?.view
+            }
+        }
+    }
+
     /// Every photo in the transcript, oldest first, for the media viewer to page through.
     func imageEntries() -> [ImageGalleryEntry] {
         var result: [ImageGalleryEntry] = []
