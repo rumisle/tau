@@ -108,7 +108,7 @@ enum TranscriptBuilder {
                     let name = block.string("name") ?? "tool"
                     let callId = block.string("id") ?? "\(rowId)"
                     let arguments = block.object("arguments") ?? [:]
-                    let tool = ToolCallInfo(callId: callId, name: name, summary: ToolSummary.summary(name: name, arguments: arguments), status: streaming ? .preparing : .pending, output: nil, childConversationId: nil)
+                    let tool = ToolCallInfo(callId: callId, name: name, summary: ToolSummary.summary(name: name, arguments: arguments), status: streaming ? .preparing : .pending, output: nil, childConversationId: nil, detail: ToolSummary.detail(name: name, arguments: arguments))
                     toolRowIndex[callId] = rows.count
                     rows.append(ChatMessage(id: rowId, role: .tool(name: name), text: "", date: date, tool: tool, isStreaming: false, entryId: entryId))
                 default:
@@ -147,6 +147,10 @@ enum TranscriptBuilder {
                 tool.output = self.text(of: message["content"])
                 if let child = (message.object("details"))?.int("conversationId") {
                     tool.childConversationId = child
+                }
+                // The edit tool's result carries the diff with line numbers.
+                if case let .edit(path, _) = tool.detail, let diff = message.object("details")?.string("diff"), !diff.isEmpty {
+                    tool.detail = .edit(path: path, diff: diff)
                 }
                 rows[index].tool = tool
             default:
@@ -223,6 +227,32 @@ enum TranscriptBuilder {
 
 /// One line per tool call, the way a terminal agent prints it.
 enum ToolSummary {
+    static func detail(name: String, arguments: JSONObject) -> ToolDetail {
+        let path = arguments.string("path") ?? ""
+        switch name {
+        case "bash":
+            return .bash(command: arguments.string("command") ?? "")
+        case "read":
+            return .read(path: path)
+        case "write":
+            return .write(path: path, content: arguments.string("content") ?? "")
+        case "edit":
+            // Until the result's diff arrives: each replacement's old lines, then its new ones.
+            var lines: [String] = []
+            for edit in arguments.objects("edits") {
+                for line in (edit.string("oldText") ?? "").components(separatedBy: "\n") {
+                    lines.append("-" + line)
+                }
+                for line in (edit.string("newText") ?? "").components(separatedBy: "\n") {
+                    lines.append("+" + line)
+                }
+            }
+            return .edit(path: path, diff: lines.joined(separator: "\n"))
+        default:
+            return .none
+        }
+    }
+
     static func summary(name: String, arguments: JSONObject) -> String {
         func path(_ key: String = "path") -> String {
             return arguments.string(key) ?? ""

@@ -299,6 +299,56 @@ enum MarkdownText {
         })
     }
 
+    /// Prism's language for a file, by its extension.
+    static func language(forPath path: String) -> String? {
+        let name = (path as NSString).lastPathComponent.lowercased()
+        if name == "dockerfile" {
+            return "docker"
+        }
+        if name == "makefile" {
+            return "makefile"
+        }
+        switch (name as NSString).pathExtension {
+        case "swift": return "swift"
+        case "py": return "python"
+        case "ts", "mts", "cts": return "typescript"
+        case "tsx": return "tsx"
+        case "js", "mjs", "cjs": return "javascript"
+        case "jsx": return "jsx"
+        case "json": return "json"
+        case "md": return "markdown"
+        case "sh", "bash", "zsh": return "bash"
+        case "rs": return "rust"
+        case "go": return "go"
+        case "c", "h": return "c"
+        case "cc", "cpp", "cxx", "hpp", "mm": return "cpp"
+        case "m": return "objectivec"
+        case "java": return "java"
+        case "kt", "kts": return "kotlin"
+        case "rb": return "ruby"
+        case "yml", "yaml": return "yaml"
+        case "toml": return "toml"
+        case "html", "xml", "plist", "svg": return "markup"
+        case "css": return "css"
+        case "sql": return "sql"
+        case "lua": return "lua"
+        case "nix": return "nix"
+        default: return nil
+        }
+    }
+
+    /// Code in one font and color, highlighted as `language` when libprisma knows it, indentation kept.
+    static func code(_ code: String, language: String?, font: UIFont, textColor: UIColor) -> NSAttributedString {
+        let string = NSMutableAttributedString(string: code, font: font, textColor: textColor)
+        let range = NSRange(location: 0, length: string.length)
+        if let language {
+            let style = MarkdownStyle(fontSize: font.pointSize, textColor: textColor, linkColor: textColor, accentColor: textColor)
+            highlight(string, range: range, language: language, style: style, fonts: Fonts(size: font.pointSize, monospace: font))
+        }
+        keepIndentation(string, range: range)
+        return string
+    }
+
     /// InteractiveTextNode drops the spaces a line starts with, which in code is indentation. No-break spaces in their
     /// place keep it; spaces inside a line stay, so long lines still wrap between words.
     private static func keepIndentation(_ string: NSMutableAttributedString, range: NSRange) {
@@ -323,12 +373,12 @@ enum MarkdownText {
         let boldItalic: UIFont
         let monospace: UIFont
 
-        init(size: CGFloat) {
+        init(size: CGFloat, monospace: UIFont? = nil) {
             self.regular = Font.regular(size)
             self.bold = Font.semibold(size)
             self.italic = Font.italic(size)
             self.boldItalic = Font.semiboldItalic(size)
-            self.monospace = Font.monospace(size)
+            self.monospace = monospace ?? Font.monospace(size)
         }
     }
 

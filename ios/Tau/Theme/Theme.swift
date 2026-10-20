@@ -227,14 +227,21 @@ final class TauTheme {
         let input = theme.chat.inputPanel
         let service = theme.chat.serviceMessage.components.withDefaultWallpaper
         let dark = theme.overallDarkAppearance
+        let chatBackgroundColor = TauTheme.baseColor(of: theme.chat.defaultWallpaper) ?? list.plainBackgroundColor
+        // Cards are incoming bubbles, except on a plain wallpaper of the bubble's own color (Day), where they take a
+        // code block's tint instead.
+        var toolCardBackgroundColor = message.incoming.bubble.withWallpaper.fill.first ?? list.itemBlocksBackgroundColor
+        if toolCardBackgroundColor.argb == chatBackgroundColor.argb {
+            toolCardBackgroundColor = dark ? UIColor(white: 1.0, alpha: 0.08) : UIColor(white: 0.0, alpha: 0.05)
+        }
         self.chat = Chat(
-            backgroundColor: TauTheme.baseColor(of: theme.chat.defaultWallpaper) ?? list.plainBackgroundColor,
+            backgroundColor: chatBackgroundColor,
             outgoing: bubble(message.outgoing),
             incoming: incoming,
             freeTextColor: message.incoming.primaryTextColor,
             freeSecondaryTextColor: message.incoming.secondaryTextColor,
             linkTextColor: message.incoming.linkTextColor,
-            toolCardBackgroundColor: message.incoming.bubble.withWallpaper.fill.first ?? list.itemBlocksBackgroundColor,
+            toolCardBackgroundColor: toolCardBackgroundColor,
             toolCardTitleColor: message.incoming.primaryTextColor,
             toolCardTextColor: message.incoming.secondaryTextColor,
             tableBorderColor: message.incoming.primaryTextColor.withMultipliedAlpha(dark ? 0.16 : 0.12),

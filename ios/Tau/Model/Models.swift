@@ -62,6 +62,18 @@ struct ToolCallInfo: Equatable {
     var output: String?
     /// A subagent's conversation, which the card opens.
     var childConversationId: Int?
+    /// What the card shows for the coding tools.
+    var detail: ToolDetail = .none
+}
+
+/// The coding tools' calls, as their cards show them.
+enum ToolDetail: Equatable {
+    case none
+    case bash(command: String)
+    case read(path: String)
+    case write(path: String, content: String)
+    /// The edit's diff: the result's numbered diff once it ran, the replacements before.
+    case edit(path: String, diff: String)
 }
 
 /// Something sent with a message: a photo or a file. Images are sent to the model as image content blocks.

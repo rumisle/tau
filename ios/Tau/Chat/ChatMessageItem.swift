@@ -615,35 +615,20 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let tool = message.tool
                 let status = tool?.status ?? .done
                 let isActive = status == .preparing || status == .pending || status == .running
+                let isDark = item.theme.presentationTheme.overallDarkAppearance
+                let (titleText, summaryText, body) = toolCardContent(name: name, tool: tool, fallbackText: message.text, isExpanded: item.isExpanded, isActive: isActive, isDark: isDark, textColor: theme.toolCardTextColor, titleColor: theme.toolCardTitleColor, accentColor: item.theme.accentColor)
                 // Title: the tool, then what it works on, as a terminal agent prints a call.
-                let title = NSMutableAttributedString(string: name, font: toolTitleFont, textColor: status == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTitleColor)
-                if let summary = tool?.summary, !summary.isEmpty {
-                    title.append(NSAttributedString(string: "  " + summary, font: Font.monospace(13.0), textColor: theme.toolCardTextColor))
+                let title = NSMutableAttributedString(string: titleText, font: toolTitleFont, textColor: status == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTitleColor)
+                if !summaryText.isEmpty {
+                    title.append(NSAttributedString(string: "  " + summaryText, font: Font.monospace(13.0), textColor: theme.toolCardTextColor))
                 }
                 let titleWidth = maxWidth - (isActive ? 22.0 : 0.0)
                 let (titleLayout, titleApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: title, maximumNumberOfLines: item.isExpanded ? 6 : 1, truncationType: .end, constrainedSize: CGSize(width: titleWidth, height: .greatestFiniteMagnitude)))
 
-                // Body: the end of the output, which is where a command says how it went.
-                let body = NSMutableAttributedString()
-                if tool?.childConversationId != nil {
-                    // A subagent links to its own transcript first; its answer follows.
-                    body.append(NSAttributedString(string: isActive ? "Working… Open subagent ›\n" : "Open subagent ›\n", font: Font.medium(14.0), textColor: item.theme.accentColor))
-                }
-                let output = (tool?.output ?? message.text).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !output.isEmpty {
-                    let lines = output.components(separatedBy: "\n")
-                    // Commands say how they went at the end; files and answers are read from the start.
-                    let fromStart = name == "read" || name == "subagent"
-                    let count = item.isExpanded ? 80 : (isActive ? 4 : 6)
-                    let shown = fromStart ? Array(lines.prefix(count)) : Array(lines.suffix(count))
-                    let elided = shown.count < lines.count
-                    let text = fromStart ? shown.joined(separator: "\n") + (elided ? "\n…" : "") : (elided ? "…\n" : "") + shown.joined(separator: "\n")
-                    body.append(NSAttributedString(string: text, font: toolFont, textColor: theme.toolCardTextColor))
-                }
                 if body.length > 0, body.string.hasSuffix("\n") {
                     body.deleteCharacters(in: NSRange(location: body.length - 1, length: 1))
                 }
-                let (textLayout, textApply) = makeToolTextLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? 90 : 8, truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), lineSpacing: 0.1))
+                let (textLayout, textApply) = makeToolTextLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? 120 : 10, truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), lineSpacing: 0.1))
 
                 let cardInsets = UIEdgeInsets(top: 9.0, left: 12.0, bottom: 10.0, right: 12.0)
                 let bodyHeight = body.length > 0 ? textLayout.size.height + 3.0 : 0.0
@@ -995,4 +980,99 @@ func messageTimeString(_ date: Date) -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "HH:mm"
     return formatter.string(from: date)
+}
+
+private let diffAddedLight = UIColor(rgb: 0x248a3d)
+private let diffAddedDark = UIColor(rgb: 0x30d158)
+private let diffRemovedLight = UIColor(rgb: 0xd70015)
+private let diffRemovedDark = UIColor(rgb: 0xff6961)
+
+/// A path as the card shows it: its last two components, the whole path once expanded.
+private func shortPath(_ path: String, isExpanded: Bool) -> String {
+    if isExpanded {
+        return path
+    }
+    let components = path.split(separator: "/")
+    return components.count <= 2 ? path : components.suffix(2).joined(separator: "/")
+}
+
+/// The first or last `count` lines, with an ellipsis line where the rest was cut.
+private func clippedLines(_ text: String, count: Int, fromStart: Bool) -> String {
+    let lines = text.components(separatedBy: "\n")
+    guard lines.count > count else {
+        return text
+    }
+    if fromStart {
+        var head = Array(lines.prefix(count))
+        while let last = head.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            head.removeLast()
+        }
+        return head.joined(separator: "\n") + "\n…"
+    }
+    return "…\n" + lines.suffix(count).joined(separator: "\n")
+}
+
+/// What a tool card says: the tool, what it works on, and a body made for the tool: a command with the end of its
+/// output, a file's first lines highlighted by its language, a diff in red and green.
+private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, isExpanded: Bool, isActive: Bool, isDark: Bool, textColor: UIColor, titleColor: UIColor, accentColor: UIColor) -> (String, String, NSMutableAttributedString) {
+    let body = NSMutableAttributedString()
+    let output = (tool?.output ?? fallbackText).trimmingCharacters(in: .whitespacesAndNewlines)
+    let codeFont = Font.monospace(12.0)
+    switch tool?.detail ?? .none {
+    case let .bash(command):
+        let shownCommand = clippedLines(command.trimmingCharacters(in: .whitespacesAndNewlines), count: isExpanded ? 40 : 3, fromStart: true)
+        body.append(MarkdownText.code("$ " + shownCommand, language: "bash", font: codeFont, textColor: titleColor))
+        if !output.isEmpty {
+            body.append(NSAttributedString(string: "\n"))
+            // A command says how it went at the end.
+            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 80 : (isActive ? 4 : 6), fromStart: false), font: codeFont, textColor: textColor))
+        }
+        return ("Bash", "", body)
+    case let .read(path):
+        if !output.isEmpty {
+            let lines = output.components(separatedBy: "\n").count
+            body.append(MarkdownText.code(clippedLines(output, count: isExpanded ? 100 : 5, fromStart: true), language: MarkdownText.language(forPath: path), font: codeFont, textColor: textColor))
+            return ("Read", shortPath(tool?.summary ?? path, isExpanded: isExpanded) + (isExpanded ? "" : "  \(lines) lines"), body)
+        }
+        return ("Read", shortPath(tool?.summary ?? path, isExpanded: isExpanded), body)
+    case let .write(path, content):
+        let lines = content.isEmpty ? 0 : content.components(separatedBy: "\n").count
+        body.append(MarkdownText.code(clippedLines(content, count: isExpanded ? 100 : 6, fromStart: true), language: MarkdownText.language(forPath: path), font: codeFont, textColor: textColor))
+        if tool?.status == .failed, !output.isEmpty {
+            body.append(NSAttributedString(string: "\n" + output, font: codeFont, textColor: isDark ? diffRemovedDark : diffRemovedLight))
+        }
+        return ("Write", shortPath(path, isExpanded: isExpanded) + "  \(lines) lines", body)
+    case let .edit(path, diff):
+        let added = isDark ? diffAddedDark : diffAddedLight
+        let removed = isDark ? diffRemovedDark : diffRemovedLight
+        let lines = diff.components(separatedBy: "\n")
+        let addedCount = lines.filter { $0.hasPrefix("+") }.count
+        let removedCount = lines.filter { $0.hasPrefix("-") }.count
+        let shown = isExpanded ? lines.prefix(160) : lines.prefix(10)
+        for (index, line) in shown.enumerated() {
+            if index > 0 {
+                body.append(NSAttributedString(string: "\n"))
+            }
+            let color = line.hasPrefix("+") ? added : (line.hasPrefix("-") ? removed : textColor)
+            body.append(NSAttributedString(string: line, font: codeFont, textColor: color))
+        }
+        if shown.count < lines.count {
+            body.append(NSAttributedString(string: "\n…", font: codeFont, textColor: textColor))
+        }
+        if tool?.status == .failed, !output.isEmpty {
+            body.append(NSAttributedString(string: "\n" + output, font: codeFont, textColor: removed))
+        }
+        return ("Edit", shortPath(path, isExpanded: isExpanded) + "  +\(addedCount) −\(removedCount)", body)
+    case .none:
+        if tool?.childConversationId != nil {
+            // A subagent links to its own transcript first; its answer follows.
+            body.append(NSAttributedString(string: isActive ? "Working… Open subagent ›\n" : "Open subagent ›\n", font: Font.medium(14.0), textColor: accentColor))
+        }
+        if !output.isEmpty {
+            // Commands say how they went at the end; answers are read from the start.
+            let fromStart = name == "subagent"
+            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 80 : (isActive ? 4 : 6), fromStart: fromStart), font: toolFont, textColor: textColor))
+        }
+        return (name == "subagent" ? "Subagent" : name, tool?.summary ?? "", body)
+    }
 }
