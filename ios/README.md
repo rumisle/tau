@@ -50,6 +50,12 @@ For checking UI from the command line (`ios/scripts/shot.sh out.png 3 -- <args>`
 | `-tab 1` | Open the Settings tab |
 | `-compose YES` | Open New Chat |
 
+`TAU_TIMING=1` in the environment (`SIMCTL_CHILD_TAU_TIMING=1 xcrun simctl launch ...`) logs each message row's layout
+time and, once a second, the frames drawn and missed, to `/tmp/tau-timing.log`.
+
+The archive, read state, and unread counts live on the server (`conversation.read`, `conversation.mark`), so every
+device agrees; Settings > Default Model sets the server's default (`settings.configure`).
+
 ## How the Telegram code is used
 
 Telegram-iOS is GPLv2, and so is this app.
@@ -61,7 +67,7 @@ SwiftPM package with one target per Bazel module. It reads Telegram's BUILD file
 sources, headers, defines and include paths, and stops at **shims**. It also generates `PresentationStrings` with
 Telegram's own script, and copies every image and Lottie file the copied sources name.
 
-**Copied** (78 modules), among them:
+**Copied** (84 modules), among them:
 
 | Modules | Used for |
 |---|---|
@@ -72,7 +78,11 @@ Telegram's own script, and copies every image and Lottie file the copied sources
 | AttachmentUI, MediaPickerUI, LegacyComponents | The attachment menu: glass sheet, photo grid with the camera tile, album switcher, caption field |
 | NavigationBarImpl, GlassBackgroundComponent, EdgeEffect, TabBarComponent, LiquidLens | Liquid Glass bars, buttons and the tab bar |
 | GradientBackground, Svg | The wallpaper gradient and its pattern |
-| RLottieBinding, LottieComponent | Telegram's animated icons |
+| RLottieBinding, LottieComponent, ManagedAnimationNode | Telegram's animated icons, the swipe actions' icons |
+| ItemListUI (rows only), ChatListBadgeNode (in `Tau/ChatList`) | The chat list's swipe actions (Read / Unread, Archive, Delete) and unread badges |
+| GalleryUI (its frame: pager, zoom, swipe to dismiss, transitions) | The media viewer for sent photos (`Chat/ImageGalleryController.swift`, after InstantPageGalleryController) |
+| TextSelectionNode, ContextMenuScreen | Selecting text in a message lifted into its context menu, and the menu over the selection |
+| libprisma (Prism's grammars in C++) | Syntax highlighting of code blocks and of the files tool cards show |
 | InteractiveTextComponent, StreamingTextReveal | Message text and the streaming reveal |
 
 **Shimmed** (`ThirdParty/telegram-shims/`, 44 modules): stand-ins with a Telegram module's name and only the API the
@@ -91,6 +101,9 @@ TelegramCore-bound feature inline.
 | 0003 | Cloud themes and the account's settings in TelegramPresentationData |
 | 0004, 0005 | The attachment menu's chat input interaction, music player, bots, AI captions, minimizing |
 | 0006, 0007 | The media picker's story, sticker and avatar modes, its full-screen gallery, the message preview |
+| 0008, 0009 | ItemListUI and GalleryUI without their screens: a typealias and a class their kept files use |
+
+0002 also puts InteractiveTextNode's attachments on the text baseline at their own height, for inline formulas.
 
 `App/TelegramAccountContext.swift` is the AccountContext Telegram's components take, and the LegacyComponents globals
 provider (after Telegram's `TelegramInitializeLegacyComponents.swift`).
@@ -108,13 +121,18 @@ after WallpaperBackgroundNode, with the pattern composed into the gradient inste
 lists (`Settings/`, in ItemListUI's glass style). `Chat/ChatHistoryNavigationButtonNode.swift` is copied from
 TelegramUI.
 
-Not yet: Telegram's full-screen media viewer and photo editor (LegacyMediaPickerGallery; the editor's paint tab needs
-DrawingUI), voice input.
+Not copied: LaTeX, which Telegram does not render. `Chat/MathText.swift` typesets `$...$`, `\(...\)`, `$$...$$` and
+`\[...\]` with [SwiftMath](https://github.com/mgriebling/SwiftMath) (MIT, a SwiftPM dependency) and hands the formulas to
+InteractiveTextNode as attachments.
+
+Not yet: Telegram's photo editor (LegacyMediaPickerGallery; its paint tab needs DrawingUI), voice input.
 
 ## Layout
 
 The app differs from Telegram where an agent chat needs it: user messages are bubbles; assistant answers have no bubble
 and run the full width on the wallpaper, rendered as Markdown (`Chat/MarkdownText.swift`); tool calls are compact cards
-with their output; thinking is dimmed and folded. The chat list shows each conversation's project directory where
+made for each tool (a command with the end of its output, a file highlighted by its language, an edit as a diff);
+thinking is dimmed and folded. A long answer is parsed and laid out in chunks split at safe paragraph breaks, so a
+streaming step costs one chunk rather than the whole answer. The chat list shows each conversation's project directory where
 Telegram shows a group message's author. A new chat starts from a project picker (`ChatList/ComposeController.swift`,
 recent projects and the server's folders through `fs.list`) and stays a draft until its first message.

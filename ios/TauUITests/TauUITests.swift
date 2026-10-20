@@ -361,4 +361,13 @@ final class TauUITests: XCTestCase {
         sleep(3)
         self.shot("scrollmem-relaunched")
     }
+
+    /// Against a running tau server: Settings > Default Model lists the server's models and changes the default.
+    func testDefaultModel() {
+        self.launch(["-theme", "light", "-tab", "1"])
+        sleep(1)
+        self.app.descendants(matching: .any)["Default Model"].firstMatch.tap()
+        sleep(2)
+        self.shot("default-model")
+    }
 }
