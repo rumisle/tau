@@ -29,7 +29,8 @@ final class TauUITests: XCTestCase {
 
     func testChatListPreview() {
         self.launch(["-mock", "YES", "-theme", "light"])
-        self.point(0.5, 0.17).press(forDuration: 1.2)
+        // The first chat, under Archived Chats.
+        self.point(0.5, 0.26).press(forDuration: 1.2)
         sleep(1)
         self.shot("list-preview")
         // Tapping the preview opens the chat.
@@ -39,7 +40,7 @@ final class TauUITests: XCTestCase {
         // Dismiss a second preview by tapping outside.
         self.point(0.12, 0.08).tap()
         sleep(1)
-        self.point(0.5, 0.27).press(forDuration: 1.2)
+        self.point(0.5, 0.35).press(forDuration: 1.2)
         sleep(1)
         self.point(0.5, 0.97).tap()
         usleep(100_000)
@@ -277,5 +278,35 @@ final class TauUITests: XCTestCase {
         self.app.buttons["send"].firstMatch.tap()
         sleep(10)
         self.shot("server-edit-after")
+    }
+
+    /// Telegram's swipe actions, Archived Chats, and the menu offering Mark as Unread on a read chat.
+    func testArchiveAndRead() {
+        self.launch(["-mock", "YES", "-theme", "light"])
+        // A read chat offers Mark as Unread.
+        self.point(0.5, 0.26).press(forDuration: 1.2)
+        sleep(1)
+        self.shot("archive-menu")
+        XCTAssertTrue(self.app.descendants(matching: .any)["Mark as Unread"].firstMatch.waitForExistence(timeout: 2))
+        self.point(0.12, 0.06).tap()
+        sleep(1)
+        // Swipe right: Read / Unread.
+        self.point(0.3, 0.35).press(forDuration: 0.05, thenDragTo: self.point(0.6, 0.35))
+        sleep(1)
+        self.shot("archive-swipe-right")
+        self.point(0.12, 0.06).tap()
+        sleep(1)
+        // Swipe left: Delete, Archive.
+        self.point(0.8, 0.26).press(forDuration: 0.05, thenDragTo: self.point(0.45, 0.26))
+        sleep(1)
+        self.shot("archive-swipe-left")
+        // The Archive button, rightmost.
+        self.point(0.9, 0.25).tap()
+        sleep(2)
+        self.shot("archive-archived")
+        // Into Archived Chats.
+        self.point(0.5, 0.17).tap()
+        sleep(1)
+        self.shot("archive-folder")
     }
 }

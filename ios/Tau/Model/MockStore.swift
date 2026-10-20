@@ -70,6 +70,10 @@ final class MockStore: TauStore {
         self.conversations[longId] = ConversationState(messages: messages, streaming: nil, busy: false)
         self.dialogs[longId] = DialogModel(id: longId, title: "Long conversation", cwd: "~", model: "claude-opus-5-5", last: nil, busy: false)
         self.refreshDialog(longId)
+        // Some unread answers, and one chat in the archive, to show the badges and Archived Chats.
+        self.dialogs[2]?.unreadCount = 2
+        self.dialogs[3]?.markedUnread = true
+        self.dialogs[seeds.count]?.archived = true
         self.publishDialogs()
     }
 
@@ -93,8 +97,32 @@ final class MockStore: TauStore {
         return "Demo data"
     }
 
-    var defaultModel: String? {
-        return "anthropic/claude-opus-5-5"
+    private(set) var defaultModel: String? = "anthropic/claude-opus-5-5"
+
+    func setDefaultModel(_ model: ModelInfo) {
+        self.defaultModel = "\(model.provider)/\(model.id)"
+    }
+
+    func markSeen(_ id: Int) {
+        guard let dialog = self.dialogs[id], dialog.isUnread else {
+            return
+        }
+        self.dialogs[id]?.unreadCount = 0
+        self.dialogs[id]?.markedUnread = false
+        self.publishDialogs()
+    }
+
+    func setUnread(_ id: Int, _ unread: Bool) {
+        self.dialogs[id]?.markedUnread = unread
+        if !unread {
+            self.dialogs[id]?.unreadCount = 0
+        }
+        self.publishDialogs()
+    }
+
+    func setArchived(_ id: Int, _ archived: Bool) {
+        self.dialogs[id]?.archived = archived
+        self.publishDialogs()
     }
 
     func close() {
@@ -190,9 +218,9 @@ final class MockStore: TauStore {
         self.publishDialogs()
     }
 
-    func duplicateConversation(_ id: Int) -> Int? {
+    func duplicateConversation(_ id: Int, completion: @escaping (Int) -> Void) {
         guard let state = self.conversations[id], let dialog = self.dialogs[id] else {
-            return nil
+            return
         }
         let newId = (self.dialogs.keys.max() ?? 0) + 1
         var copy = state
@@ -207,10 +235,13 @@ final class MockStore: TauStore {
         var newDialog = dialog
         newDialog.id = newId
         newDialog.title = dialog.title + " (copy)"
+        newDialog.unreadCount = 0
+        newDialog.markedUnread = false
+        newDialog.archived = false
         self.dialogs[newId] = newDialog
         self.refreshDialog(newId)
         self.publishDialogs()
-        return newId
+        completion(newId)
     }
 
     func deleteMessages(_ ids: Set<Int>, in id: Int) {

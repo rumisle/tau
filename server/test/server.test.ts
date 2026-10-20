@@ -193,6 +193,44 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("read marks, Mark as Unread, archive, and the default model", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", {});
+		const id = dialog.conversation.id;
+		const replica = new ConversationReplica(id);
+		await replica.sync(client);
+		await chat(client, replica, "one", "r1");
+		await chat(client, replica, "two", "r2");
+		const find = async () => {
+			const { dialogs } = await client.request("dialogs.subscribe");
+			return dialogs.find((each: { conversation: { id: number } }) => each.conversation.id === id);
+		};
+		assert.equal((await find()).unreadCount, 2);
+		const first = replica.ordered().find((entry) => entry.kind === "pi.assistant");
+		await client.request("conversation.read", { conversationId: id, at: first?.id });
+		assert.equal((await find()).unreadCount, 1);
+		await client.request("conversation.mark", { conversationId: id, unread: false });
+		assert.equal((await find()).unreadCount, 0);
+		await client.request("conversation.mark", { conversationId: id, unread: true, archived: true });
+		let found = await find();
+		assert.equal(found.markedUnread, true);
+		assert.equal(found.archived, true);
+		await client.request("conversation.read", { conversationId: id, at: replica.ordered().at(-1)?.id });
+		found = await find();
+		assert.equal(found.markedUnread, undefined);
+		assert.equal(found.archived, true, "reading keeps it archived");
+
+		const { dialog: fork } = await client.request("conversation.fork", { conversationId: id, at: replica.ordered().at(-1)?.id });
+		assert.equal(fork.unreadCount, 0, "a fork starts read");
+		assert.equal(fork.archived, undefined, "a fork starts in the main list");
+
+		const model = { provider: "dev", modelId: "echo-2" };
+		assert.deepEqual((await client.request("settings.configure", { defaultModel: model })).defaultModel, model);
+		assert.deepEqual((await client.request("hello", { protocol: 1 })).defaultModel, model);
+		await client.request("settings.configure", { defaultModel: { provider: "dev", modelId: "echo" } });
+		await client.close();
+	});
+
 	test("the client picks a conversation's cwd by browsing the server", async () => {
 		const project = mkdtempSync(join(tmpdir(), "tau-project-"));
 		mkdirSync(join(project, "repo", ".git"), { recursive: true });

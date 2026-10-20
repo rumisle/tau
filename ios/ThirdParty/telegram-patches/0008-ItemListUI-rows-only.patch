@@ -1,0 +1,12 @@
+--- a/submodules/ItemListUI/Sources/ItemListItem.swift
++++ b/submodules/ItemListUI/Sources/ItemListItem.swift
+@@ -4,6 +4,9 @@
+ import TelegramUIPreferences
+ import TelegramPresentationData
+ 
++// tau: from ItemListControllerNode.swift, which is not copied.
++public typealias ItemListSectionId = Int32
++
+ public protocol ItemListItemTag {
+     func isEqual(to other: ItemListItemTag) -> Bool
+ }

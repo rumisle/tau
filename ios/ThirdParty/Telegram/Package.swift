@@ -85,6 +85,7 @@ let package = Package(
         .library(name: "MediaPickerUI", targets: ["MediaPickerUI"]),
         .library(name: "ImageBlur", targets: ["ImageBlur"]),
         .library(name: "ViewControllerComponent", targets: ["ViewControllerComponent"]),
+        .library(name: "ItemListUI", targets: ["ItemListUI"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -116,7 +117,6 @@ let package = Package(
         .library(name: "MediaEditor", targets: ["MediaEditor"]),
         .library(name: "Camera", targets: ["Camera"]),
         .library(name: "CameraLegacy", targets: ["CameraLegacy"]),
-        .library(name: "ItemListUI", targets: ["ItemListUI"]),
         .library(name: "WallpaperBackgroundNode", targets: ["WallpaperBackgroundNode"]),
         .library(name: "LegacyMediaPickerUI", targets: ["LegacyMediaPickerUI"]),
         .library(name: "ImageObjectSeparation", targets: ["ImageObjectSeparation"]),
@@ -1872,6 +1872,18 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "ItemListUI",
+            dependencies: ["AsyncDisplayKit", "Display", "LottieSettings", "ManagedAnimationNode", "SwiftSignalKit", "TelegramPresentationData", "TelegramUIPreferences"],
+            path: "submodules/ItemListUI",
+            sources: [
+                "Sources/ItemListItem.swift",
+                "Sources/ItemListRevealOptionsNode.swift",
+                "Sources/Items/ItemListEditableItem.swift",
+                "Sources/ListItemWithHeader.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "TelegramCore",
             dependencies: ["Postbox", "SwiftSignalKit"],
             path: "tau-shims/TelegramCore",
@@ -2086,13 +2098,6 @@ let package = Package(
             dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
             path: "tau-shims/CameraLegacy",
             sources: ["CameraLegacy.swift"],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        .target(
-            name: "ItemListUI",
-            dependencies: ["Display", "TelegramPresentationData", "TelegramUIPreferences"],
-            path: "tau-shims/ItemListUI",
-            sources: ["ItemListUI.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(

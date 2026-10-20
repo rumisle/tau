@@ -124,6 +124,13 @@ export class Connection {
 		switch (method) {
 			case "models.list":
 				return this.#models();
+			case "settings.configure": {
+				const model = obj(params, "defaultModel");
+				if (model !== undefined) {
+					await this.#host.setDefaultModel({ provider: str(model, "provider"), modelId: str(model, "modelId") });
+				}
+				return { defaultModel: this.#host.defaultModel };
+			}
 			case "fs.list": {
 				const hidden = params.hidden;
 				if (hidden !== undefined && typeof hidden !== "boolean") {
@@ -160,7 +167,10 @@ export class Connection {
 					{
 						ownership: { kind: "ownerless" },
 						init: async (tx, id) => {
-							if (title !== undefined) (await tx.doc(MetaDoc, id)).title = title;
+							const meta = await tx.doc(MetaDoc, id);
+							if (title !== undefined) meta.title = title;
+							// The fork's history was read in the original.
+							meta.read = int(params, "at");
 						},
 					},
 					context,
@@ -177,6 +187,31 @@ export class Connection {
 				const title = str(params, "title");
 				await conversation.commit(async (tx) => {
 					(await tx.doc(MetaDoc, conversation.id)).title = title;
+				}, context);
+				return {};
+			}
+			case "conversation.read": {
+				const conversation = await this.#conversation(params);
+				const at = int(params, "at");
+				await conversation.commit(async (tx) => {
+					const meta = await tx.doc(MetaDoc, conversation.id);
+					if ((meta.read ?? 0) < at) meta.read = at;
+					delete meta.markedUnread;
+				}, context);
+				return {};
+			}
+			case "conversation.mark": {
+				const conversation = await this.#conversation(params);
+				const latest = (await conversation.entries({}, 1, undefined, context)).items[0]?.id;
+				await conversation.commit(async (tx) => {
+					const meta = await tx.doc(MetaDoc, conversation.id);
+					if (params.unread === true) meta.markedUnread = true;
+					else if (params.unread === false) {
+						delete meta.markedUnread;
+						if (latest !== undefined) meta.read = latest;
+					}
+					if (params.archived === true) meta.archived = true;
+					else if (params.archived === false) delete meta.archived;
 				}, context);
 				return {};
 			}

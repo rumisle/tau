@@ -53,6 +53,7 @@ ROOTS = [
     "//submodules/Components/ViewControllerComponent",
     "//submodules/TelegramUI/Components/GlassBarButtonComponent",
     "//submodules/TelegramUI/Components/GlassControls",
+    "//submodules/ItemListUI",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
@@ -88,7 +89,6 @@ SHIMS = {
     "MediaEditor": ["Display"],
     "Camera": ["SwiftSignalKit"],
     "CameraLegacy": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
-    "ItemListUI": ["Display", "TelegramPresentationData", "TelegramUIPreferences"],
     "WallpaperBackgroundNode": ["Display", "AsyncDisplayKit", "AccountContext", "TelegramCore", "TelegramPresentationData"],
     "LegacyMediaPickerUI": [],
     "ImageObjectSeparation": ["SwiftSignalKit", "AccountContext"],
@@ -108,6 +108,24 @@ SHIMS_SOURCE = os.path.join(ROOT, "ios", "ThirdParty", "telegram-shims")
 OVERRIDES = {
     # Only the text engine, not its TelegramCore-bound wrapper.
     "InteractiveTextComponent": {"srcs": ["Sources/InteractiveTextComponent.swift"]},
+    # The list item base types and the rows' swipe actions (ItemListRevealOptionsItemNode), not the settings lists.
+    # "deps" replaces the BUILD file's, which serve the whole module.
+    "ItemListUI": {
+        "srcs": [
+            "Sources/ItemListItem.swift",
+            "Sources/ListItemWithHeader.swift",
+            "Sources/ItemListRevealOptionsNode.swift",
+            "Sources/Items/ItemListEditableItem.swift",
+        ],
+        "deps": [
+            "//submodules/Display",
+            "//submodules/AsyncDisplayKit",
+            "//submodules/SSignalKit/SwiftSignalKit",
+            "//submodules/TelegramPresentationData",
+            "//submodules/LottieSettings",
+            "//submodules/ManagedAnimationNode",
+        ],
+    },
     # The avatar editor's preview, and the full-screen gallery (LegacyMediaPickerUI, TGMediaPickerGalleryModel).
     "MediaPickerUI": {"exclude": ["Sources/AvatarEditorPreviewView.swift", "Sources/LegacyMediaPickerGallery.swift"]},
     # Loading and coding themes and wallpapers from Telegram's cloud. tau uses the built-in themes.
@@ -196,6 +214,8 @@ IMAGES = [
     "Chat/Context Menu/Timer",
     "Chat/Input/Search/DownButton",
     "Chat/Input/Search/UpButton",
+    "Avatar/ArchiveAvatarIcon",
+    "Chat/Context Menu/Unarchive",
 ]
 
 # Lottie animations LottieComponent.AppBundleContent loads by name, from submodules/TelegramUI/Resources/Animations.
@@ -210,6 +230,12 @@ ANIMATIONS = [
     "anim_micToVideo.json",
     "anim_videoToMic.json",
     "anim_camera.json",
+    # The chat list's swipe actions (ChatListItem.swift's reveal option icons).
+    "anim_archive.json",
+    "anim_unarchive.json",
+    "anim_read.json",
+    "anim_unread.json",
+    "anim_delete.json",
 ]
 
 # Local changes, applied in order with `git apply` after copying. Paths in them are relative to ios/ThirdParty/Telegram.
@@ -308,7 +334,7 @@ def closure(ws: Workspace):
             sys.exit(f"{label} is a {rule.kind} (via {' -> '.join(chain)})")
         seen[label] = rule.name
         names = []
-        for dep in rule.attrs.get("deps", []) or []:
+        for dep in OVERRIDES.get(rule.name, {}).get("deps", rule.attrs.get("deps", [])) or []:
             if not isinstance(dep, str):
                 continue
             if dep.startswith(":"):

@@ -136,6 +136,12 @@ final class SettingsController: SettingsListController {
         self.statusDisposable?.dispose()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // The default model may have changed in its screen.
+        self.reload()
+    }
+
     override func items(theme: TauTheme) -> [ListViewItem] {
         let context = self.context
         let store = context.store
@@ -160,7 +166,12 @@ final class SettingsController: SettingsListController {
             SettingsRowItem(theme: theme, icon: SettingsIcon.server, title: "Server", accessory: .disclosure(label: isDemo ? "Demo" : store.serverDescription), position: first, action: { [weak self] in
                 self?.editServer()
             }),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.model, title: "Default Model", accessory: .disclosure(label: store.defaultModel?.components(separatedBy: "/").last ?? "—"), position: last, action: {}),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.model, title: "Default Model", accessory: .disclosure(label: store.defaultModel?.components(separatedBy: "/").last ?? "—"), position: last, action: { [weak self] in
+                guard let self else {
+                    return
+                }
+                (self.navigationController as? NavigationController)?.pushViewController(DefaultModelController(context: self.context))
+            }),
             SettingsTextItem(theme: theme, text: "Preferences", kind: .header),
             SettingsRowItem(theme: theme, icon: SettingsIcon.appearance, title: "Appearance", accessory: .disclosure(label: context.themeContext.settings.theme.title), position: first, action: { [weak self] in
                 guard let self else {
@@ -263,6 +274,56 @@ final class AppearanceController: SettingsListController {
                 }))
             }
             items.append(SettingsTextItem(theme: theme, text: "Switches to the preferred night theme while your iPhone is in dark mode.", kind: .footer))
+        }
+        return items
+    }
+}
+
+/// The model new conversations get, from the models the server has credentials for, grouped by provider as the chat
+/// title's model menu.
+final class DefaultModelController: SettingsListController {
+    private var models: [ModelInfo] = []
+    private var modelsDisposable: Disposable?
+
+    init(context: AppContext) {
+        super.init(context: context, title: "Default Model")
+        self.modelsDisposable = (context.store.models() |> deliverOnMainQueue).start(next: { [weak self] models in
+            self?.models = models
+            self?.reload()
+        })
+    }
+
+    required init(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        self.modelsDisposable?.dispose()
+    }
+
+    override func items(theme: TauTheme) -> [ListViewItem] {
+        let store = self.context.store
+        let current = store.defaultModel
+        var items: [ListViewItem] = []
+        var providers: [String] = []
+        for model in self.models where !providers.contains(model.provider) {
+            providers.append(model.provider)
+        }
+        for provider in providers {
+            items.append(SettingsTextItem(theme: theme, text: provider, kind: .header))
+            let models = self.models.filter { $0.provider == provider }
+            for (index, model) in models.enumerated() {
+                let position = SettingsRowPosition(isFirst: index == 0, isLast: index == models.count - 1)
+                items.append(SettingsRowItem(theme: theme, icon: nil, title: model.name, accessory: .checkmark(current == "\(model.provider)/\(model.id)"), position: position, action: { [weak self] in
+                    store.setDefaultModel(model)
+                    self?.reload()
+                }))
+            }
+        }
+        if self.models.isEmpty {
+            items.append(SettingsTextItem(theme: theme, text: "Loading models…", kind: .footer))
+        } else {
+            items.append(SettingsTextItem(theme: theme, text: "New chats start with this model, on every device connected to the server. Each chat can change its own from its title.", kind: .footer))
         }
         return items
     }

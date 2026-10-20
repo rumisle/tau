@@ -11,12 +11,17 @@ import ContextUI
 import TelegramPresentationData
 
 private struct ChatListEntry: Comparable, Identifiable {
-    let dialog: DialogModel
+    let content: ChatListItemContent
     /// Position in the list; the store sorts by last activity.
     let index: Int
 
     var stableId: Int {
-        return self.dialog.id
+        switch self.content {
+        case let .dialog(dialog):
+            return dialog.id
+        case .archive:
+            return Int.min
+        }
     }
 
     static func < (lhs: ChatListEntry, rhs: ChatListEntry) -> Bool {
@@ -24,12 +29,19 @@ private struct ChatListEntry: Comparable, Identifiable {
     }
 
     static func == (lhs: ChatListEntry, rhs: ChatListEntry) -> Bool {
-        return lhs.dialog == rhs.dialog && lhs.index == rhs.index
+        return lhs.content == rhs.content && lhs.index == rhs.index
     }
+}
+
+/// Which chats a list shows: Telegram's root list, with Archived Chats on top, or the archive folder itself.
+enum ChatListMode {
+    case main
+    case archive
 }
 
 final class ChatListController: ViewController {
     private let context: AppContext
+    private let mode: ChatListMode
     private var theme: TauTheme
     private let dialogsDisposable = MetaDisposable()
     private var statusDisposable: Disposable?
@@ -40,12 +52,14 @@ final class ChatListController: ViewController {
         return self.displayNode as! ChatListControllerNode
     }
 
-    init(context: AppContext) {
+    init(context: AppContext, mode: ChatListMode = .main) {
         self.context = context
+        self.mode = mode
         self.theme = context.theme
         // iOS 26 Telegram: glass buttons and a blurred edge instead of a bar.
         super.init(navigationBarPresentationData: context.theme.navigationBarPresentationData())
-        self.title = "Chats"
+        let title = mode == .archive ? context.theme.presentationStrings.ChatList_ArchivedChatsTitle : "Chats"
+        self.title = title
         self.titleView.update(theme: self.theme)
         // As Telegram's chat list: the title says when the list may be stale.
         self.statusDisposable = (context.store.connectionStatus |> deliverOnMainQueue).start(next: { [weak self] status in
@@ -54,7 +68,7 @@ final class ChatListController: ViewController {
             }
             switch status {
             case .online:
-                self.title = "Chats"
+                self.title = title
                 self.navigationItem.titleView = nil
             case .connecting:
                 self.title = ""
@@ -66,7 +80,9 @@ final class ChatListController: ViewController {
                 self.navigationItem.titleView = self.titleView
             }
         })
-        self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "square.and.pencil")?.withRenderingMode(.alwaysTemplate), style: .plain, target: self, action: #selector(self.composePressed))
+        if mode == .main {
+            self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "square.and.pencil")?.withRenderingMode(.alwaysTemplate), style: .plain, target: self, action: #selector(self.composePressed))
+        }
         self.statusBar.statusBarStyle = self.theme.statusBarStyleValue
         self.themeDisposable = (context.themeContext.theme |> deliverOnMainQueue).start(next: { [weak self] theme in
             self?.updateTheme(theme)
@@ -84,11 +100,21 @@ final class ChatListController: ViewController {
     }
 
     override func loadDisplayNode() {
-        self.displayNode = ChatListControllerNode(context: self.context, theme: self.theme, openDialog: { [weak self] dialog in
+        let store = self.context.store
+        let interaction = ChatListInteraction(open: { [weak self] dialog in
             self?.open(conversationId: dialog.id)
+        }, openArchive: { [weak self] in
+            self?.openArchive()
         }, contextAction: { [weak self] dialog, sourceNode, gesture in
             self?.openContextMenu(dialog: dialog, sourceNode: sourceNode, gesture: gesture)
+        }, toggleRead: { dialog in
+            store.setUnread(dialog.id, !dialog.isUnread)
+        }, setArchived: { dialog, archived in
+            store.setArchived(dialog.id, archived)
+        }, delete: { dialog in
+            store.deleteConversation(dialog.id)
         })
+        self.displayNode = ChatListControllerNode(context: self.context, theme: self.theme, mode: self.mode, interaction: interaction)
         self.dialogsDisposable.set((self.context.store.dialogsSignal() |> deliverOnMainQueue).start(next: { [weak self] dialogs in
             self?.controllerNode.update(dialogs: dialogs)
         }))
@@ -139,6 +165,10 @@ final class ChatListController: ViewController {
         }
     }
 
+    func openArchive() {
+        (self.navigationController as? NavigationController)?.pushViewController(ChatListController(context: self.context, mode: .archive))
+    }
+
     func open(conversationId: Int) {
         let start = CACurrentMediaTime()
         let controller = ChatController(context: self.context, conversationId: conversationId)
@@ -166,16 +196,45 @@ final class ChatListController: ViewController {
         let strings = self.theme.presentationStrings
         let chat = ChatController(context: self.context, conversationId: dialog.id, isPreview: true)
         var items: [ContextMenuItem] = []
-        items.append(.action(ContextMenuActionItem(text: strings.ChatList_Context_MarkAsRead, icon: { theme in
-            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/MarkAsRead"), color: theme.contextMenu.primaryColor)
-        }, action: { _, f in
-            f(.default)
-        })))
+        // ChatContextMenus.swift: Archive, then Mark as Read or Unread, as the chat's state calls for.
+        if dialog.archived {
+            items.append(.action(ContextMenuActionItem(text: strings.ChatList_Context_Unarchive, icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Unarchive"), color: theme.contextMenu.primaryColor)
+            }, action: { _, f in
+                f(.default)
+                store.setArchived(dialog.id, false)
+            })))
+        } else {
+            items.append(.action(ContextMenuActionItem(text: strings.ChatList_Context_Archive, icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Archive"), color: theme.contextMenu.primaryColor)
+            }, action: { _, f in
+                f(.default)
+                store.setArchived(dialog.id, true)
+            })))
+        }
+        if dialog.isUnread {
+            items.append(.action(ContextMenuActionItem(text: strings.ChatList_Context_MarkAsRead, icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/MarkAsRead"), color: theme.contextMenu.primaryColor)
+            }, action: { _, f in
+                f(.default)
+                store.setUnread(dialog.id, false)
+            })))
+        } else {
+            items.append(.action(ContextMenuActionItem(text: strings.ChatList_Context_MarkAsUnread, icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/MarkAsUnread"), color: theme.contextMenu.primaryColor)
+            }, action: { _, f in
+                f(.default)
+                store.setUnread(dialog.id, true)
+            })))
+        }
         items.append(.action(ContextMenuActionItem(text: "Duplicate", icon: { theme in
             return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Copy"), color: theme.contextMenu.primaryColor)
-        }, action: { _, f in
+        }, action: { [weak self] _, f in
             f(.default)
-            let _ = store.duplicateConversation(dialog.id)
+            // The copy opens, as a new chat would.
+            store.duplicateConversation(dialog.id, completion: { newId in
+                self?.open(conversationId: newId)
+            })
         })))
         items.append(.action(ContextMenuActionItem(text: strings.Common_Delete, textColor: .destructive, icon: { theme in
             return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Delete"), color: theme.contextMenu.destructiveColor)
@@ -197,8 +256,8 @@ final class ChatListController: ViewController {
 final class ChatListControllerNode: ASDisplayNode {
     private let context: AppContext
     private var theme: TauTheme
-    private let openDialog: (DialogModel) -> Void
-    private let contextAction: (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void
+    private let mode: ChatListMode
+    private let interaction: ChatListInteraction
     private let listNode: ListViewImpl
     private let bottomEdgeEffectView = EdgeEffectView()
 
@@ -206,15 +265,20 @@ final class ChatListControllerNode: ASDisplayNode {
     private var pendingDialogs: [DialogModel]?
     private var validLayout: (layout: ContainerViewLayout, navigationHeight: CGFloat)?
 
-    init(context: AppContext, theme: TauTheme, openDialog: @escaping (DialogModel) -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void) {
+    init(context: AppContext, theme: TauTheme, mode: ChatListMode, interaction: ChatListInteraction) {
         self.context = context
         self.theme = theme
-        self.openDialog = openDialog
-        self.contextAction = contextAction
+        self.mode = mode
+        self.interaction = interaction
         self.listNode = ListViewImpl()
         super.init()
         self.backgroundColor = theme.chatList.backgroundColor
         self.addSubnode(self.listNode)
+        interaction.revealedOptionsChanged = { [weak self] id in
+            self?.listNode.forEachItemNode { node in
+                (node as? ChatListItemNode)?.closeRevealOptions(except: id)
+            }
+        }
     }
 
     override func didLoad() {
@@ -233,7 +297,7 @@ final class ChatListControllerNode: ASDisplayNode {
     }
 
     private func makeItem(_ entry: ChatListEntry) -> ListViewItem {
-        return ChatListItem(theme: self.theme, dialog: entry.dialog, action: self.openDialog, contextAction: self.contextAction)
+        return ChatListItem(theme: self.theme, content: entry.content, interaction: self.interaction)
     }
 
     private func reloadAllItems() {
@@ -246,7 +310,18 @@ final class ChatListControllerNode: ASDisplayNode {
             self.pendingDialogs = dialogs
             return
         }
-        let entries = dialogs.enumerated().map { ChatListEntry(dialog: $0.element, index: $0.offset) }
+        var contents: [ChatListItemContent] = []
+        switch self.mode {
+        case .main:
+            let archived = dialogs.filter { $0.archived }
+            if !archived.isEmpty {
+                contents.append(.archive(ArchiveSummary(titles: archived.map { $0.title }, date: archived.compactMap { $0.last?.date }.max(), unreadCount: archived.reduce(0) { $0 + ($1.isUnread ? 1 : 0) })))
+            }
+            contents += dialogs.filter { !$0.archived }.map { .dialog($0) }
+        case .archive:
+            contents = dialogs.filter { $0.archived }.map { .dialog($0) }
+        }
+        let entries = contents.enumerated().map { ChatListEntry(content: $0.element, index: $0.offset) }
         let isInitial = self.entries.isEmpty
         let previous = self.entries
         self.entries = entries

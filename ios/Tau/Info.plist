@@ -2,6 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- As Telegram's Info.plist: without the first key iOS holds the app to 60 Hz on ProMotion screens (and
+	UIScreen.maximumFramesPerSecond, which Display's animations ask for, says 60); group opacity off spares
+	semi-transparent views an offscreen pass. -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>UIViewGroupOpacity</key>
+	<false/>
+	<key>UIViewEdgeAntialiasing</key>
+	<false/>
 	<!-- The server is reached over the tailnet, which WireGuard already encrypts: allow plain ws:// to *.ts.net. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>

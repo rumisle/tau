@@ -27,6 +27,12 @@ export type Dialog = {
 	/** Effective model and working directory. */
 	agent: { model?: { provider: string; modelId: string }; cwd: string };
 	busy: boolean;
+	/** The last entry the user has seen. */
+	read?: EntryId;
+	/** Assistant messages after `read`, up to 99. */
+	unreadCount: number;
+	markedUnread?: true;
+	archived?: true;
 };
 
 export type AgentPatch = {

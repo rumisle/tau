@@ -49,6 +49,11 @@ Must be the first request. A different `protocol` is rejected.
 
 Models the server has credentials for.
 
+### `settings.configure`
+`{ defaultModel?: ModelRef }` -> `{ defaultModel: ModelRef }`
+
+The model new conversations get, for every client; it survives restarts and overrides the server's `--model`.
+
 ### `fs.list`
 `{ path?: string, hidden?: boolean }` -> `{ path, parent?, entries: DirEntry[], truncated?: true }`
 
@@ -71,6 +76,10 @@ type Dialog = {
   last?: EntrySummary;                // newest entry; dialogs sort by last.id descending
   agent: { model?: ModelRef; cwd: string }; // effective model and working directory
   busy: boolean;                      // a run is going
+  read?: number;                      // the last entry the user has seen
+  unreadCount: number;                // assistant messages with text after `read`, at most 99
+  markedUnread?: true;                // marked unread by hand
+  archived?: true;                    // in Archived Chats, out of the main list
 };
 type EntrySummary = { id: number; kind: string; role?: string; text: string; timestamp?: number };
 ```
@@ -88,6 +97,8 @@ model) and pushes the new title as a `dialog` event; `title` stands in until the
 
 ### `conversation.fork`
 `{ conversationId, at: EntryId, title? }` -> `{ dialog: Dialog }`
+
+The fork starts read up to `at`, and in the main list.
 
 ### `conversation.configure`
 `{ conversationId, agent: AgentPatch }` -> `{}`
@@ -107,6 +118,18 @@ tool call, also within a running turn.
 
 ### `conversation.rename`
 `{ conversationId, title }` -> `{}`
+
+### `conversation.read`
+`{ conversationId, at: EntryId }` -> `{}`
+
+The user has seen the conversation up to `at`: moves `read` forward (never back) and clears `markedUnread`. A client
+sends it while the chat is on screen, as entries arrive.
+
+### `conversation.mark`
+`{ conversationId, unread?: boolean, archived?: boolean }` -> `{}`
+
+The chat list's actions: `unread: true` is Mark as Unread; `unread: false` is Mark as Read (`read` moves to the newest
+entry). `archived` moves the conversation into or out of Archived Chats.
 
 ### `conversation.subscribe`
 `{ conversationId, after?: EntryId, limit?: number }` ->

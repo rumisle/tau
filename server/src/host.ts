@@ -31,6 +31,12 @@ export type MetaState = {
 	createdAt?: number;
 	/** The server replaces the title after the first answer (src/titles.ts). */
 	autoTitle?: boolean;
+	/** The last entry the user has seen; later assistant messages count as unread. */
+	read?: number;
+	/** Marked unread by hand, as Telegram's "Mark as Unread"; reading the conversation clears it. */
+	markedUnread?: boolean;
+	/** Out of the main chat list, in Archived Chats. */
+	archived?: boolean;
 };
 export const MetaDoc = defineDoc<MetaState>({
 	kind: "tau.meta",
@@ -47,6 +53,14 @@ export const ServerDoc = defineDoc<{ id: string }>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ id: "" }),
+});
+
+/** Settings a client changes for the whole server. */
+export const SettingsDoc = defineDoc<{ defaultModel?: ModelRef }>({
+	kind: "tau.settings",
+	version: 1,
+	scope: "session",
+	initial: () => ({}),
 });
 
 export type HostOptions = {
@@ -67,7 +81,9 @@ export type Host = {
 	readonly storage: Storage;
 	readonly models: MutableModels;
 	readonly serverId: string;
+	/** The model new conversations get: the one set from a client, else `--model`. */
 	readonly defaultModel: ModelRef;
+	setDefaultModel(model: ModelRef): Promise<void>;
 	readonly cwd: string;
 	close(): Promise<void>;
 };
@@ -78,7 +94,7 @@ Use the tools to inspect and change files and run commands in the working direct
 export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const context = BACKGROUND_CONTEXT;
 	const cwd = options.cwd ?? homedir();
-	const defaultModel = options.model ?? DEV_MODEL;
+	let defaultModel = options.model ?? DEV_MODEL;
 
 	const models = createModels({ credentials: options.credentials });
 	for (const provider of builtinProviders()) models.setProvider(provider);
@@ -128,6 +144,8 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		if (doc.id === "") doc.id = randomUUID();
 		return doc.id;
 	}, context);
+	const saved = (await harness.snapshot(SettingsDoc, context))?.defaultModel;
+	if (saved !== undefined) defaultModel = saved;
 	// Continue runs the last process left unfinished.
 	harness.resume();
 
@@ -136,7 +154,15 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		storage,
 		models,
 		serverId,
-		defaultModel,
+		get defaultModel() {
+			return defaultModel;
+		},
+		async setDefaultModel(model) {
+			await harness.commit(async (tx) => {
+				(await tx.doc(SettingsDoc)).defaultModel = model;
+			}, context);
+			defaultModel = model;
+		},
 		cwd,
 		close: () => harness.close(context),
 	};

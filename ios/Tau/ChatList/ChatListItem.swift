@@ -2,22 +2,64 @@ import UIKit
 import AsyncDisplayKit
 import Display
 import SwiftSignalKit
+import ContextUI
+import ItemListUI
+import TelegramPresentationData
+
+/// What a row shows: a conversation, or the Archived Chats folder above them.
+enum ChatListItemContent: Equatable {
+    case dialog(DialogModel)
+    case archive(ArchiveSummary)
+}
+
+/// The Archived Chats row: Telegram's group reference, which lists the chats inside.
+struct ArchiveSummary: Equatable {
+    var titles: [String]
+    var date: Date?
+    var unreadCount: Int
+}
+
+/// The chat list's actions, shared by its rows (Telegram's ChatListNodeInteraction).
+final class ChatListInteraction {
+    let open: (DialogModel) -> Void
+    let openArchive: () -> Void
+    let contextAction: (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void
+    let toggleRead: (DialogModel) -> Void
+    let setArchived: (DialogModel, Bool) -> Void
+    let delete: (DialogModel) -> Void
+    /// A row opened its swipe actions; the others close, as with Telegram's setPeerIdWithRevealedOptions.
+    var revealedOptionsChanged: (Int?) -> Void = { _ in }
+
+    init(open: @escaping (DialogModel) -> Void, openArchive: @escaping () -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void, toggleRead: @escaping (DialogModel) -> Void, setArchived: @escaping (DialogModel, Bool) -> Void, delete: @escaping (DialogModel) -> Void) {
+        self.open = open
+        self.openArchive = openArchive
+        self.contextAction = contextAction
+        self.toggleRead = toggleRead
+        self.setArchived = setArchived
+        self.delete = delete
+    }
+}
 
 /// One chat list row. A trimmed port of Telegram-iOS ChatListUI/Sources/Node/ChatListItem.swift: same metrics (60 pt
-/// avatar, 16/15/14 pt fonts, the same height formula and frames), with the peer replaced by a dialog whose project
-/// directory takes the place of a group message's author line.
+/// avatar, 16/15/14 pt fonts, the same height formula and frames), the unread badge (ChatListBadgeNode, copied), and the
+/// swipe actions (ItemListRevealOptionsItemNode, copied), with the peer replaced by a dialog whose project directory
+/// takes the place of a group message's author line.
 final class ChatListItem: ListViewItem {
     let theme: TauTheme
-    let dialog: DialogModel
-    let action: (DialogModel) -> Void
-    /// A long press: Telegram's chat preview with actions.
-    let contextAction: (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void
+    let content: ChatListItemContent
+    let interaction: ChatListInteraction
 
-    init(theme: TauTheme, dialog: DialogModel, action: @escaping (DialogModel) -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void) {
+    init(theme: TauTheme, content: ChatListItemContent, interaction: ChatListInteraction) {
         self.theme = theme
-        self.dialog = dialog
-        self.action = action
-        self.contextAction = contextAction
+        self.content = content
+        self.interaction = interaction
+    }
+
+    var dialog: DialogModel? {
+        if case let .dialog(dialog) = self.content {
+            return dialog
+        }
+        return nil
     }
 
     var neighborDescriptor: AnyEquatable {
@@ -34,7 +76,12 @@ final class ChatListItem: ListViewItem {
 
     func selected(listView: ListView) {
         listView.clearHighlightAnimated(true)
-        self.action(self.dialog)
+        switch self.content {
+        case let .dialog(dialog):
+            self.interaction.open(dialog)
+        case .archive:
+            self.interaction.openArchive()
+        }
     }
 
     func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
@@ -73,8 +120,68 @@ private let avatarDiameter: CGFloat = 60.0
 private let titleFont = Font.semibold(16.0)
 private let textFont = Font.regular(15.0)
 private let dateFont = Font.regular(14.0)
+// ChatListItem.swift: badgeFont and badgeDiameter at the default text size.
+private let badgeFont = Font.with(size: 12.0, design: .regular, weight: .semibold, traits: [.monospacedNumbers])
+private let badgeDiameter: CGFloat = 20.0
 
-final class ChatListItemNode: ListViewItemNode {
+// ChatListItem.swift's reveal option icons and keys.
+private let deleteIcon = ItemListRevealOptionIcon.animation(animation: "anim_delete", scale: 1.0, offset: 0.0, replaceColors: nil, flip: false, startFrame: 3)
+private let readIcon = ItemListRevealOptionIcon.animation(animation: "anim_read", scale: 1.0, offset: 0.0, replaceColors: nil, flip: false, startFrame: 5)
+private let unreadIcon = ItemListRevealOptionIcon.animation(animation: "anim_unread", scale: 1.0, offset: 0.0, replaceColors: [0x2194fa], flip: false, startFrame: 5)
+private let archiveIcon = ItemListRevealOptionIcon.animation(animation: "anim_archive", scale: 1.0, offset: 2.0, replaceColors: [0xa9a9ad], flip: false, startFrame: 5)
+private let unarchiveIcon = ItemListRevealOptionIcon.animation(animation: "anim_unarchive", scale: 0.52, offset: -6.0, replaceColors: [0xa9a9ad], flip: false, startFrame: 5)
+
+private enum RevealOptionKey: Int32 {
+    case delete
+    case archive
+    case unarchive
+    case toggleMarkedUnread
+}
+
+private func rightRevealOptions(strings: PresentationStrings, theme: PresentationTheme, archived: Bool) -> [ItemListRevealOption] {
+    let actions = theme.list.itemDisclosureActions
+    var options: [ItemListRevealOption] = []
+    options.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: strings.Common_Delete, icon: deleteIcon, color: actions.destructive.fillColor, iconColor: actions.destructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+    if archived {
+        options.append(ItemListRevealOption(key: RevealOptionKey.unarchive.rawValue, title: strings.ChatList_UnarchiveAction, icon: unarchiveIcon, color: actions.inactive.fillColor, iconColor: actions.inactive.foregroundColor, textColor: theme.chatList.dateTextColor))
+    } else {
+        options.append(ItemListRevealOption(key: RevealOptionKey.archive.rawValue, title: strings.ChatList_ArchiveAction, icon: archiveIcon, color: actions.inactive.fillColor, iconColor: actions.inactive.foregroundColor, textColor: theme.chatList.dateTextColor))
+    }
+    return options
+}
+
+private func leftRevealOptions(strings: PresentationStrings, theme: PresentationTheme, isUnread: Bool) -> [ItemListRevealOption] {
+    let actions = theme.list.itemDisclosureActions
+    if isUnread {
+        return [ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Read, icon: readIcon, color: actions.inactive.fillColor, iconColor: actions.neutral1.foregroundColor, textColor: theme.chatList.dateTextColor)]
+    } else {
+        return [ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Unread, icon: unreadIcon, color: actions.accent.fillColor, iconColor: actions.accent.foregroundColor, textColor: theme.chatList.dateTextColor)]
+    }
+}
+
+/// AvatarNode's archivedChatsIcon: the archive box on the theme's archive gradient.
+private func archiveAvatarImage(theme: PresentationTheme, diameter: CGFloat) -> UIImage? {
+    let colors = theme.chatList.pinnedArchiveAvatarColor
+    let icon = generateTintedImage(image: UIImage(bundleImageName: "Avatar/ArchiveAvatarIcon"), color: colors.foregroundColor)
+    return generateImage(CGSize(width: diameter, height: diameter), rotatedContext: { size, context in
+        context.clear(CGRect(origin: CGPoint(), size: size))
+        context.addEllipse(in: CGRect(origin: CGPoint(), size: size))
+        context.clip()
+        let (top, bottom) = colors.backgroundColors.colors
+        let gradientColors = [bottom.cgColor, top.cgColor] as CFArray
+        var locations: [CGFloat] = [1.0, 0.0]
+        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: gradientColors, locations: &locations) {
+            context.drawLinearGradient(gradient, start: CGPoint(), end: CGPoint(x: 0.0, y: size.height), options: [])
+        }
+        if let icon, let cgImage = icon.cgImage {
+            let iconSize = icon.size
+            let rect = CGRect(origin: CGPoint(x: floor((size.width - iconSize.width) / 2.0), y: floor((size.height - iconSize.height) / 2.0)), size: iconSize)
+            context.draw(cgImage, in: rect)
+        }
+    })
+}
+
+final class ChatListItemNode: ItemListRevealOptionsItemNode {
     /// As in Telegram's ChatListItemNode: the row's content sits in a context source, which shrinks it under the finger
     /// and is where the preview grows from.
     private let contextContainer = ContextControllerSourceNode()
@@ -85,10 +192,13 @@ final class ChatListItemNode: ListViewItemNode {
     private let authorNode: TextNode
     private let textNode: TextNode
     private let dateNode: TextNode
+    private let badgeNode: ChatListBadgeNode
     private let separatorNode: ASDisplayNode
     private let busyIndicatorNode: BusyDotsNode
 
     private var item: ChatListItem?
+    private var isHighlightedValue = false
+    private var currentAvatarKey: String?
 
     var dialog: DialogModel? {
         return self.item?.dialog
@@ -111,6 +221,7 @@ final class ChatListItemNode: ListViewItemNode {
         self.textNode.isUserInteractionEnabled = false
         self.dateNode = TextNode()
         self.dateNode.isUserInteractionEnabled = false
+        self.badgeNode = ChatListBadgeNode()
 
         self.separatorNode = ASDisplayNode()
         self.separatorNode.isLayerBacked = true
@@ -119,7 +230,6 @@ final class ChatListItemNode: ListViewItemNode {
 
         super.init(layerBacked: false, rotated: false, seeThrough: false)
 
-        self.addSubnode(self.highlightedBackgroundNode)
         self.addSubnode(self.separatorNode)
         self.addSubnode(self.contextContainer)
         self.contextContainer.addSubnode(self.mainContentContainerNode)
@@ -128,14 +238,15 @@ final class ChatListItemNode: ListViewItemNode {
         self.mainContentContainerNode.addSubnode(self.authorNode)
         self.mainContentContainerNode.addSubnode(self.textNode)
         self.mainContentContainerNode.addSubnode(self.dateNode)
+        self.mainContentContainerNode.addSubnode(self.badgeNode)
         self.mainContentContainerNode.addSubnode(self.busyIndicatorNode)
 
         self.contextContainer.activated = { [weak self] gesture, _ in
-            guard let self, let item = self.item else {
+            guard let self, let item = self.item, let dialog = item.dialog else {
                 gesture.cancel()
                 return
             }
-            item.contextAction(item.dialog, self.contextContainer, gesture)
+            item.interaction.contextAction(dialog, self.contextContainer, gesture)
         }
     }
 
@@ -151,14 +262,85 @@ final class ChatListItemNode: ListViewItemNode {
 
     override func setHighlighted(_ highlighted: Bool, at point: CGPoint, animated: Bool) {
         super.setHighlighted(highlighted, at: point, animated: animated)
-        if highlighted {
+        self.isHighlightedValue = highlighted
+        self.updateIsHighlighted(transition: (animated && !highlighted) ? .animated(duration: 0.3, curve: .easeInOut) : .immediate)
+    }
+
+    /// ChatListItemNode.updateIsHighlighted: a row with open swipe actions stays highlighted, with rounded corners.
+    private func updateIsHighlighted(transition: ContainedViewLayoutTransition) {
+        transition.updateCornerRadius(node: self.highlightedBackgroundNode, cornerRadius: self.isRevealOptionsActive ? 26.0 : 0.0)
+        if self.isHighlightedValue || self.isRevealOptionsActive {
+            if self.highlightedBackgroundNode.supernode == nil {
+                self.insertSubnode(self.highlightedBackgroundNode, aboveSubnode: self.separatorNode)
+                self.highlightedBackgroundNode.alpha = 0.0
+            }
             self.highlightedBackgroundNode.layer.removeAllAnimations()
-            self.highlightedBackgroundNode.alpha = 1.0
-        } else if animated {
-            self.highlightedBackgroundNode.alpha = 0.0
-            self.highlightedBackgroundNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.3)
-        } else {
-            self.highlightedBackgroundNode.alpha = 0.0
+            transition.updateAlpha(layer: self.highlightedBackgroundNode.layer, alpha: 1.0)
+        } else if self.highlightedBackgroundNode.supernode != nil {
+            transition.updateAlpha(layer: self.highlightedBackgroundNode.layer, alpha: 0.0, completion: { [weak self] completed in
+                if completed, let self, !(self.isHighlightedValue || self.isRevealOptionsActive) {
+                    self.highlightedBackgroundNode.removeFromSupernode()
+                }
+            })
+        }
+        let separatorAlpha: CGFloat = (self.isRevealOptionsActive || self.isNextRevealOptionsActive) ? 0.0 : 1.0
+        transition.updateAlpha(node: self.separatorNode, alpha: separatorAlpha)
+    }
+
+    override func updateRevealOffset(offset: CGFloat, transition: ContainedViewLayoutTransition) {
+        super.updateRevealOffset(offset: offset, transition: transition)
+        transition.updateBounds(node: self.contextContainer, bounds: self.contextContainer.frame.offsetBy(dx: -offset, dy: 0.0))
+        let frame = self.highlightedBackgroundNode.frame
+        transition.updateFrame(node: self.highlightedBackgroundNode, frame: CGRect(origin: CGPoint(x: offset, y: frame.minY), size: frame.size))
+    }
+
+    override func revealOptionsActiveStateUpdated(isActive: Bool, transition: ContainedViewLayoutTransition) {
+        super.revealOptionsActiveStateUpdated(isActive: isActive, transition: transition)
+        self.updateIsHighlighted(transition: transition)
+    }
+
+    override func nextRevealOptionsActiveStateUpdated(isActive: Bool, transition: ContainedViewLayoutTransition) {
+        super.nextRevealOptionsActiveStateUpdated(isActive: isActive, transition: transition)
+        self.updateIsHighlighted(transition: transition)
+    }
+
+    override func revealOptionsInteractivelyOpened() {
+        self.item?.interaction.revealedOptionsChanged(self.item?.dialog?.id)
+    }
+
+    override func touchesToOtherItemsPrevented() {
+        super.touchesToOtherItemsPrevented()
+        self.item?.interaction.revealedOptionsChanged(nil)
+    }
+
+    /// Closes the swipe actions unless this is the row that opened them.
+    func closeRevealOptions(except id: Int?) {
+        if self.isDisplayingRevealedOptions, self.item?.dialog?.id != id {
+            self.setRevealOptionsOpened(false, animated: true)
+        }
+    }
+
+    override func revealOptionSelected(_ option: ItemListRevealOption, animated: Bool) {
+        guard let item = self.item, let dialog = item.dialog else {
+            return
+        }
+        var close = true
+        switch option.key {
+        case RevealOptionKey.delete.rawValue:
+            item.interaction.delete(dialog)
+        case RevealOptionKey.archive.rawValue, RevealOptionKey.unarchive.rawValue:
+            // As Telegram: the action fills the row, then the row leaves the list.
+            close = false
+            self.animateRevealOptionsFill {
+                item.interaction.setArchived(dialog, option.key == RevealOptionKey.archive.rawValue)
+            }
+        case RevealOptionKey.toggleMarkedUnread.rawValue:
+            item.interaction.toggleRead(dialog)
+        default:
+            break
+        }
+        if close {
+            self.setRevealOptionsOpened(false, animated: true)
         }
     }
 
@@ -167,45 +349,90 @@ final class ChatListItemNode: ListViewItemNode {
         let makeAuthorLayout = TextNode.asyncLayout(self.authorNode)
         let makeTextLayout = TextNode.asyncLayout(self.textNode)
         let makeDateLayout = TextNode.asyncLayout(self.dateNode)
-        let currentItem = self.item
+        let makeBadgeLayout = self.badgeNode.asyncLayout()
+        let currentAvatarKey = self.currentAvatarKey
 
         return { [weak self] item, params in
             let theme = item.theme.chatList
-            let dialog = item.dialog
+            let presentationTheme = item.theme.presentationTheme
+            let strings = item.theme.presentationStrings
 
             let avatarLeftInset: CGFloat = 24.0 + avatarDiameter
             let leftInset = params.leftInset + avatarLeftInset
             let rawContentWidth = params.width - leftInset - params.rightInset - 18.0
 
-            let dateString = dialog.last.map { chatListDateString($0.date) } ?? ""
+            let title: String
+            let author: String
+            let date: Date?
+            let busy: Bool
+            let badgeContent: ChatListBadgeContent
+            let badgeImage: UIImage?
+            var textString: NSAttributedString
+            var textLines = 1
+            let avatarKey: String
+            switch item.content {
+            case let .dialog(dialog):
+                title = dialog.title
+                author = dialog.projectName
+                date = dialog.last?.date
+                busy = dialog.busy
+                avatarKey = "\(dialog.id):\(dialog.title)"
+                if dialog.unreadCount > 0 {
+                    badgeContent = .text(NSAttributedString(string: "\(dialog.unreadCount)", font: badgeFont, textColor: presentationTheme.chatList.unreadBadgeActiveTextColor))
+                } else if dialog.markedUnread {
+                    badgeContent = .blank
+                } else {
+                    badgeContent = .none
+                }
+                badgeImage = badgeContent.isEmpty ? nil : PresentationResourcesChatList.badgeBackgroundActive(presentationTheme, diameter: badgeDiameter)
+                if dialog.busy {
+                    textString = NSAttributedString(string: "working", font: textFont, textColor: theme.activityTextColor)
+                } else if let last = dialog.last {
+                    let prefix: String
+                    switch last.role {
+                    case .user:
+                        prefix = "You: "
+                    case .assistant, .thinking:
+                        prefix = ""
+                    case let .tool(name):
+                        prefix = name.isEmpty ? "" : "\(name): "
+                    }
+                    let flat = (prefix + plainPreview(last.text)).replacingOccurrences(of: "\n", with: " ")
+                    textString = NSAttributedString(string: flat, font: textFont, textColor: theme.messageTextColor)
+                } else {
+                    textString = NSAttributedString(string: "No messages yet", font: textFont, textColor: theme.messageTextColor)
+                }
+            case let .archive(summary):
+                title = strings.ChatList_ArchivedChatsTitle
+                author = ""
+                date = summary.date
+                busy = false
+                avatarKey = "archive"
+                // Archived chats count as muted: a gray badge.
+                if summary.unreadCount > 0 {
+                    badgeContent = .text(NSAttributedString(string: "\(summary.unreadCount)", font: badgeFont, textColor: presentationTheme.chatList.unreadBadgeInactiveTextColor))
+                    badgeImage = PresentationResourcesChatList.badgeBackgroundInactive(presentationTheme, diameter: badgeDiameter)
+                } else {
+                    badgeContent = .none
+                    badgeImage = nil
+                }
+                textString = NSAttributedString(string: summary.titles.joined(separator: ", "), font: textFont, textColor: theme.messageTextColor)
+                textLines = 2
+            }
+
+            let dateString = date.map { chatListDateString($0) } ?? ""
             let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: dateString, font: dateFont, textColor: theme.dateTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: rawContentWidth, height: .greatestFiniteMagnitude)))
+            let (badgeSize, badgeApply) = makeBadgeLayout(CGSize(width: rawContentWidth, height: .greatestFiniteMagnitude), badgeDiameter, badgeFont, badgeImage, badgeContent)
+            let badgeInset: CGFloat = badgeContent.isEmpty ? 0.0 : badgeSize.width + 5.0
 
             let titleRectWidth = rawContentWidth - dateLayout.size.width - 10.0
-            let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: dialog.title, font: titleFont, textColor: theme.titleColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(10.0, titleRectWidth), height: .greatestFiniteMagnitude)))
+            let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: title, font: titleFont, textColor: theme.titleColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(10.0, titleRectWidth), height: .greatestFiniteMagnitude)))
 
             // The project directory reads like the author line of a group chat.
-            let (authorLayout, authorApply) = makeAuthorLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: dialog.projectName, font: textFont, textColor: theme.authorNameColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: rawContentWidth, height: .greatestFiniteMagnitude)))
+            let (authorLayout, authorApply) = makeAuthorLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: author, font: textFont, textColor: theme.authorNameColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: rawContentWidth - badgeInset, height: .greatestFiniteMagnitude)))
 
-            let busyIndicatorWidth: CGFloat = dialog.busy ? 24.0 : 0.0
-            let textString: NSAttributedString
-            if dialog.busy {
-                textString = NSAttributedString(string: "working", font: textFont, textColor: theme.activityTextColor)
-            } else if let last = dialog.last {
-                let prefix: String
-                switch last.role {
-                case .user:
-                    prefix = "You: "
-                case .assistant, .thinking:
-                    prefix = ""
-                case let .tool(name):
-                    prefix = name.isEmpty ? "" : "\(name): "
-                }
-                let flat = (prefix + plainPreview(last.text)).replacingOccurrences(of: "\n", with: " ")
-                textString = NSAttributedString(string: flat, font: textFont, textColor: theme.messageTextColor)
-            } else {
-                textString = NSAttributedString(string: "No messages yet", font: textFont, textColor: theme.messageTextColor)
-            }
-            let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: textString, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: rawContentWidth - busyIndicatorWidth, height: .greatestFiniteMagnitude)))
+            let busyIndicatorWidth: CGFloat = busy ? 24.0 : 0.0
+            let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: textString, maximumNumberOfLines: textLines, truncationType: .end, constrainedSize: CGSize(width: rawContentWidth - busyIndicatorWidth - badgeInset, height: .greatestFiniteMagnitude)))
 
             // Telegram measures one line of the title font to size the row (ChatListItem.swift, "measureLayout").
             let (measureLayout, _) = TextNode.asyncLayout(nil)(TextNodeLayoutArguments(attributedString: NSAttributedString(string: " ", font: titleFont, textColor: .black), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: titleRectWidth, height: .greatestFiniteMagnitude)))
@@ -223,8 +450,13 @@ final class ChatListItemNode: ListViewItemNode {
             let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: itemHeight), insets: UIEdgeInsets())
 
             let avatarImage: UIImage?
-            if currentItem?.dialog.title != dialog.title || currentItem?.dialog.id != dialog.id {
-                avatarImage = Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: avatarDiameter)
+            if currentAvatarKey != avatarKey || item.theme !== self?.item?.theme {
+                switch item.content {
+                case let .dialog(dialog):
+                    avatarImage = Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: avatarDiameter)
+                case .archive:
+                    avatarImage = archiveAvatarImage(theme: presentationTheme, diameter: avatarDiameter)
+                }
             } else {
                 avatarImage = nil
             }
@@ -233,7 +465,9 @@ final class ChatListItemNode: ListViewItemNode {
                 guard let strongSelf = self else {
                     return
                 }
+                let previousItem = strongSelf.item
                 strongSelf.item = item
+                strongSelf.currentAvatarKey = avatarKey
                 let transition = animation.transition
 
                 strongSelf.highlightedBackgroundNode.backgroundColor = theme.itemHighlightedBackgroundColor
@@ -246,6 +480,7 @@ final class ChatListItemNode: ListViewItemNode {
                 let _ = authorApply()
                 let _ = textApply()
                 let _ = dateApply()
+                badgeApply(previousItem != nil && animation.isAnimated, false)
 
                 let contentRect = rawContentRect.offsetBy(dx: leftInset, dy: 0.0)
                 let avatarFrame = CGRect(origin: CGPoint(x: params.leftInset + 16.0, y: floor((itemHeight - avatarDiameter) / 2.0)), size: CGSize(width: avatarDiameter, height: avatarDiameter))
@@ -257,22 +492,39 @@ final class ChatListItemNode: ListViewItemNode {
                 let authorFrame = CGRect(origin: CGPoint(x: contentRect.origin.x - 1.0, y: contentRect.minY + titleLayout.size.height - 2.0), size: authorLayout.size)
                 transition.updateFrame(node: strongSelf.authorNode, frame: authorFrame)
 
-                let textFrame = CGRect(origin: CGPoint(x: contentRect.origin.x - 1.0 + busyIndicatorWidth, y: authorFrame.minY + authorLayout.size.height - 3.0), size: textLayout.size)
+                let textY = author.isEmpty ? authorFrame.minY : authorFrame.minY + authorLayout.size.height - 3.0
+                let textFrame = CGRect(origin: CGPoint(x: contentRect.origin.x - 1.0 + busyIndicatorWidth, y: textY), size: textLayout.size)
                 transition.updateFrame(node: strongSelf.textNode, frame: textFrame)
 
-                strongSelf.busyIndicatorNode.isHidden = !dialog.busy
+                strongSelf.busyIndicatorNode.isHidden = !busy
                 strongSelf.busyIndicatorNode.color = theme.activityTextColor
                 transition.updateFrame(node: strongSelf.busyIndicatorNode, frame: CGRect(origin: CGPoint(x: contentRect.origin.x, y: textFrame.midY - 4.0), size: CGSize(width: 20.0, height: 8.0)))
 
                 let dateFrame = CGRect(origin: CGPoint(x: contentRect.maxX - dateLayout.size.width, y: contentRect.origin.y + 2.0), size: dateLayout.size)
                 transition.updateFrame(node: strongSelf.dateNode, frame: dateFrame)
 
+                // ChatListItem.swift: the badge sits at the bottom right, raised by rightAccessoryVerticalOffset.
+                let badgeFrame = CGRect(x: contentRect.maxX - badgeSize.width, y: contentRect.maxY - badgeSize.height - 4.0, width: badgeSize.width, height: badgeSize.height)
+                transition.updateFrame(node: strongSelf.badgeNode, frame: badgeFrame)
+
                 let separatorX = leftInset + rawContentRect.origin.x
                 transition.updateFrame(node: strongSelf.separatorNode, frame: CGRect(origin: CGPoint(x: separatorX, y: itemHeight - separatorHeight), size: CGSize(width: params.width - separatorX, height: separatorHeight)))
-                strongSelf.highlightedBackgroundNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -separatorHeight), size: CGSize(width: params.width, height: itemHeight + separatorHeight))
+                strongSelf.highlightedBackgroundNode.frame = CGRect(origin: CGPoint(x: strongSelf.revealOffset, y: -separatorHeight), size: CGSize(width: params.width, height: itemHeight + separatorHeight))
                 let rowFrame = CGRect(origin: CGPoint(), size: CGSize(width: params.width, height: itemHeight))
                 strongSelf.contextContainer.frame = rowFrame
+                strongSelf.contextContainer.bounds = rowFrame.offsetBy(dx: -strongSelf.revealOffset, dy: 0.0)
                 strongSelf.mainContentContainerNode.frame = rowFrame
+
+                strongSelf.updateLayout(size: layout.contentSize, leftInset: params.leftInset, rightInset: params.rightInset)
+                switch item.content {
+                case let .dialog(dialog):
+                    strongSelf.setRevealOptions((
+                        left: leftRevealOptions(strings: strings, theme: presentationTheme, isUnread: dialog.unreadCount > 0 || dialog.markedUnread),
+                        right: rightRevealOptions(strings: strings, theme: presentationTheme, archived: dialog.archived)
+                    ))
+                case .archive:
+                    strongSelf.setRevealOptions((left: [], right: []))
+                }
             })
         }
     }

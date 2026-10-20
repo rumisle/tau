@@ -11,6 +11,16 @@ struct DialogModel: Equatable {
     var model: String
     var last: EntrySummary?
     var busy: Bool
+    /// Assistant messages the user has not seen.
+    var unreadCount: Int = 0
+    /// Marked unread by hand (Telegram's Mark as Unread); opening the chat clears it.
+    var markedUnread: Bool = false
+    /// In Archived Chats.
+    var archived: Bool = false
+
+    var isUnread: Bool {
+        return self.unreadCount > 0 || self.markedUnread
+    }
 
     struct EntrySummary: Equatable {
         var id: Int

@@ -21,7 +21,15 @@ protocol TauStore: AnyObject {
     func createConversation(cwd: String?) -> Int
     func discardIfDraft(_ id: Int)
     func deleteConversation(_ id: Int)
-    func duplicateConversation(_ id: Int) -> Int?
+    /// Forks the conversation at its last entry; `completion` gets the copy's id.
+    func duplicateConversation(_ id: Int, completion: @escaping (Int) -> Void)
+    /// The chat is on screen: everything in it so far is read.
+    func markSeen(_ id: Int)
+    /// Mark as Read / Mark as Unread.
+    func setUnread(_ id: Int, _ unread: Bool)
+    func setArchived(_ id: Int, _ archived: Bool)
+    /// The model new conversations get, for every client of the server.
+    func setDefaultModel(_ model: ModelInfo)
 
     func send(_ text: String, attachments: [MessageAttachment], to id: Int)
     /// Rewrites a user message: the conversation continues from a fork just before it. Returns the conversation the

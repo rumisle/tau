@@ -101,6 +101,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
         // The position also survives the app being suspended and killed with the chat open.
         NotificationCenter.default.addObserver(self, selector: #selector(self.saveScrollState), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.applicationDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         node.sendMessage = { [weak self] text in
             self?.send(text: text, attachments: [])
         }
@@ -159,6 +160,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             }
             self.lastState = state
             self.controllerNode.update(state: state)
+            if self.isOnScreen && UIApplication.shared.applicationState == .active {
+                self.context.store.markSeen(self.conversationId)
+            }
             self.controllerNode.inputPanelNode.isBusy = state.busy
             self.updateTitle(busy: state.busy)
         }))
@@ -177,8 +181,26 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
     }
 
+    @objc private func applicationDidBecomeActive() {
+        if self.isOnScreen {
+            self.context.store.markSeen(self.conversationId)
+        }
+    }
+
+    /// On screen and not a preview: what arrives is read, as Telegram reads the messages a chat shows.
+    private var isOnScreen = false
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if !self.isPreview {
+            self.isOnScreen = true
+            self.context.store.markSeen(self.conversationId)
+        }
+    }
+
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        self.isOnScreen = false
         self.saveScrollState()
     }
 

@@ -7,6 +7,7 @@ import {
 	type ConversationId,
 	type ConversationRecord,
 	type Cursor,
+	type EntryId,
 	type EntryRecord,
 	LiveDoc,
 	type SubmissionRecord,
@@ -15,6 +16,8 @@ import { type Host, MetaDoc } from "./host.ts";
 import type { Dialog, EntrySummary } from "./protocol.ts";
 
 const PREVIEW_CHARS = 200;
+/** Unread counts stop here; a badge shows 99 at most. */
+const MAX_UNREAD = 99;
 /** Kinds a chat list never shows as the last message. */
 const HIDDEN_KINDS: ReadonlySet<string> = new Set(["pi.system"]);
 
@@ -96,9 +99,22 @@ export class Dialogs {
 		const live = await harness.snapshot(LiveDoc, conversation.id, context);
 		const agent = await harness.snapshot(AgentDoc, conversation.id, context);
 		let last: EntryRecord | undefined;
+		let unreadCount = 0;
 		if (handle !== undefined) {
-			const page = await handle.entries({}, 8, undefined, context);
+			// Newest first: the last message, and the assistant messages after the read mark.
+			const read = meta?.read ?? 0;
+			let page = await handle.entries({}, 32, undefined, context);
 			last = page.items.find((entry) => !HIDDEN_KINDS.has(entry.kind)) ?? page.items[0];
+			let scanned = 0;
+			scan: for (;;) {
+				for (const entry of page.items) {
+					if (entry.id <= read || unreadCount >= MAX_UNREAD) break scan;
+					if (isAnswer(entry)) unreadCount += 1;
+				}
+				scanned += page.items.length;
+				if (page.next === undefined || scanned >= 400) break;
+				page = await handle.entries({}, 32, page.next, context);
+			}
 		}
 		const busy = live?.run !== undefined;
 		this.#busy.set(conversation.id, busy);
@@ -112,6 +128,10 @@ export class Dialogs {
 				cwd: agent?.cwd ?? this.#host.cwd,
 			},
 			busy,
+			...(meta?.read === undefined ? {} : { read: meta.read as EntryId }),
+			unreadCount,
+			...(meta?.markedUnread === true ? { markedUnread: true as const } : {}),
+			...(meta?.archived === true ? { archived: true as const } : {}),
 		};
 	}
 
@@ -145,6 +165,12 @@ export class Dialogs {
 			this.#flushing = false;
 		}
 	}
+}
+
+/** An assistant message with text: what a reader counts as a message, unlike tool-call steps. */
+function isAnswer(entry: EntryRecord): boolean {
+	const message = entry.model?.[0];
+	return message?.role === "assistant" && message.content.some((part) => part.type === "text" && part.text.trim() !== "");
 }
 
 /** A one-line preview of an entry for the chat list. */

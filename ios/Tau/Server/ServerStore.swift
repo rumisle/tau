@@ -60,8 +60,16 @@ final class ServerStore: TauStore {
         return self.connection.url.host ?? self.connection.url.absoluteString
     }
 
+    /// Set from Settings until the next `hello` reports it.
+    private var defaultModelOverride: String?
+
     var defaultModel: String? {
-        return self.connection.hello?.defaultModel
+        return self.defaultModelOverride ?? self.connection.hello?.defaultModel
+    }
+
+    func setDefaultModel(_ model: ModelInfo) {
+        self.defaultModelOverride = "\(model.provider)/\(model.id)"
+        self.connection.request("settings.configure", ["defaultModel": ["provider": model.provider, "modelId": model.id]]) { _ in }
     }
 
     func close() {
@@ -71,6 +79,8 @@ final class ServerStore: TauStore {
     // MARK: - Connection
 
     private func connected(_ hello: TauConnection.Hello) {
+        self.defaultModelOverride = nil
+        self.readSent.removeAll()
         if self.cache.serverId != hello.serverId {
             // Another database: nothing cached is valid.
             self.cache.reset(serverId: hello.serverId)
@@ -135,7 +145,7 @@ final class ServerStore: TauStore {
             return nil
         }
         let agent = raw.object("agent") ?? [:]
-        let model = agent.object("model")?.string("modelId") ?? self.connection.hello?.defaultModel.components(separatedBy: "/").last ?? ""
+        let model = agent.object("model")?.string("modelId") ?? self.defaultModel?.components(separatedBy: "/").last ?? ""
         var last: DialogModel.EntrySummary?
         if let summary = raw.object("last"), let entryId = summary.int("id") {
             let role: MessageRole
@@ -151,15 +161,24 @@ final class ServerStore: TauStore {
             last = DialogModel.EntrySummary(id: entryId, role: role, text: summary.string("text") ?? "", date: date)
         }
         self.dialogOrder[id] = last?.id ?? raw.int("createdAt") ?? id
-        return DialogModel(
+        var dialog = DialogModel(
             id: id,
             title: raw.string("title") ?? "New chat",
             parentConversationId: conversation.object("owner")?.int("conversationId"),
             cwd: agent.string("cwd") ?? "~",
             model: model,
             last: last,
-            busy: raw.bool("busy") ?? false
+            busy: raw.bool("busy") ?? false,
+            unreadCount: raw.int("unreadCount") ?? 0,
+            markedUnread: raw.bool("markedUnread") ?? false,
+            archived: raw.bool("archived") ?? false
         )
+        // A read this device sent and the server has not reflected yet.
+        if let sent = self.readSent[id], let last, sent >= last.id {
+            dialog.unreadCount = 0
+            dialog.markedUnread = false
+        }
+        return dialog
     }
 
     private func publishDialogs() {
@@ -183,7 +202,7 @@ final class ServerStore: TauStore {
                 return dialog
             }
             let cwd = draft.cwd ?? self.connection.hello?.defaultCwd ?? "~"
-            let model = self.connection.hello?.defaultModel.components(separatedBy: "/").last ?? ""
+            let model = self.defaultModel?.components(separatedBy: "/").last ?? ""
             return DialogModel(id: id, title: "New chat", cwd: cwd, model: model, last: nil, busy: false)
         }
         return self.dialogs[id]
@@ -515,9 +534,9 @@ final class ServerStore: TauStore {
         }
     }
 
-    func duplicateConversation(_ id: Int) -> Int? {
+    func duplicateConversation(_ id: Int, completion: @escaping (Int) -> Void) {
         guard let realId = self.resolve(id), let dialog = self.dialogs[realId], let at = dialog.last?.id else {
-            return nil
+            return
         }
         self.connection.request("conversation.fork", ["conversationId": realId, "at": at, "title": "\(dialog.title) (copy)"]) { [weak self] result in
             guard let self, case let .success(value) = result, let raw = value.object("dialog"), let dialog = self.dialogModel(raw) else {
@@ -525,8 +544,57 @@ final class ServerStore: TauStore {
             }
             self.dialogs[dialog.id] = dialog
             self.publishDialogs()
+            completion(dialog.id)
         }
-        return nil
+    }
+
+    /// The last entry each conversation was marked read at from here, so a repeat is not sent.
+    private var readSent: [Int: Int] = [:]
+
+    func markSeen(_ id: Int) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        let latest = max(self.replicas[realId]?.maxId ?? 0, self.dialogs[realId]?.last?.id ?? 0)
+        let isUnread = self.dialogs[realId]?.isUnread ?? false
+        guard latest > 0, isUnread || (self.readSent[realId] ?? 0) < latest else {
+            return
+        }
+        self.readSent[realId] = latest
+        if isUnread {
+            self.dialogs[realId]?.unreadCount = 0
+            self.dialogs[realId]?.markedUnread = false
+            self.publishDialogs()
+        }
+        self.connection.request("conversation.read", ["conversationId": realId, "at": latest]) { _ in }
+    }
+
+    func setUnread(_ id: Int, _ unread: Bool) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        // Shown at once; the server's dialog push confirms it.
+        if unread {
+            self.readSent.removeValue(forKey: realId)
+            self.dialogs[realId]?.markedUnread = true
+        } else {
+            self.dialogs[realId]?.markedUnread = false
+            self.dialogs[realId]?.unreadCount = 0
+            if let last = self.dialogs[realId]?.last?.id {
+                self.readSent[realId] = last
+            }
+        }
+        self.publishDialogs()
+        self.connection.request("conversation.mark", ["conversationId": realId, "unread": unread]) { _ in }
+    }
+
+    func setArchived(_ id: Int, _ archived: Bool) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        self.dialogs[realId]?.archived = archived
+        self.publishDialogs()
+        self.connection.request("conversation.mark", ["conversationId": realId, "archived": archived]) { _ in }
     }
 
     /// The server keeps every conversation; deleting hides it from this device's list.
@@ -564,7 +632,7 @@ final class ServerStore: TauStore {
 
     func agent(_ id: Int) -> AgentSettings {
         guard let realId = self.resolve(id), let agent = self.replicas[realId]?.docs.object("pi.agent") else {
-            let fallback = self.connection.hello?.defaultModel.split(separator: "/").map(String.init) ?? []
+            let fallback = self.defaultModel?.split(separator: "/").map(String.init) ?? []
             return AgentSettings(provider: fallback.first, modelId: fallback.last, thinkingLevel: nil)
         }
         let model = agent.object("model")
@@ -705,7 +773,7 @@ final class EntryCache {
 
     func saveDialogs(_ dialogs: [DialogModel]) {
         let rows: [JSONObject] = dialogs.map { dialog in
-            var row: JSONObject = ["id": dialog.id, "title": dialog.title, "cwd": dialog.cwd, "model": dialog.model, "busy": false]
+            var row: JSONObject = ["id": dialog.id, "title": dialog.title, "cwd": dialog.cwd, "model": dialog.model, "busy": false, "unread": dialog.unreadCount, "markedUnread": dialog.markedUnread, "archived": dialog.archived]
             if let parent = dialog.parentConversationId {
                 row["parent"] = parent
             }
@@ -734,7 +802,7 @@ final class EntryCache {
             if let summary = row.object("last"), let entryId = summary.int("id") {
                 last = DialogModel.EntrySummary(id: entryId, role: (summary.bool("user") ?? false) ? .user : .assistant, text: summary.string("text") ?? "", date: Date(timeIntervalSince1970: summary.double("date") ?? 0))
             }
-            return DialogModel(id: id, title: row.string("title") ?? "", parentConversationId: row.int("parent"), cwd: row.string("cwd") ?? "~", model: row.string("model") ?? "", last: last, busy: false)
+            return DialogModel(id: id, title: row.string("title") ?? "", parentConversationId: row.int("parent"), cwd: row.string("cwd") ?? "~", model: row.string("model") ?? "", last: last, busy: false, unreadCount: row.int("unread") ?? 0, markedUnread: row.bool("markedUnread") ?? false, archived: row.bool("archived") ?? false)
         }
     }
 }
