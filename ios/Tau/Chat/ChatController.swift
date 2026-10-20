@@ -1,6 +1,7 @@
 import UIKit
 import AsyncDisplayKit
 import Display
+import UndoUI
 import SwiftSignalKit
 import GlassBackgroundComponent
 import UniformTypeIdentifiers
@@ -103,17 +104,20 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             return
         }
         let model = self.context.store.agent(self.conversationId).modelId ?? dialog.model
-        // As Telegram's chat title, the connection's state takes the title's place until it is back.
-        let title: String
+        // As Telegram's ChatTitleComponent: the connection's state takes the subtitle's place until it is back.
+        let strings = self.theme.presentationStrings
+        let status: ChatTitleView.Status
         switch self.connectionStatus {
+        case .waitingForNetwork:
+            status = .network(strings.ChatState_WaitingForNetwork)
         case .connecting:
-            title = "Connecting…"
+            status = .network(strings.ChatState_Connecting)
         case .updating:
-            title = "Updating…"
+            status = .network(strings.ChatState_Updating)
         case .online:
-            title = dialog.title
+            status = busy ? .working("working") : .info("\(dialog.projectName) · \(model)")
         }
-        self.titleView.update(title: title, subtitle: busy ? "working" : "\(dialog.projectName) · \(model)", isActive: busy)
+        self.titleView.update(title: dialog.title, status: status)
     }
 
     private var connectionStatus: ConnectionStatus = .online
@@ -134,6 +138,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         NotificationCenter.default.addObserver(self, selector: #selector(self.applicationDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         node.sendMessage = { [weak self] text in
             self?.send(text: text, attachments: [])
+        }
+        node.presentToast = { [weak self] content in
+            self?.presentToast(content)
         }
         node.messageAction = { [weak self] message, action in
             self?.perform(action, on: message)
@@ -174,7 +181,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self?.openAttachments()
         }
         node.inputPanelNode.micPressed = { [weak self] in
-            self?.controllerNode.showToast("Voice input is coming soon")
+            self?.presentToast(.info(title: nil, text: "Voice input is coming soon", timeout: nil, customUndoText: nil))
         }
         node.inputPanelNode.stopPressed = { [weak self] in
             guard let self else {
@@ -223,7 +230,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 case let .restoreInput(text):
                     self.controllerNode.inputPanelNode.appendText(text)
                 case let .notice(text):
-                    self.controllerNode.showToast(text)
+                    self.presentToast(.info(title: nil, text: text, timeout: nil, customUndoText: nil))
                 }
             }))
         }
@@ -309,6 +316,21 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         super.containerLayoutUpdated(layout, transition: transition)
         let navigationHeight = self.isPreview ? 0.0 : self.navigationLayout(layout: layout).navigationFrame.maxY
         self.controllerNode.containerLayoutUpdated(layout, navigationHeight: navigationHeight, transition: transition)
+        // As Telegram's chat: overlays presented over it, toasts among them, keep clear of the input panel.
+        var childrenLayout = layout
+        childrenLayout.intrinsicInsets.bottom = max(layout.intrinsicInsets.bottom, self.controllerNode.inputPanelInset)
+        self.presentationContext.containerLayoutUpdated(childrenLayout, transition: transition)
+    }
+
+    /// Telegram's toast at the bottom of the chat; a new one replaces the one showing, as in Telegram.
+    private weak var currentToast: UndoOverlayController?
+
+    func presentToast(_ content: UndoOverlayContent) {
+        let replacing = self.currentToast != nil
+        self.currentToast?.dismiss()
+        let controller = UndoOverlayController(presentationData: self.theme.presentationData, content: content, elevatedLayout: false, animateInAsReplacement: replacing, action: { _ in return false })
+        self.currentToast = controller
+        self.present(controller, in: .current)
     }
 
     // MARK: - Sending and editing
@@ -345,7 +367,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         switch action {
         case .copy:
             UIPasteboard.general.string = message.text
-            self.controllerNode.showToast("Copied")
+            self.presentToast(.copy(text: self.theme.presentationStrings.Conversation_TextCopied))
         case .edit:
             self.editingMessageId = message.id
             self.controllerNode.inputPanelNode.setEditing(message.text)
@@ -524,7 +546,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             let current = agent.provider.flatMap { provider in agent.modelId.map { "\(provider)/\($0)" } }
             let picker = ModelPickerController(context: self.context, title: "Model", current: current, select: { [weak self] model in
                 store.configure(id, model: model, thinkingLevel: nil)
-                self?.controllerNode.showToast("Model: \(model.name)")
+                self?.presentToast(.succeed(text: "Model changed to **\(model.name)**", timeout: nil, customUndoText: nil))
             })
             (self.navigationController as? NavigationController)?.pushViewController(picker)
         })))
@@ -536,7 +558,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 levelItems.append(.action(ContextMenuActionItem(text: level.capitalized, icon: checkIcon(level == thinking), action: { [weak self] _, f in
                     f(.default)
                     store.configure(id, model: nil, thinkingLevel: level)
-                    self?.controllerNode.showToast("Thinking: \(level.capitalized)")
+                    self?.presentToast(.succeed(text: level == "off" ? "Thinking turned off" : "Thinking set to **\(level.capitalized)**", timeout: nil, customUndoText: nil))
                 })))
             }
             controller?.pushItems(items: .single(ContextController.Items(content: .list(levelItems))))
@@ -552,12 +574,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         items.append(.action(ContextMenuActionItem(text: "Compact Context", icon: icon("Chat/Context Menu/Clear"), action: { [weak self] _, f in
             f(.default)
             store.compact(id)
-            self?.controllerNode.showToast("Compacting context")
-        })))
-        items.append(.action(ContextMenuActionItem(text: "New Context", textLayout: .secondLineWithValue("The model forgets this chat"), icon: icon("Chat/Context Menu/Reload"), action: { [weak self] _, f in
-            f(.default)
-            store.resetContext(id)
-            self?.controllerNode.showToast("New context")
+            self?.presentToast(.info(title: nil, text: "Compacting the context", timeout: nil, customUndoText: nil))
         })))
 
         let source = ChatTitleContextReferenceSource(view: self.titleView, contentArea: self.controllerNode.view.convert(self.controllerNode.frameForVisibleArea(), to: nil))
@@ -710,7 +727,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         case .copy:
             UIPasteboard.general.string = selected.map(\.text).joined(separator: "\n\n")
             self.controllerNode.setSelection(nil)
-            self.controllerNode.showToast(selected.count == 1 ? "Copied" : "Copied \(selected.count) messages")
+            self.presentToast(.copy(text: selected.count == 1 ? self.theme.presentationStrings.Conversation_TextCopied : "\(selected.count) messages copied to clipboard"))
         case .share:
             let text = selected.map(\.text).joined(separator: "\n\n")
             self.controllerNode.setSelection(nil)
@@ -747,7 +764,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 self.view.window?.rootViewController?.present(documentPicker, animated: true)
             case .camera:
                 guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
-                    self.controllerNode.showToast("No camera on this device")
+                    self.presentToast(.info(title: nil, text: "No camera on this device", timeout: nil, customUndoText: nil))
                     return
                 }
                 let camera = UIImagePickerController()
@@ -782,6 +799,8 @@ final class ChatTitleView: UIView {
     enum Status: Equatable {
         case info(String)
         case working(String)
+        /// "connecting...", in Telegram's input control color.
+        case network(String)
     }
 
     private var theme: TauTheme
@@ -818,7 +837,10 @@ final class ChatTitleView: UIView {
     }
 
     func update(title: String, subtitle: String?, isActive: Bool = false) {
-        let status: Status? = subtitle.map { isActive ? .working($0) : .info($0) }
+        self.update(title: title, status: subtitle.map { isActive ? .working($0) : .info($0) })
+    }
+
+    func update(title: String, status: Status?) {
         self.fullTitle = title
         self.update(titleItems: [AnimatedTextComponent.Item(id: AnyHashable("title"), content: .text(self.fitted(title)))], status: status, animated: true)
     }
@@ -862,10 +884,13 @@ final class ChatTitleView: UIView {
                 state = .info(NSAttributedString(string: text, font: Font.regular(12.0), textColor: self.theme.navigationBar.secondaryTextColor), .generic)
             case let .working(text):
                 state = .typingText(NSAttributedString(string: text, font: Font.regular(12.0), textColor: self.theme.accentColor), self.theme.accentColor)
+            case let .network(text):
+                state = .info(NSAttributedString(string: text, font: Font.regular(12.0), textColor: self.theme.presentationTheme.chat.inputPanel.inputControlColor), .generic)
             case nil:
                 state = .none
             }
-            let _ = self.activityNode.transitionToState(state, animation: animated ? .crossfade : .none)
+            // Telegram's subtitle slides from one state to the next.
+            let _ = self.activityNode.transitionToState(state, animation: animated ? .slide : .none)
         }
         self.layoutContent(transition: animated ? .spring(duration: 0.4) : .immediate)
     }
@@ -883,7 +908,7 @@ final class ChatTitleView: UIView {
         let maxTextWidth = max(40.0, self.bounds.width - 24.0)
         let titleSize = self.title.update(
             transition: transition,
-            component: AnyComponent(AnimatedTextComponent(font: Font.semibold(16.0), color: self.theme.navigationBar.primaryTextColor, items: self.titleItems, noDelay: true)),
+            component: AnyComponent(AnimatedTextComponent(font: Font.semibold(16.0), color: self.theme.navigationBar.primaryTextColor, items: self.titleItems, noDelay: false, animateScale: true, animateSlide: true, blur: true)),
             environment: {},
             containerSize: CGSize(width: maxTextWidth, height: 22.0)
         )

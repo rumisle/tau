@@ -907,9 +907,7 @@ final class ContextControllerExtractedPresentationNode: ASDisplayNode, ContextCo
                         }
                         
                         let presentationData = context.sharedContext.currentPresentationData.with { $0 }
-                        let undoController = UndoOverlayController(presentationData: presentationData, content: .sticker(context: context, file: file, loop: true, title: nil, text: presentationData.strings.Chat_PremiumReactionToastTitle, undoText: presentationData.strings.Chat_PremiumReactionToastAction, customAction: { [weak controller] in
-                            controller?.premiumReactionsSelected?()
-                        }), elevatedLayout: false, position: position, animateInAsReplacement: animateInAsReplacement, action: { _ in true })
+                        let undoController = UndoOverlayController(presentationData: presentationData, content: .info(title: nil, text: presentationData.strings.Chat_PremiumReactionToastTitle, timeout: nil, customUndoText: nil), elevatedLayout: false, position: position, animateInAsReplacement: animateInAsReplacement, action: { _ in true })
                         strongSelf.currentUndoController = undoController
                         controller.present(undoController, in: .current)
                     } else {

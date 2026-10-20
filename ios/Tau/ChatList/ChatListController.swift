@@ -1,6 +1,7 @@
 import UIKit
 import AsyncDisplayKit
 import Display
+import ChatListTitleView
 import SwiftSignalKit
 import MergeLists
 import ComponentFlow
@@ -45,7 +46,7 @@ final class ChatListController: ViewController {
     private var theme: TauTheme
     private let dialogsDisposable = MetaDisposable()
     private var statusDisposable: Disposable?
-    private let titleView = ChatListTitleView()
+    private let titleView: ChatListTitleView
     private var themeDisposable: Disposable?
 
     private var controllerNode: ChatListControllerNode {
@@ -56,29 +57,39 @@ final class ChatListController: ViewController {
         self.context = context
         self.mode = mode
         self.theme = context.theme
+        self.titleView = ChatListTitleView(context: context.telegram, theme: context.theme.presentationTheme, strings: context.theme.presentationStrings, animationCache: context.telegram.animationCache, animationRenderer: context.telegram.animationRenderer)
         // iOS 26 Telegram: glass buttons and a blurred edge instead of a bar.
         super.init(navigationBarPresentationData: context.theme.navigationBarPresentationData())
         let title = mode == .archive ? context.theme.presentationStrings.ChatList_ArchivedChatsTitle : "Chats"
-        self.title = title
-        self.titleView.update(theme: self.theme)
-        // As Telegram's chat list: the title says when the list may be stale.
-        self.statusDisposable = (context.store.connectionStatus |> deliverOnMainQueue).start(next: { [weak self] status in
+        // The title view draws the title, as in Telegram's chat list; the navigation bar would draw `title` under it.
+        self.navigationItem.titleView = self.titleView
+        // Telegram's ChatListTitleView: the title says, with its spinner, when the list may be stale.
+        let strings = context.theme.presentationStrings
+        // As Telegram's ChatListController: leaving online shows after 0.3 s, so a short blip does not flash the title.
+        let previous = Atomic<ConnectionStatus?>(value: nil)
+        let status = context.store.connectionStatus |> mapToSignal { value -> Signal<ConnectionStatus, NoError> in
+            if let last = previous.swap(value), last == .online, value != .online {
+                return .single(value) |> delay(0.3, queue: .mainQueue())
+            }
+            return .single(value)
+        }
+        self.statusDisposable = (status |> deliverOnMainQueue).start(next: { [weak self] status in
             guard let self else {
                 return
             }
+            let text: String
             switch status {
             case .online:
-                self.title = title
-                self.navigationItem.titleView = nil
+                text = title
+            case .waitingForNetwork:
+                text = strings.State_WaitingForNetwork
             case .connecting:
-                self.title = ""
-                self.titleView.text = "Connecting…"
-                self.navigationItem.titleView = self.titleView
+                text = strings.State_Connecting
             case .updating:
-                self.title = ""
-                self.titleView.text = "Updating…"
-                self.navigationItem.titleView = self.titleView
+                text = strings.State_Updating
             }
+            self.titleView.setTitle(NetworkStatusTitle(text: text, activity: status != .online, hasProxy: false, connectsViaProxy: false, isPasscodeSet: false, isManuallyLocked: false, peerStatus: nil), animated: true)
+            self.requestLayout(transition: .animated(duration: 0.45, curve: .spring))
         })
         if mode == .main {
             self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "square.and.pencil")?.withRenderingMode(.alwaysTemplate), style: .plain, target: self, action: #selector(self.composePressed))
@@ -128,7 +139,7 @@ final class ChatListController: ViewController {
         self.theme = theme
         self.statusBar.statusBarStyle = theme.statusBarStyleValue
         self.navigationBar?.updatePresentationData(theme.navigationBarPresentationData(), transition: .immediate)
-        self.titleView.update(theme: theme)
+        self.titleView.theme = theme.presentationTheme
         if self.isNodeLoaded {
             self.controllerNode.updateTheme(theme)
         }
@@ -383,43 +394,5 @@ private final class ChatListContextControllerContentSource: ContextControllerCon
     }
 
     func animatedIn() {
-    }
-}
-
-/// "Connecting…" with Telegram's spinner, in place of the title while the list may be stale (ChatListTitleView).
-final class ChatListTitleView: UIView {
-    private let label = UILabel()
-    private let indicator = ActivityIndicator(type: .custom(.black, 16.0, 1.5, false))
-
-    var text: String = "" {
-        didSet {
-            self.label.text = self.text
-            self.setNeedsLayout()
-        }
-    }
-
-    init() {
-        super.init(frame: CGRect(x: 0.0, y: 0.0, width: 200.0, height: 44.0))
-        self.label.font = Font.semibold(17.0)
-        self.addSubview(self.label)
-        self.addSubview(self.indicator.view)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func update(theme: TauTheme) {
-        self.label.textColor = theme.navigationBar.primaryTextColor
-        self.indicator.type = .custom(theme.navigationBar.secondaryTextColor, 16.0, 1.5, false)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let labelSize = self.label.sizeThatFits(CGSize(width: self.bounds.width - 30.0, height: 30.0))
-        let total = 16.0 + 8.0 + labelSize.width
-        let x = floor((self.bounds.width - total) / 2.0)
-        self.indicator.view.frame = CGRect(x: x, y: floor((self.bounds.height - 16.0) / 2.0), width: 16.0, height: 16.0)
-        self.label.frame = CGRect(x: x + 24.0, y: floor((self.bounds.height - labelSize.height) / 2.0), width: labelSize.width, height: labelSize.height)
     }
 }

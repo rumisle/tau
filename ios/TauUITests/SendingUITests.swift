@@ -323,4 +323,113 @@ final class SendingUITests: XCTestCase {
         sleep(6)
         self.shot("delete-3-online")
     }
+
+    /// The connection's state in the chat's subtitle, as Telegram's: "connecting...", "updating...", then back.
+    func testConnectionTitle() {
+        self.launch([])
+        self.point(0.5, 0.17).tap()
+        sleep(2)
+        self.server("stop")
+        sleep(3)
+        self.shot("conn-0-connecting")
+        self.server("start")
+        sleep(5)
+        self.shot("conn-1-online")
+        self.point(0.1, 0.08).tap()
+        sleep(1)
+        self.server("stop")
+        sleep(3)
+        self.shot("conn-2-list")
+        self.server("start")
+        sleep(5)
+    }
+
+    /// Picking a model from the title menu changes the chat's model: the pill and the picker's checkmark follow.
+    func testPickModel() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("hello")
+        self.send()
+        sleep(4)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Model"].firstMatch.tap()
+        sleep(2)
+        self.point(0.5, 0.176).tap()
+        self.app.typeText("haiku 4.5")
+        sleep(1)
+        self.shot("pick-0-search")
+        self.point(0.5, 0.25).tap()
+        sleep(3)
+        self.shot("pick-1-chosen")
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.shot("pick-2-menu")
+        self.app.descendants(matching: .any)["Model"].firstMatch.tap()
+        sleep(2)
+        self.shot("pick-3-picker")
+    }
+
+    private func pickModel(_ query: String) {
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Model"].firstMatch.tap()
+        sleep(2)
+        self.point(0.5, 0.176).tap()
+        self.app.typeText(query)
+        sleep(1)
+        self.point(0.5, 0.25).tap()
+    }
+
+    /// A model picked in a new chat before its first message is the one the chat is created with.
+    func testDraftModel() {
+        self.launch(["-newChat", "YES"])
+        sleep(1)
+        self.pickModel("haiku 4.5")
+        usleep(600_000)
+        self.shot("draft-0-toast")
+        sleep(2)
+        self.shot("draft-1-pill")
+        self.focusInput()
+        self.type("hi")
+        self.send()
+        sleep(6)
+        self.shot("draft-2-sent")
+    }
+
+    /// The default model is for new chats: an existing chat keeps its own.
+    func testDefaultModelKeepsChats() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("on echo")
+        self.send()
+        sleep(4)
+        self.launch(["-tab", "1"])
+        sleep(1)
+        self.app.descendants(matching: .any)["Default Model"].firstMatch.tap()
+        sleep(2)
+        self.point(0.5, 0.176).tap()
+        self.app.typeText("haiku 4.5")
+        sleep(1)
+        self.point(0.5, 0.25).tap()
+        sleep(2)
+        self.shot("default-0-settings")
+        self.launch([])
+        self.point(0.5, 0.17).tap()
+        sleep(2)
+        self.shot("default-1-existing")
+        self.launch(["-newChat", "YES"])
+        sleep(2)
+        self.shot("default-2-new")
+        // Back to the echo model, which the other tests expect.
+        self.launch(["-tab", "1"])
+        sleep(1)
+        self.app.descendants(matching: .any)["Default Model"].firstMatch.tap()
+        sleep(2)
+        self.point(0.5, 0.176).tap()
+        self.app.typeText("echo")
+        sleep(1)
+        self.point(0.5, 0.25).tap()
+        sleep(2)
+    }
 }

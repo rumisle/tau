@@ -52,8 +52,12 @@ let package = Package(
         .library(name: "StreamingTextReveal", targets: ["StreamingTextReveal"]),
         .library(name: "TextSelectionNode", targets: ["TextSelectionNode"]),
         .library(name: "TextNodeWithEntities", targets: ["TextNodeWithEntities"]),
+        .library(name: "ManagedAnimationNode", targets: ["ManagedAnimationNode"]),
+        .library(name: "RadialStatusNode", targets: ["RadialStatusNode"]),
         .library(name: "Lottie", targets: ["Lottie"]),
         .library(name: "AnimationUI", targets: ["AnimationUI"]),
+        .library(name: "AnimatedTextComponent", targets: ["AnimatedTextComponent"]),
+        .library(name: "UndoUI", targets: ["UndoUI"]),
         .library(name: "PlainButtonComponent", targets: ["PlainButtonComponent"]),
         .library(name: "MultilineTextWithEntitiesComponent", targets: ["MultilineTextWithEntitiesComponent"]),
         .library(name: "TabSelectorComponent", targets: ["TabSelectorComponent"]),
@@ -67,10 +71,8 @@ let package = Package(
         .library(name: "LegacyImpl", targets: ["LegacyImpl"]),
         .library(name: "Svg", targets: ["Svg"]),
         .library(name: "ChatTitleActivityNode", targets: ["ChatTitleActivityNode"]),
-        .library(name: "AnimatedTextComponent", targets: ["AnimatedTextComponent"]),
         .library(name: "AnimatedCountLabelNode", targets: ["AnimatedCountLabelNode"]),
         .library(name: "DirectionalPanGesture", targets: ["DirectionalPanGesture"]),
-        .library(name: "ManagedAnimationNode", targets: ["ManagedAnimationNode"]),
         .library(name: "SemanticStatusNode", targets: ["SemanticStatusNode"]),
         .library(name: "MoreButtonNode", targets: ["MoreButtonNode"]),
         .library(name: "ShimmerEffect", targets: ["ShimmerEffect"]),
@@ -79,7 +81,6 @@ let package = Package(
         .library(name: "MosaicLayout", targets: ["MosaicLayout"]),
         .library(name: "SolidRoundedButtonNode", targets: ["SolidRoundedButtonNode"]),
         .library(name: "SparseItemGrid", targets: ["SparseItemGrid"]),
-        .library(name: "RadialStatusNode", targets: ["RadialStatusNode"]),
         .library(name: "MediaAssetsContext", targets: ["MediaAssetsContext"]),
         .library(name: "GlassBarButtonComponent", targets: ["GlassBarButtonComponent"]),
         .library(name: "GlassControls", targets: ["GlassControls"]),
@@ -93,6 +94,7 @@ let package = Package(
         .library(name: "libprisma", targets: ["libprisma"]),
         .library(name: "ContextMenuScreen", targets: ["ContextMenuScreen"]),
         .library(name: "SearchUI", targets: ["SearchUI"]),
+        .library(name: "ChatListTitleView", targets: ["ChatListTitleView"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -107,7 +109,6 @@ let package = Package(
         .library(name: "EntityKeyboard", targets: ["EntityKeyboard"]),
         .library(name: "ReactionSelectionNode", targets: ["ReactionSelectionNode"]),
         .library(name: "TopMessageReactions", targets: ["TopMessageReactions"]),
-        .library(name: "UndoUI", targets: ["UndoUI"]),
         .library(name: "TextFormat", targets: ["TextFormat"]),
         .library(name: "AttachmentTextInputPanelNode", targets: ["AttachmentTextInputPanelNode"]),
         .library(name: "ChatPresentationInterfaceState", targets: ["ChatPresentationInterfaceState"]),
@@ -1342,6 +1343,31 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "ManagedAnimationNode",
+            dependencies: ["AppBundle", "AsyncDisplayKit", "Display", "GZip", "LottieBinding", "LottieSettings", "SwiftSignalKit", "TelegramCore"],
+            path: "submodules/ManagedAnimationNode",
+            sources: [
+                "Sources/ManagedAnimationNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "RadialStatusNode",
+            dependencies: ["AsyncDisplayKit", "Display", "LegacyComponents", "LottieSettings", "ManagedAnimationNode", "SwiftSignalKit"],
+            path: "submodules/RadialStatusNode",
+            sources: [
+                "Sources/RadialCheckContentNode.swift",
+                "Sources/RadialCloudProgressContentNode.swift",
+                "Sources/RadialDownloadContentNode.swift",
+                "Sources/RadialProgressContentNode.swift",
+                "Sources/RadialStatusContentNode.swift",
+                "Sources/RadialStatusIconContentNode.swift",
+                "Sources/RadialStatusNode.swift",
+                "Sources/RadialStatusSecretTimeoutContentNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "Lottie",
             dependencies: ["Display"],
             path: "submodules/lottie-ios",
@@ -1540,6 +1566,25 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "AnimatedTextComponent",
+            dependencies: ["BundleIconComponent", "ComponentFlow", "Display", "MultilineTextComponent", "SwiftSignalKit", "TelegramPresentationData"],
+            path: "submodules/TelegramUI/Components/AnimatedTextComponent",
+            sources: [
+                "Sources/AnimatedTextComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "UndoUI",
+            dependencies: ["AccountContext", "AnimatedStickerNode", "AnimatedTextComponent", "AnimationUI", "AppBundle", "AsyncDisplayKit", "AvatarNode", "BundleIconComponent", "ComponentDisplayAdapters", "ComponentFlow", "Display", "EmojiStatusComponent", "LottieSettings", "Markdown", "PhotoResources", "RadialStatusNode", "SwiftSignalKit", "TelegramAnimatedStickerNode", "TelegramCore", "TelegramPresentationData", "TextFormat", "TextNodeWithEntities"],
+            path: "submodules/UndoUI",
+            sources: [
+                "Sources/UndoOverlayController.swift",
+                "Sources/UndoOverlayControllerNode.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "PlainButtonComponent",
             dependencies: ["ComponentFlow", "Display"],
             path: "submodules/TelegramUI/Components/PlainButtonComponent",
@@ -1687,15 +1732,6 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
-            name: "AnimatedTextComponent",
-            dependencies: ["BundleIconComponent", "ComponentFlow", "Display", "MultilineTextComponent", "SwiftSignalKit", "TelegramPresentationData"],
-            path: "submodules/TelegramUI/Components/AnimatedTextComponent",
-            sources: [
-                "Sources/AnimatedTextComponent.swift",
-            ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        .target(
             name: "AnimatedCountLabelNode",
             dependencies: ["AsyncDisplayKit", "Display"],
             path: "submodules/AnimatedCountLabelNode",
@@ -1710,15 +1746,6 @@ let package = Package(
             path: "submodules/DirectionalPanGesture",
             sources: [
                 "Sources/DirectionalPanGestureRecognizer.swift",
-            ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        .target(
-            name: "ManagedAnimationNode",
-            dependencies: ["AppBundle", "AsyncDisplayKit", "Display", "GZip", "LottieBinding", "LottieSettings", "SwiftSignalKit", "TelegramCore"],
-            path: "submodules/ManagedAnimationNode",
-            sources: [
-                "Sources/ManagedAnimationNode.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
@@ -1801,22 +1828,6 @@ let package = Package(
                 "Sources/SparseDiscreteScrollingArea.swift",
                 "Sources/SparseItemGrid.swift",
                 "Sources/SparseItemGridScrollingArea.swift",
-            ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        .target(
-            name: "RadialStatusNode",
-            dependencies: ["AsyncDisplayKit", "Display", "LegacyComponents", "LottieSettings", "ManagedAnimationNode", "SwiftSignalKit"],
-            path: "submodules/RadialStatusNode",
-            sources: [
-                "Sources/RadialCheckContentNode.swift",
-                "Sources/RadialCloudProgressContentNode.swift",
-                "Sources/RadialDownloadContentNode.swift",
-                "Sources/RadialProgressContentNode.swift",
-                "Sources/RadialStatusContentNode.swift",
-                "Sources/RadialStatusIconContentNode.swift",
-                "Sources/RadialStatusNode.swift",
-                "Sources/RadialStatusSecretTimeoutContentNode.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
@@ -1980,6 +1991,17 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "ChatListTitleView",
+            dependencies: ["AccountContext", "ActivityIndicator", "AnimationCache", "AppBundle", "AsyncDisplayKit", "ComponentDisplayAdapters", "ComponentFlow", "Display", "EmojiStatusComponent", "MultiAnimationRenderer", "SwiftSignalKit", "TelegramCore", "TelegramPresentationData"],
+            path: "submodules/TelegramUI/Components/ChatListTitleView",
+            sources: [
+                "Sources/ChatListTitleLockView.swift",
+                "Sources/ChatListTitleProxyNode.swift",
+                "Sources/ChatListTitleView.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "TelegramCore",
             dependencies: ["Postbox", "SwiftSignalKit"],
             path: "tau-shims/TelegramCore",
@@ -2075,13 +2097,6 @@ let package = Package(
             dependencies: ["TelegramCore", "AccountContext", "ReactionSelectionNode"],
             path: "tau-shims/TopMessageReactions",
             sources: ["TopMessageReactions.swift"],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        .target(
-            name: "UndoUI",
-            dependencies: ["Display", "AsyncDisplayKit", "TelegramCore", "AccountContext", "TelegramPresentationData"],
-            path: "tau-shims/UndoUI",
-            sources: ["UndoUI.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(

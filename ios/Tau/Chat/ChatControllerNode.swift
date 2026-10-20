@@ -1,6 +1,7 @@
 import UIKit
 import AsyncDisplayKit
 import Display
+import UndoUI
 import SwiftSignalKit
 import MergeLists
 import ComponentFlow
@@ -54,7 +55,6 @@ final class ChatControllerNode: ASDisplayNode {
     private let downButtonContainer = GlassBackgroundContainerView()
     private var isAtBottom = true
     private var unseenCount = 0
-    private let toastView = ToastView()
     private let isPreview: Bool
 
     private var state: ConversationState?
@@ -147,7 +147,6 @@ final class ChatControllerNode: ASDisplayNode {
             self?.selectionAction?(action)
         }
         self.view.addSubview(self.selectionPanel)
-        self.view.addSubview(self.toastView)
     }
 
     func updateTheme(_ theme: TauTheme) {
@@ -157,7 +156,6 @@ final class ChatControllerNode: ASDisplayNode {
         self.downButton?.updateTheme(theme: theme.presentationTheme, preferClearGlass: false)
         self.inputPanelNode.updateTheme(theme)
         self.selectionPanel.update(theme: theme)
-        self.toastView.update(theme: theme)
         self.reloadItems()
         self.relayout(.immediate)
     }
@@ -168,10 +166,11 @@ final class ChatControllerNode: ASDisplayNode {
         }
     }
 
-    func showToast(_ text: String) {
-        self.toastView.show(text)
-        self.relayout(.immediate)
-    }
+    /// Telegram's toast (UndoOverlayController), which ChatController presents above the input panel.
+    var presentToast: ((UndoOverlayContent) -> Void)?
+
+    /// How far from the bottom the input panel's top is: what overlays presented over the chat keep clear of.
+    private(set) var inputPanelInset: CGFloat = 0.0
 
     // MARK: - Selection
 
@@ -317,7 +316,10 @@ final class ChatControllerNode: ASDisplayNode {
                 return self?.view
             }
             self.interaction.copied = { [weak self] _ in
-                self?.showToast("Text copied to clipboard")
+                guard let self else {
+                    return
+                }
+                self.presentToast?(.copy(text: self.theme.presentationStrings.Conversation_TextCopied))
             }
         }
     }
@@ -476,8 +478,7 @@ final class ChatControllerNode: ASDisplayNode {
                 downButton.bounds = CGRect(origin: CGPoint(), size: buttonSize)
             }
 
-            let toastSize = self.toastView.sizeThatFits(CGSize(width: size.width - 80.0, height: 44.0))
-            self.toastView.frame = CGRect(x: floor((size.width - toastSize.width) / 2.0), y: panelFrame.minY - toastSize.height - 12.0, width: toastSize.width, height: toastSize.height)
+            self.inputPanelInset = size.height - panelFrame.minY
 
             let edgeEffectHeight = size.height - panelFrame.minY + 16.0
             let edgeEffectFrame = CGRect(origin: CGPoint(x: 0.0, y: size.height - edgeEffectHeight), size: CGSize(width: size.width, height: edgeEffectHeight))
@@ -662,61 +663,5 @@ private final class SelectionGlassButtonView: UIView {
         transition.setFrame(view: self.button, frame: CGRect(origin: CGPoint(), size: size))
         transition.setFrame(view: self.backgroundView, frame: CGRect(origin: CGPoint(), size: size))
         self.backgroundView.update(size: size, cornerRadius: size.height * 0.5, isDark: theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, transition: transition)
-    }
-}
-
-/// A short glass notice above the input panel, like Telegram's tooltips.
-private final class ToastView: UIView {
-    private let backgroundView = GlassBackgroundView()
-    private let label = UILabel()
-    private var hideWork: DispatchWorkItem?
-    private var isDark = false
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        self.alpha = 0.0
-        self.isUserInteractionEnabled = false
-        self.addSubview(self.backgroundView)
-        self.backgroundView.contentView.addSubview(self.label)
-        self.label.font = Font.medium(15.0)
-        self.label.textAlignment = .center
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func update(theme: TauTheme) {
-        self.label.textColor = theme.chat.inputTextColor
-        self.isDark = theme.overallDarkAppearance
-    }
-
-    override func sizeThatFits(_ size: CGSize) -> CGSize {
-        let text = self.label.sizeThatFits(size)
-        return CGSize(width: min(size.width, ceil(text.width) + 32.0), height: 40.0)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        self.backgroundView.frame = self.bounds
-        self.backgroundView.update(size: self.bounds.size, cornerRadius: self.bounds.height / 2.0, isDark: self.isDark, tintColor: .init(kind: .panel), isInteractive: false, transition: .immediate)
-        self.label.frame = self.bounds
-    }
-
-    func show(_ text: String) {
-        self.label.text = text
-        self.setNeedsLayout()
-        self.hideWork?.cancel()
-        UIView.animate(withDuration: 0.25) {
-            self.alpha = 1.0
-        }
-        self.layer.animateScale(from: 0.8, to: 1.0, duration: 0.35, timingFunction: kCAMediaTimingFunctionSpring)
-        let work = DispatchWorkItem { [weak self] in
-            UIView.animate(withDuration: 0.25) {
-                self?.alpha = 0.0
-            }
-        }
-        self.hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: work)
     }
 }

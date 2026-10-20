@@ -60,6 +60,8 @@ ROOTS = [
     "//submodules/TextSelectionNode",
     "//submodules/SearchBarNode",
     "//submodules/SearchUI",
+    "//submodules/TelegramUI/Components/ChatListTitleView",
+    "//submodules/UndoUI",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
@@ -78,7 +80,6 @@ SHIMS = {
     "EntityKeyboard": ["Display", "ComponentFlow", "TelegramCore", "AccountContext", "AnimationCache", "MultiAnimationRenderer"],
     "ReactionSelectionNode": ["AsyncDisplayKit", "Display", "TelegramCore", "AccountContext", "AnimationCache", "MultiAnimationRenderer", "EntityKeyboard", "SwiftSignalKit", "TelegramPresentationData"],
     "TopMessageReactions": ["TelegramCore", "AccountContext", "ReactionSelectionNode"],
-    "UndoUI": ["Display", "AsyncDisplayKit", "TelegramCore", "AccountContext", "TelegramPresentationData"],
     "TextFormat": ["TelegramCore"],
     "AttachmentTextInputPanelNode": ["Display", "AsyncDisplayKit", "ComponentFlow", "TelegramCore", "TelegramPresentationData", "AccountContext", "ChatPresentationInterfaceState", "GlassBackgroundComponent", "AppBundle"],
     "ChatPresentationInterfaceState": ["Display", "TelegramCore", "TelegramPresentationData", "TelegramUIPreferences", "AccountContext"],
@@ -165,6 +166,32 @@ OVERRIDES = {
             "//submodules/Components/MultilineTextComponent",
             "//submodules/TelegramUI/Components/EdgeEffect",
             "//submodules/TelegramUI/Components/GlassBackgroundComponent",
+        ],
+    },
+    # The toasts that need no account (patch 0010): no stickers, dice, peers or custom emoji.
+    "UndoUI": {
+        "deps": [
+            "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
+            "//submodules/LottieSettings:LottieSettings",
+            "//submodules/AsyncDisplayKit:AsyncDisplayKit",
+            "//submodules/Display:Display",
+            "//submodules/TelegramCore:TelegramCore",
+            "//submodules/TelegramPresentationData:TelegramPresentationData",
+            "//submodules/TextFormat:TextFormat",
+            "//submodules/Markdown:Markdown",
+            "//submodules/RadialStatusNode:RadialStatusNode",
+            "//submodules/AnimationUI:AnimationUI",
+            "//submodules/AnimatedStickerNode:AnimatedStickerNode",
+            "//submodules/AppBundle:AppBundle",
+            "//submodules/TelegramAnimatedStickerNode:TelegramAnimatedStickerNode",
+            "//submodules/AvatarNode:AvatarNode",
+            "//submodules/AccountContext:AccountContext",
+            "//submodules/ComponentFlow:ComponentFlow",
+            "//submodules/TelegramUI/Components/EmojiStatusComponent",
+            "//submodules/TelegramUI/Components/TextNodeWithEntities",
+            "//submodules/Components/BundleIconComponent",
+            "//submodules/TelegramUI/Components/AnimatedTextComponent",
+            "//submodules/Components/ComponentDisplayAdapters",
         ],
     },
     # Loading and coding themes and wallpapers from Telegram's cloud. tau uses the built-in themes.

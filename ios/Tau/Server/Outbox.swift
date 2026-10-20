@@ -72,6 +72,10 @@ struct PendingCreate: Codable, Equatable {
     let requestId: String
     let cwd: String?
     let title: String
+    /// The model and thinking level chosen in the draft before it was sent; nil for the server's defaults.
+    var provider: String?
+    var modelId: String?
+    var thinkingLevel: String?
     var conversationId: Int?
     var attempts: Int = 0
 }
@@ -96,9 +100,11 @@ final class Outbox {
     /// Requests not persisted: an abort, a reset, a compaction, a configure, a withdraw of another device's message.
     private struct Transient {
         let seq: Int
-        let conversationId: Int
+        /// Nil while it waits for its conversation to be created.
+        var conversationId: Int?
+        var createRequestId: String? = nil
         let method: String
-        let params: JSONObject
+        var params: JSONObject
         /// Repeat after a lost connection; false for what must not happen twice (a compaction).
         let repeatable: Bool
         /// Dropped if still not sent by then: a Stop that waited out a long disconnection would stop a later run.
@@ -108,6 +114,8 @@ final class Outbox {
     private var transients: [Transient] = []
     /// Keys with a request in flight: `c<id>` per conversation, `create` for creates.
     private var inFlight: Set<String> = []
+    /// The create on the wire, which can no longer take changes.
+    private var sendingCreate: String?
     /// Keys waiting out a backoff after an `internal` error.
     private var backoff: Set<String> = []
     private var attachmentsByRequest: [String: [MessageAttachment]] = [:]
@@ -299,11 +307,11 @@ final class Outbox {
     }
 
     /// A draft conversation to create; its messages wait for it.
-    func enqueueCreate(requestId: String, cwd: String?, title: String) {
+    func enqueueCreate(requestId: String, cwd: String?, title: String, agent: AgentSettings?) {
         guard self.create(requestId) == nil else {
             return
         }
-        self.creates.append(PendingCreate(requestId: requestId, cwd: cwd, title: title))
+        self.creates.append(PendingCreate(requestId: requestId, cwd: cwd, title: title, provider: agent?.provider, modelId: agent?.modelId, thinkingLevel: agent?.thinkingLevel))
         self.save()
         self.pump()
     }
@@ -418,6 +426,27 @@ final class Outbox {
         params["conversationId"] = conversationId
         self.transients.append(Transient(seq: self.takeSeq(), conversationId: conversationId, method: method, params: params, repeatable: repeatable, completion: completion))
         self.pump()
+    }
+
+    /// A request for a conversation whose create is still on its way: sent once it exists, in order with its messages.
+    func enqueueRequest(_ method: String, createRequestId: String, params: JSONObject, repeatable: Bool, completion: ((Result<JSONObject, RequestError>) -> Void)? = nil) {
+        self.transients.append(Transient(seq: self.takeSeq(), conversationId: nil, createRequestId: createRequestId, method: method, params: params, repeatable: repeatable, completion: completion))
+    }
+
+    /// Changes the agent a create asks for, while it has not gone out. False once it has: configure it instead.
+    func configureCreate(_ requestId: String, provider: String?, modelId: String?, thinkingLevel: String?) -> Bool {
+        guard self.sendingCreate != requestId, let index = self.creates.firstIndex(where: { $0.requestId == requestId && $0.conversationId == nil }) else {
+            return false
+        }
+        if let provider, let modelId {
+            self.creates[index].provider = provider
+            self.creates[index].modelId = modelId
+        }
+        if let thinkingLevel {
+            self.creates[index].thinkingLevel = thinkingLevel
+        }
+        self.save()
+        return true
     }
 
     private func remove(at index: Int) {
@@ -625,7 +654,7 @@ final class Outbox {
     /// Start the next operation of every conversation that has none in flight.
     func pump() {
         var conversations = Set(self.items.compactMap(\.conversationId))
-        conversations.formUnion(self.transients.map(\.conversationId))
+        conversations.formUnion(self.transients.compactMap(\.conversationId))
         for conversationId in conversations {
             self.pump(conversationId: conversationId)
         }
@@ -900,15 +929,27 @@ final class Outbox {
             return
         }
         var params: JSONObject = ["requestId": create.requestId, "title": create.title, "autoTitle": true]
+        var agent: JSONObject = [:]
         if let cwd = create.cwd {
-            params["agent"] = ["cwd": cwd]
+            agent["cwd"] = cwd
+        }
+        if let provider = create.provider, let modelId = create.modelId {
+            agent["model"] = ["provider": provider, "modelId": modelId]
+        }
+        if let thinkingLevel = create.thinkingLevel, thinkingLevel != "off" {
+            agent["thinkingLevel"] = thinkingLevel
+        }
+        if !agent.isEmpty {
+            params["agent"] = agent
         }
         self.inFlight.insert(key)
+        self.sendingCreate = create.requestId
         self.connection.request("conversation.create", params) { [weak self] result in
             guard let self else {
                 return
             }
             self.inFlight.remove(key)
+            self.sendingCreate = nil
             self.handleCreate(create.requestId, result: result)
             self.pump()
         }
@@ -930,6 +971,10 @@ final class Outbox {
             for itemIndex in self.items.indices where self.items[itemIndex].conversationId == nil && self.items[itemIndex].createRequestId == requestId {
                 self.items[itemIndex].conversationId = conversationId
             }
+            for index in self.transients.indices where self.transients[index].createRequestId == requestId {
+                self.transients[index].conversationId = conversationId
+                self.transients[index].params["conversationId"] = conversationId
+            }
             self.save()
             self.created?(create, dialog)
             self.changed?(conversationId)
@@ -947,6 +992,11 @@ final class Outbox {
             self.creates.remove(at: index)
             for itemIndex in self.items.indices where self.items[itemIndex].conversationId == nil && self.items[itemIndex].createRequestId == requestId {
                 self.items[itemIndex].state = .failed(code: error.code, message: error.message)
+            }
+            let waiting = self.transients.filter { $0.createRequestId == requestId && $0.conversationId == nil }
+            self.transients.removeAll { $0.createRequestId == requestId && $0.conversationId == nil }
+            for transient in waiting {
+                transient.completion?(.failure(error))
             }
             self.save()
             self.changed?(nil)

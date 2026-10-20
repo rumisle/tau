@@ -150,14 +150,17 @@ final class SettingsController: SettingsListController {
         let last = SettingsRowPosition(isFirst: false, isLast: true)
         let single = SettingsRowPosition(isFirst: true, isLast: true)
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"
+        let strings = theme.presentationStrings
         let statusText: String
         switch self.status {
         case .online:
             statusText = "online"
         case .updating:
-            statusText = "updating…"
+            statusText = strings.ChatState_Updating
         case .connecting:
-            statusText = "connecting…"
+            statusText = strings.ChatState_Connecting
+        case .waitingForNetwork:
+            statusText = strings.ChatState_WaitingForNetwork
         }
         let isDemo = store is MockStore
         return [
@@ -176,6 +179,7 @@ final class SettingsController: SettingsListController {
                 })
                 (self.navigationController as? NavigationController)?.pushViewController(picker)
             }),
+            SettingsTextItem(theme: theme, text: "New chats use this model. Existing chats keep theirs; change one from its title.", kind: .footer),
             SettingsTextItem(theme: theme, text: "Preferences", kind: .header),
             SettingsRowItem(theme: theme, icon: SettingsIcon.appearance, title: "Appearance", accessory: .disclosure(label: context.themeContext.settings.theme.title), position: first, action: { [weak self] in
                 guard let self else {

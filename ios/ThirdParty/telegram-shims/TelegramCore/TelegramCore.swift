@@ -576,3 +576,14 @@ public struct AppConfiguration {
 
 /// A scheduled message's time that means "when the recipient comes online".
 public let scheduleWhenOnlineTimestamp: Int32 = 0x7ffffffe
+
+/// An account's emoji status, which ChatListTitleView shows beside the title. tau has none.
+public struct PeerEmojiStatus: Equatable {
+    public var fileId: Int64
+    public var color: Int32?
+
+    public init(fileId: Int64, color: Int32? = nil) {
+        self.fileId = fileId
+        self.color = color
+    }
+}

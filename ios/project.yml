@@ -69,6 +69,8 @@ targets:
           - TextSelectionNode
           - SearchUI
           - SearchBarNode
+          - ChatListTitleView
+          - UndoUI
           - libprisma
           - ItemListUI
     settings:

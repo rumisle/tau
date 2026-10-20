@@ -29,7 +29,14 @@ final class ServerStore: TauStore {
         var realId: Int?
         /// Set by the first message: the create request, idempotent, in the outbox.
         var createRequestId: String?
+        /// Chosen before the conversation exists; nil for the server's default model.
+        var agent: AgentSettings?
     }
+    /// Each conversation's model as the chat list reports it, for one whose replica is not loaded yet.
+    private var dialogAgents: [Int: AgentSettings] = [:]
+    /// A model or thinking level just chosen, shown until the conversation's own agent doc says so.
+    private var agentOverrides: [Int: (settings: AgentSettings, token: Int, confirmed: Bool)] = [:]
+    private var nextAgentToken = 0
     private var drafts: [Int: Draft] = [:]
     private var nextDraftId = -1
 
@@ -289,7 +296,10 @@ final class ServerStore: TauStore {
             return nil
         }
         let agent = raw.object("agent") ?? [:]
-        let model = agent.object("model")?.string("modelId") ?? self.defaultModel?.components(separatedBy: "/").last ?? ""
+        if let model = agent.object("model"), let modelId = model.string("modelId") {
+            self.dialogAgents[id] = AgentSettings(provider: model.string("provider"), modelId: modelId, thinkingLevel: agent.string("thinkingLevel"))
+        }
+        let model = agent.object("model")?.string("modelId") ?? ""
         var last: DialogModel.EntrySummary?
         if let summary = raw.object("last"), let entryId = summary.int("id") {
             let role: MessageRole
@@ -381,7 +391,7 @@ final class ServerStore: TauStore {
                 return dialog
             }
             let cwd = draft.cwd ?? self.connection.hello?.defaultCwd ?? "~"
-            let model = self.defaultModel?.components(separatedBy: "/").last ?? ""
+            let model = self.agent(id).modelId ?? ""
             return DialogModel(id: id, title: "New chat", cwd: cwd, model: model, last: nil, busy: false)
         }
         return self.dialogs[id]
@@ -431,10 +441,14 @@ final class ServerStore: TauStore {
             // A draft: its messages wait for the conversation to be created.
             let items = self.drafts[id]?.createRequestId.map { self.outbox.items(forCreate: $0) } ?? []
             let rows = items.map { TranscriptBuilder.row(for: $0, outbox: self.outbox) }
-            return ConversationState(messages: rows, streaming: nil, busy: false)
+            var state = ConversationState(messages: rows, streaming: nil, busy: false)
+            state.agent = self.agent(id)
+            return state
         }
         let replica = self.replica(realId)
-        return TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], images: self.images)
+        var state = TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], images: self.images)
+        state.agent = self.agent(realId)
+        return state
     }
 
     private func replica(_ id: Int) -> ConversationReplica {
@@ -584,7 +598,7 @@ final class ServerStore: TauStore {
                 self.drafts[id] = draft
                 // The first message stands in as the title until the server names the conversation after the first
                 // answer.
-                self.outbox.enqueueCreate(requestId: createRequestId, cwd: draft.cwd, title: String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)))
+                self.outbox.enqueueCreate(requestId: createRequestId, cwd: draft.cwd, title: String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)), agent: draft.agent)
             }
             self.outbox.enqueue(text: text, attachments: attachments, conversationId: nil, createRequestId: createRequestId, mode: outboxMode, showsInQueue: false)
             self.statePromises[id]?.set(self.state(for: id))
@@ -846,13 +860,30 @@ final class ServerStore: TauStore {
         }
     }
 
+    /// A conversation's model: the one chosen just now, else its agent doc, else what the chat list said. A draft
+    /// has the one chosen in it or the server's default, which the server fixes in the conversation when it creates
+    /// it: changing the default later moves no existing conversation.
     func agent(_ id: Int) -> AgentSettings {
-        guard let realId = self.resolve(id), let agent = self.replicas[realId]?.docs.object("pi.agent") else {
-            let fallback = self.defaultModel?.split(separator: "/").map(String.init) ?? []
-            return AgentSettings(provider: fallback.first, modelId: fallback.last, thinkingLevel: nil)
+        let fallback = self.defaultModel?.split(separator: "/", maxSplits: 1).map(String.init) ?? []
+        let defaultAgent = AgentSettings(provider: fallback.first, modelId: fallback.count > 1 ? fallback[1] : nil, thinkingLevel: nil)
+        if id < 0, let draft = self.drafts[id], draft.realId == nil {
+            return draft.agent ?? defaultAgent
         }
-        let model = agent.object("model")
-        return AgentSettings(provider: model?.string("provider"), modelId: model?.string("modelId"), thinkingLevel: agent.string("thinkingLevel"))
+        guard let realId = self.resolve(id) else {
+            return defaultAgent
+        }
+        var stored: AgentSettings?
+        if let agent = self.replicas[realId]?.docs.object("pi.agent"), let model = agent.object("model") {
+            stored = AgentSettings(provider: model.string("provider"), modelId: model.string("modelId"), thinkingLevel: agent.string("thinkingLevel"))
+        }
+        if let override = self.agentOverrides[realId] {
+            if override.confirmed && stored == override.settings {
+                self.agentOverrides[realId] = nil
+            } else {
+                return override.settings
+            }
+        }
+        return stored ?? self.dialogAgents[realId] ?? defaultAgent
     }
 
     func usage(_ id: Int) -> ConversationUsage {
@@ -890,18 +921,56 @@ final class ServerStore: TauStore {
     }
 
     func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?) {
-        guard let realId = self.resolve(id) else {
-            return
-        }
+        var next = self.agent(id)
         var patch: JSONObject = [:]
         if let model {
+            next.provider = model.provider
+            next.modelId = model.id
             patch["model"] = ["provider": model.provider, "modelId": model.id]
         }
         if let thinkingLevel {
+            next.thinkingLevel = thinkingLevel == "off" ? nil : thinkingLevel
             patch["thinkingLevel"] = thinkingLevel == "off" ? NSNull() : thinkingLevel
         }
+        if id < 0, var draft = self.drafts[id], draft.realId == nil {
+            // Not created yet: the create asks for it, or, if it is already on its way, a configure follows it.
+            draft.agent = next
+            self.drafts[id] = draft
+            if let create = draft.createRequestId, !self.outbox.configureCreate(create, provider: model?.provider, modelId: model?.id, thinkingLevel: thinkingLevel) {
+                self.outbox.enqueueRequest("conversation.configure", createRequestId: create, params: ["agent": patch], repeatable: true)
+            }
+            self.statePromises[id]?.set(self.state(for: id))
+            return
+        }
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        // Shown at once, as Telegram applies a setting before the server confirms it.
+        self.nextAgentToken += 1
+        let token = self.nextAgentToken
+        self.agentOverrides[realId] = (next, token, false)
         // In order with the messages around it: a model chosen before a message is the one that answers it.
-        self.outbox.enqueueRequest("conversation.configure", conversationId: realId, params: ["agent": patch], repeatable: true)
+        self.outbox.enqueueRequest("conversation.configure", conversationId: realId, params: ["agent": patch], repeatable: true) { [weak self] result in
+            guard let self, self.agentOverrides[realId]?.token == token else {
+                return
+            }
+            switch result {
+            case .success:
+                // The agent doc's change may come after the answer; until then the choice stands.
+                self.agentOverrides[realId]?.confirmed = true
+                Queue.mainQueue().after(5.0) { [weak self] in
+                    if let self, self.agentOverrides[realId]?.token == token {
+                        self.agentOverrides[realId] = nil
+                        self.publish(realId)
+                    }
+                }
+            case let .failure(error):
+                self.agentOverrides[realId] = nil
+                self.emit(realId, .notice("The model could not be changed: \(error.message)"))
+            }
+            self.publish(realId)
+        }
+        self.publish(realId)
     }
 
     func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError> {

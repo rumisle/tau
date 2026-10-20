@@ -21,12 +21,13 @@ public final class EmojiStatusComponent: Component {
 
     public enum Content: Equatable {
         case none
+        case premium(color: UIColor)
         case animation(content: AnimationContent, size: CGSize, placeholderColor: UIColor, themeColor: UIColor?, loopMode: LoopMode)
     }
 
     public let content: Content
 
-    public init(context: AccountContext, animationCache: AnimationCache, animationRenderer: MultiAnimationRenderer, content: Content, isVisibleForAnimations: Bool, useSharedAnimation: Bool = false, action: (() -> Void)?, emojiFileUpdated: ((TelegramMediaFile?) -> Void)? = nil) {
+    public init(context: AccountContext, animationCache: AnimationCache, animationRenderer: MultiAnimationRenderer, content: Content, particleColor: UIColor? = nil, isVisibleForAnimations: Bool, useSharedAnimation: Bool = false, action: (() -> Void)?, emojiFileUpdated: ((TelegramMediaFile?) -> Void)? = nil) {
         self.content = content
     }
 

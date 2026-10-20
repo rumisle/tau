@@ -1,8 +1,11 @@
 import Foundation
+import Network
 import SwiftSignalKit
 
 /// What the chat list title shows, as Telegram's "Connecting..." / "Updating...".
 enum ConnectionStatus: Equatable {
+    /// The device has no network path: Telegram's "Waiting for network".
+    case waitingForNetwork
     case connecting
     case updating
     case online
@@ -59,6 +62,10 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     var status: Signal<ConnectionStatus, NoError> {
         return self.statusPromise.get()
     }
+    /// What the socket is doing; `status` adds whether the device has a network at all.
+    private var socketStatus: ConnectionStatus = .connecting
+    private let pathMonitor = NWPathMonitor()
+    private var hasNetwork = true
 
     /// Pushes, on the main queue.
     var onPush: ((JSONObject) -> Void)?
@@ -73,17 +80,45 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     }
 
     func start() {
+        self.pathMonitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            Queue.mainQueue().async {
+                self?.networkChanged(satisfied)
+            }
+        }
+        self.pathMonitor.start(queue: .global(qos: .utility))
         self.connect()
+    }
+
+    /// A network that comes back is tried at once, not after the backoff, as Telegram does.
+    private func networkChanged(_ satisfied: Bool) {
+        let regained = satisfied && !self.hasNetwork
+        self.hasNetwork = satisfied
+        self.publishStatus()
+        if regained && !self.isReady && !self.isClosed {
+            self.retryDelay = 0.5
+            self.reconnect(generation: self.generation, delay: 0.0)
+        }
+    }
+
+    private func publishStatus() {
+        if self.socketStatus == .connecting && !self.hasNetwork {
+            self.statusPromise.set(.waitingForNetwork)
+        } else {
+            self.statusPromise.set(self.socketStatus)
+        }
     }
 
     func close() {
         self.isClosed = true
+        self.pathMonitor.cancel()
         self.task?.cancel(with: .goingAway, reason: nil)
         self.failPending()
     }
 
     func setStatus(_ status: ConnectionStatus) {
-        self.statusPromise.set(status)
+        self.socketStatus = status
+        self.publishStatus()
     }
 
     private func connect() {
@@ -100,7 +135,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         // Long tool outputs and history pages exceed the 1 MB default.
         task.maximumMessageSize = 64 * 1024 * 1024
         self.task = task
-        self.statusPromise.set(.connecting)
+        self.setStatus(.connecting)
         task.resume()
         self.receive(task: task, generation: generation)
         self.send(method: "hello", params: ["protocol": 1], on: task) { [weak self] result in
@@ -167,7 +202,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    private func reconnect(generation: Int) {
+    private func reconnect(generation: Int, delay: Double? = nil) {
         guard generation == self.generation, !self.isClosed else {
             return
         }
@@ -179,8 +214,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         self.task = nil
         self.hello = nil
         self.failPending()
-        self.statusPromise.set(.connecting)
-        let delay = self.retryDelay
+        self.setStatus(.connecting)
+        let delay = delay ?? self.retryDelay
         self.retryDelay = min(8.0, self.retryDelay * 2.0)
         let next = self.generation
         Queue.mainQueue().after(delay) { [weak self] in
