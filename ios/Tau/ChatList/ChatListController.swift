@@ -501,7 +501,6 @@ final class ComposeButtonNode: ASDisplayNode {
     override init() {
         super.init()
         self.iconNode.displaysAsynchronously = false
-        self.iconNode.image = UIImage(systemName: "square.and.pencil")?.withRenderingMode(.alwaysTemplate)
         self.addSubnode(self.iconNode)
     }
 
@@ -526,7 +525,8 @@ final class ComposeButtonNode: ASDisplayNode {
     }
 
     func update(color: UIColor) {
-        self.iconNode.image = generateTintedImage(image: UIImage(systemName: "square.and.pencil", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17.0, weight: .regular)), color: color)
+        // Telegram's own compose glyph, drawn to sit centered in the button.
+        self.iconNode.image = generateTintedImage(image: UIImage(bundleImageName: "Chat List/ComposeIcon"), color: color)
         self.setNeedsLayout()
     }
 

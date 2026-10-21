@@ -1,5 +1,5 @@
 // A free scripted model for development: streams an echo of each message, runs `$ <command>` through bash, and starts
-// a background subagent for `& <name>: <task>`.
+// a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, and waits before answering `~<seconds> <text>`.
 import type { Message } from "@earendil-works/pi-ai";
 import {
 	type FauxProviderHandle,
@@ -20,8 +20,12 @@ export function devProvider(options: { tokensPerSecond?: number } = {}): FauxPro
 		tokensPerSecond: options.tokensPerSecond ?? 80,
 	});
 	// Faux responses are consumed one per request; this one queues itself again so the model never runs dry.
-	const respond: FauxResponseFactory = (context) => {
+	const respond: FauxResponseFactory = async (context) => {
 		faux.appendResponses([respond]);
+		// `~<seconds> ` first: a model slow to start answering.
+		const last = context.messages.findLast((message) => (message.role as string) !== "system");
+		const wait = last?.role === "user" ? /^~(\d+(?:\.\d+)?) /.exec(userText(last.content)) : null;
+		if (wait !== null) await new Promise((resolve) => setTimeout(resolve, Number(wait[1]) * 1000));
 		return reply(context.messages);
 	};
 	faux.setResponses([respond]);
@@ -39,9 +43,15 @@ function reply(messages: readonly Message[]) {
 	if (text.startsWith("$ ")) {
 		return fauxAssistantMessage([fauxToolCall("bash", { command: text.slice(2) })], { stopReason: "toolUse" });
 	}
-	const subagent = /^& ([\w-]+): ([\s\S]+)$/.exec(text);
+	// `& name fork model=dev/echo thinking=high: task`, each option optional.
+	const subagent = /^& ([\w-]+)((?: [\w=./-]+)*): ([\s\S]+)$/.exec(text);
 	if (subagent !== null) {
-		return fauxAssistantMessage([fauxToolCall("subagent", { action: "spawn", name: subagent[1]!, message: subagent[2]! })], { stopReason: "toolUse" });
+		const options: Record<string, unknown> = {};
+		for (const option of subagent[2]!.trim().split(" ").filter((each) => each !== "")) {
+			const [key, value] = option.split("=");
+			options[key!] = value ?? true;
+		}
+		return fauxAssistantMessage([fauxToolCall("subagent", { action: "spawn", name: subagent[1]!, message: subagent[3]!, ...options })], { stopReason: "toolUse" });
 	}
 	const turns = messages.filter((message) => message.role === "user").length;
 	return fauxAssistantMessage([

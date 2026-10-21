@@ -187,7 +187,7 @@ final class ChatControllerNode: ASDisplayNode {
     var newChatProjectTapped: (() -> Void)?
     var newChatModelTapped: (() -> Void)?
 
-    private func layoutNewChatCard(size: CGSize, top: CGFloat, bottom: CGFloat) {
+    private func layoutNewChatCard(size: CGSize, top: CGFloat, bottom: CGFloat, transition: ContainedViewLayoutTransition) {
         let isEmpty = (self.state?.messages.isEmpty ?? true) && self.state?.streaming == nil
         guard let content = self.newChatCard, isEmpty, !self.isPreview else {
             if let node = self.newChatCardNode {
@@ -200,9 +200,11 @@ final class ChatControllerNode: ASDisplayNode {
             return
         }
         let node: NewChatCardNode
+        var transition = transition
         if let current = self.newChatCardNode {
             node = current
         } else {
+            transition = .immediate
             node = NewChatCardNode()
             node.projectTapped = { [weak self] in
                 self?.newChatProjectTapped?()
@@ -215,7 +217,8 @@ final class ChatControllerNode: ASDisplayNode {
         }
         let cardSize = node.update(content: content, theme: self.theme, width: size.width)
         // Centered in the area the transcript would fill, as ChatEmptyNode is.
-        node.frame = CGRect(origin: CGPoint(x: floor((size.width - cardSize.width) / 2.0), y: floor(top + (bottom - top - cardSize.height) / 2.0)), size: cardSize)
+        // It moves with the keyboard, on the keyboard's own curve, as ChatEmptyNode does.
+        transition.updateFrame(node: node, frame: CGRect(origin: CGPoint(x: floor((size.width - cardSize.width) / 2.0), y: floor(top + (bottom - top - cardSize.height) / 2.0)), size: cardSize))
     }
 
     /// Telegram's toast (UndoOverlayController), which ChatController presents above the input panel.
@@ -277,6 +280,10 @@ final class ChatControllerNode: ASDisplayNode {
             streaming.isStreaming = true
             messages.append(streaming)
         }
+        if ChatControllerNode.isWaiting(state: state, messages: messages) {
+            // Working with nothing to show yet: the τ where the answer will start.
+            messages.append(ChatMessage(id: ChatControllerNode.waitingRowId, role: .assistant, text: "", date: Date(timeIntervalSince1970: 0.0), isStreaming: true, isWaiting: true))
+        }
         var entries = messages.enumerated().map { index, message in
             ChatHistoryEntry(message: message, index: index, isStreaming: message.isStreaming, selection: message.isStreaming ? nil : selectedIds.map { $0.contains(message.id) }, isExpanded: expanded.contains(message.id))
         }
@@ -325,7 +332,7 @@ final class ChatControllerNode: ASDisplayNode {
         } else {
             options.insert(.AnimateInsertion)
             // A message the user just sent scrolls the history to the end.
-            if indicesAndItems.contains(where: { $0.0 == 0 && $0.1.message.role == .user }) {
+            if indicesAndItems.contains(where: { $0.0 <= 1 && $0.1.message.role == .user }) {
                 scrollToItem = ListViewScrollToItem(index: 0, position: .top(0.0), animated: true, curve: .Default(duration: nil), directionHint: .Up)
             }
         }
@@ -334,6 +341,35 @@ final class ChatControllerNode: ASDisplayNode {
             self.contentReady = nil
             contentReady()
         }
+    }
+
+    static let waitingRowId = Int.min / 2
+
+    /// The agent has the message and nothing of its answer is on screen: not writing, no tool card spinning. Also a
+    /// message just sent, before the server has it.
+    private static func isWaiting(state: ConversationState, messages: [ChatMessage]) -> Bool {
+        guard let last = messages.last, !last.isStreaming else {
+            return false
+        }
+        if last.role == .user, last.delivery == .sending {
+            return true
+        }
+        guard state.busy else {
+            return false
+        }
+        if case .failed = last.delivery {
+            return false
+        }
+        // A call still running has its own spinner.
+        for message in messages.reversed() {
+            if message.role == .user {
+                break
+            }
+            if let status = message.tool?.status, status == .preparing || status == .pending || status == .running {
+                return false
+            }
+        }
+        return true
     }
 
     /// Called once, when the first known transcript is laid out.
@@ -547,9 +583,10 @@ final class ChatControllerNode: ASDisplayNode {
 
         // The history runs under the navigation bar and the panel; its insets keep content clear of both. The list is
         // rotated, so its top inset is the visual bottom.
-        self.layoutNewChatCard(size: size, top: navigationHeight, bottom: panelFrame.minY)
+        self.layoutNewChatCard(size: size, top: navigationHeight, bottom: panelFrame.minY, transition: transition)
         let historyInsets = UIEdgeInsets(
-            top: size.height - panelFrame.minY + 6.0,
+            // Room under the last answer, as Telegram leaves under its last message.
+            top: size.height - panelFrame.minY + 16.0,
             left: layout.safeInsets.right,
             bottom: navigationHeight + 6.0,
             right: layout.safeInsets.left

@@ -618,7 +618,7 @@ final class SendingUITests: XCTestCase {
     func testBackgroundSubagent() {
         self.launch(["-newChat", "YES"])
         self.focusInput()
-        self.type("& reader: $ sleep 10 && echo found the bug")
+        self.type("& reader fork thinking=high: $ sleep 10 && echo found the **bug**")
         self.send()
         sleep(4)
         self.shot("sub-0-working")
@@ -669,5 +669,46 @@ final class SendingUITests: XCTestCase {
         self.app.descendants(matching: .any)["Network Usage"].firstMatch.tap()
         sleep(1)
         self.shot("data-2-network")
+    }
+
+    /// The τ while the agent has written nothing yet, then the answer with when it came and how long it took.
+    func testWaitingAndFooter() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("~3 hello **there**")
+        self.send()
+        sleep(1)
+        self.shot("wait-0")
+        sleep(1)
+        self.shot("wait-1")
+        sleep(6)
+        self.shot("wait-2-answer")
+    }
+
+    /// A new chat moved to another server's folder stays the same screen, with what was written; back is the list.
+    func testNewChatNavigation() {
+        self.launch(["-server2.url", "ws://remote.example.ts.net:7878"])
+        sleep(4)
+        self.point(0.9, 0.098).tap()
+        sleep(2)
+        self.focusInput()
+        self.type("carry me")
+        sleep(1)
+        self.shot("nav-0-keyboard")
+        self.app.descendants(matching: .any)["newChatProject"].firstMatch.tap()
+        sleep(2)
+        self.shot("nav-1-picker")
+        // The other server's Browse row (the chat starts on the most recent project, remote here), then its home.
+        self.app.descendants(matching: .any)["my-mac"].firstMatch.tap()
+        sleep(3)
+        self.shot("nav-2-browse")
+        self.app.descendants(matching: .any)["Use This Folder"].firstMatch.tap()
+        sleep(2)
+        self.shot("nav-3-moved")
+        self.point(0.1, 0.08).tap()
+        sleep(2)
+        self.shot("nav-4-back")
+        // The list, not the chat it started as.
+        XCTAssertFalse(self.app.descendants(matching: .any)["newChatProject"].firstMatch.exists)
     }
 }

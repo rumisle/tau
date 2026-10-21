@@ -70,12 +70,92 @@ final class MockStore: TauStore, TauServer {
         self.conversations[longId] = ConversationState(messages: messages, streaming: nil, busy: false)
         self.dialogs[longId] = DialogModel(id: longId, title: "Long conversation", cwd: "~", model: "claude-opus-5-5", last: nil, busy: false)
         self.refreshDialog(longId)
+        // Formulas as models write them, in every place Markdown puts them.
+        let mathId = seeds.count + 2
+        let mathMessages = MockStore.mathAnswers.enumerated().map { index, text in
+            ChatMessage(id: self.mintId(), role: index % 2 == 0 ? .user : .assistant, text: text, date: now.addingTimeInterval(-7_200 + Double(index) * 30))
+        }
+        self.conversations[mathId] = ConversationState(messages: mathMessages, streaming: nil, busy: false)
+        self.dialogs[mathId] = DialogModel(id: mathId, title: "Math stress", cwd: "~", model: "claude-opus-5-5", last: nil, busy: false)
+        self.refreshDialog(mathId)
         // Some unread answers, and one chat in the archive, to show the badges and Archived Chats.
         self.dialogs[2]?.unreadCount = 2
         self.dialogs[3]?.markedUnread = true
         self.dialogs[seeds.count]?.archived = true
         self.publishDialogs()
     }
+
+    static let mathAnswers: [String] = [
+        "Show me some calculus",
+        #"""
+        The Gaussian integral is $\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}$, and the limit $\lim_{x \to 0} \frac{\sin x}{x} = 1$.
+
+        $$
+        \frac{d}{dx}\left( \int_{a}^{x} f(t)\,dt \right) = f(x)
+        $$
+
+        Taylor: \( e^x = \sum_{n=0}^{\infty} \frac{x^n}{n!} \) and display \[ \sin x = x - \frac{x^3}{3!} + \frac{x^5}{5!} - \cdots \]
+        """#,
+        "Linear algebra and probability",
+        #"""
+        1. The normal equations give $\hat{\boldsymbol{\beta}} = (X^\top X)^{-1} X^\top \mathbf{y}$.
+        2. For a matrix $A = \begin{pmatrix} a & b \\ c & d \end{pmatrix}$, $\det A = ad - bc$.
+        3. Bayes: $P(A \mid B) = \dfrac{P(B \mid A)\,P(A)}{P(B)}$
+
+        - Expectation $\mathbb{E}[X] = \sum_x x\,p(x)$, variance $\operatorname{Var}(X) = \mathbb{E}[X^2] - \mathbb{E}[X]^2$
+        - Markov: $\Pr[X \ge t] \le \frac{\mathbb{E}[X]}{t}$ for $t > 0$
+
+        > Note: $\|\mathbf{x}\|_2 = \sqrt{\sum_i x_i^2}$ inside a quote.
+
+        | Quantity | Formula |
+        |---|---|
+        | Mean | $\mu = \frac{1}{n}\sum_i x_i$ |
+        | Std | $\sigma = \sqrt{\frac{1}{n}\sum_i (x_i - \mu)^2}$ |
+        """#,
+        "Piecewise and aligned",
+        #"""
+        $$
+        f(x) = \begin{cases}
+        x^2 & \text{if } x \ge 0 \\
+        -x & \text{otherwise}
+        \end{cases}
+        $$
+
+        $$
+        \begin{align}
+        (a+b)^2 &= a^2 + 2ab + b^2 \\
+        &\le 2(a^2 + b^2)
+        \end{align}
+        $$
+
+        $$\begin{equation} E = mc^2 \tag{1} \end{equation}$$
+
+        $$\operatorname*{arg\,max}_{\theta} \; \mathcal{L}(\theta) \quad\text{and}\quad \underbrace{a + \cdots + a}_{n \text{ times}} = na$$
+
+        $$x \xrightarrow{f} y \implies \overset{?}{=} \quad \boxed{42}$$
+        """#,
+        "Edge cases",
+        #"""
+        Prices like $5 and $10 stay text, as does a lone $ sign. Escaped \$ too.
+
+        Inline at the end of a sentence $a^2+b^2=c^2$. Then $x$, $y$ and $z$ with punctuation.
+
+        Code is untouched: `$not math$` and
+
+        ```python
+        cost = "$" + str(x)  # $y$
+        ```
+
+        A long display formula that must shrink to fit the column:
+
+        $$\sum_{i=1}^{n} \sum_{j=1}^{m} \left( a_{ij} + b_{ij} \right)^2 = \sum_{i=1}^{n} \sum_{j=1}^{m} a_{ij}^2 + 2 \sum_{i,j} a_{ij} b_{ij} + \sum_{i,j} b_{ij}^2$$
+
+        Sets: $\{x \in \mathbb{R} \mid x > 0\}$, $A \subseteq B$, $\emptyset$, $\forall \epsilon > 0\ \exists \delta > 0$.
+        Logic: $p \land q \Rightarrow \neg r$, $\therefore$ done. Not equal $a \not\equiv b \pmod{n}$.
+        Greek $\alpha, \beta, \gamma, \Gamma, \varphi, \omega$ and $45^\circ$.
+        Typed as Unicode: $x ∈ ℝ, a ≤ b, α → β$. Symbols $A \vdash B$, $f \hookrightarrow g$, $a \lesssim b$, $\checkmark$.
+        """#,
+    ]
 
     func dialogsSignal() -> Signal<[DialogModel], NoError> {
         return self.dialogsPromise.get()

@@ -78,6 +78,13 @@ enum MessageRole: Equatable {
     case thinking
 }
 
+/// When a run ended and how long it took, from its first message to its answer.
+struct TurnInfo: Equatable {
+    var finishedAt: Date
+    /// Unknown when the run began before the loaded transcript.
+    var duration: TimeInterval?
+}
+
 /// A tool call and, once it finished, its result: one card in the transcript.
 struct ToolCallInfo: Equatable {
     enum Status: Equatable {
@@ -102,6 +109,32 @@ struct ToolCallInfo: Equatable {
     var childBusy: Bool = false
     /// What the card shows for the coding tools.
     var detail: ToolDetail = .none
+    /// A background subagent's call or answer, which has a card of its own.
+    var subagent: SubagentCall?
+}
+
+/// One step of a background subagent, as its card shows it: the subagent, as the quote Telegram puts over a reply, and
+/// what happened.
+struct SubagentCall: Equatable {
+    enum Kind: Equatable {
+        case spawn
+        case send
+        case stop
+        /// Its answer, posted back to the conversation that started it.
+        case answer
+        case failed
+    }
+
+    var kind: Kind
+    var name: String
+    /// The task, the message sent, or the answer.
+    var text: String
+    /// The task it was started with, which an answer's quote repeats.
+    var task: String?
+    /// Another model than the parent's, as `provider/id`.
+    var model: String?
+    var thinking: String?
+    var fork: Bool = false
 }
 
 /// The coding tools' calls, as their cards show them.
@@ -146,6 +179,10 @@ struct ChatMessage: Equatable {
     var outgoingId: String?
     /// The entry this row comes from, for forking at it.
     var entryId: Int?
+    /// On the last answer of a run: when it ended, and how long it took.
+    var turn: TurnInfo?
+    /// Not a message: the agent is working and has nothing to show yet (ChatWaitingNode).
+    var isWaiting: Bool = false
 
     enum Delivery: Equatable {
         /// Not acknowledged by the server: the clock.

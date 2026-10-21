@@ -429,6 +429,32 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("a subagent can start from a copy of its conversation, at another effort", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Forking parent" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "context", content: "the secret is 42" });
+		await until(replica, () => idle(replica) && kinds(replica).includes("pi.assistant"));
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "fork-spawn", content: "& helper fork thinking=xhigh: what is the secret" });
+		await until(replica, () => idle(replica) && kinds(replica).includes("pi.tool-result"));
+		const result = replica.ordered().findLast((entry) => entry.kind === "pi.tool-result")!;
+		const details = (result.model as { details?: { conversationId: number; fork?: boolean; thinking?: string } }[])[0]!.details!;
+		assert.equal(details.fork, true);
+		// The echo model has no xhigh: the nearest level it has.
+		assert.equal(details.thinking, "high");
+		const child = new ConversationReplica(details.conversationId);
+		await child.sync(client);
+		await until(child, () => idle(child) && JSON.stringify(child.ordered()).includes("what is the secret"));
+		// The copy holds the conversation up to the request, and not the call itself.
+		const texts = JSON.stringify(child.ordered().map((entry) => entry.model));
+		assert.match(texts, /the secret is 42/);
+		assert.doesNotMatch(texts, /"toolCall"/);
+		const view = await client.request("conversation.subscribe", { conversationId: details.conversationId });
+		assert.equal(view.docs["pi.agent"]?.thinkingLevel, "high");
+		await client.close();
+	});
+
 	test("an answer is pushed through ntfy only while no app is in the foreground", async () => {
 		const posts: unknown[] = [];
 		server.notifier.post = async (_url, body) => {

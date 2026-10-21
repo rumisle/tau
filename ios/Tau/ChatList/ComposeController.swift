@@ -92,9 +92,14 @@ final class ProjectPickerController: SettingsListController {
         })
     }
 
+    /// Closes the whole sheet, with any folders opened in it, and then applies the choice: under the sheet as it goes
+    /// down, so the chat behind it is already the chosen one.
     private func picked(_ location: ProjectLocation) {
-        self.choose(location)
-        self.dismiss()
+        let choose = self.choose
+        if let navigationController = self.navigationController as? NavigationController, let index = navigationController.viewControllers.firstIndex(where: { $0 === self }) {
+            navigationController.setViewControllers(Array(navigationController.viewControllers.prefix(upTo: index)), animated: true, completion: {})
+        }
+        choose(location)
     }
 
     override func items(theme: TauTheme) -> [ListViewItem] {

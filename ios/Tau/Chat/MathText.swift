@@ -156,7 +156,7 @@ enum MathText {
         if let cached {
             rendered = cached
         } else {
-            var math = MathImage(latex: formula.latex, fontSize: size, textColor: .black, labelMode: formula.display ? .display : .text, textAlignment: .left)
+            var math = MathImage(latex: LatexNormalizer.normalize(formula.latex), fontSize: size, textColor: .black, labelMode: formula.display ? .display : .text, textAlignment: .left)
             lock.lock()
             let (error, image, info) = math.asImage()
             lock.unlock()
@@ -169,7 +169,8 @@ enum MathText {
             cache[key] = rendered
             lock.unlock()
         }
-        guard var (image, ascent, descent) = rendered else {
+        // An empty formula (`$\phantom{x}$`) typesets to no image, which nothing can draw or tint.
+        guard var (image, ascent, descent) = rendered, image.size.width >= 1.0, image.size.height >= 1.0 else {
             return nil
         }
         // A display formula wider than the text column shrinks to fit; it cannot wrap.

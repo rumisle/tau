@@ -5,7 +5,7 @@
 // conversation's Stop and idle waits leave it alone. Its ID goes out in the call's details, which the app shows as a
 // link into the subagent's own transcript.
 import type { Context } from "@earendil-works/chord";
-import { type AssistantMessage, Type } from "@earendil-works/pi-ai";
+import { type AssistantMessage, clampThinkingLevel, type ModelThinkingLevel, Type } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
 	type ConversationId,
@@ -17,7 +17,9 @@ import {
 	type EntryId,
 	type Extension,
 	LiveDoc,
+	type ModelRef,
 	type TaskId,
+	type Tx,
 } from "@earendil-works/pi-durable";
 import { MetaDoc } from "./host.ts";
 
@@ -120,6 +122,28 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 		runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), taskContext),
 });
 
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/**
+ * The entry a forked subagent starts from: the one before the assistant message making this call, so the copy holds the
+ * whole conversation up to the request, and not the call itself, whose result it would never see.
+ */
+async function forkPoint(tx: Tx, conversationId: ConversationId, callId: string): Promise<EntryId | undefined> {
+	let cursor: Parameters<Tx["scanEntries"]>[2];
+	let found = false;
+	for (let pages = 0; pages < 20; pages++) {
+		const page = await tx.scanEntries({ conversationId }, 50, cursor);
+		for (const entry of page.items) {
+			if (found) return entry.id;
+			const message = (entry as { model?: AssistantMessage[] }).model?.[0];
+			if (entry.kind === "pi.assistant" && message?.content?.some((part) => part.type === "toolCall" && part.id === callId)) found = true;
+		}
+		if (page.next === undefined) return undefined;
+		cursor = page.next;
+	}
+	return undefined;
+}
+
 const subagentTool = defineTool({
 	name: "subagent",
 	description:
@@ -129,21 +153,29 @@ const subagentTool = defineTool({
 		"(name, message: the task), send (name, message; followUp: true waits for its current answer instead of " +
 		"steering it), stop (name: stops its current work), status (name, or every subagent without one). Use subagents " +
 		"for independent investigations that would fill this conversation with tool output; start several to work in " +
-		"parallel.",
+		"parallel. A spawn can take fork: true to start from a copy of this conversation, for work that needs what was " +
+		"said so far; model (provider/id) and thinking to run on another model or effort, such as a fast one for search.",
 	parameters: Type.Object({
 		action: Type.Union([Type.Literal("spawn"), Type.Literal("send"), Type.Literal("stop"), Type.Literal("status")]),
 		name: Type.Optional(Type.String({ description: "A short name, such as reader or tests" })),
 		message: Type.Optional(Type.String({ description: "The task for spawn, or the message for send" })),
 		followUp: Type.Optional(Type.Boolean()),
+		fork: Type.Optional(Type.Boolean({ description: "spawn: start from a copy of this conversation instead of empty" })),
+		model: Type.Optional(Type.String({ description: "spawn: provider/id of the model to run on; yours when omitted" })),
+		thinking: Type.Optional(Type.Union(THINKING_LEVELS.map((level) => Type.Literal(level)))),
 	}),
 	// A call cut off by a crash is not run again: a repeated stop could stop newer work. The model sees the call was
 	// interrupted and can ask with status.
 	replay: "unsafe",
 	execute: async (args, api, callContext: Context) => {
-		const { action, name, message, followUp } = args;
+		const { action, name, message, followUp, fork } = args;
+		let model: ModelRef | undefined;
+		let thinkingLevel: ModelThinkingLevel | undefined;
 		const reply = (text: string, conversationId?: ConversationId) => ({
 			output: [{ type: "text" as const, text }],
-			...(conversationId === undefined || name === undefined ? {} : { details: { name, conversationId, action } }),
+			...(conversationId === undefined || name === undefined
+				? {}
+				: { details: { name, conversationId, action, ...(model === undefined ? {} : { model: `${model.provider}/${model.modelId}` }), ...(thinkingLevel === undefined ? {} : { thinking: thinkingLevel }), ...(fork === true ? { fork: true } : {}) } }),
 		});
 		const registry = (await api.snapshot(Subagents, api.conversationId, callContext)) ?? { agents: {}, reporters: {} };
 
@@ -168,18 +200,40 @@ const subagentTool = defineTool({
 		}
 		if (message === undefined || message.trim() === "") return reply(`${action} needs a message.`);
 
+		// Another model or effort: one the server has credentials for, at a level it has (pi's clampThinkingLevel).
+		if (action === "spawn" && (args.model !== undefined || args.thinking !== undefined)) {
+			const available = await api.models.getAvailable();
+			let found = available.find((each) => args.model === undefined || `${each.provider}/${each.id}` === args.model || each.id === args.model);
+			if (args.model === undefined) {
+				const own = (await api.agent(callContext)).model;
+				found = own === undefined ? undefined : api.models.getModel(own.provider, own.modelId);
+			} else if (found === undefined) {
+				const names = available.slice(0, 40).map((each) => `${each.provider}/${each.id}`);
+				return reply(`No model ${args.model}. Available: ${names.join(", ")}.`);
+			}
+			if (found !== undefined && args.model !== undefined) model = { provider: found.provider, modelId: found.id };
+			if (args.thinking !== undefined) thinkingLevel = found === undefined ? args.thinking : clampThinkingLevel(found, args.thinking);
+		}
+
 		const result = await api.commit(async (tx) => {
 			const state = await tx.doc(Subagents, api.conversationId);
+			// Tables are read before the first write.
+			const at = action === "spawn" && fork === true && !Object.hasOwn(state.agents, name) ? await forkPoint(tx, api.conversationId, api.callId) : undefined;
 			// Both tasks belong to this conversation and are background: its Stop and idle waits skip them.
 			const background = { ownership: { kind: "conversation" }, background: true } as const;
 			if (action === "spawn") {
 				if (Object.hasOwn(state.agents, name)) return `${name} already exists; use send.`;
 				const anchor = await tx.createTask(Anchor, null, background);
-				// Owned by a task of this conversation: it starts as a copy of this agent.
-				const child = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
+				// Owned by a task of this conversation: it starts as a copy of this agent, and with fork, of its transcript.
+				const ownership = { kind: "task", taskId: anchor } as const;
+				const child = at === undefined ? await tx.createConversation({ ownership }) : await tx.forkConversation(api.conversationId, at, { ownership });
 				await configure(tx, child.id, {
 					extensions: { remove: [Subagent] },
-					instructions: `You are the subagent "${name}". Do the task you are given and answer with what you found.`,
+					instructions:
+						`You are the subagent "${name}". Do the task you are given and answer with what you found.` +
+						(at === undefined ? "" : " The conversation before the task is the one you were started from."),
+					...(model === undefined ? {} : { model }),
+					...(thinkingLevel === undefined ? {} : { thinkingLevel: thinkingLevel === "off" ? null : thinkingLevel }),
 				});
 				(await tx.doc(MetaDoc, child.id)).title = `${name}: ${taskTitle(message)}`;
 				state.agents[name] = { conversationId: child.id, reported: [] };

@@ -66,6 +66,9 @@ final class NewChatCardNode: ASDisplayNode {
                 }
             }
             row.button.addTarget(self, action: index == 0 ? #selector(self.projectPressed) : #selector(self.modelPressed), forControlEvents: .touchUpInside)
+            row.button.isAccessibilityElement = true
+            row.button.accessibilityIdentifier = index == 0 ? "newChatProject" : "newChatModel"
+            row.button.accessibilityTraits = .button
         }
     }
 

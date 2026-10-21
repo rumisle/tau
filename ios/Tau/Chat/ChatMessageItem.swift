@@ -218,6 +218,13 @@ final class ChatMessageItemNode: ListViewItemNode {
     private let toolBackgroundNode = ASDisplayNode()
     private let toolTitleNode = TextNode()
     private let toolTextNode = TextNode()
+    /// A subagent's card: its name and task as the quote over a Telegram reply, then what it said.
+    private let subagentQuoteNode = ASDisplayNode()
+    private let subagentBarNode = ASDisplayNode()
+    private let subagentTaskNode = TextNode()
+    private let subagentMetaNode = TextNode()
+    private let subagentArrowNode = ASImageNode()
+    private var subagentAnswerNode: InteractiveTextNode?
     /// As in ChatMessageBubbleItemNode: the long-press source wraps the extractable container, whose content node the
     /// context menu lifts out of the list and puts back.
     let containerNode = ContextControllerSourceNode()
@@ -255,6 +262,17 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.contentNode.addSubnode(self.toolBackgroundNode)
         self.contentNode.addSubnode(self.toolTitleNode)
         self.contentNode.addSubnode(self.toolTextNode)
+        self.subagentQuoteNode.isLayerBacked = true
+        self.subagentQuoteNode.cornerRadius = 8.0
+        self.subagentQuoteNode.clipsToBounds = true
+        self.subagentBarNode.isLayerBacked = true
+        self.subagentQuoteNode.addSubnode(self.subagentBarNode)
+        self.subagentArrowNode.isLayerBacked = true
+        self.subagentArrowNode.displaysAsynchronously = false
+        for node in [self.subagentQuoteNode, self.subagentTaskNode, self.subagentMetaNode, self.subagentArrowNode] {
+            node.isHidden = true
+            self.contentNode.addSubnode(node)
+        }
         self.contentNode.addSubnode(self.dateNode)
         for node in [self.clockFrameNode, self.clockMinNode, self.checkSentNode, self.checkReadNode] {
             node.isLayerBacked = true
@@ -477,6 +495,9 @@ final class ChatMessageItemNode: ListViewItemNode {
         let makeDateLayout = TextNode.asyncLayout(self.dateNode)
         let makeToolTitleLayout = TextNode.asyncLayout(self.toolTitleNode)
         let makeToolTextLayout = TextNode.asyncLayout(self.toolTextNode)
+        let makeSubagentTaskLayout = TextNode.asyncLayout(self.subagentTaskNode)
+        let makeSubagentMetaLayout = TextNode.asyncLayout(self.subagentMetaNode)
+        let makeSubagentAnswerLayout = InteractiveTextNode.asyncLayout(self.subagentAnswerNode)
         let existingTextNodes = self.textNodes
         let existingTableNodes = self.tableNodes
         let currentRevealCount = self.revealController.map { Int($0.revealedCount) }
@@ -670,6 +691,43 @@ final class ChatMessageItemNode: ListViewItemNode {
 
             case .assistant, .thinking:
                 let mergedTop = above == .assistant || above == .tool
+                if message.isWaiting {
+                    let size = ChatWaitingNode.size
+                    let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: size.height + 4.0), insets: UIEdgeInsets(top: mergedTop ? 6.0 : 10.0, left: 0.0, bottom: 6.0, right: 0.0))
+                    return (layout, { _ in
+                        guard let self else {
+                            return
+                        }
+                        self.item = item
+                        self.stopReveal()
+                        self.laidOutBlocks = []
+                        self.bubbleNode.isHidden = true
+                        self.dateNode.isHidden = true
+                        self.hideStatus()
+                        self.setToolVisible(false)
+                        self.setTextNodes([])
+                        // The same τ across updates, so its tracing does not restart.
+                        let existing = self.waitingNode
+                        self.waitingNode = nil
+                        self.setTableNodes([])
+                        for node in self.imageNodes {
+                            node.isHidden = true
+                        }
+                        for node in self.fileNodes {
+                            node.isHidden = true
+                        }
+                        let node = existing ?? ChatWaitingNode()
+                        self.waitingNode = node
+                        if node.supernode !== self.contentNode {
+                            self.contentNode.addSubnode(node)
+                        }
+                        node.update(color: item.theme.accentColor)
+                        // Where the answer's first letter will be.
+                        node.frame = CGRect(origin: CGPoint(x: params.leftInset + freeTextInset + leftShift - 3.0, y: 2.0), size: size)
+                        self.contentFrame = .zero
+                        self.layoutContainers(size: layout.contentSize)
+                    })
+                }
                 let maxTextWidth = contentWidth - freeTextInset * 2.0 - leftShift
                 let isThinking = message.role == .thinking
                 // Reasoning is dimmer and smaller, and folds to its start once the answer is written.
@@ -720,7 +778,22 @@ final class ChatMessageItemNode: ListViewItemNode {
 
                 // While streaming, the row is as tall as the content revealed so far.
                 let revealed: Int? = (item.isStreaming || currentRevealCount != nil) ? (currentRevealCount ?? 0) : nil
-                let height = contentHeight(laidOut, revealed: revealed)
+                let textHeight = contentHeight(laidOut, revealed: revealed)
+                // The end of a run: when the answer came and how long the run took, at the bottom right as Telegram
+                // dates a message.
+                var footerLayout: TextNodeLayout?
+                var footerApply: (() -> TextNode)?
+                if let turn = message.turn, !item.isStreaming, revealed == nil {
+                    var text = messageTimeString(turn.finishedAt)
+                    if let duration = turn.duration, duration >= 1.0 {
+                        text = "Worked for \(formatDuration(duration)) · " + text
+                    }
+                    let (layout, apply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: text, font: dateFont, textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 20.0)))
+                    footerLayout = layout
+                    footerApply = apply
+                }
+                let footerSpacing: CGFloat = 5.0
+                let height = textHeight + (footerLayout.map { footerSpacing + $0.size.height } ?? 0.0)
                 let insets = UIEdgeInsets(top: mergedTop ? 6.0 : 10.0, left: 0.0, bottom: 6.0, right: 0.0)
                 let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: insets)
 
@@ -731,7 +804,17 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.item = item
                     self.laidOutBlocks = laidOut
                     self.bubbleNode.isHidden = true
-                    self.dateNode.isHidden = true
+                    if let footerLayout, let footerApply {
+                        let _ = footerApply()
+                        if self.dateNode.isHidden {
+                            self.dateNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.25)
+                        }
+                        self.dateNode.isHidden = false
+                        let x = params.leftInset + freeTextInset + leftShift
+                        self.dateNode.frame = CGRect(origin: CGPoint(x: x + maxTextWidth - footerLayout.size.width, y: textHeight + footerSpacing), size: footerLayout.size)
+                    } else {
+                        self.dateNode.isHidden = true
+                    }
                     self.hideStatus()
                     self.setToolVisible(false)
                     for node in self.imageNodes {
@@ -791,6 +874,155 @@ final class ChatMessageItemNode: ListViewItemNode {
                 })
 
             case let .tool(name):
+                if let call = message.tool?.subagent {
+                    let tool = message.tool!
+                    let status = tool.status
+                    let working = status == .preparing || status == .pending || status == .running || tool.childBusy
+                    let accent = item.theme.accentColor
+                    let cardWidth = contentWidth - freeTextInset * 2.0 + 8.0 - leftShift
+                    let quoteInset: CGFloat = 6.0
+                    let quoteWidth = cardWidth - quoteInset * 2.0
+                    let quoteText = UIEdgeInsets(top: 6.0, left: 11.0, bottom: 7.0, right: 30.0)
+                    let textWidth = quoteWidth - quoteText.left - quoteText.right
+
+                    // The quote: who, and the task it works on.
+                    let header = NSMutableAttributedString(string: call.name, font: Font.semibold(14.0), textColor: accent)
+                    let suffix: String
+                    switch call.kind {
+                    case .spawn:
+                        suffix = working ? "working" : ""
+                    case .send:
+                        suffix = "message"
+                    case .stop:
+                        suffix = "stopped"
+                    case .answer:
+                        suffix = "answered"
+                    case .failed:
+                        suffix = "failed"
+                    }
+                    if !suffix.isEmpty {
+                        header.append(NSAttributedString(string: " · " + suffix, font: Font.regular(14.0), textColor: call.kind == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTextColor))
+                    }
+                    let (headerLayout, headerApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: header, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: textWidth, height: .greatestFiniteMagnitude)))
+                    let quoted: String
+                    switch call.kind {
+                    case .spawn, .send:
+                        quoted = call.text
+                    case .answer, .failed, .stop:
+                        quoted = call.task ?? "Subagent"
+                    }
+                    let quoteLines = call.kind == .spawn ? (item.isExpanded ? 12 : 3) : (call.kind == .send ? 2 : 1)
+                    let taskString = NSAttributedString(string: quoted.replacingOccurrences(of: "\n", with: quoteLines == 1 ? " " : "\n"), font: Font.regular(14.0), textColor: theme.toolCardTitleColor)
+                    let (taskLayout, taskApply) = makeSubagentTaskLayout(TextNodeLayoutArguments(attributedString: taskString, maximumNumberOfLines: quoteLines, truncationType: .end, constrainedSize: CGSize(width: textWidth, height: .greatestFiniteMagnitude)))
+                    let quoteHeight = quoteText.top + headerLayout.size.height + 1.0 + taskLayout.size.height + quoteText.bottom
+
+                    // Below it: the answer, as an answer reads; or what the subagent runs on.
+                    let bodyInsets = UIEdgeInsets(top: 7.0, left: 12.0, bottom: 10.0, right: 12.0)
+                    let bodyWidth = cardWidth - bodyInsets.left - bodyInsets.right
+                    var answerLayout: InteractiveTextNodeLayout?
+                    var answerApply: ((InteractiveTextNode.ApplyArguments) -> InteractiveTextNode)?
+                    var metaLayout: TextNodeLayout?
+                    var metaApply: (() -> TextNode)?
+                    if call.kind == .answer || call.kind == .failed, !call.text.isEmpty {
+                        var style = MarkdownStyle(fontSize: 15.0, textColor: call.kind == .failed ? theme.toolCardTextColor : theme.toolCardTitleColor, linkColor: theme.linkTextColor, accentColor: accent)
+                        style.maxWidth = bodyWidth
+                        let answer = MarkdownText.render(call.text, style: style)
+                        let (layout, apply) = makeSubagentAnswerLayout(InteractiveTextNodeLayoutArguments(attributedString: answer, maximumNumberOfLines: item.isExpanded ? 0 : 12, truncationType: .end, constrainedSize: CGSize(width: bodyWidth, height: .greatestFiniteMagnitude)))
+                        answerLayout = layout
+                        answerApply = apply
+                    } else if call.kind == .spawn {
+                        var parts: [String] = []
+                        if let model = call.model {
+                            parts.append(model.split(separator: "/").last.map(String.init) ?? model)
+                        }
+                        if let thinking = call.thinking {
+                            parts.append("thinking \(thinking)")
+                        }
+                        if call.fork {
+                            parts.append("forked from this chat")
+                        }
+                        if !parts.isEmpty {
+                            let (layout, apply) = makeSubagentMetaLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: parts.joined(separator: " · "), font: Font.regular(13.0), textColor: theme.toolCardTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: bodyWidth, height: .greatestFiniteMagnitude)))
+                            metaLayout = layout
+                            metaApply = apply
+                        }
+                    }
+                    var cardHeight = quoteInset + quoteHeight + quoteInset
+                    if let answerLayout {
+                        cardHeight += bodyInsets.top - quoteInset + answerLayout.size.height + bodyInsets.bottom
+                    } else if let metaLayout {
+                        cardHeight += 5.0 - quoteInset + metaLayout.size.height + 9.0
+                    }
+                    let cardSize = CGSize(width: cardWidth, height: cardHeight)
+                    let mergedTop = above == .tool
+                    let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: cardSize.height), insets: UIEdgeInsets(top: mergedTop ? 3.0 : 6.0, left: 0.0, bottom: 3.0, right: 0.0))
+                    let arrowImage = PresentationResourcesItemList.disclosureArrowImage(item.theme.presentationTheme)
+
+                    return (layout, { animation in
+                        guard let self else {
+                            return
+                        }
+                        self.item = item
+                        self.stopReveal()
+                        self.laidOutBlocks = []
+                        self.bubbleNode.isHidden = true
+                        self.dateNode.isHidden = true
+                        self.hideStatus()
+                        self.setTextNodes([])
+                        self.setTableNodes([])
+                        self.setToolVisible(true)
+                        self.toolTextNode.isHidden = true
+                        self.setSubagentVisible(true)
+
+                        self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
+                        let cardFrame = CGRect(origin: CGPoint(x: params.leftInset + freeTextInset - 4.0 + leftShift, y: 0.0), size: cardSize)
+                        self.contentFrame = cardFrame
+                        animation.animator.updateFrame(layer: self.toolBackgroundNode.layer, frame: cardFrame, completion: nil)
+
+                        let quoteFrame = CGRect(x: cardFrame.minX + quoteInset, y: cardFrame.minY + quoteInset, width: quoteWidth, height: quoteHeight)
+                        self.subagentQuoteNode.backgroundColor = accent.withAlphaComponent(item.theme.presentationTheme.overallDarkAppearance ? 0.16 : 0.1)
+                        self.subagentBarNode.backgroundColor = accent
+                        animation.animator.updateFrame(layer: self.subagentQuoteNode.layer, frame: quoteFrame, completion: nil)
+                        self.subagentBarNode.frame = CGRect(x: 0.0, y: 0.0, width: 3.0, height: quoteHeight)
+
+                        let _ = headerApply()
+                        animation.animator.updateFrame(layer: self.toolTitleNode.layer, frame: CGRect(origin: CGPoint(x: quoteFrame.minX + quoteText.left, y: quoteFrame.minY + quoteText.top), size: headerLayout.size), completion: nil)
+                        let _ = taskApply()
+                        animation.animator.updateFrame(layer: self.subagentTaskNode.layer, frame: CGRect(origin: CGPoint(x: quoteFrame.minX + quoteText.left, y: quoteFrame.minY + quoteText.top + headerLayout.size.height + 1.0), size: taskLayout.size), completion: nil)
+
+                        // Working: Telegram's spinner; otherwise the arrow into its transcript.
+                        let accessoryFrame = CGRect(x: quoteFrame.maxX - 22.0, y: quoteFrame.minY + quoteText.top + floor((headerLayout.size.height - 14.0) / 2.0), width: 14.0, height: 14.0)
+                        self.updateToolActivity(isActive: working, color: accent, frame: accessoryFrame)
+                        let hasLink = tool.childConversationId != nil && !working
+                        self.subagentArrowNode.isHidden = !hasLink
+                        if let arrowImage {
+                            self.subagentArrowNode.image = arrowImage
+                            self.subagentArrowNode.frame = CGRect(x: quoteFrame.maxX - 10.0 - arrowImage.size.width, y: quoteFrame.minY + floor((quoteHeight - arrowImage.size.height) / 2.0), width: arrowImage.size.width, height: arrowImage.size.height)
+                        }
+
+                        if let answerLayout, let answerApply {
+                            let node = answerApply(InteractiveTextNode.ApplyArguments(animation: animation, spoilerTextColor: theme.freeTextColor, spoilerEffectColor: theme.freeTextColor, areContentAnimationsEnabled: true, spoilerExpandRect: nil))
+                            node.isUserInteractionEnabled = false
+                            if node.supernode !== self.contentNode {
+                                self.contentNode.insertSubnode(node, belowSubnode: self.dateNode)
+                            }
+                            self.subagentAnswerNode = node
+                            node.isHidden = false
+                            animation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + bodyInsets.left, y: quoteFrame.maxY + bodyInsets.top), size: answerLayout.size), completion: nil)
+                        } else {
+                            self.subagentAnswerNode?.isHidden = true
+                        }
+                        if let metaLayout, let metaApply {
+                            let _ = metaApply()
+                            self.subagentMetaNode.isHidden = false
+                            self.subagentMetaNode.frame = CGRect(origin: CGPoint(x: cardFrame.minX + bodyInsets.left, y: quoteFrame.maxY + 5.0), size: metaLayout.size)
+                        } else {
+                            self.subagentMetaNode.isHidden = true
+                        }
+                        self.layoutContainers(size: layout.contentSize)
+                        self.updateSelection(item: item, size: layout.contentSize, animation: animation)
+                    })
+                }
                 let maxWidth = contentWidth - freeTextInset * 2.0 - 24.0 - leftShift
                 let tool = message.tool
                 let status = tool?.status ?? .done
@@ -832,6 +1064,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.setTextNodes([])
                     self.setTableNodes([])
                     self.setToolVisible(true)
+                    self.setSubagentVisible(false)
                     self.toolTextNode.isHidden = body.length == 0
 
                     self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
@@ -881,10 +1114,23 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
     }
 
+    private func setSubagentVisible(_ visible: Bool) {
+        self.subagentQuoteNode.isHidden = !visible
+        self.subagentTaskNode.isHidden = !visible
+        if !visible {
+            self.subagentMetaNode.isHidden = true
+            self.subagentArrowNode.isHidden = true
+            self.subagentAnswerNode?.isHidden = true
+        }
+    }
+
     private func setToolVisible(_ visible: Bool) {
         if !visible, let node = self.toolActivityNode {
             self.toolActivityNode = nil
             node.removeFromSupernode()
+            self.setSubagentVisible(false)
+        } else if !visible {
+            self.setSubagentVisible(false)
         }
         self.toolBackgroundNode.isHidden = !visible
         self.toolTitleNode.isHidden = !visible
@@ -919,7 +1165,9 @@ final class ChatMessageItemNode: ListViewItemNode {
         scroller.view.alwaysBounceVertical = false
         scroller.view.scrollsToTop = false
         scroller.view.contentInsetAdjustmentBehavior = .never
-        // Swiping back still works while the block is scrolled to its start.
+        // As Telegram's horizontal lists: over the block only a swipe from the screen's edge goes back, and none
+        // while it is scrolled away from its start.
+        scroller.view.disablesInteractiveTransitionGestureRecognizer = true
         scroller.view.disablesInteractiveTransitionGestureRecognizerNow = { [weak scroller] in
             return (scroller?.view.contentOffset.x ?? 0.0) > 0.0
         }
@@ -1012,7 +1260,13 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
     }
 
+    private var waitingNode: ChatWaitingNode?
+
     private func setTableNodes(_ nodes: [ChatTableNode]) {
+        if let node = self.waitingNode {
+            self.waitingNode = nil
+            node.removeFromSupernode()
+        }
         for node in self.tableNodes where !nodes.contains(where: { $0 === node }) {
             node.removeFromSupernode()
         }
@@ -1276,6 +1530,21 @@ final class FileAttachmentNode: ASDisplayNode {
     }
 }
 
+/// A run's length as a stopwatch reads it: 4.2s, 38s, 2m 05s, 1h 03m.
+func formatDuration(_ duration: TimeInterval) -> String {
+    if duration < 10.0 {
+        return String(format: "%.1fs", duration)
+    }
+    let seconds = Int(duration.rounded())
+    if seconds < 60 {
+        return "\(seconds)s"
+    }
+    if seconds < 3600 {
+        return String(format: "%dm %02ds", seconds / 60, seconds % 60)
+    }
+    return String(format: "%dh %02dm", seconds / 3600, (seconds % 3600) / 60)
+}
+
 func messageTimeString(_ date: Date) -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "HH:mm"
@@ -1383,9 +1652,10 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
         return ("Edit", shortPath(path, isExpanded: isExpanded) + "  +\(addedCount) −\(removedCount)", body)
     case .none:
         if tool?.childConversationId != nil {
-            // A subagent links to its own transcript first; its answer follows.
-            let working = isActive || tool?.childBusy == true
-            body.append(NSAttributedString(string: working ? "Working… Open subagent ›\n" : "Open subagent ›\n", font: Font.medium(14.0), textColor: accentColor))
+            // An earlier, foreground subagent: the spinner says it works; once done, a link to its transcript.
+            if !(isActive || tool?.childBusy == true) {
+                body.append(NSAttributedString(string: "Open subagent ›\n", font: Font.medium(14.0), textColor: accentColor))
+            }
         }
         if !output.isEmpty {
             // Commands say how they went at the end; answers are read from the start.

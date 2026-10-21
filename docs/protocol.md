@@ -102,9 +102,13 @@ type EntrySummary = { id: number; kind: string; role?: string; text: string; tim
 ```
 
 Conversations owned by a task (subagents) have `owner`; a chat list usually hides them. The server's `subagent` tool
-creates one per call, titled after its task, and puts its ID in the call's details (`pi.live.tools[i].details` while it
-runs, the `pi.tool-result` entry's `details` after): `{ conversationId }`. Subscribe to it like any conversation to show
-the subagent's own transcript.
+runs them in the background: a spawn creates one, titled after its task, and returns at once; the subagent's answer
+comes back later as a user message of the parent, `<subagent name="…" conversation="…" status="answered|failed">answer
+</subagent>`, which an app shows as the subagent's card. A spawn may start from a copy of the parent (`fork: true`, the
+transcript up to the request) and on another model or effort (`model: "provider/id"`, `thinking`). The call's details
+(`pi.live.tools[i].details` while it runs, the `pi.tool-result` entry's `details` after) say which:
+`{ name, conversationId, action, model?, thinking?, fork? }`. Subscribe to the conversation like any other to show the
+subagent's own transcript.
 
 ### `conversation.create`
 `{ requestId?: string, title?, autoTitle?: boolean, agent?: AgentPatch }` -> `{ dialog: Dialog }`

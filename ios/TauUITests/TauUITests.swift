@@ -433,4 +433,15 @@ final class TauUITests: XCTestCase {
         sleep(1)
         self.shot("appearance")
     }
+
+    /// Formulas as models write them, everywhere Markdown puts them (MockStore.mathAnswers), top to bottom.
+    func testMathStress() {
+        self.launch(["-mock", "YES", "-theme", "night", "-openChat", "6"])
+        sleep(2)
+        for index in 0 ..< 6 {
+            self.shot("math-\(index)")
+            self.app.swipeDown(velocity: .slow)
+            sleep(1)
+        }
+    }
 }

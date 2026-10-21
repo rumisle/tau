@@ -1,6 +1,7 @@
 import UIKit
 import AsyncDisplayKit
 import Display
+import InteractiveTextComponent
 
 struct ChatTableStyle {
     var borderColor: UIColor
@@ -17,7 +18,8 @@ final class ChatTableNode: ASDisplayNode {
 
     private var scrollView: UIScrollView?
     private let contentNode = ASDisplayNode()
-    private var cellNodes: [TextNode] = []
+    /// InteractiveTextNode, as the answer's text: it draws formulas (text attachments), which TextNode does not.
+    private var cellNodes: [InteractiveTextNode] = []
     private var lineNodes: [ASDisplayNode] = []
     private let headerBackgroundNode = ASDisplayNode()
 
@@ -36,6 +38,11 @@ final class ChatTableNode: ASDisplayNode {
         scrollView.layer.cornerRadius = ChatTableNode.cornerRadius
         scrollView.layer.cornerCurve = .continuous
         scrollView.clipsToBounds = true
+        // As the code blocks' scrollers: only an edge swipe goes back over a table, and none once it is scrolled.
+        scrollView.disablesInteractiveTransitionGestureRecognizer = true
+        scrollView.disablesInteractiveTransitionGestureRecognizerNow = { [weak scrollView] in
+            return (scrollView?.contentOffset.x ?? 0.0) > 0.0
+        }
         scrollView.addSubview(self.contentNode.view)
         self.view.addSubview(scrollView)
         self.scrollView = scrollView
@@ -52,8 +59,10 @@ final class ChatTableNode: ASDisplayNode {
             var columnWidths = Array(repeating: ChatTableNode.minColumnWidth, count: columnCount)
             for row in rows {
                 for (column, cell) in row.enumerated() where column < columnCount {
-                    let bounds = cell.boundingRect(with: CGSize(width: ChatTableNode.maxColumnWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], context: nil)
-                    columnWidths[column] = min(ChatTableNode.maxColumnWidth, max(columnWidths[column], ceil(bounds.width) + insets.left + insets.right))
+                    // Measured by Core Text, as drawn: a formula is a run delegate, which `boundingRect` cannot measure (it
+                    // raises on the attachment).
+                    let (natural, _) = InteractiveTextNode.asyncLayout(nil)(InteractiveTextNodeLayoutArguments(attributedString: cell, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: ChatTableNode.maxColumnWidth, height: .greatestFiniteMagnitude)))
+                    columnWidths[column] = min(ChatTableNode.maxColumnWidth, max(columnWidths[column], ceil(natural.size.width) + insets.left + insets.right))
                 }
             }
             // A narrow table stretches its columns to the message width.
@@ -63,17 +72,17 @@ final class ChatTableNode: ASDisplayNode {
                 columnWidths = columnWidths.map { floor($0 + extra) }
             }
 
-            var cells: [(frame: CGRect, apply: () -> TextNode)] = []
+            var cells: [(frame: CGRect, apply: (InteractiveTextNode.ApplyArguments) -> InteractiveTextNode)] = []
             var rowFrames: [CGRect] = []
             var y: CGFloat = 0.0
             for row in rows {
                 var x: CGFloat = 0.0
                 var rowHeight: CGFloat = 0.0
-                var rowCells: [(CGFloat, CGFloat, TextNodeLayout, () -> TextNode)] = []
+                var rowCells: [(CGFloat, CGFloat, InteractiveTextNodeLayout, (InteractiveTextNode.ApplyArguments) -> InteractiveTextNode)] = []
                 for column in 0 ..< columnCount {
                     let cell = column < row.count ? row[column] : NSAttributedString()
                     let width = columnWidths[column]
-                    let (layout, apply) = TextNode.asyncLayout(nil)(TextNodeLayoutArguments(attributedString: cell, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: width - insets.left - insets.right, height: .greatestFiniteMagnitude)))
+                    let (layout, apply) = InteractiveTextNode.asyncLayout(nil)(InteractiveTextNodeLayoutArguments(attributedString: cell, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: width - insets.left - insets.right, height: .greatestFiniteMagnitude)))
                     rowHeight = max(rowHeight, layout.size.height + insets.top + insets.bottom)
                     rowCells.append((x, width, layout, apply))
                     x += width
@@ -100,7 +109,8 @@ final class ChatTableNode: ASDisplayNode {
                     lineNode.removeFromSupernode()
                 }
                 node.cellNodes = cells.map { cell in
-                    let textNode = cell.apply()
+                    let textNode = cell.apply(InteractiveTextNode.ApplyArguments(animation: .None, spoilerTextColor: .label, spoilerEffectColor: .label, areContentAnimationsEnabled: false, spoilerExpandRect: nil))
+                    textNode.isUserInteractionEnabled = false
                     textNode.frame = cell.frame
                     node.contentNode.addSubnode(textNode)
                     return textNode

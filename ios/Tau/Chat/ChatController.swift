@@ -13,7 +13,8 @@ import TelegramPresentationData
 
 final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     private let context: AppContext
-    let conversationId: Int
+    /// A draft moved to another server becomes that server's draft, in this same screen.
+    private(set) var conversationId: Int
     private let isPreview: Bool
     private var theme: TauTheme
     private let stateDisposable = MetaDisposable()
@@ -64,13 +65,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self?.updateTheme(theme)
         })
         if !isPreview {
-            self.connectionDisposable = ((context.store.server(of: conversationId)?.connectionStatus ?? context.store.connectionStatus) |> deliverOnMainQueue).start(next: { [weak self] status in
-                guard let self else {
-                    return
-                }
-                self.connectionStatus = status
-                self.updateTitle(busy: self.lastState?.busy ?? false)
-            })
+            self.subscribeConnection()
         }
         self.settingsDisposable = (context.themeContext.settingsSignal |> deliverOnMainQueue).start(next: { [weak self] settings in
             self?.controllerNode.wrapCode = settings.wrapCode
@@ -87,6 +82,64 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.connectionDisposable?.dispose()
         self.themeDisposable?.dispose()
         self.settingsDisposable?.dispose()
+    }
+
+    private func subscribeConnection() {
+        let store = self.context.store
+        self.connectionDisposable?.dispose()
+        self.connectionDisposable = ((store.server(of: self.conversationId)?.connectionStatus ?? store.connectionStatus) |> deliverOnMainQueue).start(next: { [weak self] status in
+            guard let self else {
+                return
+            }
+            self.connectionStatus = status
+            self.updateTitle(busy: self.lastState?.busy ?? false)
+        })
+    }
+
+    private func subscribeConversation() {
+        self.stateDisposable.set((self.context.store.conversationSignal(self.conversationId) |> deliverOnMainQueue).start(next: { [weak self] state in
+            guard let self else {
+                return
+            }
+            self.lastState = state
+            self.controllerNode.update(state: state)
+            if let pending = self.pendingEditDraft, let message = state.messages.first(where: { $0.entryId != nil && $0.entryId == pending.editEntryId }) {
+                self.pendingEditDraft = nil
+                self.beginEditing(message, text: pending.editText ?? message.text, focus: false)
+            }
+            if self.isOnScreen && UIApplication.shared.applicationState == .active {
+                self.context.store.markSeen(self.conversationId)
+            }
+            self.controllerNode.inputPanelNode.isBusy = state.busy
+            self.updateTitle(busy: state.busy)
+        }))
+        if !self.isPreview {
+            self.eventsDisposable.set((self.context.store.chatEvents(self.conversationId) |> deliverOnMainQueue).start(next: { [weak self] event in
+                guard let self else {
+                    return
+                }
+                switch event {
+                case let .restoreInput(text):
+                    self.controllerNode.inputPanelNode.appendText(text)
+                case let .notice(text):
+                    self.presentToast(.info(title: nil, text: text, timeout: nil, customUndoText: nil))
+                }
+            }))
+        }
+    }
+
+    /// The draft is another one now (another server's): the same screen follows it, with what was written.
+    private func retarget(to id: Int) {
+        let old = self.conversationId
+        guard id != old else {
+            return
+        }
+        self.conversationId = id
+        self.context.store.setInputDraft(nil, for: old)
+        self.context.store.discardIfDraft(old)
+        self.subscribeConnection()
+        self.subscribeConversation()
+        self.saveInputDraft()
     }
 
     private func updateTheme(_ theme: TauTheme) {
@@ -162,11 +215,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             guard let self else {
                 return
             }
+            self.saveInputDraft()
             let newId = self.context.store.relocateDraft(self.conversationId, to: location)
-            if newId != self.conversationId, let navigationController = self.navigationController as? NavigationController {
-                // On another server it is another draft: this chat gives way to it, with what was written.
-                self.controllerNode.inputPanelNode.textChanged = nil
-                navigationController.replaceTopController(ChatController(context: self.context, conversationId: newId), animated: false)
+            if newId != self.conversationId {
+                self.retarget(to: newId)
             } else {
                 self.updateTitle(busy: false)
             }
@@ -296,35 +348,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             node.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.previewTapGesture)))
         }
 
-        self.stateDisposable.set((self.context.store.conversationSignal(self.conversationId) |> deliverOnMainQueue).start(next: { [weak self] state in
-            guard let self else {
-                return
-            }
-            self.lastState = state
-            self.controllerNode.update(state: state)
-            if let pending = self.pendingEditDraft, let message = state.messages.first(where: { $0.entryId != nil && $0.entryId == pending.editEntryId }) {
-                self.pendingEditDraft = nil
-                self.beginEditing(message, text: pending.editText ?? message.text, focus: false)
-            }
-            if self.isOnScreen && UIApplication.shared.applicationState == .active {
-                self.context.store.markSeen(self.conversationId)
-            }
-            self.controllerNode.inputPanelNode.isBusy = state.busy
-            self.updateTitle(busy: state.busy)
-        }))
-        if !self.isPreview {
-            self.eventsDisposable.set((self.context.store.chatEvents(self.conversationId) |> deliverOnMainQueue).start(next: { [weak self] event in
-                guard let self else {
-                    return
-                }
-                switch event {
-                case let .restoreInput(text):
-                    self.controllerNode.inputPanelNode.appendText(text)
-                case let .notice(text):
-                    self.presentToast(.info(title: nil, text: text, timeout: nil, customUndoText: nil))
-                }
-            }))
-        }
+        self.subscribeConversation()
         self.displayNodeDidLoad()
     }
 

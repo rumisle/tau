@@ -148,6 +148,10 @@ enum TranscriptBuilder {
         let items = outbox.items(for: replica.id)
         var rows: [ChatMessage] = []
         var toolRowIndex: [String: Int] = [:]
+        /// Each subagent's task, for the quote on its answers.
+        var subagentTasks: [String: String] = [:]
+        /// When the run being read began: its first message.
+        var turnStart: Date?
 
         func addAssistant(content: [JSONObject], base: Int, date: Date, entryId: Int?, streaming: Bool) {
             for (index, block) in content.enumerated() {
@@ -169,7 +173,13 @@ enum TranscriptBuilder {
                     let name = block.string("name") ?? "tool"
                     let callId = block.string("id") ?? "\(rowId)"
                     let arguments = block.object("arguments") ?? [:]
-                    let tool = ToolCallInfo(callId: callId, name: name, summary: ToolSummary.summary(name: name, arguments: arguments), status: streaming ? .preparing : .pending, output: nil, childConversationId: nil, detail: ToolSummary.detail(name: name, arguments: arguments))
+                    var tool = ToolCallInfo(callId: callId, name: name, summary: ToolSummary.summary(name: name, arguments: arguments), status: streaming ? .preparing : .pending, output: nil, childConversationId: nil, detail: ToolSummary.detail(name: name, arguments: arguments))
+                    if name == "subagent", let call = ToolSummary.subagent(arguments) {
+                        tool.subagent = call
+                        if call.kind == .spawn {
+                            subagentTasks[call.name] = call.text
+                        }
+                    }
                     toolRowIndex[callId] = rows.count
                     rows.append(ChatMessage(id: rowId, role: .tool(name: name), text: "", date: date, tool: tool, isStreaming: false, entryId: entryId))
                 default:
@@ -186,6 +196,9 @@ enum TranscriptBuilder {
             let date = message.double("timestamp").map { Date(timeIntervalSince1970: $0 / 1000.0) } ?? Date()
             switch kind {
             case "pi.user":
+                if turnStart == nil {
+                    turnStart = date
+                }
                 let (text, imageBlocks) = self.userContent(message["content"])
                 let attachments = imageBlocks.enumerated().compactMap { index, block -> MessageAttachment? in
                     guard let image = images.image(entryId: id, index: index, block: block) else {
@@ -195,7 +208,8 @@ enum TranscriptBuilder {
                 }
                 if let report = SubagentReport(text) {
                     // A background subagent's answer, posted as a message: its card, not the user's bubble.
-                    let tool = ToolCallInfo(callId: "report-\(id)", name: "subagent", summary: report.status == "answered" ? "\(report.name) answered" : "\(report.name) stopped", status: report.status == "answered" ? .done : .failed, output: report.text, childConversationId: report.conversationId)
+                    var tool = ToolCallInfo(callId: "report-\(id)", name: "subagent", summary: report.status == "answered" ? "\(report.name) answered" : "\(report.name) stopped", status: report.status == "answered" ? .done : .failed, output: report.text, childConversationId: report.conversationId)
+                    tool.subagent = SubagentCall(kind: report.status == "answered" ? .answer : .failed, name: report.name, text: report.text, task: subagentTasks[report.name])
                     rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "subagent"), text: "", date: date, tool: tool, entryId: id))
                     continue
                 }
@@ -206,14 +220,30 @@ enum TranscriptBuilder {
                 if message.string("stopReason") == "error", let error = message.string("errorMessage") {
                     rows.append(ChatMessage(id: self.rowId(base: base, block: 63), role: .assistant, text: "**Error:** \(error)", date: date, entryId: id))
                 }
+                // The end of a run: its answer says when it came and how long the run took, from the first message.
+                if message.string("stopReason") != "toolUse" {
+                    let finished = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
+                    if let last = rows.indices.last, rows[last].role == .assistant, rows[last].entryId == id {
+                        rows[last].turn = TurnInfo(finishedAt: finished, duration: turnStart.map { finished.timeIntervalSince($0) })
+                    }
+                    turnStart = nil
+                }
             case "pi.tool-result":
                 guard let callId = message.string("toolCallId"), let index = toolRowIndex[callId], var tool = rows[index].tool else {
                     continue
                 }
                 tool.status = (message.bool("isError") ?? false) ? .failed : .done
                 tool.output = self.text(of: message["content"])
-                if let child = (message.object("details"))?.int("conversationId") {
-                    tool.childConversationId = child
+                if let details = message.object("details") {
+                    if let child = details.int("conversationId") {
+                        tool.childConversationId = child
+                    }
+                    // What the server made of the options: the model it found, the level it fitted.
+                    if var call = tool.subagent {
+                        call.model = details.string("model") ?? call.model
+                        call.thinking = details.string("thinking") ?? call.thinking
+                        tool.subagent = call
+                    }
                 }
                 // The edit tool's result carries the diff with line numbers.
                 if case let .edit(path, _) = tool.detail, let diff = message.object("details")?.string("diff"), !diff.isEmpty {
@@ -328,6 +358,27 @@ enum ToolSummary {
         default:
             return .none
         }
+    }
+
+    /// A background subagent's call, from its arguments; nil for status, which names none.
+    static func subagent(_ arguments: JSONObject) -> SubagentCall? {
+        guard let name = arguments.string("name"), !name.isEmpty else {
+            return nil
+        }
+        let message = arguments.string("message") ?? ""
+        let kind: SubagentCall.Kind
+        switch arguments.string("action") {
+        case "send":
+            kind = .send
+        case "stop":
+            kind = .stop
+        case "spawn":
+            kind = .spawn
+        default:
+            return nil
+        }
+        let fork = arguments.bool("fork") ?? (arguments.string("fork") == "true")
+        return SubagentCall(kind: kind, name: name, text: message, model: arguments.string("model"), thinking: arguments.string("thinking"), fork: fork)
     }
 
     static func summary(name: String, arguments: JSONObject) -> String {
