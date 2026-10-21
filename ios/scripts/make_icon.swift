@@ -1,4 +1,4 @@
-// The app icon: ChatWaitingNode's τ, in white on Telegram's blue, in blue on the night palette, and gray for tinting.
+// The app icon: ChatWaitingNode's τ, in white on pink, in pink on the night palette, and gray for tinting.
 // Usage: xcrun swift ios/scripts/make_icon.swift ios/Tau/Assets.xcassets/AppIcon.appiconset
 import Foundation
 import CoreGraphics
@@ -53,9 +53,9 @@ func render(_ name: String, background: [UInt32]?, glyph: [UInt32], glyphAlpha: 
     CGImageDestinationFinalize(dest)
 }
 
-// Telegram's blue, light at the top as its icon, and a white τ.
-render("icon.png", background: [0x3DBBF6, 0x1A8AD4], glyph: [0xFFFFFF])
-// Dark: the night palette's blue-gray, and the τ in the blue.
-render("icon-dark.png", background: [0x1B2836, 0x0E1621], glyph: [0x5CC8FF, 0x2A9EF1])
+// Pink, light at the top as Telegram lights its icon, and a white τ.
+render("icon.png", background: [0xFF8DBF, 0xEC4A8B], glyph: [0xFFFFFF])
+// Dark: the night palette's blue-gray, and the τ in the pink.
+render("icon-dark.png", background: [0x1B2836, 0x0E1621], glyph: [0xFFA3CC, 0xF2569A])
 // Tinted: a gray glyph on nothing, which the system colors.
 render("icon-tinted.png", background: nil, glyph: [0xFFFFFF])
