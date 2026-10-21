@@ -175,6 +175,49 @@ final class ChatControllerNode: ASDisplayNode {
         return super.hitTest(point, with: event)
     }
 
+    /// The card of an empty new chat (NewChatCardNode); nil hides it.
+    var newChatCard: NewChatCardNode.Content? {
+        didSet {
+            if self.newChatCard != oldValue {
+                self.relayout(.immediate)
+            }
+        }
+    }
+    private var newChatCardNode: NewChatCardNode?
+    var newChatProjectTapped: (() -> Void)?
+    var newChatModelTapped: (() -> Void)?
+
+    private func layoutNewChatCard(size: CGSize, top: CGFloat, bottom: CGFloat) {
+        let isEmpty = (self.state?.messages.isEmpty ?? true) && self.state?.streaming == nil
+        guard let content = self.newChatCard, isEmpty, !self.isPreview else {
+            if let node = self.newChatCardNode {
+                self.newChatCardNode = nil
+                node.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { [weak node] _ in
+                    node?.removeFromSupernode()
+                })
+                node.layer.animateScale(from: 1.0, to: 0.8, duration: 0.2, removeOnCompletion: false)
+            }
+            return
+        }
+        let node: NewChatCardNode
+        if let current = self.newChatCardNode {
+            node = current
+        } else {
+            node = NewChatCardNode()
+            node.projectTapped = { [weak self] in
+                self?.newChatProjectTapped?()
+            }
+            node.modelTapped = { [weak self] in
+                self?.newChatModelTapped?()
+            }
+            self.newChatCardNode = node
+            self.insertSubnode(node, aboveSubnode: self.historyNode)
+        }
+        let cardSize = node.update(content: content, theme: self.theme, width: size.width)
+        // Centered in the area the transcript would fill, as ChatEmptyNode is.
+        node.frame = CGRect(origin: CGPoint(x: floor((size.width - cardSize.width) / 2.0), y: floor(top + (bottom - top - cardSize.height) / 2.0)), size: cardSize)
+    }
+
     /// Telegram's toast (UndoOverlayController), which ChatController presents above the input panel.
     var presentToast: ((UndoOverlayContent) -> Void)?
 
@@ -216,8 +259,12 @@ final class ChatControllerNode: ASDisplayNode {
                 self.riseSources[queued.text] = source
             }
         }
+        let wasEmpty = self.state.map { $0.messages.isEmpty && $0.streaming == nil } ?? true
         self.state = state
         self.inputPanelNode.setQueue(state.queued)
+        if wasEmpty != (state.messages.isEmpty && state.streaming == nil) {
+            self.relayout(.immediate)
+        }
         guard self.validLayout != nil else {
             // The list cannot lay items out before it has a size.
             return
@@ -500,6 +547,7 @@ final class ChatControllerNode: ASDisplayNode {
 
         // The history runs under the navigation bar and the panel; its insets keep content clear of both. The list is
         // rotated, so its top inset is the visual bottom.
+        self.layoutNewChatCard(size: size, top: navigationHeight, bottom: panelFrame.minY)
         let historyInsets = UIEdgeInsets(
             top: size.height - panelFrame.minY + 6.0,
             left: layout.safeInsets.right,

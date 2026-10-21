@@ -3,7 +3,7 @@ import SwiftSignalKit
 
 /// In-memory stand-in for the tau server. Sending a message streams a canned answer the way the server does: a partial
 /// message that grows every ~100 ms (one `pi.live` commit each), then a final entry.
-final class MockStore: TauStore {
+final class MockStore: TauStore, TauServer {
     private var dialogs: [Int: DialogModel] = [:]
     private var conversations: [Int: ConversationState] = [:]
     private var nextId = 10_000
@@ -107,8 +107,62 @@ final class MockStore: TauStore {
         self.inputDrafts[InputDraftStorage.key(id)] = draft.flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    var serverDescription: String {
-        return "Demo data"
+    // MARK: - One demo server
+
+    let slot = 0
+    let name = "demo"
+    let address = "demo"
+    let status: ConnectionStatus = .online
+    let latency: Double? = 0.012
+    let home: String? = "/Users/you"
+    private(set) var defaultThinkingLevel = "off"
+
+    func setDefaultThinkingLevel(_ level: String) {
+        self.defaultThinkingLevel = level
+    }
+
+    var servers: [TauServer] {
+        return [self]
+    }
+
+    var serversSignal: Signal<[TauServer], NoError> {
+        return .single([self])
+    }
+
+    func server(_ slot: Int) -> TauServer? {
+        return self
+    }
+
+    func server(of id: Int) -> TauServer? {
+        return self
+    }
+
+    func createConversation(server slot: Int, cwd: String?) -> Int {
+        return self.createConversation(cwd: cwd)
+    }
+
+    let isDemo = true
+
+    func relocateDraft(_ id: Int, to location: ProjectLocation) -> Int {
+        self.dialogs[id]?.cwd = location.path
+        self.publish(id)
+        return id
+    }
+
+    func addServer(address: String, token: String?, name: String?) {
+    }
+
+    func updateServer(_ slot: Int, address: String, token: String?, name: String?) {
+    }
+
+    func removeServer(_ slot: Int) {
+    }
+
+    func moveServer(from: Int, to: Int) {
+    }
+
+    func serverToken(_ slot: Int) -> String? {
+        return nil
     }
 
     private(set) var defaultModel: String? = "anthropic/claude-opus-5-5"
@@ -230,6 +284,10 @@ final class MockStore: TauStore {
     }
 
     func loadOlder(_ id: Int) {
+    }
+
+    func cachedModel(provider: String, id: String) -> ModelInfo? {
+        return ModelInfo(provider: provider, id: id, name: id, reasoning: true, thinkingLevels: ["off", "minimal", "low", "medium", "high"])
     }
 
     func models() -> Signal<[ModelInfo], NoError> {

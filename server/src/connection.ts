@@ -2,9 +2,10 @@
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context";
 import type { Op } from "@earendil-works/chord/delta";
-import type { ImageContent, ModelThinkingLevel, TextContent } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels, type ImageContent, type ModelThinkingLevel, type TextContent } from "@earendil-works/pi-ai";
 import {
 	type AgentChange,
+	AgentDoc,
 	type Conversation,
 	ConversationBusy,
 	type ConversationId,
@@ -12,6 +13,7 @@ import {
 	type Cursor,
 	type EntryId,
 	type EntryRecord,
+	type ModelRef,
 	type SubmissionId,
 } from "@earendil-works/pi-durable";
 import { readFileSync } from "node:fs";
@@ -56,6 +58,8 @@ const SERIAL_METHODS = new Set([
 	"conversation.configure",
 	"conversation.rename",
 ]);
+
+const THINKING_LEVELS: readonly ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** Longest conversation title a rename takes. */
 const MAX_TITLE_CHARS = 64;
@@ -177,7 +181,14 @@ export class Connection {
 				if (model !== undefined) {
 					await this.#host.setDefaultModel({ provider: str(model, "provider"), modelId: str(model, "modelId") });
 				}
-				return { defaultModel: this.#host.defaultModel };
+				const level = str(params, "defaultThinkingLevel", true);
+				if (level !== undefined) {
+					if (!THINKING_LEVELS.includes(level as ModelThinkingLevel)) {
+						throw new ProtocolError("bad_request", `Unknown thinking level ${level}`);
+					}
+					await this.#host.setDefaultThinkingLevel(level as ModelThinkingLevel);
+				}
+				return { defaultModel: this.#host.defaultModel, defaultThinkingLevel: this.#host.defaultThinkingLevel };
 			}
 			case "fs.list": {
 				const hidden = params.hidden;
@@ -198,10 +209,13 @@ export class Connection {
 				const title = str(params, "title", true);
 				const autoTitle = params.autoTitle === true;
 				const patch = obj(params, "agent") ?? {};
+				// The defaults are fixed in the conversation now: changing them later moves no existing conversation.
+				const model = (patch.model as ModelRef | undefined) ?? this.#host.defaultModel;
+				const thinkingLevel = this.#fitThinking(model, (patch.thinkingLevel as ModelThinkingLevel | undefined) ?? this.#host.defaultThinkingLevel);
 				const conversation = await harness.createConversation(
 					{
 						ownership: { kind: "ownerless" },
-						agent: await agentChange({ model: this.#host.defaultModel, ...patch }),
+						agent: await agentChange({ model, ...patch, thinkingLevel: thinkingLevel === "off" ? undefined : thinkingLevel }),
 						init: async (tx, id) => {
 							const meta = await tx.doc(MetaDoc, id);
 							if (title !== undefined) meta.title = title;
@@ -250,7 +264,17 @@ export class Connection {
 			}
 			case "conversation.configure": {
 				const conversation = await this.#conversation(params);
-				await conversation.configure(await agentChange(obj(params, "agent") ?? {}), context);
+				const patch = { ...(obj(params, "agent") ?? {}) };
+				// A thinking level the model has: the one asked for, or after a model change the current one, fitted as
+				// pi fits it when the model changes (clampThinkingLevel).
+				if (patch.model !== undefined || patch.thinkingLevel !== undefined) {
+					const current = await harness.snapshot(AgentDoc, conversation.id, context);
+					const model = (patch.model as ModelRef | null | undefined) ?? current?.model ?? this.#host.defaultModel;
+					const asked: ModelThinkingLevel = patch.thinkingLevel === undefined ? (current?.thinkingLevel ?? "off") : ((patch.thinkingLevel as ModelThinkingLevel | null) ?? "off");
+					const fitted = this.#fitThinking(model, asked);
+					if (patch.thinkingLevel !== undefined || fitted !== asked) patch.thinkingLevel = fitted === "off" ? null : fitted;
+				}
+				await conversation.configure(await agentChange(patch), context);
 				return {};
 			}
 			case "conversation.rename": {
@@ -339,6 +363,7 @@ export class Connection {
 			protocol: PROTOCOL_VERSION,
 			serverId: this.#host.serverId,
 			defaultModel: this.#host.defaultModel,
+			defaultThinkingLevel: this.#host.defaultThinkingLevel,
 			defaultCwd: this.#host.cwd,
 			home: homedir(),
 			hostname: hostname(),
@@ -355,10 +380,17 @@ export class Connection {
 				id: model.id,
 				name: model.name,
 				reasoning: model.reasoning,
+				thinkingLevels: getSupportedThinkingLevels(model),
 				contextWindow: model.contextWindow,
 				input: model.input,
 			})),
 		};
+	}
+
+	/** `level` if the model has it, else the nearest level it has, as pi's clampThinkingLevel picks. */
+	#fitThinking(ref: ModelRef, level: ModelThinkingLevel): ModelThinkingLevel {
+		const model = this.#host.models.getModel(ref.provider, ref.modelId);
+		return model === undefined ? level : clampThinkingLevel(model, level);
 	}
 
 	async #conversation(params: Record<string, unknown>): Promise<Conversation> {

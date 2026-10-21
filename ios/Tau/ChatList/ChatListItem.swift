@@ -376,7 +376,7 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
             switch item.content {
             case let .dialog(dialog):
                 title = dialog.title
-                author = dialog.projectName
+                author = dialog.projectLabel
                 date = dialog.last?.date
                 busy = dialog.busy
                 avatarKey = "\(dialog.id):\(dialog.title)"

@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { CredentialStore, MutableModels } from "@earendil-works/pi-ai";
+import type { CredentialStore, ModelThinkingLevel, MutableModels } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
@@ -70,7 +70,7 @@ export const CreatesDoc = defineDoc<{ requests: Record<string, number>; order: s
 });
 
 /** Settings a client changes for the whole server. */
-export const SettingsDoc = defineDoc<{ defaultModel?: ModelRef }>({
+export const SettingsDoc = defineDoc<{ defaultModel?: ModelRef; defaultThinkingLevel?: ModelThinkingLevel }>({
 	kind: "tau.settings",
 	version: 1,
 	scope: "session",
@@ -98,6 +98,9 @@ export type Host = {
 	/** The model new conversations get: the one set from a client, else `--model`. */
 	readonly defaultModel: ModelRef;
 	setDefaultModel(model: ModelRef): Promise<void>;
+	/** The thinking level new conversations get, fitted to their model; "off" until a client sets one. */
+	readonly defaultThinkingLevel: ModelThinkingLevel;
+	setDefaultThinkingLevel(level: ModelThinkingLevel): Promise<void>;
 	/** Orders the requests that change a conversation, across connections (src/serial.ts). */
 	readonly serial: Serial;
 	readonly cwd: string;
@@ -160,8 +163,9 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		if (doc.id === "") doc.id = randomUUID();
 		return doc.id;
 	}, context);
-	const saved = (await harness.snapshot(SettingsDoc, context))?.defaultModel;
-	if (saved !== undefined) defaultModel = saved;
+	const savedSettings = await harness.snapshot(SettingsDoc, context);
+	if (savedSettings?.defaultModel !== undefined) defaultModel = savedSettings.defaultModel;
+	let defaultThinkingLevel: ModelThinkingLevel = savedSettings?.defaultThinkingLevel ?? "off";
 	// Continue runs the last process left unfinished.
 	harness.resume();
 
@@ -178,6 +182,15 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 				(await tx.doc(SettingsDoc)).defaultModel = model;
 			}, context);
 			defaultModel = model;
+		},
+		get defaultThinkingLevel() {
+			return defaultThinkingLevel;
+		},
+		async setDefaultThinkingLevel(level) {
+			await harness.commit(async (tx) => {
+				(await tx.doc(SettingsDoc)).defaultThinkingLevel = level;
+			}, context);
+			defaultThinkingLevel = level;
 		},
 		serial: new Serial(),
 		cwd,

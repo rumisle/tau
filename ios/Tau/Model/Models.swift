@@ -6,6 +6,15 @@ struct DialogModel: Equatable {
     var title: String
     /// A subagent's conversation, owned by a tool call in another one.
     var parentConversationId: Int? = nil
+    /// The server it is on (TauServer.slot).
+    var serverSlot: Int = 0
+    /// That server's name, while there is more than one server.
+    var serverName: String?
+
+    /// The project, after its server's name when there are several: `nest:tau`.
+    var projectLabel: String {
+        return self.serverName.map { "\($0):\(self.projectName)" } ?? self.projectName
+    }
     /// The conversation's working directory on the server.
     var cwd: String
     var model: String

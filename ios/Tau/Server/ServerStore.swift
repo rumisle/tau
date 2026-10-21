@@ -4,7 +4,7 @@ import SwiftSignalKit
 /// Conversations synced with a tau server (docs/protocol.md). Keeps the dialog list subscribed, subscribes to a
 /// conversation while a screen shows it, caches entries on disk so a reopened chat shows at once and a reconnect only
 /// fetches what is new. Messages go through the outbox (Outbox.swift, docs/sending.md).
-final class ServerStore: TauStore {
+final class ServerStore: ConversationStore, TauServer {
     let connection: TauConnection
     private let cache: EntryCache
     private let scroll: ScrollStateStorage
@@ -49,7 +49,15 @@ final class ServerStore: TauStore {
     private var nextDraftId = -1
     private let inputDrafts: InputDraftStorage
 
-    init(url: URL, token: String?) {
+    let slot: Int
+    /// The name the user gave this server, if any.
+    var configuredName: String?
+    /// After `hello`, when the server's name, home or defaults may have changed.
+    var infoChanged: (() -> Void)?
+
+    init(url: URL, token: String?, slot: Int = 0, name: String? = nil) {
+        self.slot = slot
+        self.configuredName = name
         self.connection = TauConnection(url: url, token: token)
         self.outbox = Outbox(connection: self.connection, namespace: url.absoluteString)
         self.inputDrafts = InputDraftStorage(namespace: url.absoluteString)
@@ -231,8 +239,48 @@ final class ServerStore: TauStore {
         return ServerInfo(address: self.connection.url.absoluteString, hostname: hello.hostname, piRevision: hello.piRevision)
     }
 
-    var serverDescription: String {
-        return self.connection.url.host ?? self.connection.url.absoluteString
+    var name: String {
+        if let name = self.configuredName, !name.isEmpty {
+            return name
+        }
+        // The name it was added by, "nest" for nest.example.ts.net; for an IP address, the computer's own name.
+        let host = self.connection.url.host ?? self.connection.url.absoluteString
+        let isAddress = host.first?.isNumber == true || host.contains(":") || host == "localhost"
+        if !isAddress {
+            return String(host.split(separator: ".").first ?? Substring(host))
+        }
+        if let hostname = self.connection.hello?.hostname, !hostname.isEmpty {
+            return String(hostname.split(separator: ".").first ?? Substring(hostname))
+        }
+        return host
+    }
+
+    var address: String {
+        return self.connection.url.absoluteString
+    }
+
+    var status: ConnectionStatus {
+        return self.connection.currentStatus
+    }
+
+    var latency: Double? {
+        return self.connection.currentStatus == .online ? self.connection.latency : nil
+    }
+
+    var home: String? {
+        return self.connection.hello?.home
+    }
+
+    private var defaultThinkingOverride: String?
+
+    var defaultThinkingLevel: String {
+        return self.defaultThinkingOverride ?? self.connection.hello?.defaultThinkingLevel ?? "off"
+    }
+
+    func setDefaultThinkingLevel(_ level: String) {
+        self.defaultThinkingOverride = level
+        self.connection.request("settings.configure", ["defaultThinkingLevel": level]) { _ in }
+        self.infoChanged?()
     }
 
     /// Set from Settings until the next `hello` reports it.
@@ -245,6 +293,7 @@ final class ServerStore: TauStore {
     func setDefaultModel(_ model: ModelInfo) {
         self.defaultModelOverride = "\(model.provider)/\(model.id)"
         self.connection.request("settings.configure", ["defaultModel": ["provider": model.provider, "modelId": model.id]]) { _ in }
+        self.infoChanged?()
     }
 
     func close() {
@@ -255,6 +304,8 @@ final class ServerStore: TauStore {
 
     private func connected(_ hello: TauConnection.Hello) {
         self.defaultModelOverride = nil
+        self.defaultThinkingOverride = nil
+        self.infoChanged?()
         self.readSent.removeAll()
         if self.cache.serverId != hello.serverId {
             // Another database: nothing cached is valid.
@@ -623,6 +674,17 @@ final class ServerStore: TauStore {
         return id
     }
 
+    /// A draft not sent yet runs in `cwd` instead. False once its create has gone out.
+    func setDraftCwd(_ id: Int, cwd: String) -> Bool {
+        guard var draft = self.drafts[id], draft.createRequestId == nil, draft.forkOf == nil else {
+            return false
+        }
+        draft.cwd = cwd
+        self.drafts[id] = draft
+        self.statePromises[id]?.set(self.state(for: id))
+        return true
+    }
+
     func discardIfDraft(_ id: Int) {
         guard let draft = self.drafts[id], draft.realId == nil else {
             return
@@ -922,13 +984,17 @@ final class ServerStore: TauStore {
 
     private var modelsCache: [ModelInfo]?
 
+    func cachedModel(provider: String, id: String) -> ModelInfo? {
+        return self.modelsCache?.first { $0.provider == provider && $0.id == id }
+    }
+
     func models() -> Signal<[ModelInfo], NoError> {
         if let cached = self.modelsCache {
             return .single(cached)
         }
         return self.connection.request("models.list")
         |> map { value -> [ModelInfo] in
-            return value.objects("models").map { ModelInfo(provider: $0.string("provider") ?? "", id: $0.string("id") ?? "", name: $0.string("name") ?? $0.string("id") ?? "", reasoning: $0.bool("reasoning") ?? false, contextWindow: $0.int("contextWindow")) }
+            return value.objects("models").map { ModelInfo(provider: $0.string("provider") ?? "", id: $0.string("id") ?? "", name: $0.string("name") ?? $0.string("id") ?? "", reasoning: $0.bool("reasoning") ?? false, thinkingLevels: ($0["thinkingLevels"] as? [Any])?.compactMap { $0 as? String } ?? ["off"], contextWindow: $0.int("contextWindow")) }
         }
         |> `catch` { _ -> Signal<[ModelInfo], NoError> in
             return .single([])
@@ -946,7 +1012,7 @@ final class ServerStore: TauStore {
     /// it: changing the default later moves no existing conversation.
     func agent(_ id: Int) -> AgentSettings {
         let fallback = self.defaultModel?.split(separator: "/", maxSplits: 1).map(String.init) ?? []
-        let defaultAgent = AgentSettings(provider: fallback.first, modelId: fallback.count > 1 ? fallback[1] : nil, thinkingLevel: nil)
+        let defaultAgent = AgentSettings(provider: fallback.first, modelId: fallback.count > 1 ? fallback[1] : nil, thinkingLevel: self.defaultThinkingLevel == "off" ? nil : self.defaultThinkingLevel)
         if id < 0, let draft = self.drafts[id], draft.realId == nil {
             return draft.agent ?? defaultAgent
         }

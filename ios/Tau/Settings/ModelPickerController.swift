@@ -28,8 +28,12 @@ final class ModelPickerController: ViewController {
     private var modelsDisposable: Disposable?
 
     /// `current` is the selected model as `provider/id`.
-    init(context: AppContext, title: String, current: String?, select: @escaping (ModelInfo) -> Void) {
+    /// The server whose models it lists.
+    private let server: TauServer
+
+    init(context: AppContext, server: TauServer, title: String, current: String?, select: @escaping (ModelInfo) -> Void) {
         self.context = context
+        self.server = server
         self.current = current
         self.select = select
         let presentationData = context.theme.presentationData
@@ -110,7 +114,7 @@ final class ModelPickerController: ViewController {
         self.navigationBar?.updateBackgroundAlpha(0.0, transition: .immediate)
         self.displayNodeDidLoad()
 
-        self.modelsDisposable = (self.context.store.models() |> deliverOnMainQueue).start(next: { [weak self] models in
+        self.modelsDisposable = (self.server.models() |> deliverOnMainQueue).start(next: { [weak self] models in
             self?.controllerNode.update(models: models)
         })
     }

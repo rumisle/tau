@@ -24,6 +24,9 @@ private let colorGray = UIColor(rgb: 0x8E8E93)
 enum SettingsIcon {
     static let server = renderSettingsIcon(name: "Item List/Icons/Proxy", backgroundColors: [colorGreen])
     static let model = renderSettingsIcon(name: "Item List/Icons/AITools", backgroundColors: [colorPurple])
+    static let thinking = renderSettingsIcon(name: "Item List/Icons/Tips", backgroundColors: [colorOrange])
+    static let storage = renderSettingsIcon(name: "Item List/Icons/Pie", backgroundColors: [colorGreen])
+    static let network = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorBlue])
     static let projects = renderSettingsIcon(name: "Item List/Icons/Folder", backgroundColors: [colorLightBlue])
     static let appearance = renderSettingsIcon(name: "Item List/Icons/Appearance", backgroundColors: [colorLightBlue])
     static let notifications = renderSettingsIcon(name: "Item List/Icons/Notifications", backgroundColors: [colorRed])
@@ -127,7 +130,11 @@ final class SettingsRowItem: ListViewItem {
     let action: (() -> Void)?
     let toggled: ((Bool) -> Void)?
 
-    init(theme: TauTheme, icon: UIImage?, title: String, subtitle: String? = nil, titleColor: UIColor? = nil, accessory: Accessory, position: SettingsRowPosition, action: (() -> Void)?, toggled: ((Bool) -> Void)? = nil) {
+    /// The second line's color: Telegram's proxy list shows a connected server's status in the accent color.
+    var subtitleColor: UIColor?
+
+    init(theme: TauTheme, icon: UIImage?, title: String, subtitle: String? = nil, subtitleColor: UIColor? = nil, titleColor: UIColor? = nil, accessory: Accessory, position: SettingsRowPosition, action: (() -> Void)?, toggled: ((Bool) -> Void)? = nil) {
+        self.subtitleColor = subtitleColor
         self.toggled = toggled
         self.theme = theme
         self.icon = icon
@@ -261,7 +268,7 @@ final class SettingsRowItemNode: ListViewItemNode {
             let maxTitleWidth = sectionLeft + sectionWidth - rightInset - accessoryWidth - labelLayout.size.width - 10.0 - contentLeft
             let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.title, font: titleFont, textColor: item.titleColor ?? theme.itemPrimaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: 30.0)))
 
-            let (subtitleLayout, subtitleApply) = makeSubtitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.subtitle ?? "", font: Font.regular(14.0), textColor: theme.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: 30.0)))
+            let (subtitleLayout, subtitleApply) = makeSubtitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.subtitle ?? "", font: Font.regular(14.0), textColor: item.subtitleColor ?? theme.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: 30.0)))
             let hasSubtitle = !(item.subtitle ?? "").isEmpty
             // ItemListCheckboxItem's two-line metrics: 11 pt insets and 1 pt between the lines.
             let verticalInset: CGFloat = hasSubtitle ? 11.0 : 15.0

@@ -93,7 +93,23 @@ final class ChatListController: ViewController {
             self.requestLayout(transition: .animated(duration: 0.45, curve: .spring))
         })
         if mode == .main {
-            self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "square.and.pencil")?.withRenderingMode(.alwaysTemplate), style: .plain, target: self, action: #selector(self.composePressed))
+            // The compose button in the bar's glass; a long press lists recent projects.
+            let composeNode = ComposeButtonNode()
+            composeNode.longPressed = { [weak self, weak composeNode] in
+                guard let self, let composeNode else {
+                    return
+                }
+                self.openComposeMenu(sourceView: composeNode.view)
+            }
+            composeNode.tapped = { [weak self] in
+                self?.compose()
+            }
+            self.composeNode = composeNode
+            composeNode.update(color: context.theme.navigationBar.primaryTextColor)
+            let item = UIBarButtonItem(customDisplayNode: composeNode)!
+            item.target = self
+            item.action = #selector(self.composePressed)
+            self.navigationItem.rightBarButtonItem = item
         }
         self.statusBar.statusBarStyle = self.theme.statusBarStyleValue
         self.themeDisposable = (context.themeContext.theme |> deliverOnMainQueue).start(next: { [weak self] theme in
@@ -128,6 +144,7 @@ final class ChatListController: ViewController {
         })
         self.displayNode = ChatListControllerNode(context: self.context, theme: self.theme, mode: self.mode, interaction: interaction)
         self.dialogsDisposable.set((self.context.store.dialogsSignal() |> deliverOnMainQueue).start(next: { [weak self] dialogs in
+            self?.latestDialogs = dialogs
             self?.controllerNode.update(dialogs: dialogs)
         }))
         self.displayNodeDidLoad()
@@ -138,6 +155,7 @@ final class ChatListController: ViewController {
             return
         }
         self.theme = theme
+        self.composeNode?.update(color: theme.navigationBar.primaryTextColor)
         self.statusBar.statusBarStyle = theme.statusBarStyleValue
         self.navigationBar?.updatePresentationData(theme.navigationBarPresentationData(), transition: .immediate)
         self.titleView.theme = theme.presentationTheme
@@ -155,26 +173,63 @@ final class ChatListController: ViewController {
         self.compose()
     }
 
-    /// New Chat, as Telegram's compose button: pick where the agent works, then the chat replaces the picker.
+    private var composeNode: ComposeButtonNode?
+    /// The list as last shown, for where a new chat starts.
+    private(set) var latestDialogs: [DialogModel] = []
+
+    /// New Chat: straight into an empty chat in the most recent project; its card changes where and with what.
     func compose() {
-        let compose = ComposeController(context: self.context, open: { [weak self] cwd in
-            self?.startChat(cwd: cwd)
-        })
-        (self.navigationController as? NavigationController)?.pushViewController(compose)
+        guard let location = self.context.store.defaultLocation(self.latestDialogs) else {
+            return
+        }
+        self.startChat(at: location)
     }
 
-    func startChat(cwd: String?) {
+    func startChat(at location: ProjectLocation) {
         guard let navigationController = self.navigationController as? NavigationController else {
             return
         }
-        let id = self.context.store.createConversation(cwd: cwd)
+        let id = self.context.store.createConversation(server: location.slot, cwd: location.path)
         let chat = ChatController(context: self.context, conversationId: id)
-        // Drop the picker screens under the new chat, so Back returns to the list.
-        let kept = navigationController.viewControllers.filter { !($0 is ComposeController || $0 is FolderBrowserController) }
-        navigationController.setViewControllers(kept + [chat], animated: true)
+        navigationController.pushViewController(chat)
         Queue.mainQueue().after(0.45) {
             chat.activateInput()
         }
+    }
+
+    /// A long press on compose: Telegram's context menu from the button, with the recent projects, then Choose Project.
+    private func openComposeMenu(sourceView: UIView) {
+        let store = self.context.store
+        let theme = self.theme
+        var items: [ContextMenuItem] = []
+        for location in store.recentProjects(self.latestDialogs).prefix(5) {
+            items.append(.action(ContextMenuActionItem(text: store.projectTitle(location), textLayout: .secondLineWithValue(store.describe(location)), icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Message"), color: theme.contextMenu.primaryColor)
+            }, action: { [weak self] _, f in
+                f(.default)
+                self?.startChat(at: location)
+            })))
+        }
+        if !items.isEmpty {
+            items.append(.separator)
+        }
+        items.append(.action(ContextMenuActionItem(text: "Choose Project…", icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Folder"), color: theme.contextMenu.primaryColor)
+        }, action: { [weak self] _, f in
+            f(.default)
+            guard let self else {
+                return
+            }
+            let picker = ProjectPickerController(context: self.context, current: nil, choose: { [weak self] location in
+                Queue.mainQueue().after(0.3) {
+                    self?.startChat(at: location)
+                }
+            })
+            (self.navigationController as? NavigationController)?.pushViewController(picker)
+        })))
+        let source = ComposeContextReferenceSource(view: sourceView)
+        let controller = makeContextController(presentationData: theme.presentationData, source: .reference(source), items: .single(ContextController.Items(content: .list(items))), gesture: nil)
+        self.presentInGlobalOverlay(controller)
     }
 
     func openArchive() {
@@ -289,9 +344,16 @@ final class ChatListController: ViewController {
         let navigationController = self.navigationController as? NavigationController
         let source = ChatListContextControllerContentSource(controller: chat, sourceNode: sourceNode, navigationController: navigationController)
         let contextController = makeContextController(presentationData: self.theme.presentationData, source: .controller(source), items: .single(ContextController.Items(content: .list(items))), gesture: gesture)
-        chat.previewTapped = { [weak self, weak contextController] in
+        chat.previewTapped = { [weak self, weak contextController, weak chat] in
+            guard let self, let chat, let navigationController = self.navigationController as? NavigationController else {
+                return
+            }
+            // Telegram zooms the preview into the chat rather than pushing it from the side.
+            let frame = chat.view.convert(chat.view.bounds, to: nil)
             contextController?.dismiss(result: .dismissWithoutContent, completion: nil)
-            self?.open(conversationId: dialog.id)
+            let full = ChatController(context: self.context, conversationId: dialog.id)
+            navigationController.pushViewController(full, animated: false)
+            full.animateFromPreview(frame: frame)
         }
         self.presentInGlobalOverlay(contextController)
     }
@@ -427,5 +489,71 @@ private final class ChatListContextControllerContentSource: ContextControllerCon
     }
 
     func animatedIn() {
+    }
+}
+
+/// The compose glyph inside the navigation bar's glass button, which also takes a long press.
+final class ComposeButtonNode: ASDisplayNode {
+    private let iconNode = ASImageNode()
+    var longPressed: (() -> Void)?
+    var tapped: (() -> Void)?
+
+    override init() {
+        super.init()
+        self.iconNode.displaysAsynchronously = false
+        self.iconNode.image = UIImage(systemName: "square.and.pencil")?.withRenderingMode(.alwaysTemplate)
+        self.addSubnode(self.iconNode)
+    }
+
+    override func didLoad() {
+        super.didLoad()
+        let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(self.longPressGesture(_:)))
+        recognizer.minimumPressDuration = 0.4
+        self.view.addGestureRecognizer(recognizer)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(self.tapGesture))
+        tap.require(toFail: recognizer)
+        self.view.addGestureRecognizer(tap)
+    }
+
+    @objc private func tapGesture() {
+        self.tapped?()
+    }
+
+    @objc private func longPressGesture(_ recognizer: UILongPressGestureRecognizer) {
+        if recognizer.state == .began {
+            self.longPressed?()
+        }
+    }
+
+    func update(color: UIColor) {
+        self.iconNode.image = generateTintedImage(image: UIImage(systemName: "square.and.pencil", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17.0, weight: .regular)), color: color)
+        self.setNeedsLayout()
+    }
+
+    override func calculateSizeThatFits(_ constrainedSize: CGSize) -> CGSize {
+        return CGSize(width: 44.0, height: 44.0)
+    }
+
+    override func layout() {
+        super.layout()
+        if let image = self.iconNode.image {
+            self.iconNode.frame = CGRect(origin: CGPoint(x: floor((self.bounds.width - image.size.width) / 2.0), y: floor((self.bounds.height - image.size.height) / 2.0)), size: image.size)
+        }
+    }
+}
+
+/// The compose button as a context menu's anchor.
+private final class ComposeContextReferenceSource: ContextReferenceContentSource {
+    private weak var view: UIView?
+
+    init(view: UIView) {
+        self.view = view
+    }
+
+    func transitionInfo() -> ContextControllerReferenceViewInfo? {
+        guard let view = self.view else {
+            return nil
+        }
+        return ContextControllerReferenceViewInfo(referenceView: view, contentAreaInScreenSpace: UIScreen.main.bounds)
     }
 }

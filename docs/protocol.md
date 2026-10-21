@@ -42,7 +42,7 @@ socket, so a client must not send one (content limits below are far under it).
 ## Methods
 
 ### `hello`
-`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number }`
+`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number }`
 
 `defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
 `hostname` is the computer's name, `piRevision` the pi commit the server links, `uptime` seconds since it started.
@@ -50,14 +50,18 @@ socket, so a client must not send one (content limits below are far under it).
 Must be the first request. A different `protocol` is rejected.
 
 ### `models.list`
-`{}` -> `{ models: { provider, id, name, reasoning, contextWindow, input: ("text"|"image")[] }[] }`
+`{}` -> `{ models: { provider, id, name, reasoning, thinkingLevels: string[], contextWindow, input: ("text"|"image")[] }[] }`
 
-Models the server has credentials for.
+Models the server has credentials for. `thinkingLevels` are the levels the model has, `off` first (pi-ai's
+`getSupportedThinkingLevels`).
 
 ### `settings.configure`
-`{ defaultModel?: ModelRef }` -> `{ defaultModel: ModelRef }`
+`{ defaultModel?: ModelRef, defaultThinkingLevel?: string }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string }`
 
-The model new conversations get, for every client; it survives restarts and overrides the server's `--model`.
+The model and thinking level new conversations get, for every client; they survive restarts, and the model overrides
+the server's `--model`. A create fixes both in the conversation, the level fitted to its model as pi's
+`clampThinkingLevel` fits it: changing a default moves no existing conversation. `conversation.configure` fits the
+level the same way, and again after a model change.
 
 ### `fs.list`
 `{ path?: string, hidden?: boolean }` -> `{ path, parent?, entries: DirEntry[], truncated?: true }`

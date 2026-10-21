@@ -29,6 +29,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     struct Hello {
         let serverId: String
         let defaultModel: String
+        let defaultThinkingLevel: String
         let defaultCwd: String
         let home: String
         let hostname: String
@@ -62,6 +63,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     }
 
     private let statusPromise = ValuePromise<ConnectionStatus>(.connecting, ignoreRepeated: true)
+    private(set) var currentStatus: ConnectionStatus = .connecting
+    /// The last ping's round trip, in seconds: Telegram's proxy list shows it.
+    private(set) var latency: Double?
     var status: Signal<ConnectionStatus, NoError> {
         return self.statusPromise.get()
     }
@@ -105,11 +109,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func publishStatus() {
-        if self.socketStatus == .connecting && !self.hasNetwork {
-            self.statusPromise.set(.waitingForNetwork)
-        } else {
-            self.statusPromise.set(self.socketStatus)
-        }
+        self.currentStatus = self.socketStatus == .connecting && !self.hasNetwork ? .waitingForNetwork : self.socketStatus
+        self.statusPromise.set(self.currentStatus)
     }
 
     func close() {
@@ -152,6 +153,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                 let hello = Hello(
                     serverId: value.string("serverId") ?? "",
                     defaultModel: model.map { "\($0.string("provider") ?? "")/\($0.string("modelId") ?? "")" } ?? "",
+                    defaultThinkingLevel: value.string("defaultThinkingLevel") ?? "off",
                     defaultCwd: value.string("defaultCwd") ?? "~",
                     home: value.string("home") ?? "~",
                     hostname: value.string("hostname") ?? "",
@@ -159,6 +161,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                 )
                 self.hello = hello
                 self.startPinging(generation: generation)
+                self.ping(generation: generation)
                 self.onConnected?(hello)
             case .failure:
                 self.reconnect(generation: generation)
@@ -192,9 +195,13 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
             return
         }
         var answered = false
+        let sent = CFAbsoluteTimeGetCurrent()
         task.sendPing { [weak self] error in
             Queue.mainQueue().async {
                 answered = true
+                if error == nil {
+                    self?.latency = CFAbsoluteTimeGetCurrent() - sent
+                }
                 if error != nil {
                     self?.reconnect(generation: generation)
                 }

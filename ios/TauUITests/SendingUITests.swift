@@ -564,5 +564,44 @@ final class SendingUITests: XCTestCase {
         sleep(2)
         self.shot("rename-4-list")
     }
-}
 
+    /// Two servers: one list, Telegram's proxy-style server list, a server's page, and a new chat's card.
+    func testMultiServer() {
+        self.launch(["-server2.url", "ws://remote.example.ts.net:7878"])
+        sleep(4)
+        self.shot("multi-0-list")
+        self.point(0.75, 0.96).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Servers"].firstMatch.tap()
+        sleep(3)
+        self.shot("multi-1-servers")
+        self.point(0.5, 0.28).tap()
+        sleep(2)
+        self.shot("multi-2-server")
+        self.point(0.1, 0.08).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Add Server"].firstMatch.tap()
+        sleep(2)
+        self.shot("multi-3-add")
+        self.point(0.32, 0.49).tap()
+        sleep(1)
+        self.point(0.1, 0.08).tap()
+        sleep(1)
+        self.point(0.25, 0.96).tap()
+        sleep(1)
+        // New Chat: straight into the chat, its card in the middle.
+        self.point(0.9, 0.098).tap()
+        sleep(2)
+        self.shot("multi-4-newchat")
+        self.point(0.5, 0.3).tap()
+        sleep(2)
+        self.shot("multi-5-projects")
+        self.point(0.12, 0.11).tap()
+        sleep(1)
+        self.point(0.1, 0.08).tap()
+        sleep(1)
+        self.point(0.9, 0.098).press(forDuration: 0.8)
+        sleep(1)
+        self.shot("multi-6-compose-menu")
+    }
+}

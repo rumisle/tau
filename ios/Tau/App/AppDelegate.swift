@@ -113,7 +113,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         guard defaults.object(forKey: "openChat") != nil || isNewChat else {
             return
         }
-        let conversationId = isNewChat ? context.store.createConversation(cwd: nil) : defaults.integer(forKey: "openChat")
+        let conversationId = isNewChat ? context.store.createConversation(server: context.store.servers.first?.slot ?? 0, cwd: nil) : defaults.integer(forKey: "openChat")
         let chat = ChatController(context: context, conversationId: conversationId)
         navigationController.pushViewController(chat, animated: false)
         if let draft = defaults.string(forKey: "draft") {
@@ -224,7 +224,5 @@ func makeStore() -> TauStore {
     if defaults.bool(forKey: "mock") {
         return MockStore()
     }
-    let address = defaults.string(forKey: "server.url") ?? defaultServerURL
-    let url = URL(string: address) ?? URL(string: defaultServerURL)!
-    return ServerStore(url: url, token: defaults.string(forKey: "server.token"))
+    return MultiStore(configs: ServerConfigStorage.load())
 }

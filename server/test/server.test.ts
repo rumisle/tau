@@ -394,6 +394,25 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("the default thinking level is fitted to the model a conversation gets", async () => {
+		const client = await TauClient.connect(server.url);
+		const settings = await client.request("settings.configure", { defaultThinkingLevel: "xhigh" });
+		assert.equal(settings.defaultThinkingLevel, "xhigh");
+		const { models } = await client.request("models.list", {});
+		const echo = models.find((model: { provider: string }) => model.provider === "dev");
+		assert.deepEqual(echo.thinkingLevels, ["off", "minimal", "low", "medium", "high"]);
+		const { dialog } = await client.request("conversation.create", { title: "Thinks" });
+		const id = dialog.conversation.id;
+		const view = await client.request("conversation.subscribe", { conversationId: id });
+		// The echo model has no xhigh: the nearest level it has.
+		assert.equal(view.docs["pi.agent"]?.thinkingLevel, "high");
+		await client.request("conversation.configure", { conversationId: id, agent: { thinkingLevel: "max" } });
+		const after = await client.request("conversation.subscribe", { conversationId: id });
+		assert.equal(after.docs["pi.agent"]?.thinkingLevel, "high");
+		await client.request("settings.configure", { defaultThinkingLevel: "off" });
+		await client.close();
+	});
+
 	test("a fork with a request ID happens once", async () => {
 		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", { title: "Parent" });

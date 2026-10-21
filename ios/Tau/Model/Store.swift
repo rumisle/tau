@@ -1,19 +1,64 @@
 import UIKit
 import SwiftSignalKit
 
-/// What the screens need from conversations. MockStore serves canned data (UI tests, screenshots); ServerStore syncs
-/// with a tau server (docs/protocol.md).
-protocol TauStore: AnyObject {
+/// One tau server: its connection, and what it keeps for all its clients.
+protocol TauServer: AnyObject {
+    /// Stable among the configured servers; part of every conversation ID from it (MultiStore).
+    var slot: Int { get }
+    /// What the app calls it: the name given, else the computer's name.
+    var name: String { get }
+    var address: String { get }
     var connectionStatus: Signal<ConnectionStatus, NoError> { get }
-    /// Shown in Settings: where the store gets its data.
-    var serverDescription: String { get }
-    /// What the connected server reported about itself; nil while not connected or on demo data.
+    var status: ConnectionStatus { get }
+    /// The last round trip to it, in seconds, while connected.
+    var latency: Double? { get }
+    /// What the server reported about itself; nil until it has.
     var serverInfo: ServerInfo? { get }
+    /// The server user's home directory, where a new chat starts unless it picks a project.
+    var home: String? { get }
+    /// The model new conversations get, as `provider/id`.
+    var defaultModel: String? { get }
+    func setDefaultModel(_ model: ModelInfo)
+    /// The thinking level new conversations get, fitted to their model by the server.
+    var defaultThinkingLevel: String { get }
+    func setDefaultThinkingLevel(_ level: String)
+    /// Models the server has credentials for.
+    func models() -> Signal<[ModelInfo], NoError>
+    /// A model from the last list, if one came.
+    func cachedModel(provider: String, id: String) -> ModelInfo?
+    /// One directory of the server's file system, for picking where a conversation runs.
+    func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError>
+}
+
+/// What the screens need: conversations from every configured server (MultiStore), or canned data (MockStore).
+protocol TauStore: ConversationStore {
+    /// The configured servers, in the order the user keeps them.
+    var servers: [TauServer] { get }
+    /// After a server is added, removed, renamed or reordered.
+    var serversSignal: Signal<[TauServer], NoError> { get }
+    func server(_ slot: Int) -> TauServer?
+    /// The server a conversation is on.
+    func server(of id: Int) -> TauServer?
+    /// A new conversation on that server, in `cwd` (nil: the server's home). A draft until its first message.
+    func createConversation(server slot: Int, cwd: String?) -> Int
+    /// A new chat moved to another project before its first message: the same draft on that server, else a new one
+    /// there with what was written. Returns the chat's ID from now on.
+    func relocateDraft(_ id: Int, to location: ProjectLocation) -> Int
+    var isDemo: Bool { get }
+    func addServer(address: String, token: String?, name: String?)
+    func updateServer(_ slot: Int, address: String, token: String?, name: String?)
+    func removeServer(_ slot: Int)
+    func moveServer(from: Int, to: Int)
+    func serverToken(_ slot: Int) -> String?
+}
+
+/// One server's conversations (ServerStore), or the canned ones.
+protocol ConversationStore: AnyObject {
+    /// Every server's status together: Telegram's chat list title.
+    var connectionStatus: Signal<ConnectionStatus, NoError> { get }
     /// A chat's unsent input (docs: InputDrafts.swift); a chat not created yet has the New Chat draft.
     func inputDraft(_ id: Int) -> InputDraft?
     func setInputDraft(_ draft: InputDraft?, for id: Int)
-    /// The model new conversations get, as `provider/id`.
-    var defaultModel: String? { get }
     /// Stops syncing, before the app switches to another store.
     func close()
 
@@ -33,8 +78,6 @@ protocol TauStore: AnyObject {
     /// Mark as Read / Mark as Unread.
     func setUnread(_ id: Int, _ unread: Bool)
     func setArchived(_ id: Int, _ archived: Bool)
-    /// The model new conversations get, for every client of the server.
-    func setDefaultModel(_ model: ModelInfo)
 
     /// Sends a message (docs/sending.md). While the agent works, a steer reaches it after its current step and a
     /// follow-up once its run ends; idle, both start a run.
@@ -60,8 +103,6 @@ protocol TauStore: AnyObject {
     func chatEvents(_ id: Int) -> Signal<ChatEvent, NoError>
     func loadOlder(_ id: Int)
 
-    /// Models the server has credentials for.
-    func models() -> Signal<[ModelInfo], NoError>
     /// The conversation's model and thinking level (`pi.agent`).
     func agent(_ id: Int) -> AgentSettings
     func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?)
@@ -73,9 +114,6 @@ protocol TauStore: AnyObject {
     func resetContext(_ id: Int)
     /// What the conversation has spent, and how full its context is.
     func usage(_ id: Int) -> ConversationUsage
-
-    /// One directory of the server's file system, for picking where a conversation runs.
-    func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError>
 
     func scrollState(_ id: Int) -> ChatScrollState?
     func setScrollState(_ state: ChatScrollState?, for id: Int)
@@ -93,7 +131,7 @@ enum ChatEvent: Equatable {
     case notice(String)
 }
 
-extension TauStore {
+extension ConversationStore {
     func send(_ text: String, to id: Int) {
         self.send(text, attachments: [], to: id, mode: .steer)
     }
@@ -108,6 +146,8 @@ struct ModelInfo: Equatable {
     var id: String
     var name: String
     var reasoning: Bool
+    /// The thinking levels it has, `off` first (pi-ai's getSupportedThinkingLevels).
+    var thinkingLevels: [String] = ["off"]
     /// Tokens the model takes in at most.
     var contextWindow: Int? = nil
 }

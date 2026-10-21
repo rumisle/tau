@@ -64,7 +64,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self?.updateTheme(theme)
         })
         if !isPreview {
-            self.connectionDisposable = (context.store.connectionStatus |> deliverOnMainQueue).start(next: { [weak self] status in
+            self.connectionDisposable = ((context.store.server(of: conversationId)?.connectionStatus ?? context.store.connectionStatus) |> deliverOnMainQueue).start(next: { [weak self] status in
                 guard let self else {
                     return
                 }
@@ -122,9 +122,64 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         case .updating:
             status = .network(strings.ChatState_Updating)
         case .online:
-            status = busy ? .working("working") : .info("\(dialog.projectName) · \(model)")
+            status = busy ? .working("working") : .info("\(dialog.projectLabel) · \(model)")
         }
         self.titleView.update(title: dialog.title, status: status)
+        self.updateNewChatCard(dialog: dialog)
+    }
+
+    /// A chat not created yet shows where it will run and with what, each a tap from changing.
+    private func updateNewChatCard(dialog: DialogModel) {
+        guard dialog.id < 0, !self.isPreview else {
+            self.controllerNode.newChatCard = nil
+            return
+        }
+        let store = self.context.store
+        let agent = store.agent(self.conversationId)
+        let location = ProjectLocation(slot: dialog.serverSlot, path: dialog.cwd)
+        let modelName = agent.provider.flatMap { provider in agent.modelId.flatMap { store.server(of: self.conversationId)?.cachedModel(provider: provider, id: $0)?.name } } ?? agent.modelId ?? dialog.model
+        self.controllerNode.newChatCard = NewChatCardNode.Content(
+            project: store.projectTitle(location),
+            projectDetail: store.describe(location),
+            model: modelName,
+            modelDetail: "Thinking: \(thinkingTitle(agent.thinkingLevel ?? "off"))"
+        )
+    }
+
+    private func chooseProject() {
+        guard let dialog = self.context.store.dialog(self.conversationId) else {
+            return
+        }
+        let current = ProjectLocation(slot: dialog.serverSlot, path: dialog.cwd)
+        let picker = ProjectPickerController(context: self.context, current: current, choose: { [weak self] location in
+            guard let self else {
+                return
+            }
+            let newId = self.context.store.relocateDraft(self.conversationId, to: location)
+            if newId != self.conversationId, let navigationController = self.navigationController as? NavigationController {
+                // On another server it is another draft: this chat gives way to it, with what was written.
+                self.controllerNode.inputPanelNode.textChanged = nil
+                navigationController.replaceTopController(ChatController(context: self.context, conversationId: newId), animated: false)
+            } else {
+                self.updateTitle(busy: false)
+            }
+        })
+        (self.navigationController as? NavigationController)?.pushViewController(picker)
+    }
+
+    private func openModelPicker() {
+        let store = self.context.store
+        let id = self.conversationId
+        let agent = store.agent(id)
+        let current = agent.provider.flatMap { provider in agent.modelId.map { "\(provider)/\($0)" } }
+        guard let server = store.server(of: id) else {
+            return
+        }
+        let picker = ModelPickerController(context: self.context, server: server, title: "Model", current: current, select: { [weak self] model in
+            store.configure(id, model: model, thinkingLevel: nil)
+            self?.presentToast(.succeed(text: "Model changed to **\(model.name)**", timeout: nil, customUndoText: nil))
+        })
+        (self.navigationController as? NavigationController)?.pushViewController(picker)
     }
 
     private var connectionStatus: ConnectionStatus = .online
@@ -145,6 +200,12 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         NotificationCenter.default.addObserver(self, selector: #selector(self.applicationDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         node.sendMessage = { [weak self] text in
             self?.send(text: text, attachments: [])
+        }
+        node.newChatProjectTapped = { [weak self] in
+            self?.chooseProject()
+        }
+        node.newChatModelTapped = { [weak self] in
+            self?.openModelPicker()
         }
         node.presentToast = { [weak self] content in
             self?.presentToast(content)
@@ -335,7 +396,42 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.controllerNode.inputPanelNode.setText(text)
     }
 
+    private(set) var validLayout: ContainerViewLayout?
+
+    /// The chat grows out of its preview into the navigation stack, as Telegram's ChatControllerImpl
+    /// animateFromPreviewing does: pushed without animation, then its view goes from the preview's frame and size to
+    /// its own, the history scaled so its lines keep their breaks, the input panel rising from below.
+    func animateFromPreview(frame initialFrame: CGRect, transition: ContainedViewLayoutTransition = .animated(duration: 0.4, curve: .spring)) {
+        guard let navigationController = self.navigationController as? NavigationController, let updatedLayout = self.validLayout, transition.isAnimated else {
+            return
+        }
+        let initialLayout = ContainerViewLayout(size: initialFrame.size, metrics: updatedLayout.metrics, deviceMetrics: updatedLayout.deviceMetrics, intrinsicInsets: UIEdgeInsets(), safeInsets: UIEdgeInsets(), additionalInsets: UIEdgeInsets(), statusBarHeight: nil, inputHeight: nil, inputHeightIsInteractivellyChanging: false, inVoiceOver: false, presentedInFormSheet: false)
+        let initialView = self.view.superview
+        let startFrame = navigationController.view.convert(initialFrame, from: nil)
+        let updatedFrame = self.view.convert(self.view.bounds, to: navigationController.view)
+        navigationController.view.addSubview(self.view)
+        self.view.clipsToBounds = true
+        self.view.frame = startFrame
+        self.containerLayoutUpdated(initialLayout, transition: .immediate)
+        self.containerLayoutUpdated(updatedLayout, transition: transition)
+        let history = self.controllerNode.historyNode
+        history.layer.animateScaleX(from: initialLayout.size.width / updatedLayout.size.width, to: 1.0, duration: 0.4, timingFunction: kCAMediaTimingFunctionSpring)
+        history.layer.animatePosition(from: CGPoint(x: (updatedLayout.size.width - initialLayout.size.width) / 2.0, y: 0.0), to: CGPoint(), duration: 0.4, timingFunction: kCAMediaTimingFunctionSpring, additive: true)
+        let panel = self.controllerNode.inputPanelNode
+        panel.layer.animatePosition(from: CGPoint(x: 0.0, y: panel.frame.height + 40.0), to: CGPoint(), duration: 0.4, timingFunction: kCAMediaTimingFunctionSpring, additive: true)
+        self.view.layer.animate(from: 30.0 as NSNumber, to: updatedLayout.deviceMetrics.screenCornerRadius as NSNumber, keyPath: "cornerRadius", timingFunction: kCAMediaTimingFunctionSpring, duration: 0.4)
+        transition.updateFrame(view: self.view, frame: updatedFrame, completion: { [weak self] _ in
+            guard let self else {
+                return
+            }
+            initialView?.addSubview(self.view)
+            self.view.clipsToBounds = false
+        })
+        transition.updateCornerRadius(layer: self.view.layer, cornerRadius: 0.0)
+    }
+
     override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
+        self.validLayout = layout
         super.containerLayoutUpdated(layout, transition: transition)
         let navigationHeight = self.isPreview ? 0.0 : self.navigationLayout(layout: layout).navigationFrame.maxY
         self.controllerNode.containerLayoutUpdated(layout, navigationHeight: navigationHeight, transition: transition)
@@ -623,25 +719,19 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         })))
         items.append(.action(ContextMenuActionItem(text: "Model", textLayout: .secondLineWithValue(agent.modelId ?? "default"), icon: icon("Chat/Context Menu/Settings"), action: { [weak self] _, f in
             f(.default)
-            guard let self else {
-                return
-            }
-            let current = agent.provider.flatMap { provider in agent.modelId.map { "\(provider)/\($0)" } }
-            let picker = ModelPickerController(context: self.context, title: "Model", current: current, select: { [weak self] model in
-                store.configure(id, model: model, thinkingLevel: nil)
-                self?.presentToast(.succeed(text: "Model changed to **\(model.name)**", timeout: nil, customUndoText: nil))
-            })
-            (self.navigationController as? NavigationController)?.pushViewController(picker)
+            self?.openModelPicker()
         })))
-        items.append(.action(ContextMenuActionItem(text: "Thinking", textLayout: .secondLineWithValue(thinking.capitalized), icon: icon("Chat/Context Menu/Timer"), action: { controller, _ in
+        // The levels this model has (pi-ai's getSupportedThinkingLevels); the server fits the rest.
+        let levels = agent.provider.flatMap { provider in agent.modelId.flatMap { store.server(of: id)?.cachedModel(provider: provider, id: $0)?.thinkingLevels } } ?? ["off", "low", "medium", "high"]
+        items.append(.action(ContextMenuActionItem(text: "Thinking", textLayout: .secondLineWithValue(thinkingTitle(thinking)), icon: icon("Chat/Context Menu/Timer"), action: { controller, _ in
             var levelItems: [ContextMenuItem] = [.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
                 controller?.popItems()
             })), .separator]
-            for level in ["off", "low", "medium", "high"] {
-                levelItems.append(.action(ContextMenuActionItem(text: level.capitalized, icon: checkIcon(level == thinking), action: { [weak self] _, f in
+            for level in levels {
+                levelItems.append(.action(ContextMenuActionItem(text: thinkingTitle(level), icon: checkIcon(level == thinking), action: { [weak self] _, f in
                     f(.default)
                     store.configure(id, model: nil, thinkingLevel: level)
-                    self?.presentToast(.succeed(text: level == "off" ? "Thinking turned off" : "Thinking set to **\(level.capitalized)**", timeout: nil, customUndoText: nil))
+                    self?.presentToast(.succeed(text: level == "off" ? "Thinking turned off" : "Thinking set to **\(thinkingTitle(level))**", timeout: nil, customUndoText: nil))
                 })))
             }
             controller?.pushItems(items: .single(ContextController.Items(content: .list(levelItems))))

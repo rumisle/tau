@@ -162,24 +162,25 @@ final class SettingsController: SettingsListController {
         case .waitingForNetwork:
             statusText = strings.ChatState_WaitingForNetwork
         }
-        let isDemo = store is MockStore
+        let servers = store.servers
+        let serversLabel = store.isDemo ? "Demo" : (servers.count == 1 ? servers[0].name : "\(servers.count)")
+        let subtitle: String
+        if store.isDemo {
+            subtitle = "Demo data"
+        } else if servers.count == 1 {
+            subtitle = "\(servers[0].name) · \(statusText)"
+        } else {
+            subtitle = "\(servers.count) servers · \(statusText)"
+        }
         return [
-            SettingsProfileItem(theme: theme, title: "tau", subtitle: isDemo ? "Demo data" : "\(store.serverDescription) · \(statusText)"),
-            SettingsTextItem(theme: theme, text: "Server", kind: .header),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.server, title: "Server", accessory: .disclosure(label: isDemo ? "Demo" : store.serverDescription), position: first, action: { [weak self] in
-                self?.editServer()
-            }),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.model, title: "Default Model", accessory: .disclosure(label: store.defaultModel?.components(separatedBy: "/").last ?? "—"), position: last, action: { [weak self] in
+            SettingsProfileItem(theme: theme, title: "tau", subtitle: subtitle),
+            SettingsTextItem(theme: theme, text: "", kind: .header),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.server, title: "Servers", accessory: .disclosure(label: serversLabel), position: single, action: { [weak self] in
                 guard let self else {
                     return
                 }
-                let picker = ModelPickerController(context: self.context, title: "Default Model", current: self.context.store.defaultModel, select: { [weak self] model in
-                    self?.context.store.setDefaultModel(model)
-                    self?.reload()
-                })
-                (self.navigationController as? NavigationController)?.pushViewController(picker)
+                self.push(ServersController(context: self.context))
             }),
-            SettingsTextItem(theme: theme, text: "New chats use this model.", kind: .footer),
             SettingsTextItem(theme: theme, text: "Preferences", kind: .header),
             SettingsRowItem(theme: theme, icon: SettingsIcon.appearance, title: "Appearance", accessory: .disclosure(label: context.themeContext.settings.theme.title), position: first, action: { [weak self] in
                 guard let self else {
@@ -199,45 +200,6 @@ final class SettingsController: SettingsListController {
         ]
     }
 
-    /// The server's address and token. Saving reconnects every screen to it.
-    private func editServer() {
-        let defaults = UserDefaults.standard
-        let alert = UIAlertController(title: "Server", message: "The tau server's WebSocket address, and its TAU_TOKEN if it has one. Start a server with `npm start` in tau's server/ directory; from a phone, use the computer's address, such as ws://192.168.1.10:7878 or its Tailscale name.", preferredStyle: .alert)
-        alert.addTextField { field in
-            field.placeholder = defaultServerURL
-            field.text = defaults.string(forKey: "server.url") ?? defaultServerURL
-            field.keyboardType = .URL
-            field.autocapitalizationType = .none
-            field.autocorrectionType = .no
-        }
-        alert.addTextField { field in
-            field.placeholder = "Token (optional)"
-            field.text = defaults.string(forKey: "server.token")
-            field.isSecureTextEntry = true
-        }
-        alert.addAction(UIAlertAction(title: "Use Demo Data", style: .default, handler: { [weak self] _ in
-            defaults.set(true, forKey: "mock")
-            self?.switchStore()
-        }))
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Connect", style: .default, handler: { [weak self, weak alert] _ in
-            let address = alert?.textFields?[0].text?.trimmingCharacters(in: .whitespaces) ?? ""
-            let token = alert?.textFields?[1].text ?? ""
-            guard let url = URL(string: address), url.scheme == "ws" || url.scheme == "wss" else {
-                return
-            }
-            defaults.set(url.absoluteString, forKey: "server.url")
-            defaults.set(token.isEmpty ? nil : token, forKey: "server.token")
-            defaults.set(false, forKey: "mock")
-            self?.switchStore()
-        }))
-        self.view.window?.rootViewController?.present(alert, animated: true)
-    }
-
-    private func switchStore() {
-        self.context.store.close()
-        self.context.setStore(makeStore())
-    }
 }
 
 final class AppearanceController: SettingsListController {

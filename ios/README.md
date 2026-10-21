@@ -28,6 +28,7 @@ conversations (`Model/MockStore.swift`).
 | File | Role |
 |---|---|
 | `TauConnection.swift` | One WebSocket: requests by id, pushes, `hello`, reconnect with backoff, a ping that finds a dead socket, a response timeout; the chat list and chat titles show Telegram's "Connecting…" / "Updating…" meanwhile |
+| `MultiStore.swift` | Every configured server at once, one ServerStore each: their chats in one list, conversation IDs that carry the server's slot, Telegram's title status across them; the saved server list |
 | `Outbox.swift` | Messages on their way, on disk until the server has them: one request per conversation at a time, in order, idempotent retries, safe withdraws (`../docs/sending.md`) |
 | `ConversationReplica.swift` | A conversation's cached entries, docs kept current with ops, and `TranscriptBuilder`, which turns entries and `pi.live` into rows |
 | `ServerStore.swift` | The store: dialog list, subscriptions while a chat is open, drafts, sending through the outbox, steer and follow-up, Stop that returns queued messages to the field, fork-based edits, the entry cache in Caches |
@@ -76,7 +77,7 @@ SwiftPM package with one target per Bazel module. It reads Telegram's BUILD file
 sources, headers, defines and include paths, and stops at **shims**. It also generates `PresentationStrings` with
 Telegram's own script, and copies every image and Lottie file the copied sources name.
 
-**Copied** (88 modules), among them:
+**Copied** (91 modules), among them:
 
 | Modules | Used for |
 |---|---|
@@ -93,11 +94,12 @@ Telegram's own script, and copies every image and Lottie file the copied sources
 | TextSelectionNode, ContextMenuScreen | Selecting text in a message lifted into its context menu, and the menu over the selection |
 | SearchBarNode, SearchUI | The model picker's search (`Settings/ModelPickerController.swift`, after LanguageSelectionScreen) |
 | ChatListTitleView | The chat list's "Connecting..." / "Updating..." title with its spinner |
+| AlertComponent, AlertInputFieldComponent | Telegram's alerts with fields: Rename Chat, Add Server, a server's name and address |
 | UndoUI (no account-bound toasts, patch 0010) | Telegram's toasts: "Text copied to clipboard", model changes, notices |
 | libprisma (Prism's grammars in C++) | Syntax highlighting of code blocks and of the files tool cards show |
 | InteractiveTextComponent, StreamingTextReveal | Message text and the streaming reveal |
 
-**Shimmed** (`ThirdParty/telegram-shims/`, 42 modules): stand-ins with a Telegram module's name and only the API the
+**Shimmed** (`ThirdParty/telegram-shims/`, 41 modules): stand-ins with a Telegram module's name and only the API the
 copied code uses, for modules bound to Telegram's account, network and database (`TelegramCore`, `Postbox`,
 `AccountContext`, ...) or to features tau does not have (reactions, stickers, stories, calls). Most are a few types;
 some do real work in Telegram's shapes: `AttachmentTextInputPanelNode` is the caption field, `AnimatedStickerComponent`

@@ -32,13 +32,17 @@ final class AboutController: SettingsListController {
         var items: [ListViewItem] = [
             SettingsProfileItem(theme: theme, title: "tau", subtitle: "Version \(version) (\(build))"),
         ]
-        if let server = store.serverInfo {
-            let revision = String(server.piRevision.prefix(7))
-            items.append(SettingsTextItem(theme: theme, text: "Server", kind: .header))
-            items.append(SettingsRowItem(theme: theme, icon: nil, title: "Computer", accessory: .value(server.hostname), position: first, action: nil))
-            items.append(SettingsRowItem(theme: theme, icon: nil, title: "Address", accessory: .value(server.address), position: middle, action: nil))
-            items.append(SettingsRowItem(theme: theme, icon: nil, title: "pi", accessory: .disclosure(label: revision.isEmpty ? "—" : revision), position: last, action: revision.isEmpty ? nil : open("https://github.com/earendil-works/pi/tree/\(server.piRevision)")))
-            items.append(SettingsTextItem(theme: theme, text: "The server runs pi-durable from pi's main branch at this commit.", kind: .footer))
+        let servers = store.servers.filter { $0.serverInfo != nil }
+        if !servers.isEmpty {
+            items.append(SettingsTextItem(theme: theme, text: servers.count == 1 ? "Server" : "Servers", kind: .header))
+            for (index, server) in servers.enumerated() {
+                guard let info = server.serverInfo else {
+                    continue
+                }
+                let revision = String(info.piRevision.prefix(7))
+                items.append(SettingsRowItem(theme: theme, icon: nil, title: server.name, subtitle: "\(info.hostname) · pi \(revision.isEmpty ? "—" : revision)", accessory: .disclosure(label: ""), position: SettingsRowPosition(isFirst: index == 0, isLast: index == servers.count - 1), action: revision.isEmpty ? nil : open("https://github.com/earendil-works/pi/tree/\(info.piRevision)")))
+            }
+            items.append(SettingsTextItem(theme: theme, text: "Servers run pi-durable from pi's main branch at these commits.", kind: .footer))
         }
         items.append(SettingsTextItem(theme: theme, text: "Made With", kind: .header))
         items.append(SettingsRowItem(theme: theme, icon: nil, title: "Telegram for iOS", subtitle: "Interface", accessory: .disclosure(label: ""), position: first, action: open("https://github.com/TelegramMessenger/Telegram-iOS")))
