@@ -1025,4 +1025,50 @@ final class SendingUITests: XCTestCase {
         self.app.descendants(matching: .any)["Unpin"].firstMatch.tap()
         sleep(1)
     }
+
+    /// The share sheet from another app: Safari's Share, then tau's sheet with the chats as avatars, New Chat first; a
+    /// chat picked, a comment, Send; the message arrives in the chat.
+    func testShareExtension() {
+        self.launch([])
+        sleep(3)
+        XCUIDevice.shared.press(.home)
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.launch()
+        safari.open(URL(string: "https://example.com")!)
+        sleep(4)
+        self.shot("share-safari")
+        print("BUTTONS", safari.buttons.allElementsBoundByIndex.map { "\($0.identifier)|\($0.label)" })
+        let share = safari.buttons.matching(NSPredicate(format: "identifier == 'ShareButton' OR label == 'Share'")).firstMatch
+        if share.exists {
+            share.tap()
+        } else {
+            safari.buttons.matching(NSPredicate(format: "label CONTAINS 'More' OR identifier CONTAINS 'More'")).firstMatch.tap()
+            sleep(1)
+            safari.descendants(matching: .any).matching(NSPredicate(format: "label == 'Share'")).firstMatch.tap()
+        }
+        sleep(2)
+        self.shot("share-0-sheet")
+        let tau = safari.descendants(matching: .any).matching(NSPredicate(format: "label == 'tau'")).firstMatch
+        if !tau.waitForExistence(timeout: 3.0) {
+            safari.swipeLeft()
+        }
+        safari.descendants(matching: .any).matching(NSPredicate(format: "label == 'tau'")).firstMatch.tap()
+        sleep(3)
+        self.shot("share-1-tau")
+        // New Chat and the first chat, a comment, Send.
+        safari.descendants(matching: .any).matching(NSPredicate(format: "label == 'New Chat'")).firstMatch.tap()
+        sleep(1)
+        safari.coordinate(withNormalizedOffset: CGVector(dx: 0.32, dy: 0.27)).tap()
+        sleep(1)
+        safari.descendants(matching: .textView).firstMatch.tap()
+        safari.typeText("read this page")
+        sleep(1)
+        self.shot("share-2-picked")
+        safari.descendants(matching: .any)["Send"].firstMatch.tap()
+        sleep(4)
+        self.shot("share-3-sent")
+        self.app.activate()
+        sleep(3)
+        self.shot("share-4-list")
+    }
 }

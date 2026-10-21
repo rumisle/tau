@@ -28,6 +28,7 @@ targets:
         buildPhase: resources
     dependencies:
       - target: TauWidgets
+      - target: TauShare
       - package: SwiftMath
       - package: TelegramFoundation
         products:
@@ -81,6 +82,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau
         PRODUCT_NAME: Tau
+        # The keychain group the share extension reads the chats from and leaves what it could not send in.
+        CODE_SIGN_ENTITLEMENTS: Tau/Tau.entitlements
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
@@ -111,6 +114,25 @@ targets:
         PRODUCT_NAME: TauWidgets
         INFOPLIST_FILE: TauWidgets/Info.plist
         GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
+  TauShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: TauShare
+      - path: Tau/Share/ShareModels.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau.share
+        PRODUCT_NAME: TauShare
+        INFOPLIST_FILE: TauShare/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: TauShare/TauShare.entitlements
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"

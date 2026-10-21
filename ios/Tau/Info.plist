@@ -2,6 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- The keychain group the app and its share extension exchange chats and unsent shares in (ShareModels.swift). -->
+	<key>TauKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.rumisle.tau.shared</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

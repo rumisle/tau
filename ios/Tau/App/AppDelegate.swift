@@ -37,6 +37,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         let context = AppContext(store: makeStore(), themeContext: themeContext)
         self.context = context
         LiveActivityController.shared.attach(store: context.store)
+        ShareBridge.shared.attach(store: context.store)
 
         let makeRoot: () -> (RootTabController, ChatListController) = {
             let chatList = ChatListController(context: context)
