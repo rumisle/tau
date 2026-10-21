@@ -143,6 +143,15 @@ final class MockStore: TauStore, TauServer {
 
     let isDemo = true
 
+    var answers: Signal<ChatAnswer, NoError> {
+        return .never()
+    }
+
+    let ntfy: NtfyTarget? = nil
+
+    func setNtfy(_ target: NtfyTarget?) {
+    }
+
     func relocateDraft(_ id: Int, to location: ProjectLocation) -> Int {
         self.dialogs[id]?.cwd = location.path
         self.publish(id)

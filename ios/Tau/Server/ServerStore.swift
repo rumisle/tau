@@ -84,12 +84,46 @@ final class ServerStore: ConversationStore, TauServer {
         self.connection.start()
         NotificationCenter.default.addObserver(self, selector: #selector(self.didBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(self.didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.willResignActive), name: UIApplication.willResignActiveNotification, object: nil)
     }
 
     /// Back in the foreground: a socket that died while suspended is found out at once, not at the next ping.
     @objc private func didBecomeActive() {
         self.connection.checkAlive()
         self.outbox.pump()
+        self.sendPresence()
+    }
+
+    @objc private func willResignActive() {
+        self.sendPresence(active: false)
+    }
+
+    /// The server pushes nothing while an app is in the foreground showing its own banners.
+    private func sendPresence(active: Bool? = nil) {
+        let active = active ?? (UIApplication.shared.applicationState == .active)
+        self.connection.request("client.presence", ["active": active]) { _ in }
+    }
+
+    private let answersPipe = ValuePipe<ChatAnswer>()
+
+    var answers: Signal<ChatAnswer, NoError> {
+        return self.answersPipe.signal()
+    }
+
+    private var ntfyOverride: NtfyTarget??
+
+    var ntfy: NtfyTarget? {
+        if let override = self.ntfyOverride {
+            return override
+        }
+        return self.connection.hello?.ntfy
+    }
+
+    func setNtfy(_ target: NtfyTarget?) {
+        self.ntfyOverride = .some(target)
+        let value: Any = target.map { ["server": $0.server, "topic": $0.topic] as JSONObject } ?? NSNull()
+        self.connection.request("settings.configure", ["ntfy": value]) { _ in }
+        self.infoChanged?()
     }
 
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -236,7 +270,7 @@ final class ServerStore: ConversationStore, TauServer {
         guard let hello = self.connection.hello else {
             return nil
         }
-        return ServerInfo(address: self.connection.url.absoluteString, hostname: hello.hostname, piRevision: hello.piRevision)
+        return ServerInfo(serverId: hello.serverId, address: self.connection.url.absoluteString, hostname: hello.hostname, piRevision: hello.piRevision)
     }
 
     var name: String {
@@ -305,6 +339,8 @@ final class ServerStore: ConversationStore, TauServer {
     private func connected(_ hello: TauConnection.Hello) {
         self.defaultModelOverride = nil
         self.defaultThinkingOverride = nil
+        self.ntfyOverride = nil
+        self.sendPresence()
         self.infoChanged?()
         self.readSent.removeAll()
         if self.cache.serverId != hello.serverId {
@@ -343,6 +379,11 @@ final class ServerStore: ConversationStore, TauServer {
         switch push.string("event") {
         case "dialog":
             if let raw = push.object("dialog"), var dialog = self.dialogModel(raw) {
+                // A run that ended with a new answer of a top-level chat: its banner.
+                let previous = self.dialogs[dialog.id]
+                if let last = dialog.last, last.role == .assistant, !dialog.busy, dialog.parentConversationId == nil, dialog.unreadCount > 0, last.id > (previous?.last?.id ?? 0), previous?.busy == true || previous == nil {
+                    self.answersPipe.putNext(ChatAnswer(conversationId: dialog.id, title: dialog.title, text: plainPreview(last.text)))
+                }
                 if let override = self.titleOverrides[dialog.id] {
                     if dialog.title == override.title {
                         self.titleOverrides[dialog.id] = nil

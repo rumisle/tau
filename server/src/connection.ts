@@ -20,7 +20,8 @@ import { readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import type { Dialogs } from "./dialogs.ts";
 import { directory, listDirectory } from "./fs.ts";
-import { CreatesDoc, type Host, MetaDoc } from "./host.ts";
+import { CreatesDoc, type Host, MetaDoc, SettingsDoc } from "./host.ts";
+import type { Notifier } from "./notifier.ts";
 import {
 	type AgentPatch,
 	type ErrorCode,
@@ -100,9 +101,13 @@ export class Connection {
 	#stopDialogs: (() => void) | undefined;
 	#hello = false;
 	#closed = false;
+	readonly #notifier: Notifier | undefined;
+	/** This client's app is in the foreground (client.presence). */
+	#active = false;
 
-	constructor(host: Host, dialogs: Dialogs, socket: Socket) {
+	constructor(host: Host, dialogs: Dialogs, socket: Socket, notifier?: Notifier) {
 		this.#host = host;
+		this.#notifier = notifier;
 		this.#dialogs = dialogs;
 		this.#socket = socket;
 		const { context, cancel } = withCancel(BACKGROUND_CONTEXT);
@@ -160,6 +165,7 @@ export class Connection {
 	async close(): Promise<void> {
 		if (this.#closed) return;
 		this.#closed = true;
+		if (this.#active) this.#notifier?.presence(-1);
 		this.#cancel();
 		for (const cleanup of this.#cleanups) cleanup();
 		this.#stopDialogs?.();
@@ -176,7 +182,25 @@ export class Connection {
 		switch (method) {
 			case "models.list":
 				return this.#models();
+			case "client.presence": {
+				// The app in the foreground shows its own banners; while one is, nothing is pushed.
+				const active = params.active === true;
+				if (active !== this.#active) {
+					this.#active = active;
+					this.#notifier?.presence(active ? 1 : -1);
+				}
+				return {};
+			}
 			case "settings.configure": {
+				if (params.ntfy !== undefined) {
+					const ntfy = params.ntfy === null ? undefined : obj(params, "ntfy");
+					const target = ntfy === undefined ? undefined : { server: str(ntfy, "server"), topic: str(ntfy, "topic") };
+					await harness.commit(async (tx) => {
+						const settings = await tx.doc(SettingsDoc);
+						if (target === undefined) delete settings.ntfy;
+						else settings.ntfy = target;
+					}, context);
+				}
 				const model = obj(params, "defaultModel");
 				if (model !== undefined) {
 					await this.#host.setDefaultModel({ provider: str(model, "provider"), modelId: str(model, "modelId") });
@@ -353,7 +377,7 @@ export class Connection {
 		}
 	}
 
-	#helloRequest(params: Record<string, unknown>): unknown {
+	async #helloRequest(params: Record<string, unknown>): Promise<unknown> {
 		const protocol = int(params, "protocol");
 		if (protocol !== PROTOCOL_VERSION) {
 			throw new ProtocolError("bad_request", `Unsupported protocol ${protocol}; server speaks ${PROTOCOL_VERSION}`);
@@ -364,6 +388,7 @@ export class Connection {
 			serverId: this.#host.serverId,
 			defaultModel: this.#host.defaultModel,
 			defaultThinkingLevel: this.#host.defaultThinkingLevel,
+			ntfy: (await this.#host.harness.snapshot(SettingsDoc, this.#context))?.ntfy ?? null,
 			defaultCwd: this.#host.cwd,
 			home: homedir(),
 			hostname: hostname(),

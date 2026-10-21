@@ -429,6 +429,34 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("an answer is pushed through ntfy only while no app is in the foreground", async () => {
+		const posts: unknown[] = [];
+		server.notifier.post = async (_url, body) => {
+			posts.push(body);
+		};
+		const client = await TauClient.connect(server.url);
+		await client.request("hello", { protocol: 1 });
+		await client.request("settings.configure", { ntfy: { server: "https://ntfy.example", topic: "tau-test" } });
+		const run = async (text: string) => {
+			const { dialog } = await client.request("conversation.create", { title: "Pushed" });
+			const replica = new ConversationReplica(dialog.conversation.id);
+			await replica.sync(client);
+			await client.request("conversation.submit", { conversationId: replica.id, requestId: `push-${text}`, content: text });
+			await until(replica, () => idle(replica) && kinds(replica).includes("pi.assistant"));
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			return replica.id;
+		};
+		await client.request("client.presence", { active: true });
+		await run("seen in the app");
+		assert.equal(posts.length, 0);
+		await client.request("client.presence", { active: false });
+		const id = await run("away");
+		assert.equal(posts.length, 1);
+		assert.match(JSON.stringify(posts[0]), new RegExp(`tau://chat\\?server=[^&]+&id=${id}`));
+		await client.request("settings.configure", { ntfy: null });
+		await client.close();
+	});
+
 	test("a fork with a request ID happens once", async () => {
 		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", { title: "Parent" });

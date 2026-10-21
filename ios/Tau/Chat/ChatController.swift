@@ -13,7 +13,7 @@ import TelegramPresentationData
 
 final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     private let context: AppContext
-    private let conversationId: Int
+    let conversationId: Int
     private let isPreview: Bool
     private var theme: TauTheme
     private let stateDisposable = MetaDisposable()

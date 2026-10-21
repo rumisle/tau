@@ -295,6 +295,27 @@ final class MultiStore: TauStore {
         return moved
     }
 
+    var answers: Signal<ChatAnswer, NoError> {
+        return self.storesPromise.get() |> mapToSignal { [weak self] slots -> Signal<ChatAnswer, NoError> in
+            guard let self else {
+                return .never()
+            }
+            let signals = slots.compactMap { slot in self.stores[slot].map { store in store.answers |> map { answer -> ChatAnswer in
+                var answer = answer
+                answer.conversationId = MultiStore.global(slot, answer.conversationId)
+                return answer
+            } } }
+            // Every server's answers as they come.
+            return Signal { subscriber in
+                let disposables = DisposableSet()
+                for signal in signals {
+                    disposables.add(signal.start(next: { subscriber.putNext($0) }))
+                }
+                return disposables
+            }
+        }
+    }
+
     func inputDraft(_ id: Int) -> InputDraft? {
         guard let (store, local) = self.route(id) else {
             return nil

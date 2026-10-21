@@ -33,6 +33,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         let defaultCwd: String
         let home: String
         let hostname: String
+        let ntfy: NtfyTarget?
         /// The pi commit the server links.
         let piRevision: String
     }
@@ -157,6 +158,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                     defaultCwd: value.string("defaultCwd") ?? "~",
                     home: value.string("home") ?? "~",
                     hostname: value.string("hostname") ?? "",
+                    ntfy: value.object("ntfy").flatMap { ntfy in ntfy.string("server").flatMap { server in ntfy.string("topic").map { NtfyTarget(server: server, topic: $0) } } },
                     piRevision: value.string("piRevision") ?? ""
                 )
                 self.hello = hello

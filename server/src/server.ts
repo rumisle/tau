@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import { Connection } from "./connection.ts";
 import { Dialogs } from "./dialogs.ts";
 import type { Host } from "./host.ts";
+import { Notifier } from "./notifier.ts";
 import { Titler } from "./titles.ts";
 
 export type ServerOptions = {
@@ -17,12 +18,14 @@ export type ServerOptions = {
 
 export type Server = {
 	readonly url: string;
+	readonly notifier: Notifier;
 	close(): Promise<void>;
 };
 
 export async function serve(host: Host, options: ServerOptions = {}): Promise<Server> {
 	const dialogs = new Dialogs(host);
 	const titler = new Titler(host);
+	const notifier = new Notifier(host);
 	const connections = new Set<Connection>();
 	const wss = new WebSocketServer({
 		host: options.host ?? "127.0.0.1",
@@ -34,7 +37,7 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 		verifyClient: ({ req }: { req: IncomingMessage }) => authorized(req, options.token),
 	});
 	wss.on("connection", (socket) => {
-		const connection = new Connection(host, dialogs, socket);
+		const connection = new Connection(host, dialogs, socket, notifier);
 		connections.add(connection);
 		// Frames are handled concurrently; responses carry request IDs.
 		socket.on("message", (data, isBinary) => {
@@ -54,11 +57,13 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 	const address = wss.address() as AddressInfo;
 	return {
 		url: `ws://${address.address.includes(":") ? `[${address.address}]` : address.address}:${address.port}`,
+		notifier,
 		close: async () => {
 			for (const client of wss.clients) client.terminate();
 			await Promise.allSettled([...connections].map((connection) => connection.close()));
 			dialogs.close();
 			titler.close();
+			notifier.close();
 			await new Promise<void>((resolve) => wss.close(() => resolve()));
 		},
 	};

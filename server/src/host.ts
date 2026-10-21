@@ -70,7 +70,12 @@ export const CreatesDoc = defineDoc<{ requests: Record<string, number>; order: s
 });
 
 /** Settings a client changes for the whole server. */
-export const SettingsDoc = defineDoc<{ defaultModel?: ModelRef; defaultThinkingLevel?: ModelThinkingLevel }>({
+export const SettingsDoc = defineDoc<{
+	defaultModel?: ModelRef;
+	defaultThinkingLevel?: ModelThinkingLevel;
+	/** Where pushes go (src/notifier.ts); none until a client turns them on. */
+	ntfy?: { server: string; topic: string };
+}>({
 	kind: "tau.settings",
 	version: 1,
 	scope: "session",

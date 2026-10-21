@@ -188,7 +188,12 @@ final class SettingsController: SettingsListController {
                 }
                 self.push(AppearanceController(context: self.context))
             }),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.notifications, title: "Notifications", accessory: .disclosure(label: "Off"), position: middle, action: {}),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.notifications, title: "Notifications", accessory: .disclosure(label: store.servers.contains(where: { $0.ntfy != nil }) ? "On" : ""), position: middle, action: { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.push(NotificationsController(context: self.context))
+            }),
             SettingsRowItem(theme: theme, icon: SettingsIcon.data, title: "Data and Storage", accessory: .disclosure(label: ""), position: last, action: {}),
             SettingsTextItem(theme: theme, text: "", kind: .header),
             SettingsRowItem(theme: theme, icon: SettingsIcon.about, title: "About tau", accessory: .disclosure(label: version), position: single, action: { [weak self] in

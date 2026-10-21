@@ -55,8 +55,16 @@ Must be the first request. A different `protocol` is rejected.
 Models the server has credentials for. `thinkingLevels` are the levels the model has, `off` first (pi-ai's
 `getSupportedThinkingLevels`).
 
+### `client.presence`
+`{ active: boolean }` -> `{}`
+
+Whether this client's app is in the foreground, showing its own banners: while any client is, the server pushes
+nothing (docs/notifications.md). A closed connection counts as inactive.
+
 ### `settings.configure`
-`{ defaultModel?: ModelRef, defaultThinkingLevel?: string }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string }`
+`{ defaultModel?: ModelRef, defaultThinkingLevel?: string, ntfy?: { server, topic } | null }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string }`
+
+`ntfy` sets or clears where answers are pushed; `hello` reports it as `ntfy`.
 
 The model and thinking level new conversations get, for every client; they survive restarts, and the model overrides
 the server's `--model`. A create fixes both in the conversation, the level fitted to its model as pi's

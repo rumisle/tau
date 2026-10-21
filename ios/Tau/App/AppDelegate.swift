@@ -12,6 +12,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     private var statusBarHost: ApplicationStatusBarHost?
     private var context: AppContext?
     private var themeDisposable: Disposable?
+    private var notificationController: NotificationContainerController?
+    private let answersDisposable = MetaDisposable()
+    private var navigationController: NavigationController?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         TauTiming.startFrameMonitor()
@@ -45,12 +48,20 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         let (root, chatList) = makeRoot()
         let navigationController = NavigationController(mode: .single, theme: context.theme.navigationControllerTheme)
         navigationController.setViewControllers([root], animated: false)
-        context.replaceStore = { _ in
+        context.replaceStore = { [weak self] _ in
             let (root, _) = makeRoot()
             navigationController.setViewControllers([root], animated: false)
             root.select(index: 1)
+            self?.observeAnswers(context: context)
         }
         self.mainWindow.viewController = navigationController
+        self.navigationController = navigationController
+
+        // Telegram's in-app notifications: banners over everything, in the window's top level.
+        let notificationController = NotificationContainerController(context: context.telegram)
+        self.notificationController = notificationController
+        self.mainWindow.topLevelOverlayControllers = [notificationController]
+        self.observeAnswers(context: context)
 
         context.telegramShared.mainWindow = self.mainWindow
         self.themeDisposable = (themeContext.theme |> deliverOnMainQueue).start(next: { theme in
@@ -63,6 +74,64 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         window.makeKeyAndVisible()
         self.applyDebugLaunchArguments(context: context, chatList: chatList, root: root, navigationController: navigationController)
+        return true
+    }
+
+    /// A chat's new answer, as Telegram's ApplicationContext shows a message: not for the chat on screen, a banner for
+    /// another while the app is in the foreground; a tap opens the chat.
+    private func observeAnswers(context: AppContext) {
+        self.answersDisposable.set((context.store.answers |> deliverOnMainQueue).start(next: { [weak self] answer in
+            guard let self, UIApplication.shared.applicationState == .active, InAppNotificationSettings.banners else {
+                return
+            }
+            if let chat = self.navigationController?.topViewController as? ChatController, chat.conversationId == answer.conversationId {
+                return
+            }
+            if InAppNotificationSettings.vibrate {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+            let item = ChatNotificationItem(conversationId: answer.conversationId, title: answer.title, text: answer.text, theme: context.theme.presentationTheme, tapAction: { [weak self] in
+                self?.notificationController?.removeItemsWithGroupingKey(answer.conversationId)
+                self?.openChat(answer.conversationId, context: context)
+                return false
+            })
+            self.notificationController?.enqueue(item)
+        }))
+    }
+
+    /// Opens a chat over whatever is on screen, as Telegram's banner and push taps do.
+    private func openChat(_ id: Int, context: AppContext) {
+        guard let navigationController = self.navigationController else {
+            return
+        }
+        if let chat = navigationController.topViewController as? ChatController, chat.conversationId == id {
+            return
+        }
+        navigationController.pushViewController(ChatController(context: context, conversationId: id))
+    }
+
+    /// `tau://chat?server=<serverId>&id=<conversation>`: what a push opens (server/src/notifier.ts).
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        guard url.scheme == "tau", url.host == "chat", let context = self.context, let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+        let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        guard let local = query["id"].flatMap(Int.init) else {
+            return false
+        }
+        let open = { [weak self] in
+            let server = context.store.servers.first { $0.serverInfo?.serverId == query["server"] } ?? context.store.servers.first
+            guard let server else {
+                return
+            }
+            self?.openChat(MultiStore.global(server.slot, local), context: context)
+        }
+        // At launch the servers may not have said who they are yet.
+        if context.store.servers.contains(where: { $0.serverInfo?.serverId == query["server"] }) {
+            open()
+        } else {
+            Queue.mainQueue().after(1.5, open)
+        }
         return true
     }
 
@@ -225,4 +294,17 @@ func makeStore() -> TauStore {
         return MockStore()
     }
     return MultiStore(configs: ServerConfigStorage.load())
+}
+
+/// Settings > Notifications > In-App: Telegram's InAppNotificationSettings, in UserDefaults.
+enum InAppNotificationSettings {
+    static var banners: Bool {
+        get { UserDefaults.standard.object(forKey: "notifications.banners") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "notifications.banners") }
+    }
+
+    static var vibrate: Bool {
+        get { UserDefaults.standard.object(forKey: "notifications.vibrate") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "notifications.vibrate") }
+    }
 }

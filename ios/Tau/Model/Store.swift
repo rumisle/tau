@@ -22,6 +22,9 @@ protocol TauServer: AnyObject {
     /// The thinking level new conversations get, fitted to their model by the server.
     var defaultThinkingLevel: String { get }
     func setDefaultThinkingLevel(_ level: String)
+    /// Where the server pushes answers while no app is in the foreground (server/src/notifier.ts); nil: nowhere.
+    var ntfy: NtfyTarget? { get }
+    func setNtfy(_ target: NtfyTarget?)
     /// Models the server has credentials for.
     func models() -> Signal<[ModelInfo], NoError>
     /// A model from the last list, if one came.
@@ -56,6 +59,8 @@ protocol TauStore: ConversationStore {
 protocol ConversationStore: AnyObject {
     /// Every server's status together: Telegram's chat list title.
     var connectionStatus: Signal<ConnectionStatus, NoError> { get }
+    /// A conversation's run ended with an answer, live: Telegram's in-app banner shows it.
+    var answers: Signal<ChatAnswer, NoError> { get }
     /// A chat's unsent input (docs: InputDrafts.swift); a chat not created yet has the New Chat draft.
     func inputDraft(_ id: Int) -> InputDraft?
     func setInputDraft(_ draft: InputDraft?, for id: Int)
@@ -196,7 +201,22 @@ struct DirectoryListing: Equatable {
     var entries: [Entry]
 }
 
+/// A new answer of a chat, for its banner.
+struct ChatAnswer: Equatable {
+    var conversationId: Int
+    var title: String
+    var text: String
+}
+
+/// An ntfy server and a topic only this user's phone subscribes to.
+struct NtfyTarget: Equatable {
+    var server: String
+    var topic: String
+}
+
 struct ServerInfo: Equatable {
+    /// The database's ID (`hello`): what a push names its server by.
+    var serverId: String = ""
     var address: String
     var hostname: String
     var piRevision: String

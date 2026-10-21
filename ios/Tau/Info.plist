@@ -2,6 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.rumisle.tau</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tau</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>ntfy</string>
+	</array>
 	<!-- As Telegram's Info.plist: without the first key iOS holds the app to 60 Hz on ProMotion screens (and
 	UIScreen.maximumFramesPerSecond, which Display's animations ask for, says 60); group opacity off spares
 	semi-transparent views an offscreen pass. -->

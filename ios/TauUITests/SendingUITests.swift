@@ -622,4 +622,27 @@ final class SendingUITests: XCTestCase {
         sleep(3)
         self.shot("sub-2-answered")
     }
+
+    /// An answer in a chat that is not on screen: Telegram's banner; and Settings > Notifications.
+    func testInAppNotification() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("$ sleep 5 && echo ready")
+        self.send()
+        sleep(1)
+        self.point(0.1, 0.08).tap()
+        sleep(6)
+        self.shot("notify-0-banner")
+        sleep(5)
+        self.point(0.75, 0.96).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Notifications"].firstMatch.tap()
+        sleep(2)
+        self.shot("notify-1-settings")
+        self.point(0.88, 0.426).tap()
+        sleep(2)
+        self.shot("notify-2-push-on")
+        self.point(0.88, 0.426).tap()
+        sleep(1)
+    }
 }
