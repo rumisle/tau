@@ -941,4 +941,24 @@ final class SendingUITests: XCTestCase {
         sleep(1)
         self.shot("usage-2-models")
     }
+
+    /// Dictation, with the stand-in engine: the microphone listens and the words come in dimmed until fixed, with a red
+    /// dot and the time in the field; with text written, the field's own microphone adds to it.
+    func testDictation() {
+        self.launch(["-newChat", "YES"])
+        self.app.descendants(matching: .any)["microphone"].firstMatch.tap()
+        sleep(1)
+        self.shot("dict-0-listening")
+        sleep(2)
+        self.shot("dict-1-more")
+        self.app.descendants(matching: .any)["stopDictation"].firstMatch.tap()
+        sleep(1)
+        self.shot("dict-2-stopped")
+        self.focusInput()
+        self.type(" Then")
+        sleep(1)
+        self.app.descendants(matching: .any)["dictate"].firstMatch.tap()
+        sleep(2)
+        self.shot("dict-3-append")
+    }
 }

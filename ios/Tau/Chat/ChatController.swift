@@ -370,8 +370,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         node.inputPanelNode.attachPressed = { [weak self] in
             self?.openAttachments()
         }
-        node.inputPanelNode.micPressed = { [weak self] in
-            self?.presentToast(.info(title: nil, text: "Voice input is coming soon", timeout: nil, customUndoText: nil))
+        node.inputPanelNode.micPressed = {
+            // Dictation starts; a real engine will ask for the microphone here.
         }
         node.inputPanelNode.stopPressed = { [weak self] in
             guard let self else {

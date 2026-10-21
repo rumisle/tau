@@ -27,6 +27,24 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     private let stopBackgroundView: GlassBackgroundView
     private let stopIconView: UIImageView
     private let accessoryView: InputAccessoryPanelView
+    /// Dictation inside the field, at its end, where Telegram's panel keeps the sticker button: there whenever the
+    /// main button is not the microphone, so voice can add to text already written, or steer while the agent works.
+    private let fieldMicView = UIImageView()
+    /// While dictating, in the field mic's place: a blinking red dot and the time, as Telegram's recording shows; a tap
+    /// ends it.
+    private let dictationView = UIView()
+    private let dictationDot = UIView()
+    private let dictationLabel = UILabel()
+    private let dictationEngine: DictationEngine = MockDictationEngine()
+    private let dictationDisposable = MetaDisposable()
+    private var dictationTimer: SwiftSignalKit.Timer?
+    private var dictationStart: Date?
+    /// Where the words being heard are in the text, replaced as they change.
+    private var dictationRange: NSRange?
+    /// The space put before a stretch, kept as its words change.
+    private var dictationLead = ""
+    private(set) var isDictating = false
+    private var micShowsActive = false
 
     var sendMessage: ((String) -> Void)?
     /// A long press on Send, with the button to point a menu at.
@@ -111,6 +129,11 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         super.init()
     }
 
+    deinit {
+        self.dictationDisposable.dispose()
+        self.dictationTimer?.invalidate()
+    }
+
     override func didLoad() {
         super.didLoad()
         self.view.addSubview(self.glassContainer)
@@ -123,6 +146,26 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         // Inside the field's glass, above the text, where Telegram's iOS 26 input panel puts it.
         self.fieldBackgroundView.contentView.addSubview(self.accessoryView)
         self.fieldBackgroundView.contentView.clipsToBounds = true
+        self.fieldMicView.contentMode = .center
+        self.fieldMicView.isUserInteractionEnabled = true
+        self.fieldMicView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.fieldMicTapped)))
+        self.fieldMicView.isAccessibilityElement = true
+        self.fieldMicView.accessibilityIdentifier = "dictate"
+        self.fieldMicView.accessibilityLabel = "Dictate"
+        self.fieldMicView.accessibilityTraits = .button
+        self.fieldBackgroundView.contentView.addSubview(self.fieldMicView)
+        self.dictationDot.backgroundColor = UIColor(rgb: 0xFF3B30)
+        self.dictationDot.layer.cornerRadius = 4.5
+        self.dictationView.addSubview(self.dictationDot)
+        self.dictationLabel.font = Font.with(size: 15.0, design: .regular, weight: .regular, traits: [.monospacedNumbers])
+        self.dictationView.addSubview(self.dictationLabel)
+        self.dictationView.alpha = 0.0
+        self.dictationView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.dictationTapped)))
+        self.dictationView.isAccessibilityElement = true
+        self.dictationView.accessibilityIdentifier = "stopDictation"
+        self.dictationView.accessibilityLabel = "Stop Dictation"
+        self.dictationView.accessibilityTraits = .button
+        self.fieldBackgroundView.contentView.addSubview(self.dictationView)
         content.addSubview(self.micBackgroundView)
         self.micBackgroundView.contentView.addSubview(self.micIconView)
         content.addSubview(self.sendBackgroundView)
@@ -135,6 +178,10 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.textView.delegate = self
         self.attachBackgroundView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.attachTapped)))
         self.micBackgroundView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.micTapped)))
+        // Held: dictation while the finger is down, as Telegram's hold-to-record.
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(self.micHeld(_:)))
+        hold.minimumPressDuration = 0.25
+        self.micBackgroundView.addGestureRecognizer(hold)
         self.sendBackgroundView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.sendPressed)))
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(self.sendLongPress(_:)))
         longPress.minimumPressDuration = 0.3
@@ -177,6 +224,19 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         let chat = self.theme.chat
         self.attachIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconAttachment"), color: chat.panelControlColor)
         self.micIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconMicrophone"), color: chat.panelControlColor)
+        // Smaller, as the field's own controls are.
+        if let mic = UIImage(bundleImageName: "Chat/Input/Text/IconMicrophone") {
+            let size = CGSize(width: floor(mic.size.width * 0.8), height: floor(mic.size.height * 0.8))
+            self.fieldMicView.image = generateImage(size, contextGenerator: { size, context in
+                context.clear(CGRect(origin: CGPoint(), size: size))
+                if let cgImage = mic.cgImage {
+                    context.clip(to: CGRect(origin: CGPoint(), size: size), mask: cgImage)
+                    context.setFillColor(chat.inputPlaceholderColor.cgColor)
+                    context.fill(CGRect(origin: CGPoint(), size: size))
+                }
+            })
+        }
+        self.dictationLabel.textColor = chat.inputTextColor
         self.sendIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/SendIcon"), color: chat.actionControlForegroundColor)
         self.stopIconView.image = generateImage(CGSize(width: 14.0, height: 14.0), rotatedContext: { size, context in
             context.clear(CGRect(origin: CGPoint(), size: size))
@@ -281,10 +341,147 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     }
 
     @objc private func micTapped() {
+        if self.isDictating {
+            self.stopDictation()
+        } else {
+            self.startDictation()
+        }
+    }
+
+    @objc private func micHeld(_ recognizer: UILongPressGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            if !self.isDictating {
+                self.startDictation()
+            }
+        case .ended, .cancelled, .failed:
+            self.stopDictation()
+        default:
+            break
+        }
+    }
+
+    @objc private func fieldMicTapped() {
+        self.startDictation()
+    }
+
+    @objc private func dictationTapped() {
+        self.stopDictation()
+    }
+
+    // MARK: - Dictation
+
+    /// What is heard goes in at the cursor (at the end when the field is not being edited), dimmed while it may still
+    /// change; the field keeps whatever else is in it.
+    func startDictation() {
+        guard !self.isDictating else {
+            return
+        }
+        self.isDictating = true
+        self.dictationStart = Date()
+        self.dictationRange = nil
         self.micPressed?()
+        let timer = SwiftSignalKit.Timer(timeout: 0.5, repeat: true, completion: { [weak self] in
+            self?.updateDictationIndicator()
+        }, queue: Queue.mainQueue())
+        self.dictationTimer = timer
+        timer.start()
+        self.updateDictationIndicator()
+        self.dictationDot.layer.removeAllAnimations()
+        let blink = CABasicAnimation(keyPath: "opacity")
+        blink.fromValue = 1.0
+        blink.toValue = 0.2
+        blink.duration = 0.6
+        blink.autoreverses = true
+        blink.repeatCount = .infinity
+        self.dictationDot.layer.add(blink, forKey: "blink")
+        self.dictationDisposable.set((self.dictationEngine.start() |> deliverOnMainQueue).start(next: { [weak self] event in
+            self?.apply(event)
+        }, completed: { [weak self] in
+            self?.finishDictation()
+        }))
+        self.requestLayout?(.animated(duration: 0.3, curve: .spring))
+    }
+
+    func stopDictation() {
+        guard self.isDictating else {
+            return
+        }
+        self.dictationEngine.stop()
+        self.finishDictation()
+    }
+
+    private func finishDictation() {
+        guard self.isDictating else {
+            return
+        }
+        self.isDictating = false
+        self.dictationDisposable.set(nil)
+        self.dictationTimer?.invalidate()
+        self.dictationTimer = nil
+        self.dictationDot.layer.removeAllAnimations()
+        // Whatever was still being heard stays, as said.
+        if let range = self.dictationRange {
+            self.restyle(range: range, partial: false)
+        }
+        self.dictationRange = nil
+        self.requestLayout?(.animated(duration: 0.3, curve: .spring))
+    }
+
+    private func updateDictationIndicator() {
+        let elapsed = Int(Date().timeIntervalSince(self.dictationStart ?? Date()))
+        self.dictationLabel.text = String(format: "%d:%02d", elapsed / 60, elapsed % 60)
+    }
+
+    private func apply(_ event: DictationEvent) {
+        let storage = self.textView.textStorage
+        let text: String
+        let partial: Bool
+        switch event {
+        case let .partial(value):
+            text = value
+            partial = true
+        case let .final(value):
+            text = value
+            partial = false
+        }
+        // The first words of a stretch go where the cursor is, a space apart from what is before them.
+        let range: NSRange
+        if let current = self.dictationRange {
+            range = current
+        } else {
+            let cursor = self.textView.isFirstResponder ? self.textView.selectedRange.location : storage.length
+            range = NSRange(location: min(cursor, storage.length), length: 0)
+            let before = range.location > 0 ? (storage.string as NSString).substring(with: NSRange(location: range.location - 1, length: 1)) : ""
+            self.dictationLead = (before.isEmpty || before == " " || before == "\n") ? "" : " "
+        }
+        let value = self.dictationLead + text
+        let attributes: [NSAttributedString.Key: Any] = [.font: ChatInputPanelNode.font, .foregroundColor: partial ? self.theme.chat.inputPlaceholderColor : self.theme.chat.inputTextColor]
+        storage.replaceCharacters(in: range, with: NSAttributedString(string: value, attributes: attributes))
+        let newRange = NSRange(location: range.location, length: (value as NSString).length)
+        self.textView.typingAttributes = [.font: ChatInputPanelNode.font, .foregroundColor: self.theme.chat.inputTextColor]
+        if partial {
+            self.dictationRange = newRange
+        } else {
+            self.dictationRange = nil
+        }
+        if self.textView.isFirstResponder {
+            self.textView.selectedRange = NSRange(location: newRange.upperBound, length: 0)
+        }
+        self.textViewDidChange(self.textView)
+    }
+
+    private func restyle(range: NSRange, partial: Bool) {
+        let storage = self.textView.textStorage
+        guard range.upperBound <= storage.length else {
+            return
+        }
+        storage.addAttribute(.foregroundColor, value: partial ? self.theme.chat.inputPlaceholderColor : self.theme.chat.inputTextColor, range: range)
     }
 
     @objc private func sendPressed() {
+        // What is still being heard is sent as heard so far.
+        self.stopDictation()
         let text = self.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return
@@ -312,9 +509,22 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         return width - (size + spacing) * 2.0
     }
 
+    /// Room at the field's end for its microphone, or the dictation's dot and time.
+    private var fieldTrailing: CGFloat {
+        if self.isDictating {
+            return 58.0
+        }
+        return self.showsFieldMic ? 28.0 : 0.0
+    }
+
+    /// The field's microphone whenever the main button is something else.
+    private var showsFieldMic: Bool {
+        return !self.isDictating && self.action != .microphone
+    }
+
     private func measureTextHeight(width: CGFloat) -> CGFloat {
         let insets = ChatInputPanelNode.textInsets
-        let textWidth = self.fieldWidth(width) - insets.left - insets.right
+        let textWidth = self.fieldWidth(width) - insets.left - insets.right - self.fieldTrailing
         let maxHeight = ceil(ChatInputPanelNode.font.lineHeight * ChatInputPanelNode.fieldMaxLines)
         let text = self.text.isEmpty ? " " : self.text
         let bounds = (text as NSString).boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], attributes: [.font: ChatInputPanelNode.font], context: nil)
@@ -325,7 +535,13 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     func updateLayout(width: CGFloat, transition: ContainedViewLayoutTransition) -> CGFloat {
         self.validWidth = width
         let hasText = !self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let action: Action = hasText ? .send : (self.isBusy ? .stop : .microphone)
+        // While dictating into an empty field the microphone stays, lit, and stops it.
+        let action: Action = hasText ? .send : (self.isDictating ? .microphone : (self.isBusy ? .stop : .microphone))
+        // Lit while it listens.
+        if self.isDictating != self.micShowsActive {
+            self.micShowsActive = self.isDictating
+            self.micIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconMicrophone"), color: self.isDictating ? self.theme.accentColor : self.theme.chat.panelControlColor)
+        }
         let previousAction = self.action
         self.action = action
         let size = ChatInputPanelNode.controlSize
@@ -372,7 +588,19 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         let fieldFrame = CGRect(origin: CGPoint(x: attachFrame.maxX + spacing, y: 0.0), size: CGSize(width: self.fieldWidth(width), height: fieldHeight))
         componentTransition.setFrame(view: self.fieldBackgroundView, frame: fieldFrame)
         self.fieldBackgroundView.update(size: fieldFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .panel), isInteractive: true, transition: componentTransition)
-        componentTransition.setFrame(view: self.textView, frame: CGRect(origin: CGPoint(x: 0.0, y: accessoryHeight), size: CGSize(width: fieldFrame.width, height: textAreaHeight)))
+        componentTransition.setFrame(view: self.textView, frame: CGRect(origin: CGPoint(x: 0.0, y: accessoryHeight), size: CGSize(width: fieldFrame.width - self.fieldTrailing, height: textAreaHeight)))
+        // The field's own controls on its last line, at its end.
+        let trailingY = fieldHeight - size
+        let micFrame = CGRect(x: fieldFrame.width - 36.0, y: trailingY, width: 32.0, height: size)
+        componentTransition.setFrame(view: self.fieldMicView, frame: micFrame)
+        componentTransition.setAlpha(view: self.fieldMicView, alpha: self.showsFieldMic ? 1.0 : 0.0)
+        self.fieldMicView.isUserInteractionEnabled = self.showsFieldMic
+        let dictationFrame = CGRect(x: fieldFrame.width - 64.0, y: trailingY, width: 60.0, height: size)
+        componentTransition.setFrame(view: self.dictationView, frame: dictationFrame)
+        self.dictationDot.frame = CGRect(x: 4.0, y: floor((size - 9.0) / 2.0), width: 9.0, height: 9.0)
+        self.dictationLabel.frame = CGRect(x: 18.0, y: 0.0, width: 42.0, height: size)
+        componentTransition.setAlpha(view: self.dictationView, alpha: self.isDictating ? 1.0 : 0.0)
+        self.dictationView.isUserInteractionEnabled = self.isDictating
         componentTransition.setFrame(view: self.placeholderLabel, frame: CGRect(origin: CGPoint(x: insets.left, y: accessoryHeight + insets.top), size: CGSize(width: fieldFrame.width - insets.left - insets.right, height: ceil(ChatInputPanelNode.font.lineHeight))))
 
         // The microphone and the send button share a spot; one replaces the other with Telegram's scale and fade
