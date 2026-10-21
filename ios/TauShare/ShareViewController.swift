@@ -4,15 +4,15 @@ import UniformTypeIdentifiers
 private let tauPink = UIColor(red: 0xF2 / 255.0, green: 0x56 / 255.0, blue: 0x9A / 255.0, alpha: 1.0)
 private let accent = UIColor(red: 0x2A / 255.0, green: 0x9E / 255.0, blue: 0xF1 / 255.0, alpha: 1.0)
 
-/// Telegram's avatar gradients (AvatarNode), by index.
-private let avatarGradients: [(UInt32, UInt32)] = [(0xFF885E, 0xFF516A), (0xFFCD6A, 0xFFA85C), (0xA0DE7E, 0x54CB68), (0x53EDD6, 0x28C9B7), (0x72D5FD, 0x2A9EF1), (0x82B1FF, 0x665FFF), (0xE0A2F3, 0xD669ED)]
+/// Telegram's avatar gradients (top, bottom), in the order the app's Avatar picks them by chat ID.
+private let avatarGradients: [(UInt32, UInt32)] = [(0xFF885E, 0xFF516A), (0xFFCD6A, 0xFFA85C), (0x82B1FF, 0x665FFF), (0xA0DE7E, 0x54CB68), (0x00FCFD, 0x4ACCCD), (0x72D5FD, 0x2A9EF1), (0xE0A2F3, 0xD669ED)]
 
 private func color(_ rgb: UInt32) -> UIColor {
     return UIColor(red: CGFloat((rgb >> 16) & 0xff) / 255.0, green: CGFloat((rgb >> 8) & 0xff) / 255.0, blue: CGFloat(rgb & 0xff) / 255.0, alpha: 1.0)
 }
 
 private func avatarImage(title: String, index: Int, diameter: CGFloat) -> UIImage {
-    let words = title.split(separator: " ").prefix(2)
+    let words = title.split(whereSeparator: { $0 == " " || $0 == "-" || $0 == "_" }).prefix(2)
     let letters = words.compactMap { $0.first.map(String.init) }.joined().uppercased()
     let (top, bottom) = avatarGradients[abs(index) % avatarGradients.count]
     return UIGraphicsImageRenderer(size: CGSize(width: diameter, height: diameter)).image { context in
@@ -21,7 +21,7 @@ private func avatarImage(title: String, index: Int, diameter: CGFloat) -> UIImag
         context.cgContext.clip()
         let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [color(top).cgColor, color(bottom).cgColor] as CFArray, locations: [0.0, 1.0])!
         context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0.0, y: diameter), options: [])
-        let text = NSAttributedString(string: letters, attributes: [.font: UIFont.systemFont(ofSize: diameter * 0.38, weight: .semibold), .foregroundColor: UIColor.white])
+        let text = NSAttributedString(string: letters, attributes: [.font: UIFont.systemFont(ofSize: floor(diameter * 26.0 / 60.0), weight: .bold).rounded, .foregroundColor: UIColor.white])
         let size = text.size()
         text.draw(at: CGPoint(x: (diameter - size.width) / 2.0, y: (diameter - size.height) / 2.0))
     }
@@ -493,5 +493,12 @@ final class ShareChatCell: UICollectionViewCell {
         self.accessibilityLabel = title
         self.isAccessibilityElement = true
         self.accessibilityTraits = selected ? [.button, .selected] : .button
+    }
+}
+
+private extension UIFont {
+    /// SF Rounded, as Telegram's avatar letters.
+    var rounded: UIFont {
+        return self.fontDescriptor.withDesign(.rounded).map { UIFont(descriptor: $0, size: self.pointSize) } ?? self
     }
 }

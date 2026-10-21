@@ -25,18 +25,27 @@ Time is in minutes, never seconds: "4 min", nothing in the first minute. iOS 18 
 (`SystemFormatStyle.DateOffset` with minutes and hours), so it moves without updates; on iOS 17 it is what the last
 update said.
 
+## Look
+
+tau's pink (the icon's accent, `#F2569A`) is the only color besides the avatars: minutes, "Working", the done check;
+red only for a failure. Each chat appears as it does in the list, its letter avatar in Telegram's gradient (the same one,
+picked by its ID); a working chat has a pink ring around it, as a story does in Telegram, a done one a pink check on
+it, a failed one a red mark. The ring's room is kept either way, so avatars and titles line up whatever the states. The
+lock screen card is dark, as the island, so both read the same.
+
 ## Dynamic Island
 
-- **Compact**: the pink τ on the left. On the right: one chat working, its minutes; several, how many are working;
-  something done and not seen, a green check; failed, a red mark.
+- **Compact**: the pink τ on the left. On the right: one chat working, its minutes ("4m", "<1m"); several, how many
+  are, in a pink disc; all done, a pink check; one failed, a red mark.
 - **Minimal** (another app's activity shares the island): the τ, or the check or the mark.
-- **Expanded** (long press): each chat's title, state and minutes, and its step or the answer's first line. No buttons:
-  to stop an agent, open the app.
+- **Expanded** (long press): a top line either side of the camera, the τ and "Working" or "2 working" on the left, the
+  minutes (one chat), "+1 more", or the check on the right; under it up to two chats, avatar, title, state, and the
+  step or the answer's first line, the avatars under the τ. No buttons: to stop an agent, open the app.
 
 ## Lock screen
 
-A card: a row a chat, the title on the left and the minutes or "Done" on the right, the step or the answer's first line
-under it in the secondary color. A tap opens that chat (with one chat, the whole card does).
+The same rows, two at most and "+1 more" under them in line with the titles (an activity gets 160 pt). A tap opens that
+chat (with one chat, the whole card does).
 
 ## Completion
 

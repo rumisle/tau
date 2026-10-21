@@ -996,6 +996,44 @@ final class SendingUITests: XCTestCase {
         self.app.activate()
     }
 
+    /// Three chats at once: two working, one done, in the island (how many work), expanded (a row each) and on the lock
+    /// screen.
+    func testLiveActivityChats() {
+        self.launch(["-newChat", "YES"])
+        for (index, text) in ["$ sleep 90 && echo first", "$ sleep 90 && echo second", "$ sleep 4 && echo all green"].enumerated() {
+            if index > 0 {
+                self.point(0.1, 0.08).tap()
+                sleep(2)
+                self.point(0.9, 0.098).tap()
+                sleep(2)
+            }
+            self.focusInput()
+            self.type(text)
+            self.send()
+            sleep(2)
+        }
+        sleep(6)
+        self.point(0.1, 0.08).tap()
+        sleep(1)
+        XCUIDevice.shared.press(.home)
+        sleep(3)
+        self.shot("lac-0-island")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.025)).press(forDuration: 1.2)
+        sleep(2)
+        self.shot("lac-1-expanded")
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
+        sleep(1)
+        XCUIDevice.shared.perform(NSSelectorFromString("pressLockButton"))
+        sleep(2)
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        sleep(2)
+        self.shot("lac-2-lock")
+        XCUIDevice.shared.perform(NSSelectorFromString("pressLockButton"))
+        sleep(1)
+        self.app.activate()
+    }
+
     /// A pinned chat on top, then the list scrolled and back, the search field collapsing and coming back: the list
     /// must settle (an inset that followed the collapsing field looped until the stack ran out).
     func testPinnedListScrolls() {
