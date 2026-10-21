@@ -6,6 +6,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationId, ConversationRecord, Cursor, EntryId, EntryRecord } from "@earendil-works/pi-durable";
 import { type Host, MetaDoc } from "../host.ts";
 import { type IndexEntry, type IndexPart, Kind, type KindName, SearchIndex, type SearchResponse } from "./index.ts";
+import { type UsageReport, UsageLedger, type UsageRow } from "./usage.ts";
 
 /** A conversation's searchable parts: what the user and the model said, and the model's reasoning; no tool calls or output. */
 export function searchParts(entry: EntryRecord): IndexPart[] {
@@ -46,16 +47,38 @@ function partText(entry: EntryRecord, idx: number): string | undefined {
 	return undefined;
 }
 
-function indexEntry(entry: EntryRecord): IndexEntry | undefined {
-	const parts = searchParts(entry);
-	if (parts.length === 0) return undefined;
+/** Every entry moves its conversation's cursor; those with something to search add parts. */
+function indexEntry(entry: EntryRecord): IndexEntry {
 	const timestamp = (entry.model?.[0] as { timestamp?: number } | undefined)?.timestamp;
-	return { conversationId: entry.conversationId, entryId: entry.id, time: timestamp ?? Date.now(), parts };
+	return { conversationId: entry.conversationId, entryId: entry.id, time: timestamp ?? Date.now(), parts: searchParts(entry) };
+}
+
+/** An answer's spend, for the usage ledger. */
+function usageRow(entry: EntryRecord): UsageRow | undefined {
+	if (entry.kind !== "pi.assistant") return undefined;
+	const message = entry.model?.[0] as
+		| { provider?: string; model?: string; timestamp?: number; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } } }
+		| undefined;
+	const usage = message?.usage;
+	if (usage === undefined || message?.provider === undefined || message.model === undefined) return undefined;
+	return {
+		entryId: entry.id,
+		conversationId: entry.conversationId,
+		time: message.timestamp ?? Date.now(),
+		model: `${message.provider}/${message.model}`,
+		input: usage.input ?? 0,
+		output: usage.output ?? 0,
+		cacheRead: usage.cacheRead ?? 0,
+		cacheWrite: usage.cacheWrite ?? 0,
+		cost: usage.cost?.total ?? 0,
+	};
 }
 
 export class Search {
 	readonly index: SearchIndex;
+	readonly usage: UsageLedger;
 	readonly #host: Host;
+	#pendingUsage: UsageRow[] = [];
 	readonly #unsubscribe: () => void;
 	/** Entries committed while the backfill runs, indexed after it. */
 	#pending: IndexEntry[] = [];
@@ -67,11 +90,13 @@ export class Search {
 	constructor(host: Host, path: string) {
 		this.#host = host;
 		this.index = new SearchIndex(path);
+		this.usage = new UsageLedger(this.index.db);
 		this.#unsubscribe = host.harness.subscribeCommits((publication) => {
 			for (const change of publication.changes) {
 				if (change.type === "entry") {
-					const entry = indexEntry(change.value);
-					if (entry !== undefined) this.#pending.push(entry);
+					this.#pending.push(indexEntry(change.value));
+					const usage = usageRow(change.value);
+					if (usage !== undefined) this.#pendingUsage.push(usage);
 				} else if (change.type === "conversation") {
 					this.#conversation(change.value);
 				} else if (change.type === "document" && change.conversationId !== undefined && change.record.kind === MetaDoc.definition.kind) {
@@ -110,14 +135,17 @@ export class Search {
 	}
 
 	#scheduleFlush(): void {
-		if (this.#flushScheduled || this.#backfilling || this.#pending.length === 0) return;
+		if (this.#flushScheduled || this.#backfilling || (this.#pending.length === 0 && this.#pendingUsage.length === 0)) return;
 		this.#flushScheduled = true;
 		setImmediate(() => {
 			this.#flushScheduled = false;
 			const pending = this.#pending;
+			const usage = this.#pendingUsage;
 			this.#pending = [];
+			this.#pendingUsage = [];
 			try {
 				this.index.add(pending);
+				this.usage.add(usage);
 			} catch (error) {
 				console.error("[search] indexing failed:", error);
 			}
@@ -142,8 +170,9 @@ export class Search {
 				do {
 					const batch = await storage.scanEntries({ conversationId: conversation.id, minEntryId: (after + 1) as EntryId, order: "ascending" }, 256, entries, context);
 					// A fork sees its origin's entries too; each is indexed once, as its own conversation's.
-					const own = batch.items.filter((entry) => entry.conversationId === conversation.id).flatMap((entry) => indexEntry(entry) ?? []);
-					this.index.add(own);
+					const own = batch.items.filter((entry) => entry.conversationId === conversation.id);
+					this.index.add(own.map(indexEntry));
+					this.usage.add(own.flatMap((entry) => usageRow(entry) ?? []));
 					indexed += own.length;
 					entries = batch.next;
 					// Let requests in between pages.
@@ -167,6 +196,12 @@ export class Search {
 			return found === undefined ? undefined : partText(found.entry, idx);
 		};
 		return this.index.search(query, load, { ...options, hits: 1 });
+	}
+
+	/** What the models cost over the last `days` days (0: all), in the client's days. */
+	async report(days: number, tzOffset: number): Promise<UsageReport> {
+		await this.ready;
+		return this.usage.report(days, tzOffset);
 	}
 
 	/** One conversation's matching entries, newest first. */

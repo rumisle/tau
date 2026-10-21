@@ -480,6 +480,23 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("usage reports each answer once, by day, model and conversation", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Spend" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "u-1", content: "count me" });
+		await until(replica, () => idle(replica) && replica.ordered().some((entry) => entry.kind === "pi.assistant"));
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const report = await client.request("usage.report", { days: 7, tzOffset: 120 });
+		assert.equal(report.days.length, 7);
+		const mine = report.conversations.find((each: { conversationId: number }) => each.conversationId === replica.id);
+		assert.equal(mine.replies, 1);
+		assert.ok(report.models.some((each: { model: string }) => each.model === "dev/echo"));
+		assert.ok(Object.keys(report.days.at(-1).models).includes("dev/echo"));
+		await client.close();
+	});
+
 	test("an overloaded provider is asked again until it answers", async () => {
 		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", { title: "Overloaded" });

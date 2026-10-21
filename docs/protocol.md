@@ -108,6 +108,24 @@ Without `conversationId`, conversations best first (default 20 from `offset`):
 conversation's matching entries, newest first, its origins' up to where it was forked included:
 `{ hits: { entryId, kind, time }[], terms }`.
 
+### `usage.report`
+`{ days?: number, tzOffset?: number }` -> `{ days, models, conversations, total, previous }`
+
+What the models cost over the last `days` days (default 30, 0: all), each day cut at the client's midnight (`tzOffset`:
+minutes east of UTC). From a ledger of every answer's `usage` the server keeps with the search index
+(`server/src/search/usage.ts`):
+
+```ts
+type Totals = { cost: number; input: number; output: number; cacheRead: number; cacheWrite: number; replies: number };
+{
+  days: { day: "2026-10-21"; models: Record<string, Totals> }[];     // oldest first, every day of the span
+  models: (Totals & { model: string })[];                            // `provider/modelId`, costliest first
+  conversations: (Totals & { conversationId })[];                    // the 20 costliest
+  total: Totals & { conversations: number };
+  previous: Totals;                                                  // the span just before, for the change
+}
+```
+
 ### `dialogs.subscribe`
 `{}` -> `{ dialogs: Dialog[] }`, then `dialog` events.
 

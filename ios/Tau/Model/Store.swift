@@ -35,6 +35,9 @@ protocol TauServer: AnyObject {
     func cachedModel(provider: String, id: String) -> ModelInfo?
     /// One directory of the server's file system, for picking where a conversation runs.
     func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError>
+    /// What the models cost over the last `days` days (0: all), by day in this phone's time zone; nil when the
+    /// server cannot say.
+    func usageReport(days: Int) -> Signal<UsageReport?, NoError>
 }
 
 /// What the screens need: conversations from every configured server (MultiStore), or canned data (MockStore).

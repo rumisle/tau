@@ -27,6 +27,7 @@ enum SettingsIcon {
     static let thinking = renderSettingsIcon(name: "Item List/Icons/Tips", backgroundColors: [colorOrange])
     static let storage = renderSettingsIcon(name: "Item List/Icons/Pie", backgroundColors: [colorGreen])
     static let network = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorBlue])
+    static let usage = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorPurple])
     static let projects = renderSettingsIcon(name: "Item List/Icons/Folder", backgroundColors: [colorLightBlue])
     static let appearance = renderSettingsIcon(name: "Item List/Icons/Appearance", backgroundColors: [colorLightBlue])
     static let notifications = renderSettingsIcon(name: "Item List/Icons/Notifications", backgroundColors: [colorRed])

@@ -194,6 +194,12 @@ final class SettingsController: SettingsListController {
                 }
                 self.push(NotificationsController(context: self.context))
             }),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.usage, title: "Usage", accessory: .disclosure(label: ""), position: middle, action: { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.push(UsageController(context: self.context))
+            }),
             SettingsRowItem(theme: theme, icon: SettingsIcon.data, title: "Data and Storage", accessory: .disclosure(label: ""), position: last, action: { [weak self] in
                 guard let self else {
                     return

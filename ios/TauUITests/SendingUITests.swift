@@ -12,9 +12,9 @@ final class SendingUITests: XCTestCase {
         try? FileManager.default.createDirectory(atPath: "/tmp/tau-ui", withIntermediateDirectories: true)
     }
 
-    private func launch(_ arguments: [String]) {
+    private func launch(_ arguments: [String], server: String = "ws://127.0.0.1:7979") {
         self.app = XCUIApplication()
-        self.app.launchArguments = ["-server.url", "ws://127.0.0.1:7979", "-wrapCode", "YES", "-theme", "dark"] + arguments
+        self.app.launchArguments = ["-server.url", server, "-wrapCode", "YES", "-theme", "dark"] + arguments
         self.app.launch()
         sleep(2)
     }
@@ -924,5 +924,21 @@ final class SendingUITests: XCTestCase {
         self.app.descendants(matching: .any)["closeSearch"].firstMatch.tap()
         sleep(1)
         self.shot("chatsearch-2-closed")
+    }
+
+    /// Settings > Usage: the span, the overview with its changes, the days by model, the models and the top chats.
+    /// Against a copy of a server that spent something: `TAU_USAGE_SERVER`, default port 7981.
+    func testUsage() {
+        self.launch(["-tab", "1"], server: ProcessInfo.processInfo.environment["TAU_USAGE_SERVER"] ?? "ws://127.0.0.1:7981")
+        sleep(2)
+        self.app.descendants(matching: .any)["Usage"].firstMatch.tap()
+        sleep(2)
+        self.shot("usage-0")
+        self.point(0.885, 0.58).tap()
+        sleep(1)
+        self.shot("usage-1-day")
+        self.app.swipeUp()
+        sleep(1)
+        self.shot("usage-2-models")
     }
 }

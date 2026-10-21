@@ -9,7 +9,7 @@ import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { type Compiled, compile, excerpt, ftsExpression, highlight, parseQuery, type Range, type Vocabulary } from "./match.ts";
 import { tokenize } from "./tokenize.ts";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const Kind = { user: 0, assistant: 1, reasoning: 2, title: 3 } as const;
 export type KindName = keyof typeof Kind;
@@ -142,7 +142,7 @@ export class SearchIndex {
 		const version = (this.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
 		if (version === SCHEMA_VERSION) return;
 		this.db.exec("BEGIN");
-		for (const table of ["conv", "part", "vocab", "fts"]) this.db.exec(`DROP TABLE IF EXISTS ${table}`);
+		for (const table of ["conv", "part", "vocab", "fts", "usage"]) this.db.exec(`DROP TABLE IF EXISTS ${table}`);
 		this.db.exec(`CREATE TABLE conv (
 			id INTEGER PRIMARY KEY, counter INTEGER NOT NULL, cursor INTEGER NOT NULL, updated INTEGER NOT NULL,
 			parent INTEGER, parent_at INTEGER, archived INTEGER NOT NULL DEFAULT 0)`);

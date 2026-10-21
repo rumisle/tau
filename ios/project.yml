@@ -69,6 +69,7 @@ targets:
           - TextSelectionNode
           - SearchUI
           - SearchBarNode
+          - SegmentedControlNode
           - ChatListTitleView
           - UndoUI
           - AlertComponent

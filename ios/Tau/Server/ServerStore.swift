@@ -1307,6 +1307,18 @@ final class ServerStore: ConversationStore, TauServer {
         self.publish(realId)
     }
 
+    func usageReport(days: Int) -> Signal<UsageReport?, NoError> {
+        let slot = self.slot
+        return self.connection.request("usage.report", ["days": days, "tzOffset": TimeZone.current.secondsFromGMT() / 60])
+        |> map { value -> UsageReport? in
+            return UsageReport(value, globalId: { MultiStore.global(slot, $0) })
+        }
+        |> `catch` { _ -> Signal<UsageReport?, NoError> in
+            return .single(nil)
+        }
+        |> deliverOnMainQueue
+    }
+
     func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError> {
         var params: JSONObject = [:]
         if let path {

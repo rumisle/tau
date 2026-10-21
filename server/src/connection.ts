@@ -234,6 +234,10 @@ export class Connection {
 				if (conversationId !== undefined) return this.#search.searchConversation(conversationId, query, { kinds, typing });
 				return this.#search.search(query, { limit: Math.min(int(params, "limit", true) ?? 20, 100), offset: int(params, "offset", true) ?? 0, kinds, typing }, context);
 			}
+			case "usage.report": {
+				if (this.#search === undefined) throw new ProtocolError("bad_request", "Usage is not available");
+				return this.#search.report(Math.max(0, int(params, "days", true) ?? 30), int(params, "tzOffset", true) ?? 0);
+			}
 			case "dialogs.subscribe":
 				this.#stopDialogs ??= this.#dialogs.onDialog((dialog) => this.#push({ event: "dialog", dialog }));
 				return { dialogs: await this.#dialogs.list(context) };
