@@ -231,7 +231,7 @@ final class SendingUITests: XCTestCase {
         self.server("start")
         sleep(8)
         self.shot("offline-2-list-delivered")
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(2)
         self.shot("offline-3-delivered")
     }
@@ -257,7 +257,7 @@ final class SendingUITests: XCTestCase {
         sleep(3)
         self.shot("kill-1-list")
         // The newest chat is first.
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(5)
         self.shot("kill-2-delivered")
     }
@@ -286,7 +286,7 @@ final class SendingUITests: XCTestCase {
     /// Back from a chat to the list: the tab bar comes back whole.
     func testTabBarAfterChat() {
         self.launch([])
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(2)
         self.point(0.1, 0.08).tap()
         sleep(2)
@@ -296,7 +296,7 @@ final class SendingUITests: XCTestCase {
         sleep(2)
         self.shot("tabbar-after-openchat")
         // With the keyboard up in the chat.
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(2)
         self.focusInput()
         self.point(0.1, 0.08).tap()
@@ -315,7 +315,7 @@ final class SendingUITests: XCTestCase {
         sleep(2)
         self.shot("tabbar-after-newchat-sent")
         // After the title menu.
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(2)
         self.point(0.5, 0.075).tap()
         sleep(1)
@@ -325,7 +325,7 @@ final class SendingUITests: XCTestCase {
         sleep(2)
         self.shot("tabbar-after-menu")
         // After the rename alert.
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(2)
         self.point(0.5, 0.075).tap()
         sleep(1)
@@ -382,7 +382,7 @@ final class SendingUITests: XCTestCase {
     /// The connection's state in the chat's subtitle, as Telegram's: "connecting...", "updating...", then back.
     func testConnectionTitle() {
         self.launch([])
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(2)
         self.server("stop")
         sleep(3)
@@ -474,7 +474,7 @@ final class SendingUITests: XCTestCase {
         sleep(2)
         self.shot("default-0-settings")
         self.launch([])
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(2)
         self.shot("default-1-existing")
         self.launch(["-newChat", "YES"])
@@ -508,7 +508,7 @@ final class SendingUITests: XCTestCase {
         sleep(1)
         self.launch([])
         self.shot("drafts-0-list")
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(2)
         self.shot("drafts-1-restored")
         // Edit the sent message, then kill the app mid-edit.
@@ -521,7 +521,7 @@ final class SendingUITests: XCTestCase {
         sleep(1)
         self.shot("drafts-3-editing")
         self.launch([])
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(3)
         self.shot("drafts-4-edit-restored")
         // Cancelling the edit brings back what was being written.
@@ -544,7 +544,7 @@ final class SendingUITests: XCTestCase {
         sleep(4)
         self.server("stop")
         self.launch([])
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(2)
         self.shot("editoff-0")
         // The second message.
@@ -648,7 +648,7 @@ final class SendingUITests: XCTestCase {
         sleep(2)
         self.shot("sub-1-list")
         sleep(10)
-        self.point(0.5, 0.17).tap()
+        self.point(0.5, 0.24).tap()
         sleep(3)
         self.shot("sub-2-answered")
     }
@@ -836,7 +836,7 @@ final class SendingUITests: XCTestCase {
         self.launch([])
         // Pins an earlier run left.
         for _ in 0 ..< 4 {
-            self.point(0.5, 0.17).press(forDuration: 1.0)
+            self.point(0.5, 0.24).press(forDuration: 1.0)
             sleep(1)
             let unpin = self.app.descendants(matching: .any)["Unpin"].firstMatch
             if unpin.exists {
@@ -848,24 +848,24 @@ final class SendingUITests: XCTestCase {
                 break
             }
         }
-        self.point(0.5, 0.344).press(forDuration: 1.0)
+        self.point(0.5, 0.414).press(forDuration: 1.0)
         sleep(1)
         self.app.descendants(matching: .any)["Pin"].firstMatch.tap()
         sleep(2)
-        self.point(0.5, 0.344).press(forDuration: 1.0)
+        self.point(0.5, 0.414).press(forDuration: 1.0)
         sleep(1)
         self.app.descendants(matching: .any)["Pin"].firstMatch.tap()
         sleep(2)
         self.shot("pin-0-list")
-        let row = self.point(0.3, 0.17)
-        row.press(forDuration: 0.05, thenDragTo: self.point(0.8, 0.17))
+        let row = self.point(0.3, 0.24)
+        row.press(forDuration: 0.05, thenDragTo: self.point(0.8, 0.24))
         sleep(1)
         self.shot("pin-1-swipe")
-        self.point(0.24, 0.165).tap()
+        self.point(0.24, 0.235).tap()
         sleep(2)
         self.shot("pin-2-unpinned")
         // Leave the list as found.
-        self.point(0.5, 0.17).press(forDuration: 1.0)
+        self.point(0.5, 0.24).press(forDuration: 1.0)
         sleep(1)
         self.app.descendants(matching: .any)["Unpin"].firstMatch.tap()
         sleep(1)
@@ -994,5 +994,35 @@ final class SendingUITests: XCTestCase {
         sleep(3)
         self.shot("la-3-done")
         self.app.activate()
+    }
+
+    /// A pinned chat on top, then the list scrolled and back, the search field collapsing and coming back: the list
+    /// must settle (an inset that followed the collapsing field looped until the stack ran out).
+    func testPinnedListScrolls() {
+        self.launch([])
+        self.point(0.5, 0.24).press(forDuration: 1.0)
+        sleep(1)
+        let pin = self.app.descendants(matching: .any)["Pin"].firstMatch
+        if pin.exists {
+            pin.tap()
+        } else {
+            self.point(0.5, 0.97).tap()
+        }
+        sleep(2)
+        self.app.terminate()
+        self.launch([])
+        sleep(2)
+        self.app.swipeUp()
+        sleep(1)
+        self.app.swipeDown()
+        sleep(1)
+        self.point(0.5, 0.14).press(forDuration: 0.05, thenDragTo: self.point(0.5, 0.11))
+        sleep(1)
+        self.shot("pinscroll-0")
+        XCTAssertEqual(self.app.state, .runningForeground)
+        self.point(0.5, 0.24).press(forDuration: 1.0)
+        sleep(1)
+        self.app.descendants(matching: .any)["Unpin"].firstMatch.tap()
+        sleep(1)
     }
 }

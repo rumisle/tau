@@ -12,6 +12,15 @@ bundle=com.rumisle.tau
 
 if [ "${1:-}" = "--device" ]; then
 	team="${TAU_TEAM:-TEAMID}"
+	# The widget extension (the Live Activity) needs a provisioning profile of its own, which only an Apple ID signed in
+	# to Xcode (Settings > Accounts) can make; without one the app is built for the device without it.
+	profiles="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+	if ! grep -rlqa "$team.$bundle.widgets" "$profiles" 2>/dev/null && [ "$(defaults read com.apple.dt.Xcode DVTDeveloperAccountManagerAppleIDLists 2>/dev/null | grep -c @)" = "0" ]; then
+		echo "no Xcode account to sign the Live Activity extension: building without it" >&2
+		sed -e '/^  TauWidgets:/,/^  TauUITests:/{/^  TauUITests:/!d;}' -e '/      - target: TauWidgets/d' project.yml > .project-device.yml
+		if command -v xcodegen >/dev/null; then xcodegen generate --quiet --spec .project-device.yml; else nix shell nixpkgs#xcodegen -c xcodegen generate --quiet --spec .project-device.yml; fi
+		rm -f .project-device.yml
+	fi
 	device="${TAU_DEVICE:-$(xcrun devicectl list devices 2>/dev/null | awk '/available \(paired\)/ {print $3; exit}')}"
 	[ -n "$device" ] || { echo "no paired device available" >&2; exit 1; }
 	xcodebuild -project Tau.xcodeproj -scheme Tau -configuration Release \

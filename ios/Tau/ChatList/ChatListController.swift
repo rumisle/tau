@@ -191,7 +191,11 @@ final class ChatListController: ViewController {
 
     override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
         super.containerLayoutUpdated(layout, transition: transition)
-        self.controllerNode.containerLayoutUpdated(layout, navigationHeight: self.navigationLayout(layout: layout).navigationFrame.maxY, transition: transition)
+        // The search field collapses as the list scrolls, which changes the bar's height; the list's inset must not
+        // follow it, or each scroll moves the inset, which moves the scroll, without end (cleanNavigationHeight adds
+        // the collapsed part back, as Telegram's lists use it).
+        let navigationHeight = self.searchContentNode != nil ? self.cleanNavigationHeight : self.navigationLayout(layout: layout).navigationFrame.maxY
+        self.controllerNode.containerLayoutUpdated(layout, navigationHeight: navigationHeight, transition: transition)
         self.controllerNode.updateSearchLayout(layout, navigationBarHeight: self.cleanNavigationHeight, transition: transition)
     }
 
