@@ -840,8 +840,12 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         let subagents = store.subagents(of: id)
         if !subagents.isEmpty {
             let working = subagents.filter(\.busy).count
-            let summary = working > 0 ? "\(working) working · \(subagents.count) in all" : (subagents.count == 1 ? "1 subagent" : "\(subagents.count) subagents")
-            items.append(.action(ContextMenuActionItem(text: "Subagents", textLayout: .secondLineWithValue(summary), icon: icon("Chat/Context Menu/Bots"), action: { [weak self] controller, _ in
+            let summary = NSMutableAttributedString(string: subagents.count == 1 ? "1 subagent" : "\(subagents.count) subagents")
+            if working > 0 {
+                summary.insert(NSAttributedString(string: " · "), at: 0)
+                summary.insert(NSAttributedString(string: "\(working) working", attributes: [.foregroundColor: self.theme.presentationData.theme.list.itemAccentColor]), at: 0)
+            }
+            items.append(.action(ContextMenuActionItem(text: "Subagents", textLayout: .secondLineWithAttributedValue(summary), icon: icon("Chat/Context Menu/Bots"), action: { [weak self] controller, _ in
                 guard let self else {
                     return
                 }
@@ -871,18 +875,23 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.presentInGlobalOverlay(controller)
     }
 
-    /// The Subagents submenu: each with its avatar, what it is doing and for how long, as it goes. A tap opens its
-    /// conversation.
+    /// The Subagents submenu: each with its avatar and how long it has worked, as it goes, in the accent color while it
+    /// works (as Telegram's "typing"); the most recently active first. A tap opens its conversation. The task is its
+    /// title there: in a menu row it would be cut to a few words.
     private func subagentItems(icon: @escaping (String) -> (PresentationTheme) -> UIImage?) -> Signal<ContextController.Items, NoError> {
         var items: [ContextMenuItem] = [.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
             controller?.popItems()
         })), .separator]
-        let subagents = self.context.store.subagents(of: self.conversationId)
-        for (index, dialog) in subagents.enumerated() {
-            let parts = dialog.title.components(separatedBy: ": ")
-            let name = parts.first ?? dialog.title
-            let task = parts.count > 1 ? parts.dropFirst().joined(separator: ": ") : ""
-            let avatar = Avatar.image(letters: Avatar.letters(name), colorIndex: index + 2, diameter: 30.0)
+        let accent = self.theme.presentationData.theme.list.itemAccentColor
+        let subagents = self.context.store.subagents(of: self.conversationId).sorted { a, b in
+            if a.busy != b.busy {
+                return a.busy
+            }
+            return (a.last?.date ?? .distantPast) > (b.last?.date ?? .distantPast)
+        }
+        for dialog in subagents {
+            let name = dialog.title.components(separatedBy: ": ").first ?? dialog.title
+            let avatar = Avatar.image(letters: Avatar.letters(name), colorIndex: dialog.id, diameter: 30.0)
             let child = dialog.id
             let action: (ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void = { [weak self] _, f in
                 f(.default)
@@ -900,18 +909,15 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                         call = found
                     }
                 }
-                var status: String
+                let status: NSAttributedString
                 if busy {
-                    status = call?.startedAt.map { "working · \(formatElapsed(Date().timeIntervalSince($0)))" } ?? "working"
+                    status = NSAttributedString(string: call?.startedAt.map { "working · \(formatElapsed(Date().timeIntervalSince($0)))" } ?? "working", attributes: [.foregroundColor: accent])
                 } else if let duration = call?.duration {
-                    status = "worked \(formatDuration(duration))"
+                    status = NSAttributedString(string: "worked \(formatDuration(duration))")
                 } else {
-                    status = "idle"
+                    status = NSAttributedString(string: "idle")
                 }
-                if !task.isEmpty {
-                    status += " · " + task
-                }
-                return ContextMenuActionItem(text: name, textLayout: .secondLineWithValue(status), icon: { _ in nil }, iconSource: ContextMenuActionItemIconSource(size: CGSize(width: 30.0, height: 30.0), cornerRadius: 15.0, signal: .single(avatar)), iconPosition: .left, action: action)
+                return ContextMenuActionItem(text: name, textLayout: .secondLineWithAttributedValue(status), icon: { _ in nil }, iconSource: ContextMenuActionItemIconSource(size: CGSize(width: 30.0, height: 30.0), cornerRadius: 15.0, signal: .single(avatar)), iconPosition: .left, action: action)
             }), false))
         }
         return .single(ContextController.Items(content: .list(items)))

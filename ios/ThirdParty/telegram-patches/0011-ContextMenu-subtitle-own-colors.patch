@@ -1,0 +1,17 @@
+diff --git a/submodules/TelegramUI/Components/ContextControllerImpl/Sources/ContextControllerActionsStackNode.swift b/submodules/TelegramUI/Components/ContextControllerImpl/Sources/ContextControllerActionsStackNode.swift
+index 528a1b6..dfee2ae 100644
+--- a/submodules/TelegramUI/Components/ContextControllerImpl/Sources/ContextControllerActionsStackNode.swift
++++ b/submodules/TelegramUI/Components/ContextControllerImpl/Sources/ContextControllerActionsStackNode.swift
+@@ -273,7 +273,11 @@ public final class ContextControllerActionsListActionItemNode: HighlightTracking
+             self.titleLabelNode.maximumNumberOfLines = 1
+             self.subtitleNode.maximumNumberOfLines = 3
+             let mutableString = subtitleValue.mutableCopy() as! NSMutableAttributedString
+-            mutableString.addAttribute(.foregroundColor, value: subtitleColor, range: NSRange(location: 0, length: mutableString.length))
++            mutableString.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: mutableString.length), options: []) { value, range, _ in
++                if value == nil {
++                    mutableString.addAttribute(.foregroundColor, value: subtitleColor, range: range)
++                }
++            }
+             mutableString.addAttribute(.font, value: subtitleFont, range: NSRange(location: 0, length: mutableString.length))
+             subtitle = mutableString
+         case .multiline:
