@@ -151,19 +151,14 @@ final class TauUITests: XCTestCase {
 
     func testComposeDiscard() {
         self.launch(["-mock", "YES", "-theme", "light"])
-        // The compose button, top right, then the default folder.
-        self.point(0.9, 0.08).tap()
-        sleep(1)
-        self.shot("compose-picker")
-        self.app.descendants(matching: .any)["Default folder"].firstMatch.tap()
+        // The compose button, top right: straight into a new chat.
+        self.point(0.9, 0.098).tap()
         sleep(1)
         self.shot("compose")
         self.point(0.1, 0.08).tap()
         sleep(1)
         self.shot("compose-discarded")
-        self.point(0.9, 0.08).tap()
-        sleep(1)
-        self.app.descendants(matching: .any)["Default folder"].firstMatch.tap()
+        self.point(0.9, 0.098).tap()
         sleep(1)
         self.point(0.5, 0.955).tap()
         sleep(1)
@@ -209,10 +204,14 @@ final class TauUITests: XCTestCase {
     func testServerBrowse() {
         self.launch(["-theme", "night"])
         sleep(2)
-        self.point(0.9, 0.08).tap()
+        // A long press on compose: recent projects, then Choose Project.
+        self.point(0.9, 0.098).press(forDuration: 0.8)
+        sleep(1)
+        self.shot("browse-menu")
+        self.app.descendants(matching: .any)["Choose Project…"].firstMatch.tap()
         sleep(2)
         self.shot("browse-recent")
-        self.app.descendants(matching: .any)["Browse…"].firstMatch.tap()
+        self.app.descendants(matching: .any)["Home"].firstMatch.tap()
         sleep(2)
         self.shot("browse-home")
     }
@@ -366,6 +365,11 @@ final class TauUITests: XCTestCase {
     func testDefaultModel() {
         self.launch(["-theme", "light", "-tab", "1"])
         sleep(1)
+        // Settings > Servers > the server > Default Model.
+        self.app.descendants(matching: .any)["Servers"].firstMatch.tap()
+        sleep(2)
+        self.point(0.5, 0.28).tap()
+        sleep(2)
         self.app.descendants(matching: .any)["Default Model"].firstMatch.tap()
         sleep(2)
         self.shot("default-model")
