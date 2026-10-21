@@ -98,6 +98,8 @@ let package = Package(
         .library(name: "SearchUI", targets: ["SearchUI"]),
         .library(name: "ChatListTitleView", targets: ["ChatListTitleView"]),
         .library(name: "AlertInputFieldComponent", targets: ["AlertInputFieldComponent"]),
+        .library(name: "HeaderPanelContainerComponent", targets: ["HeaderPanelContainerComponent"]),
+        .library(name: "HorizontalTabsComponent", targets: ["HorizontalTabsComponent"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -2030,6 +2032,24 @@ let package = Package(
             path: "submodules/TelegramUI/Components/AlertComponent/AlertInputFieldComponent",
             sources: [
                 "Sources/AlertInputFieldComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "HeaderPanelContainerComponent",
+            dependencies: ["ComponentDisplayAdapters", "ComponentFlow", "Display", "GlassBackgroundComponent", "TelegramPresentationData"],
+            path: "submodules/TelegramUI/Components/HeaderPanelContainerComponent",
+            sources: [
+                "Sources/HeaderPanelContainerComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "HorizontalTabsComponent",
+            dependencies: ["AccountContext", "AnimationUI", "AsyncDisplayKit", "ComponentDisplayAdapters", "ComponentFlow", "Display", "HeaderPanelContainerComponent", "LiquidLens", "MultilineTextWithEntitiesComponent", "TelegramCore", "TelegramPresentationData", "TextBadgeComponent"],
+            path: "submodules/TelegramUI/Components/HorizontalTabsComponent",
+            sources: [
+                "Sources/HorizontalTabsComponent.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

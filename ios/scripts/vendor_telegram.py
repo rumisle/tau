@@ -64,6 +64,7 @@ ROOTS = [
     "//submodules/UndoUI",
     "//submodules/TelegramUI/Components/AlertComponent",
     "//submodules/TelegramUI/Components/AlertComponent/AlertInputFieldComponent",
+    "//submodules/TelegramUI/Components/HorizontalTabsComponent",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
@@ -299,6 +300,19 @@ IMAGES = [
     "Chat/Context Menu/Unpin",
     # The title menu's Search.
     "Chat/Context Menu/Search",
+    # Chat folders: a tab's menu, a chat's Add to Folder, the picker's categories (ChatListController.tabContextGesture,
+    # ChatContextMenus.swift, ChatListFilterPresetController).
+    "Chat/Context Menu/Add",
+    "Chat/Context Menu/EditFolder",
+    "Chat/Context Menu/ReorderItems",
+    "Chat/Context Menu/ReadAll",
+    "Chat/Context Menu/AddToFolder",
+    "Chat/Context Menu/RemoveFromFolder",
+    "Chat List/Filters/Archive",
+    "Chat List/Filters/Read",
+    "Chat List/Filters/Chats",
+    "Chat List/Filters/NewChats",
+    "Chat List/Filters/Bot",
 ]
 
 # Lottie animations LottieComponent.AppBundleContent loads by name, from submodules/TelegramUI/Resources/Animations.
@@ -321,6 +335,12 @@ ANIMATIONS = [
     "anim_delete.json",
     "anim_pin.json",
     "anim_unpin.json",
+    # Search with nothing found, Chat Folders' header, a new folder's, an empty folder (ChatListSearchListPaneNode,
+    # ChatListFilterSettingsHeaderItem, ChatListEmptyNode).
+    "ChatListNoResults.tgs",
+    "ChatListFolders.tgs",
+    "ChatListNewFolder.tgs",
+    "ChatListFilterEmpty.tgs",
 ]
 
 # Local changes, applied in order with `git apply` after copying. Paths in them are relative to ios/ThirdParty/Telegram.

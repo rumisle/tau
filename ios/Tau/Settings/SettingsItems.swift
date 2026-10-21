@@ -3,6 +3,8 @@ import AsyncDisplayKit
 import Display
 import SwiftSignalKit
 import AppBundle
+import ComponentFlow
+import LottieComponent
 
 // Grouped list rows in Telegram's iOS 26 ItemList style (ItemListUI, `ItemListSystemStyle.glass`): sections inset 16 pt
 // with 26 pt corners, 15 pt vertical padding, 30 pt rounded icons, 17 pt text.
@@ -28,6 +30,8 @@ enum SettingsIcon {
     static let storage = renderSettingsIcon(name: "Item List/Icons/Pie", backgroundColors: [colorGreen])
     static let network = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorBlue])
     static let usage = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorPurple])
+    /// PresentationResourcesSettings.chatFolders.
+    static let chatFolders = renderSettingsIcon(name: "Item List/Icons/Folder", backgroundColors: [colorLightBlue])
     static let projects = renderSettingsIcon(name: "Item List/Icons/Folder", backgroundColors: [colorLightBlue])
     static let appearance = renderSettingsIcon(name: "Item List/Icons/Appearance", backgroundColors: [colorLightBlue])
     static let notifications = renderSettingsIcon(name: "Item List/Icons/Notifications", backgroundColors: [colorRed])
@@ -118,6 +122,8 @@ final class SettingsRowItem: ListViewItem {
         case checkmark(Bool)
         /// Telegram's switch (Display's SwitchNode, as ItemListSwitchItem has); `toggled` gets the new value.
         case toggle(Bool)
+        /// A small accent pill, as the Add of ChatListFilterPresetListSuggestedItem; the row's action is its tap.
+        case button(String)
     }
 
     let theme: TauTheme
@@ -197,6 +203,7 @@ final class SettingsRowItemNode: ListViewItemNode {
     private let subtitleNode = TextNode()
     private let labelNode = TextNode()
     private let arrowNode = ASImageNode()
+    private let pillNode = ASImageNode()
     private let separatorNode = ASDisplayNode()
     private var switchNode: SwitchNode?
 
@@ -220,6 +227,9 @@ final class SettingsRowItemNode: ListViewItemNode {
         self.addSubnode(self.subtitleNode)
         self.addSubnode(self.labelNode)
         self.addSubnode(self.arrowNode)
+        self.pillNode.isLayerBacked = true
+        self.pillNode.displaysAsynchronously = false
+        self.addSubnode(self.pillNode)
     }
 
     override func setHighlighted(_ highlighted: Bool, at point: CGPoint, animated: Bool) {
@@ -251,7 +261,10 @@ final class SettingsRowItemNode: ListViewItemNode {
             var showsArrow = false
             var showsCheck = false
             var toggleValue: Bool?
+            var pillTitle: String?
             switch item.accessory {
+            case let .button(title):
+                pillTitle = title
             case let .toggle(value):
                 toggleValue = value
             case .none:
@@ -264,7 +277,21 @@ final class SettingsRowItemNode: ListViewItemNode {
             case let .checkmark(value):
                 showsCheck = value
             }
-            let accessoryWidth: CGFloat = toggleValue != nil ? 51.0 : (showsArrow || showsCheck ? 22.0 : 0.0)
+            let pillImage = pillTitle.map { title -> UIImage? in
+                let text = NSAttributedString(string: title, font: Font.semibold(15.0), textColor: item.theme.presentationTheme.list.itemCheckColors.foregroundColor)
+                let textSize = text.boundingRect(with: CGSize(width: 200.0, height: 40.0), options: .usesLineFragmentOrigin, context: nil).size
+                let size = CGSize(width: ceil(textSize.width) + 24.0, height: 28.0)
+                return generateImage(size, rotatedContext: { size, context in
+                    context.clear(CGRect(origin: CGPoint(), size: size))
+                    context.setFillColor(item.theme.presentationTheme.list.itemCheckColors.fillColor.cgColor)
+                    context.addPath(UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: size), cornerRadius: size.height / 2.0).cgPath)
+                    context.fillPath()
+                    UIGraphicsPushContext(context)
+                    text.draw(at: CGPoint(x: 12.0, y: floor((size.height - textSize.height) / 2.0)))
+                    UIGraphicsPopContext()
+                })
+            } ?? nil
+            let accessoryWidth: CGFloat = toggleValue != nil ? 51.0 : (showsArrow || showsCheck ? 22.0 : (pillImage.map { $0.size.width + 8.0 } ?? 0.0))
             let (labelLayout, labelApply) = makeLabelLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: labelText, font: titleFont, textColor: theme.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: sectionWidth * 0.5, height: 30.0)))
             let maxTitleWidth = sectionLeft + sectionWidth - rightInset - accessoryWidth - labelLayout.size.width - 10.0 - contentLeft
             let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.title, font: titleFont, textColor: item.titleColor ?? theme.itemPrimaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: 30.0)))
@@ -330,6 +357,11 @@ final class SettingsRowItemNode: ListViewItemNode {
                     self.arrowNode.image = generateTintedImage(image: UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16.0, weight: .semibold)), color: theme.itemAccentColor)
                 }
                 self.arrowNode.isHidden = !(showsArrow || showsCheck)
+                self.pillNode.image = pillImage
+                self.pillNode.isHidden = pillImage == nil
+                if let pillImage {
+                    self.pillNode.frame = CGRect(x: accessoryX - pillImage.size.width + 4.0, y: floor((height - pillImage.size.height) / 2.0), width: pillImage.size.width, height: pillImage.size.height)
+                }
                 if let image = self.arrowNode.image {
                     self.arrowNode.frame = CGRect(x: accessoryX - image.size.width, y: floor((height - image.size.height) / 2.0), width: image.size.width, height: image.size.height)
                 }
@@ -535,5 +567,217 @@ final class SettingsProfileItemNode: ListViewItemNode {
                 self.subtitleNode.frame = CGRect(origin: CGPoint(x: floor((params.width - subtitleLayout.size.width) / 2.0), y: self.titleNode.frame.maxY + 2.0), size: subtitleLayout.size)
             })
         }
+    }
+}
+
+// MARK: - Text field row
+
+/// A row that is a text field, as Telegram's ItemListSingleLineInputItem (and the folder name's
+/// ItemListFilterTitleInputItem): the placeholder in the secondary color, the text as it is typed.
+final class SettingsInputItem: ListViewItem {
+    let theme: TauTheme
+    let text: String
+    let placeholder: String
+    let position: SettingsRowPosition
+    let maxLength: Int
+    let changed: (String) -> Void
+
+    init(theme: TauTheme, text: String, placeholder: String, position: SettingsRowPosition = SettingsRowPosition(isFirst: true, isLast: true), maxLength: Int = 64, changed: @escaping (String) -> Void) {
+        self.theme = theme
+        self.text = text
+        self.placeholder = placeholder
+        self.position = position
+        self.maxLength = maxLength
+        self.changed = changed
+    }
+
+    var neighborDescriptor: AnyEquatable {
+        return .noNeighborInfluence
+    }
+
+    var selectable: Bool {
+        return false
+    }
+
+    func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
+        Queue.mainQueue().async {
+            let node = SettingsInputItemNode()
+            let layout = node.update(item: self, params: params)
+            node.contentSize = layout.contentSize
+            node.insets = layout.insets
+            completion(node, { return (nil, { _ in }) })
+        }
+    }
+
+    func updateNode(async: @escaping (@escaping () -> Void) -> Void, node: @escaping () -> ListViewItemNode, params: ListViewItemLayoutParams, neighbors: ListViewItemNeighbors, animation: ListViewItemUpdateAnimation, completion: @escaping (ListViewItemNodeLayout, @escaping (ListViewItemApply) -> Void) -> Void) {
+        Queue.mainQueue().async {
+            guard let nodeValue = node() as? SettingsInputItemNode else {
+                return
+            }
+            let layout = nodeValue.update(item: self, params: params)
+            completion(layout, { _ in })
+        }
+    }
+}
+
+final class SettingsInputItemNode: ListViewItemNode, UITextFieldDelegate {
+    private let backgroundNode = ASDisplayNode()
+    private var textField: UITextField?
+    private var item: SettingsInputItem?
+
+    init() {
+        super.init(layerBacked: false, rotated: false, seeThrough: false)
+        self.backgroundNode.isLayerBacked = true
+        self.addSubnode(self.backgroundNode)
+    }
+
+    func focus() {
+        self.textField?.becomeFirstResponder()
+    }
+
+    func update(item: SettingsInputItem, params: ListViewItemLayoutParams) -> ListViewItemNodeLayout {
+        self.item = item
+        let theme = item.theme.list
+        let sectionLeft = params.leftInset + sectionSideInset
+        let sectionWidth = params.width - params.leftInset - params.rightInset - sectionSideInset * 2.0
+        let height: CGFloat = 52.0
+        let frame = CGRect(x: sectionLeft, y: 0.0, width: sectionWidth, height: height)
+        self.backgroundNode.backgroundColor = theme.itemBlocksBackgroundColor
+        self.backgroundNode.frame = frame
+        var corners: CACornerMask = []
+        if item.position.isFirst {
+            corners.formUnion([.layerMinXMinYCorner, .layerMaxXMinYCorner])
+        }
+        if item.position.isLast {
+            corners.formUnion([.layerMinXMaxYCorner, .layerMaxXMaxYCorner])
+        }
+        self.backgroundNode.layer.cornerRadius = corners.isEmpty ? 0.0 : sectionCornerRadius
+        self.backgroundNode.layer.maskedCorners = corners
+        self.backgroundNode.layer.cornerCurve = .continuous
+        let textField: UITextField
+        if let current = self.textField {
+            textField = current
+        } else {
+            textField = UITextField()
+            textField.delegate = self
+            textField.clearButtonMode = .whileEditing
+            textField.returnKeyType = .done
+            textField.addTarget(self, action: #selector(self.textChanged), for: .editingChanged)
+            self.textField = textField
+            self.view.addSubview(textField)
+        }
+        textField.font = titleFont
+        textField.textColor = theme.itemPrimaryTextColor
+        textField.tintColor = theme.itemAccentColor
+        textField.keyboardAppearance = item.theme.presentationTheme.rootController.keyboardColor.keyboardAppearance
+        textField.attributedPlaceholder = NSAttributedString(string: item.placeholder, font: titleFont, textColor: item.theme.presentationTheme.list.itemPlaceholderTextColor)
+        if textField.text != item.text {
+            textField.text = item.text
+        }
+        textField.accessibilityIdentifier = item.placeholder
+        textField.frame = CGRect(x: sectionLeft + 20.0, y: 0.0, width: sectionWidth - 28.0, height: height)
+        return ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets())
+    }
+
+    @objc private func textChanged() {
+        guard let item = self.item, let textField = self.textField else {
+            return
+        }
+        var text = textField.text ?? ""
+        if text.count > item.maxLength {
+            text = String(text.prefix(item.maxLength))
+            textField.text = text
+        }
+        item.changed(text)
+    }
+
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        textField.resignFirstResponder()
+        return false
+    }
+}
+
+// MARK: - Animated header
+
+/// The animation and a line of help over a screen's rows, as Telegram's ChatListFilterSettingsHeaderItem; a tap plays it
+/// again.
+final class SettingsAnimationHeaderItem: ListViewItem {
+    let theme: TauTheme
+    let animation: String
+    let text: String
+
+    init(theme: TauTheme, animation: String, text: String) {
+        self.theme = theme
+        self.animation = animation
+        self.text = text
+    }
+
+    var neighborDescriptor: AnyEquatable {
+        return .noNeighborInfluence
+    }
+
+    var selectable: Bool {
+        return false
+    }
+
+    func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
+        Queue.mainQueue().async {
+            let node = SettingsAnimationHeaderItemNode()
+            let layout = node.update(item: self, params: params)
+            node.contentSize = layout.contentSize
+            node.insets = layout.insets
+            completion(node, { return (nil, { _ in }) })
+        }
+    }
+
+    func updateNode(async: @escaping (@escaping () -> Void) -> Void, node: @escaping () -> ListViewItemNode, params: ListViewItemLayoutParams, neighbors: ListViewItemNeighbors, animation: ListViewItemUpdateAnimation, completion: @escaping (ListViewItemNodeLayout, @escaping (ListViewItemApply) -> Void) -> Void) {
+        Queue.mainQueue().async {
+            guard let nodeValue = node() as? SettingsAnimationHeaderItemNode else {
+                return
+            }
+            let layout = nodeValue.update(item: self, params: params)
+            completion(layout, { _ in })
+        }
+    }
+}
+
+final class SettingsAnimationHeaderItemNode: ListViewItemNode {
+    private let animation = ComponentView<Empty>()
+    private let textNode = ImmediateTextNode()
+    private var didPlay = false
+
+    init() {
+        super.init(layerBacked: false, rotated: false, seeThrough: false)
+        self.textNode.textAlignment = .center
+        self.textNode.maximumNumberOfLines = 0
+        self.addSubnode(self.textNode)
+    }
+
+    override func didLoad() {
+        super.didLoad()
+        self.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.animationTapped)))
+    }
+
+    @objc private func animationTapped() {
+        (self.animation.view as? LottieComponent.View)?.playOnce()
+    }
+
+    func update(item: SettingsAnimationHeaderItem, params: ListViewItemLayoutParams) -> ListViewItemNodeLayout {
+        let size = CGSize(width: 96.0, height: 96.0)
+        let _ = self.animation.update(transition: .immediate, component: AnyComponent(LottieComponent(content: LottieComponent.AppBundleContent(name: item.animation), startingPosition: .begin, size: size, lottieSettings: .noAccountFallback)), environment: {}, containerSize: size)
+        if let view = self.animation.view {
+            if view.superview == nil {
+                self.view.addSubview(view)
+            }
+            view.frame = CGRect(origin: CGPoint(x: floor((params.width - size.width) / 2.0), y: 0.0), size: size)
+            if !self.didPlay {
+                self.didPlay = true
+                (view as? LottieComponent.View)?.playOnce(delay: 0.2)
+            }
+        }
+        self.textNode.attributedText = NSAttributedString(string: item.text, font: Font.regular(14.0), textColor: item.theme.list.freeTextColor)
+        let textSize = self.textNode.updateLayout(CGSize(width: params.width - params.leftInset - params.rightInset - 64.0, height: 200.0))
+        self.textNode.frame = CGRect(origin: CGPoint(x: floor((params.width - textSize.width) / 2.0), y: size.height + 10.0), size: textSize)
+        return ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: size.height + 10.0 + textSize.height + 4.0), insets: UIEdgeInsets(top: 8.0, left: 0.0, bottom: 0.0, right: 0.0))
     }
 }

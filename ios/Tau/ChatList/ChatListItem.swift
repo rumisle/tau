@@ -23,7 +23,7 @@ struct ArchiveSummary: Equatable {
 
 /// The chat list's actions, shared by its rows (Telegram's ChatListNodeInteraction).
 final class ChatListInteraction {
-    let open: (DialogModel) -> Void
+    var open: (DialogModel) -> Void
     let openArchive: () -> Void
     let contextAction: (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void
     let toggleRead: (DialogModel) -> Void

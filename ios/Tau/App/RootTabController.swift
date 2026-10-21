@@ -31,6 +31,8 @@ final class RootTabController: ViewController {
     /// app opens straight into a chat: such a bar is made again once it is in one.
     private var tabBarMadeOutsideWindow = false
     private var isChangingSelectedIndex = false
+    /// While a tab's search is open the bar slides away, as TabBarController.updateIsTabBarHidden does.
+    private(set) var isTabBarHidden = false
     private var validLayout: ContainerViewLayout?
 
     override var transitionNavigationBar: NavigationBar? {
@@ -78,6 +80,16 @@ final class RootTabController: ViewController {
         }
         if let layout = self.validLayout {
             self.containerLayoutUpdated(layout, transition: .immediate)
+        }
+    }
+
+    func updateIsTabBarHidden(_ hidden: Bool, transition: ContainedViewLayoutTransition) {
+        guard hidden != self.isTabBarHidden else {
+            return
+        }
+        self.isTabBarHidden = hidden
+        if let layout = self.validLayout {
+            self.containerLayoutUpdated(layout, transition: .animated(duration: 0.4, curve: .slide))
         }
     }
 
@@ -149,7 +161,9 @@ final class RootTabController: ViewController {
         if let currentController = self.currentController {
             currentController.view.frame = CGRect(origin: CGPoint(), size: layout.size)
             var childLayout = layout
-            childLayout.intrinsicInsets.bottom = tabBarHeight
+            if !self.isTabBarHidden {
+                childLayout.intrinsicInsets.bottom = tabBarHeight
+            }
             currentController.containerLayoutUpdated(childLayout, transition: transition)
         }
     }
@@ -190,7 +204,7 @@ final class RootTabController: ViewController {
             environment: {},
             containerSize: CGSize(width: layout.size.width - sideInset * 2.0, height: 100.0)
         )
-        let tabBarFrame = CGRect(origin: CGPoint(x: floor((layout.size.width - tabBarSize.width) * 0.5), y: layout.size.height - tabBarSize.height - panelsBottomInset), size: tabBarSize)
+        let tabBarFrame = CGRect(origin: CGPoint(x: floor((layout.size.width - tabBarSize.width) * 0.5), y: layout.size.height - (self.isTabBarHidden ? 0.0 : tabBarSize.height + panelsBottomInset)), size: tabBarSize)
         if let tabBar = self.tabBarView.view {
             if tabBar.superview == nil {
                 self.displayNode.view.addSubview(tabBar)

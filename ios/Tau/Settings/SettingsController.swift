@@ -194,6 +194,12 @@ final class SettingsController: SettingsListController {
                 }
                 self.push(NotificationsController(context: self.context))
             }),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.chatFolders, title: "Chat Folders", accessory: .disclosure(label: ChatFolderStore.shared.folders.isEmpty ? "" : "\(ChatFolderStore.shared.folders.count)"), position: middle, action: { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.push(ChatFoldersController(context: self.context))
+            }),
             SettingsRowItem(theme: theme, icon: SettingsIcon.usage, title: "Usage", accessory: .disclosure(label: ""), position: middle, action: { [weak self] in
                 guard let self else {
                     return
