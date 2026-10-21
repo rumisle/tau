@@ -978,12 +978,19 @@ final class ChatMessageItemNode: ListViewItemNode {
                     var style = MarkdownStyle(fontSize: 14.0, textColor: serviceText, linkColor: serviceText, accentColor: serviceText)
                     style.maxWidth = innerWidth
                     let summaryText = MarkdownText.render(summary.isEmpty ? "No summary." : summary, style: style)
-                    let (summaryLayout, summaryApply) = makeSubagentAnswerLayout(InteractiveTextNodeLayoutArguments(attributedString: summaryText, maximumNumberOfLines: item.isExpanded ? 0 : 4, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: .greatestFiniteMagnitude)))
+                    let (summaryLayout, summaryApply) = makeSubagentAnswerLayout(InteractiveTextNodeLayoutArguments(attributedString: summaryText, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: .greatestFiniteMagnitude)))
+                    // Folded, as Telegram folds a long quote: the first lines fade out, with no ellipsis to land on
+                    // a line of its own between paragraphs.
+                    let foldedHeight: CGFloat = 96.0
+                    let isFolded = !item.isExpanded && summaryLayout.size.height > foldedHeight + 16.0
+                    let summaryHeight = isFolded ? foldedHeight : summaryLayout.size.height
+                    // The arrow only where there is something to fold.
+                    let showsArrow = summaryLayout.size.height > foldedHeight + 16.0
                     let arrowImage = generateTintedImage(image: UIImage(bundleImageName: "Item List/ExpandingItemVerticalSmallArrow"), color: serviceText.withMultipliedAlpha(0.7))
-                    let arrowHeight = (arrowImage?.size.height ?? 0.0) + 6.0
+                    let arrowHeight = showsArrow ? (arrowImage?.size.height ?? 0.0) + 6.0 : 6.0
                     let separatorY = cardInsets.top + headerLayout.size.height + 2.0 + sublineLayout.size.height + 10.0
                     let summaryY = separatorY + 10.0
-                    let cardHeight = summaryY + summaryLayout.size.height + 6.0 + arrowHeight + cardInsets.bottom - 6.0
+                    let cardHeight = summaryY + summaryHeight + 6.0 + arrowHeight + cardInsets.bottom - 6.0
                     let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: cardHeight), insets: insets)
                     return (layout, { animation in
                         guard let self else {
@@ -1031,7 +1038,17 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.subagentAnswerNode = node
                         node.isHidden = false
                         animation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: card.minX + cardInsets.left, y: card.minY + summaryY), size: summaryLayout.size), completion: nil)
-                        if let arrowImage {
+                        if isFolded {
+                            let mask = CAGradientLayer()
+                            mask.frame = CGRect(x: 0.0, y: 0.0, width: summaryLayout.size.width, height: summaryHeight)
+                            mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
+                            mask.locations = [0.0, NSNumber(value: Double((summaryHeight - 36.0) / summaryHeight)), 1.0]
+                            node.layer.mask = mask
+                        } else {
+                            node.layer.mask = nil
+                        }
+                        self.subagentArrowNode.isHidden = !showsArrow
+                        if let arrowImage, showsArrow {
                             self.subagentArrowNode.isHidden = false
                             self.subagentArrowNode.image = arrowImage
                             self.subagentArrowNode.frame = CGRect(x: card.midX - arrowImage.size.width / 2.0, y: card.maxY - cardInsets.bottom - arrowImage.size.height + 2.0, width: arrowImage.size.width, height: arrowImage.size.height)
@@ -1526,6 +1543,7 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.timerNode.isHidden = true
         self.isAccessibilityElement = false
         self.accessibilityIdentifier = nil
+        self.subagentAnswerNode?.layer.mask = nil
         for node in self.tableNodes where !nodes.contains(where: { $0 === node }) {
             node.removeFromSupernode()
         }

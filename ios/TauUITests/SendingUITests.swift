@@ -780,4 +780,20 @@ final class SendingUITests: XCTestCase {
         sleep(4)
         self.shot("timer-1-done")
     }
+
+    /// The Subagents list in the title menu keeps time while it is open, without moving.
+    func testSubagentMenuTicks() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("& ticker: $ sleep 30 && echo ok")
+        self.send()
+        sleep(4)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Subagents"].firstMatch.tap()
+        sleep(1)
+        self.shot("tick-0")
+        sleep(2)
+        self.shot("tick-1")
+    }
 }

@@ -847,32 +847,39 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.presentInGlobalOverlay(controller)
     }
 
-    /// The Subagents submenu: each with its avatar, what it is doing and for how long. A tap opens its conversation.
+    /// The Subagents submenu: each with its avatar, what it is doing and for how long, as it goes. A tap opens its
+    /// conversation.
     private func subagentItems(icon: @escaping (String) -> (PresentationTheme) -> UIImage?) -> Signal<ContextController.Items, NoError> {
-        let back = self.theme.presentationStrings.Common_Back
-        let make: () -> (ContextController.Items, Bool) = { [weak self] in
-            guard let self else {
-                return (ContextController.Items(content: .list([])), false)
-            }
-            var items: [ContextMenuItem] = [.action(ContextMenuActionItem(text: back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
-                controller?.popItems()
-            })), .separator]
-            // Their calls in this transcript: when each last got work, and how long it took.
-            var calls: [String: SubagentCall] = [:]
-            for message in self.lastState?.messages ?? [] {
-                if let call = message.tool?.subagent, call.kind == .spawn || call.kind == .send {
-                    calls[call.name] = call
+        var items: [ContextMenuItem] = [.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
+            controller?.popItems()
+        })), .separator]
+        let subagents = self.context.store.subagents(of: self.conversationId)
+        for (index, dialog) in subagents.enumerated() {
+            let parts = dialog.title.components(separatedBy: ": ")
+            let name = parts.first ?? dialog.title
+            let task = parts.count > 1 ? parts.dropFirst().joined(separator: ": ") : ""
+            let avatar = Avatar.image(letters: Avatar.letters(name), colorIndex: index + 2, diameter: 30.0)
+            let child = dialog.id
+            let action: (ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void = { [weak self] _, f in
+                f(.default)
+                guard let self else {
+                    return
                 }
+                (self.navigationController as? NavigationController)?.pushViewController(ChatController(context: self.context, conversationId: child))
             }
-            let subagents = self.context.store.subagents(of: self.conversationId)
-            for (index, dialog) in subagents.enumerated() {
-                let parts = dialog.title.components(separatedBy: ": ")
-                let name = parts.first ?? dialog.title
-                let task = parts.count > 1 ? parts.dropFirst().joined(separator: ": ") : ""
+            // Read again each second while shown: its state, and its call in this transcript, for the time.
+            items.append(.custom(TickingContextItem({ [weak self] in
+                let busy = self?.context.store.subagents(of: self?.conversationId ?? 0).first(where: { $0.id == child })?.busy ?? dialog.busy
+                var call: SubagentCall?
+                for message in self?.lastState?.messages ?? [] {
+                    if let found = message.tool?.subagent, found.name == name, found.kind == .spawn || found.kind == .send {
+                        call = found
+                    }
+                }
                 var status: String
-                if dialog.busy {
-                    status = calls[name]?.startedAt.map { "working · \(formatElapsed(Date().timeIntervalSince($0)))" } ?? "working"
-                } else if let duration = calls[name]?.duration {
+                if busy {
+                    status = call?.startedAt.map { "working · \(formatElapsed(Date().timeIntervalSince($0)))" } ?? "working"
+                } else if let duration = call?.duration {
                     status = "worked \(formatDuration(duration))"
                 } else {
                     status = "idle"
@@ -880,20 +887,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 if !task.isEmpty {
                     status += " · " + task
                 }
-                let avatar = Avatar.image(letters: Avatar.letters(name), colorIndex: index + 2, diameter: 30.0)
-                let child = dialog.id
-                items.append(.action(ContextMenuActionItem(text: name, textLayout: .secondLineWithValue(status), icon: { _ in nil }, iconSource: ContextMenuActionItemIconSource(size: CGSize(width: 30.0, height: 30.0), cornerRadius: 15.0, signal: .single(avatar)), iconPosition: .left, action: { [weak self] _, f in
-                    f(.default)
-                    guard let self else {
-                        return
-                    }
-                    (self.navigationController as? NavigationController)?.pushViewController(ChatController(context: self.context, conversationId: child))
-                })))
-            }
-            return (ContextController.Items(content: .list(items)), false)
+                return ContextMenuActionItem(text: name, textLayout: .secondLineWithValue(status), icon: { _ in nil }, iconSource: ContextMenuActionItemIconSource(size: CGSize(width: 30.0, height: 30.0), cornerRadius: 15.0, signal: .single(avatar)), iconPosition: .left, action: action)
+            }), false))
         }
-        // As opened: the menu redraws with a transition on each change, so it does not tick.
-        return .single(make().0)
+        return .single(ContextController.Items(content: .list(items)))
     }
 
     /// The usage submenu: how full the context is, then the conversation's spend, by model when it used several.
