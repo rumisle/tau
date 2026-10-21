@@ -793,7 +793,12 @@ final class ServerStore: ConversationStore, TauServer {
                 // The first message stands in as the title until the server names the conversation after the first
                 // answer.
                 let title = draft.titleIsManual ? (draft.title ?? "") : String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48))
-                self.outbox.enqueueCreate(requestId: createRequestId, cwd: draft.cwd, title: title, agent: draft.agent)
+                if let forkOf = draft.forkOf, let forkAt = draft.forkAt {
+                    // A copy made before its message (Restore Full Context): the fork, then the message.
+                    self.outbox.enqueueCreate(requestId: createRequestId, cwd: nil, title: draft.title ?? title, agent: nil, forkOf: forkOf, forkAt: forkAt)
+                } else {
+                    self.outbox.enqueueCreate(requestId: createRequestId, cwd: draft.cwd, title: title, agent: draft.agent)
+                }
                 if draft.titleIsManual {
                     _ = self.outbox.renameCreate(createRequestId, title: title)
                 }
@@ -966,6 +971,29 @@ final class ServerStore: ConversationStore, TauServer {
         self.outbox.enqueueCreate(requestId: createRequestId, cwd: nil, title: draft.title ?? "Edited", agent: nil, forkOf: realId, forkAt: at)
         self.outbox.enqueue(text: text, attachments: message.attachments, conversationId: nil, createRequestId: createRequestId, mode: .followUp, showsInQueue: false)
         completion(draftId)
+    }
+
+    func forkBefore(entryId: Int, in id: Int) -> Int? {
+        guard let realId = self.resolve(id), let replica = self.replicas[realId], let at = replica.entries.keys.filter({ $0 < entryId }).max() else {
+            return nil
+        }
+        // Created by its first message, through the outbox, as any draft: leaving it unsent leaves nothing behind.
+        let draftId = self.nextDraftId
+        self.nextDraftId -= 1
+        var draft = Draft(cwd: self.dialogs[realId]?.cwd)
+        draft.agent = self.agent(realId)
+        draft.forkOf = realId
+        draft.forkAt = at
+        draft.title = self.dialogs[realId]?.title
+        self.drafts[draftId] = draft
+        return draftId
+    }
+
+    func subagents(of id: Int) -> [DialogModel] {
+        guard let realId = self.resolve(id) else {
+            return []
+        }
+        return self.dialogs.values.filter { $0.parentConversationId == realId }.sorted { $0.id < $1.id }
     }
 
     func duplicateConversation(_ id: Int, completion: @escaping (Int) -> Void) {

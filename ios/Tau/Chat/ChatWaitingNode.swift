@@ -91,8 +91,14 @@ final class ChatWaitingNode: ASDisplayNode {
         end.toValue = 1.0
         end.beginTime = 0.8
         end.duration = 1.1
+        // A round cap draws a dot for a stroke of no length: hidden while there is nothing to draw, before the pen
+        // goes down and once it has lifted off.
+        let ink = CAKeyframeAnimation(keyPath: "opacity")
+        ink.values = [0.0, 1.0, 1.0, 0.0, 0.0]
+        ink.keyTimes = [0.0, 0.02, NSNumber(value: 1.70 / 1.9), NSNumber(value: 1.76 / 1.9), 1.0]
+        ink.duration = 1.9
         let group = CAAnimationGroup()
-        group.animations = [draw, end, lift]
+        group.animations = [draw, end, lift, ink]
         group.duration = 1.9
         group.repeatCount = .infinity
         group.isRemovedOnCompletion = false

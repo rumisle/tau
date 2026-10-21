@@ -466,6 +466,14 @@ final class MockStore: TauStore, TauServer {
         self.publishDialogs()
     }
 
+    func forkBefore(entryId: Int, in id: Int) -> Int? {
+        return nil
+    }
+
+    func subagents(of id: Int) -> [DialogModel] {
+        return []
+    }
+
     func duplicateConversation(_ id: Int, completion: @escaping (Int) -> Void) {
         guard let state = self.conversations[id], let dialog = self.dialogs[id] else {
             return

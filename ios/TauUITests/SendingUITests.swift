@@ -636,6 +636,14 @@ final class SendingUITests: XCTestCase {
         self.send()
         sleep(4)
         self.shot("sub-0-working")
+        // The title menu lists it, with what it does and for how long.
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Subagents"].firstMatch.tap()
+        sleep(2)
+        self.shot("sub-0b-menu")
+        self.point(0.5, 0.97).tap()
+        sleep(1)
         self.point(0.1, 0.08).tap()
         sleep(2)
         self.shot("sub-1-list")
@@ -724,5 +732,52 @@ final class SendingUITests: XCTestCase {
         self.shot("nav-4-back")
         // The list, not the chat it started as.
         XCTAssertFalse(self.app.descendants(matching: .any)["newChatProject"].firstMatch.exists)
+    }
+
+    /// Compaction from the title menu: its pill with the τ and its time, messages go on meanwhile, then the summary's
+    /// card, which unfolds, and Restore Full Context.
+    func testCompaction() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        for text in ["one two three four five six seven", "eight nine ten eleven twelve", "thirteen fourteen fifteen"] {
+            self.type(text)
+            self.send()
+            sleep(3)
+        }
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Compact Context"].firstMatch.tap()
+        usleep(1_500_000)
+        self.shot("compact-0-pill")
+        self.focusInput()
+        self.type("while compacting")
+        self.send()
+        usleep(1_000_000)
+        self.shot("compact-1-during")
+        sleep(5)
+        self.shot("compact-2-card")
+        let card = self.app.descendants(matching: .any).matching(identifier: "compactionCard").firstMatch
+        _ = card.waitForExistence(timeout: 5.0)
+        card.tap()
+        sleep(1)
+        self.shot("compact-3-expanded")
+        card.press(forDuration: 1.0)
+        sleep(1)
+        self.shot("compact-4-menu")
+        self.app.descendants(matching: .any)["Restore Full Context"].firstMatch.tap()
+        sleep(2)
+        self.shot("compact-5-restored")
+    }
+
+    /// A tool past a second ticks its time; once done it keeps how long it took. The title counts the run.
+    func testToolTimer() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("$ sleep 4 && echo done")
+        self.send()
+        sleep(3)
+        self.shot("timer-0-running")
+        sleep(4)
+        self.shot("timer-1-done")
     }
 }

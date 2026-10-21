@@ -144,7 +144,8 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		storage = await openNodeSqliteStorage(options.database);
 	}
 
-	const settings: HarnessSettings = { toolExecution: "parallel" };
+	// The dev model's chats are short: a manual compaction there keeps little verbatim, so it has something to summarize.
+	const settings: HarnessSettings = { toolExecution: "parallel", compaction: { modelOverrides: { [`${DEV_MODEL.provider}/${DEV_MODEL.modelId}`]: { keepRecentTokens: 200 } } } };
 	const harness = await Harness.open(
 		storage,
 		{

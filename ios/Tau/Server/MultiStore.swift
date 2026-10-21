@@ -343,6 +343,20 @@ final class MultiStore: TauStore {
         store.duplicateConversation(local, completion: { completion(MultiStore.global(slot, $0)) })
     }
 
+    func forkBefore(entryId: Int, in id: Int) -> Int? {
+        guard let (store, local) = self.route(id) else {
+            return nil
+        }
+        return store.forkBefore(entryId: entryId, in: local).map { MultiStore.global(store.slot, $0) }
+    }
+
+    func subagents(of id: Int) -> [DialogModel] {
+        guard let (store, local) = self.route(id) else {
+            return []
+        }
+        return store.subagents(of: local).map { self.mapped($0, store.slot) }
+    }
+
     func markSeen(_ id: Int) {
         self.route(id).map { $0.0.markSeen($0.1) }
     }

@@ -74,8 +74,18 @@ enum MessageRole: Equatable {
     case user
     case assistant
     case tool(name: String)
-    /// The model's reasoning before an answer, shown dimmed and folded.
+    /// The model's reasoning before an answer, shown dimmed.
     case thinking
+    /// Not a message: what happened to the conversation (a compaction), centered as Telegram's service messages.
+    case service
+}
+
+/// What a service row says.
+enum ServiceContent: Equatable {
+    /// A summary being made, since `since` (when this app first saw it).
+    case compacting(since: Date)
+    /// The summary that now stands in for what came before it, for the model.
+    case compacted(summary: String, reason: String)
 }
 
 /// When a run ended and how long it took, from its first message to its answer.
@@ -109,6 +119,10 @@ struct ToolCallInfo: Equatable {
     var childBusy: Bool = false
     /// What the card shows for the coding tools.
     var detail: ToolDetail = .none
+    /// When it began: the end of the answer that made the call. Nil while that answer is written.
+    var startedAt: Date?
+    /// How long it took, once done (the result's own measure).
+    var duration: TimeInterval?
     /// A background subagent's call or answer, which has a card of its own.
     var subagent: SubagentCall?
 }
@@ -135,6 +149,9 @@ struct SubagentCall: Equatable {
     var model: String?
     var thinking: String?
     var fork: Bool = false
+    /// A spawn or message: when it went out. An answer: how long the subagent took, from then.
+    var startedAt: Date?
+    var duration: TimeInterval?
 }
 
 /// The coding tools' calls, as their cards show them.
@@ -183,6 +200,7 @@ struct ChatMessage: Equatable {
     var turn: TurnInfo?
     /// Not a message: the agent is working and has nothing to show yet (ChatWaitingNode).
     var isWaiting: Bool = false
+    var service: ServiceContent?
 
     enum Delivery: Equatable {
         /// Not acknowledged by the server: the clock.
@@ -232,6 +250,15 @@ struct ConversationState: Equatable {
     var agent: AgentSettings?
     /// The conversation's title, so a rename reaches an open chat.
     var title: String?
+    /// While it works: when the run began, for the title's timer.
+    var runStartedAt: Date?
+    /// The newest compaction that failed, until one succeeds: its task and why.
+    var compactionFailure: CompactionFailure?
+}
+
+struct CompactionFailure: Equatable {
+    var taskId: Int
+    var error: String
 }
 
 /// Where the user left a chat: the message at the bottom of the screen and how far it was scrolled past, as Telegram's

@@ -26,6 +26,12 @@ export function devProvider(options: { tokensPerSecond?: number } = {}): FauxPro
 		const last = context.messages.findLast((message) => (message.role as string) !== "system");
 		const wait = last?.role === "user" ? /^~(\d+(?:\.\d+)?) /.exec(userText(last.content)) : null;
 		if (wait !== null) await new Promise((resolve) => setTimeout(resolve, Number(wait[1]) * 1000));
+		// A compaction's summarization: a few seconds, and a summary shaped like a real one.
+		if (context.messages.some((message) => (message.role as string) === "system" && JSON.stringify(message).includes("summarization assistant"))) {
+			await new Promise((resolve) => setTimeout(resolve, 3000));
+			const turns = context.messages.filter((message) => message.role === "user").length;
+			return fauxAssistantMessage([fauxText(`## Goal\nTry tau's compaction with the dev model.\n\n## Progress\n- ${turns} messages summarized\n- The echo model answered each one\n\n## Next Steps\n1. Keep chatting after the summary`)]);
+		}
 		return reply(context.messages);
 	};
 	faux.setResponses([respond]);

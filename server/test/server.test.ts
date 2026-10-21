@@ -455,6 +455,24 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("a manual compaction places its summary while the conversation goes on", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Compacted" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		for (const text of ["one", "two", "three"]) {
+			await client.request("conversation.submit", { conversationId: replica.id, requestId: `c-${text}`, content: `${text} ${"word ".repeat(80)}` });
+			await until(replica, () => idle(replica) && replica.ordered().filter((entry) => entry.kind === "pi.assistant").length >= ["one", "two", "three"].indexOf(text) + 1);
+		}
+		await client.request("conversation.compact", { conversationId: replica.id });
+		// The conversation takes a message while the summary is made.
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "c-during", content: "during" });
+		await until(replica, () => kinds(replica).includes("pi.compaction") && idle(replica), 15_000);
+		const compaction = replica.ordered().find((entry) => entry.kind === "pi.compaction")!;
+		assert.match(JSON.stringify(compaction.model), /## Goal/);
+		await client.close();
+	});
+
 	test("an answer is pushed through ntfy only while no app is in the foreground", async () => {
 		const posts: unknown[] = [];
 		server.notifier.post = async (_url, body) => {

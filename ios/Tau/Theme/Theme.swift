@@ -26,6 +26,35 @@ final class TauTheme {
             }
         }
 
+        /// The chat's plain background. Text sits on it without a bubble, so each is a quiet color the theme's own text
+        /// reads well on: a cool light gray under Classic's white bubbles, white for Day; for the dark themes not pure
+        /// black, whose contrast with white text smears on OLED (halation), but a near-black a step below the bubbles,
+        /// neutral for Night and the blue-gray of Telegram's night palette for Tinted Night.
+        var plainBackground: UInt32 {
+            switch self {
+            case .classic:
+                return 0xE5EAEE
+            case .day:
+                return 0xFFFFFF
+            case .night:
+                return 0x0D0D0F
+            case .tintedNight:
+                return 0x0E1621
+            }
+        }
+
+        /// Text on it: dark themes soften pure white a little, which also lowers halation.
+        var freeTextColor: UIColor? {
+            switch self {
+            case .night:
+                return UIColor(rgb: 0xE9EAEC)
+            case .tintedNight:
+                return UIColor(rgb: 0xE6EBF0)
+            case .classic, .day:
+                return nil
+            }
+        }
+
         var title: String {
             switch self {
             case .classic:
@@ -162,8 +191,9 @@ final class TauTheme {
         self.builtin = builtin
         self.presentationTheme = theme
         self.presentationStrings = base.strings
-        self.wallpaper = theme.chat.defaultWallpaper
-        self.presentationData = base.withUpdated(theme: theme).withUpdated(chatWallpaper: theme.chat.defaultWallpaper)
+        let wallpaper = TelegramWallpaper.color(builtin.plainBackground)
+        self.wallpaper = wallpaper
+        self.presentationData = base.withUpdated(theme: theme).withUpdated(chatWallpaper: wallpaper)
         self.overallDarkAppearance = theme.overallDarkAppearance
         self.accentColor = theme.list.itemAccentColor
 
@@ -227,7 +257,10 @@ final class TauTheme {
         let input = theme.chat.inputPanel
         let service = theme.chat.serviceMessage.components.withDefaultWallpaper
         let dark = theme.overallDarkAppearance
-        let chatBackgroundColor = TauTheme.baseColor(of: theme.chat.defaultWallpaper) ?? list.plainBackgroundColor
+        let chatBackgroundColor = UIColor(rgb: builtin.plainBackground)
+        // Pills and cards: Telegram's color for a plain wallpaper (the background, darker, see-through) on a light
+        // one; a lift of white on a dark one, where darker would vanish.
+        let serviceFill = dark ? UIColor(white: 1.0, alpha: 0.08) : serviceColor(with: chatBackgroundColor)
         // Cards are incoming bubbles, except on a plain wallpaper of the bubble's own color (Day), where they take a
         // code block's tint instead.
         var toolCardBackgroundColor = message.incoming.bubble.withWallpaper.fill.first ?? list.itemBlocksBackgroundColor
@@ -238,7 +271,7 @@ final class TauTheme {
             backgroundColor: chatBackgroundColor,
             outgoing: bubble(message.outgoing),
             incoming: incoming,
-            freeTextColor: message.incoming.primaryTextColor,
+            freeTextColor: builtin.freeTextColor ?? message.incoming.primaryTextColor,
             freeSecondaryTextColor: message.incoming.secondaryTextColor,
             linkTextColor: message.incoming.linkTextColor,
             toolCardBackgroundColor: toolCardBackgroundColor,
@@ -252,8 +285,8 @@ final class TauTheme {
             inputPlaceholderColor: input.inputPlaceholderColor,
             actionControlFillColor: input.actionControlFillColor,
             actionControlForegroundColor: input.actionControlForegroundColor,
-            serviceFillColor: service.fill,
-            serviceTextColor: service.primaryText
+            serviceFillColor: serviceFill,
+            serviceTextColor: dark ? UIColor(white: 1.0, alpha: 0.92) : service.primaryText
         )
 
         let tabBar = theme.rootController.tabBar

@@ -153,7 +153,10 @@ enum TranscriptBuilder {
         /// When the run being read began: its first message.
         var turnStart: Date?
 
-        func addAssistant(content: [JSONObject], base: Int, date: Date, entryId: Int?, streaming: Bool) {
+        /// The row of each subagent's latest spawn or message, whose answer is still to come.
+        var subagentCallRows: [String: Int] = [:]
+
+        func addAssistant(content: [JSONObject], base: Int, date: Date, entryId: Int?, streaming: Bool, toolStart: Date? = nil) {
             for (index, block) in content.enumerated() {
                 let rowId = self.rowId(base: base, block: index)
                 switch block.string("type") {
@@ -174,10 +177,15 @@ enum TranscriptBuilder {
                     let callId = block.string("id") ?? "\(rowId)"
                     let arguments = block.object("arguments") ?? [:]
                     var tool = ToolCallInfo(callId: callId, name: name, summary: ToolSummary.summary(name: name, arguments: arguments), status: streaming ? .preparing : .pending, output: nil, childConversationId: nil, detail: ToolSummary.detail(name: name, arguments: arguments))
-                    if name == "subagent", let call = ToolSummary.subagent(arguments) {
+                    tool.startedAt = toolStart
+                    if name == "subagent", var call = ToolSummary.subagent(arguments) {
+                        call.startedAt = toolStart
                         tool.subagent = call
                         if call.kind == .spawn {
                             subagentTasks[call.name] = call.text
+                        }
+                        if call.kind == .spawn || call.kind == .send {
+                            subagentCallRows[call.name] = rows.count
                         }
                     }
                     toolRowIndex[callId] = rows.count
@@ -209,14 +217,22 @@ enum TranscriptBuilder {
                 if let report = SubagentReport(text) {
                     // A background subagent's answer, posted as a message: its card, not the user's bubble.
                     var tool = ToolCallInfo(callId: "report-\(id)", name: "subagent", summary: report.status == "answered" ? "\(report.name) answered" : "\(report.name) stopped", status: report.status == "answered" ? .done : .failed, output: report.text, childConversationId: report.conversationId)
-                    tool.subagent = SubagentCall(kind: report.status == "answered" ? .answer : .failed, name: report.name, text: report.text, task: subagentTasks[report.name])
+                    var call = SubagentCall(kind: report.status == "answered" ? .answer : .failed, name: report.name, text: report.text, task: subagentTasks[report.name])
+                    // How long it worked: from the call that gave it the work, which shows the time too.
+                    if let callRow = subagentCallRows.removeValue(forKey: report.name), let started = rows[callRow].tool?.subagent?.startedAt {
+                        call.duration = max(0.0, date.timeIntervalSince(started))
+                        rows[callRow].tool?.subagent?.duration = call.duration
+                    }
+                    tool.subagent = call
                     rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "subagent"), text: "", date: date, tool: tool, entryId: id))
                     continue
                 }
                 rows.append(ChatMessage(id: rowIdForUserEntry[id] ?? self.rowId(base: id, block: 0), role: .user, text: text, date: date, attachments: attachments, entryId: id))
             case "pi.assistant":
                 let base = entry.int("byTaskId") ?? id
-                addAssistant(content: message.objects("content"), base: base, date: date, entryId: id, streaming: false)
+                // Its calls start once it is written.
+                let written = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
+                addAssistant(content: message.objects("content"), base: base, date: date, entryId: id, streaming: false, toolStart: written)
                 if message.string("stopReason") == "error", let error = message.string("errorMessage") {
                     rows.append(ChatMessage(id: self.rowId(base: base, block: 63), role: .assistant, text: "**Error:** \(error)", date: date, entryId: id))
                 }
@@ -234,6 +250,9 @@ enum TranscriptBuilder {
                 }
                 tool.status = (message.bool("isError") ?? false) ? .failed : .done
                 tool.output = self.text(of: message["content"])
+                if let milliseconds = message.double("durationMs") {
+                    tool.duration = milliseconds / 1000.0
+                }
                 if let details = message.object("details") {
                     if let child = details.int("conversationId") {
                         tool.childConversationId = child
@@ -250,6 +269,17 @@ enum TranscriptBuilder {
                     tool.detail = .edit(path: path, diff: diff)
                 }
                 rows[index].tool = tool
+            case "pi.compaction":
+                // The summary the model now reads instead of what came before (durable's SUMMARY_PREFIX/SUFFIX).
+                var summary = self.text(of: message["content"])
+                if let start = summary.range(of: "<summary>\n") {
+                    summary = String(summary[start.upperBound...])
+                }
+                if summary.hasSuffix("\n</summary>") {
+                    summary = String(summary.dropLast("\n</summary>".count))
+                }
+                let reason = entry.object("data")?.string("reason") ?? "manual"
+                rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .service, text: summary, date: date, entryId: id, service: .compacted(summary: summary.trimmingCharacters(in: .whitespacesAndNewlines), reason: reason)))
             default:
                 continue
             }
@@ -299,9 +329,35 @@ enum TranscriptBuilder {
                 break
             }
         }
+        // A summary being made: it does not stop the conversation, so it is a row of its own at the end.
+        if let compaction = live.objects("compactions").first, let taskId = compaction.int("taskId") {
+            rows.append(ChatMessage(id: self.rowId(base: taskId, block: 62), role: .service, text: "", date: Date(timeIntervalSince1970: 0.0), service: .compacting(since: self.firstSeen(compaction: taskId))))
+        }
         let queue = self.queue(replica: replica, items: items)
         // The agent works, or something waits for it: a message on its way is not that.
-        return ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !queue.isEmpty, queued: queue, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
+        var state = ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !queue.isEmpty, queued: queue, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
+        state.runStartedAt = replica.isBusy ? turnStart : nil
+        if let failure = live.object("compactionFailure"), let taskId = failure.int("taskId") {
+            state.compactionFailure = CompactionFailure(taskId: taskId, error: failure.string("error") ?? "")
+        }
+        return state
+    }
+
+    private static let compactionLock = NSLock()
+    private static var compactionStarts: [Int: Date] = [:]
+
+    /// When this app first saw a compaction task: the live document says it runs, not since when.
+    static func firstSeen(compaction taskId: Int) -> Date {
+        self.compactionLock.lock()
+        defer {
+            self.compactionLock.unlock()
+        }
+        if let date = self.compactionStarts[taskId] {
+            return date
+        }
+        let now = Date()
+        self.compactionStarts[taskId] = now
+        return now
     }
 
     /// A user message's text and its image blocks.

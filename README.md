@@ -39,4 +39,6 @@ npm run check
 ```
 
 Model credentials come from pi's `~/.pi/agent/auth.json` (the same logins as the `pi` CLI, safe to share) and the
-usual provider environment variables. The `dev/echo` model is free: it echoes, and runs `$ <command>` through bash.
+usual provider environment variables. The `dev/echo` model is free: it echoes, runs `$ <command>` through bash, starts a subagent for
+`& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`, and writes a short summary
+when asked to compact.

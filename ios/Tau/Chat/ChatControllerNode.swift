@@ -348,7 +348,11 @@ final class ChatControllerNode: ASDisplayNode {
     /// The agent has the message and nothing of its answer is on screen: not writing, no tool card spinning. A message
     /// still on its way has its clock instead: the agent has nothing to work on yet.
     private static func isWaiting(state: ConversationState, messages: [ChatMessage]) -> Bool {
-        guard state.busy, let last = messages.last, !last.isStreaming, last.delivery == .delivered else {
+        // A compaction's pill says the conversation is busy with it; under it, the last message.
+        if messages.contains(where: { if case .compacting = $0.service { return true } else { return false } }) {
+            return false
+        }
+        guard state.busy, let last = messages.last(where: { $0.role != .service }), !last.isStreaming, last.delivery == .delivered else {
             return false
         }
         // A call still running has its own spinner.

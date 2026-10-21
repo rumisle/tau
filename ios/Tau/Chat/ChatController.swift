@@ -77,11 +77,43 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     }
 
     deinit {
+        self.titleTimer?.invalidate()
         self.stateDisposable.dispose()
         self.eventsDisposable.dispose()
         self.connectionDisposable?.dispose()
         self.themeDisposable?.dispose()
         self.settingsDisposable?.dispose()
+    }
+
+    private var seenCompactionFailure: Int??
+    private var titleTimer: SwiftSignalKit.Timer?
+
+    /// When the compaction now running began, as the transcript's pill says.
+    private var compactingSince: Date? {
+        for message in (self.lastState?.messages ?? []).reversed() {
+            if case let .compacting(since) = message.service {
+                return since
+            }
+        }
+        return nil
+    }
+
+    /// The title's time ticks while the agent works or a compaction runs.
+    private func updateTitleTimer() {
+        let ticking = (self.lastState?.busy == true && self.lastState?.runStartedAt != nil) || self.compactingSince != nil
+        if ticking, self.titleTimer == nil {
+            let timer = SwiftSignalKit.Timer(timeout: 1.0, repeat: true, completion: { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.updateTitle(busy: self.lastState?.busy ?? false)
+            }, queue: Queue.mainQueue())
+            self.titleTimer = timer
+            timer.start()
+        } else if !ticking, let timer = self.titleTimer {
+            self.titleTimer = nil
+            timer.invalidate()
+        }
     }
 
     private func subscribeConnection() {
@@ -112,6 +144,15 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             }
             self.controllerNode.inputPanelNode.isBusy = state.busy
             self.updateTitle(busy: state.busy)
+            self.updateTitleTimer()
+            // A compaction that failed says so once, as a toast; one from before this chat opened stays quiet.
+            let failure = state.compactionFailure?.taskId
+            if self.seenCompactionFailure == nil {
+                self.seenCompactionFailure = .some(failure)
+            } else if let failure, self.seenCompactionFailure != .some(failure) {
+                self.seenCompactionFailure = .some(failure)
+                self.presentToast(.info(title: nil, text: "The context could not be compacted: \(state.compactionFailure?.error ?? "")", timeout: nil, customUndoText: nil))
+            }
         }))
         if !self.isPreview {
             self.eventsDisposable.set((self.context.store.chatEvents(self.conversationId) |> deliverOnMainQueue).start(next: { [weak self] event in
@@ -176,7 +217,12 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             status = .network(strings.ChatState_Updating)
         case .online:
             if busy {
-                status = .working("working")
+                // How long this run has worked, as it goes.
+                let elapsed = self.lastState?.runStartedAt.map { Date().timeIntervalSince($0) } ?? 0.0
+                status = .working(elapsed >= 1.0 ? "working · \(formatElapsed(elapsed))" : "working")
+            } else if let since = self.compactingSince {
+                let elapsed = Date().timeIntervalSince(since)
+                status = .working(elapsed >= 1.0 ? "compacting · \(formatElapsed(elapsed))" : "compacting")
             } else if let activity = dialog.subagentActivity {
                 // Its background subagents, as Telegram's title says who is typing.
                 status = .working(activity)
@@ -767,6 +813,17 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             }
             controller?.pushItems(items: .single(ContextController.Items(content: .list(levelItems))))
         })))
+        let subagents = store.subagents(of: id)
+        if !subagents.isEmpty {
+            let working = subagents.filter(\.busy).count
+            let summary = working > 0 ? "\(working) working · \(subagents.count) in all" : (subagents.count == 1 ? "1 subagent" : "\(subagents.count) subagents")
+            items.append(.action(ContextMenuActionItem(text: "Subagents", textLayout: .secondLineWithValue(summary), icon: icon("Chat/Context Menu/Bots"), action: { [weak self] controller, _ in
+                guard let self else {
+                    return
+                }
+                controller?.pushItems(items: self.subagentItems(icon: icon))
+            })))
+        }
         items.append(.separator)
         let usage = store.usage(id)
         items.append(.action(ContextMenuActionItem(text: "Usage", textLayout: .secondLineWithValue(usageSummary(usage)), icon: icon("Chat/Context Menu/Info"), action: { [weak self] controller, _ in
@@ -775,15 +832,68 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             }
             controller?.pushItems(items: .single(ContextController.Items(content: .list(self.usageItems(usage, icon: icon)))))
         })))
-        items.append(.action(ContextMenuActionItem(text: "Compact Context", icon: icon("Chat/Context Menu/Clear"), action: { [weak self] _, f in
-            f(.default)
-            store.compact(id)
-            self?.presentToast(.info(title: nil, text: "Compacting the context", timeout: nil, customUndoText: nil))
-        })))
+        if self.compactingSince != nil {
+            // Its pill in the chat shows it working; the chat goes on meanwhile.
+            items.append(.action(ContextMenuActionItem(text: "Compacting Context…", textColor: .disabled, icon: icon("Chat/Context Menu/Clear"), action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)))
+        } else {
+            items.append(.action(ContextMenuActionItem(text: "Compact Context", icon: icon("Chat/Context Menu/Clear"), action: { _, f in
+                f(.default)
+                store.compact(id)
+            })))
+        }
 
         let source = ChatTitleContextReferenceSource(view: self.titleView, contentArea: self.controllerNode.view.convert(self.controllerNode.frameForVisibleArea(), to: nil))
         let controller = makeContextController(presentationData: self.theme.presentationData, source: .reference(source), items: .single(ContextController.Items(content: .list(items))), gesture: nil)
         self.presentInGlobalOverlay(controller)
+    }
+
+    /// The Subagents submenu: each with its avatar, what it is doing and for how long. A tap opens its conversation.
+    private func subagentItems(icon: @escaping (String) -> (PresentationTheme) -> UIImage?) -> Signal<ContextController.Items, NoError> {
+        let back = self.theme.presentationStrings.Common_Back
+        let make: () -> (ContextController.Items, Bool) = { [weak self] in
+            guard let self else {
+                return (ContextController.Items(content: .list([])), false)
+            }
+            var items: [ContextMenuItem] = [.action(ContextMenuActionItem(text: back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
+                controller?.popItems()
+            })), .separator]
+            // Their calls in this transcript: when each last got work, and how long it took.
+            var calls: [String: SubagentCall] = [:]
+            for message in self.lastState?.messages ?? [] {
+                if let call = message.tool?.subagent, call.kind == .spawn || call.kind == .send {
+                    calls[call.name] = call
+                }
+            }
+            let subagents = self.context.store.subagents(of: self.conversationId)
+            for (index, dialog) in subagents.enumerated() {
+                let parts = dialog.title.components(separatedBy: ": ")
+                let name = parts.first ?? dialog.title
+                let task = parts.count > 1 ? parts.dropFirst().joined(separator: ": ") : ""
+                var status: String
+                if dialog.busy {
+                    status = calls[name]?.startedAt.map { "working · \(formatElapsed(Date().timeIntervalSince($0)))" } ?? "working"
+                } else if let duration = calls[name]?.duration {
+                    status = "worked \(formatDuration(duration))"
+                } else {
+                    status = "idle"
+                }
+                if !task.isEmpty {
+                    status += " · " + task
+                }
+                let avatar = Avatar.image(letters: Avatar.letters(name), colorIndex: index + 2, diameter: 30.0)
+                let child = dialog.id
+                items.append(.action(ContextMenuActionItem(text: name, textLayout: .secondLineWithValue(status), icon: { _ in nil }, iconSource: ContextMenuActionItemIconSource(size: CGSize(width: 30.0, height: 30.0), cornerRadius: 15.0, signal: .single(avatar)), iconPosition: .left, action: { [weak self] _, f in
+                    f(.default)
+                    guard let self else {
+                        return
+                    }
+                    (self.navigationController as? NavigationController)?.pushViewController(ChatController(context: self.context, conversationId: child))
+                })))
+            }
+            return (ContextController.Items(content: .list(items)), false)
+        }
+        // As opened: the menu redraws with a transition on each change, so it does not tick.
+        return .single(make().0)
     }
 
     /// The usage submenu: how full the context is, then the conversation's spend, by model when it used several.
@@ -867,6 +977,16 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 self?.perform(.copy, on: message)
             })))
         }
+        if case .compacted = message.service, let entryId = message.entryId {
+            // As an edit of an earlier message: the conversation goes on in a copy, from before the summary, with
+            // everything the model saw then.
+            items.append(.action(ContextMenuActionItem(text: "Restore Full Context", textLayout: .secondLineWithValue("Continues in a copy"), icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Reload"), color: theme.actionSheet.primaryTextColor)
+            }, action: { [weak self] _, f in
+                f(.default)
+                self?.restoreFullContext(before: entryId)
+            })))
+        }
         if message.role == .user {
             items.append(.action(ContextMenuActionItem(text: strings.Conversation_MessageDialogEdit, icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Edit"), color: theme.actionSheet.primaryTextColor)
@@ -883,6 +1003,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 self?.perform(.share, on: message)
             })))
         }
+        if message.role != .service {
         items.append(.action(ContextMenuActionItem(text: strings.Conversation_ContextMenuSelect, icon: { theme in
             return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Select"), color: theme.actionSheet.primaryTextColor)
         }, action: { [weak self] _, f in
@@ -896,10 +1017,24 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self.controllerNode.setSelection([message.id], transition: transition)
             f(.custom(transition))
         })))
+        }
 
         let source = ChatMessageContextExtractedContentSource(chatNode: self.controllerNode, messageId: message.id)
         let controller = makeContextController(presentationData: self.theme.presentationData, source: .extracted(source), items: .single(ContextController.Items(content: .list(items))), recognizer: nil, gesture: gesture)
         self.presentInGlobalOverlay(controller)
+    }
+
+    /// Restore Full Context: a copy of this chat from before a compaction, opened over it; it exists once something
+    /// is sent in it.
+    private func restoreFullContext(before entryId: Int) {
+        guard let forkId = self.context.store.forkBefore(entryId: entryId, in: self.conversationId), let navigationController = self.navigationController as? NavigationController else {
+            return
+        }
+        let chat = ChatController(context: self.context, conversationId: forkId)
+        navigationController.pushViewController(chat)
+        Queue.mainQueue().after(0.5) {
+            chat.presentToast(.info(title: nil, text: "A copy from before the summary, with the full context", timeout: nil, customUndoText: nil))
+        }
     }
 
     // MARK: - Selection mode

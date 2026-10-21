@@ -413,7 +413,7 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                     switch last.role {
                     case .user:
                         prefix = "You: "
-                    case .assistant, .thinking:
+                    case .assistant, .thinking, .service:
                         prefix = ""
                     case let .tool(name):
                         prefix = name.isEmpty ? "" : "\(name): "

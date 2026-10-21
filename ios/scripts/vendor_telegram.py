@@ -291,6 +291,8 @@ IMAGES = [
     "Chat/Context Menu/Unarchive",
     # The send button's menu: Send as Follow-up (ChatSendMessageContextScreen's Schedule Message icon).
     "Chat/Input/Menu/ScheduleIcon",
+    # The title menu's Subagents.
+    "Chat/Context Menu/Bots",
 ]
 
 # Lottie animations LottieComponent.AppBundleContent loads by name, from submodules/TelegramUI/Resources/Animations.

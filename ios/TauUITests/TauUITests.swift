@@ -444,4 +444,13 @@ final class TauUITests: XCTestCase {
             sleep(1)
         }
     }
+
+    /// The same answer on each theme's plain background.
+    func testThemeBackgrounds() {
+        for theme in ["classic", "day", "night", "tintedNight"] {
+            self.launch(["-mock", "YES", "-theme", theme, "-openChat", "6"])
+            sleep(2)
+            self.shot("bg-\(theme)")
+        }
+    }
 }

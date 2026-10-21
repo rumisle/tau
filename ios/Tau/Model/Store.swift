@@ -82,6 +82,11 @@ protocol ConversationStore: AnyObject {
     func deleteConversation(_ id: Int)
     /// Forks the conversation at its last entry; `completion` gets the copy's id.
     func duplicateConversation(_ id: Int, completion: @escaping (Int) -> Void)
+    /// A copy of the conversation up to just before `entryId`, as a draft until its first message (as an edit's fork,
+    /// without the message). Nil when there is nothing before it.
+    func forkBefore(entryId: Int, in id: Int) -> Int?
+    /// Its background subagents' conversations, oldest first.
+    func subagents(of id: Int) -> [DialogModel]
     /// The chat is on screen: everything in it so far is read.
     func markSeen(_ id: Int)
     /// Mark as Read / Mark as Unread.
