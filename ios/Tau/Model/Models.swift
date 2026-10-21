@@ -168,6 +168,8 @@ struct ConversationState: Equatable {
     var isLoaded: Bool = true
     /// The model and thinking level, which the title shows.
     var agent: AgentSettings?
+    /// The conversation's title, so a rename reaches an open chat.
+    var title: String?
 }
 
 /// Where the user left a chat: the message at the bottom of the screen and how far it was scrolled past, as Telegram's

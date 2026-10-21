@@ -1,6 +1,7 @@
 import UIKit
 import AsyncDisplayKit
 import Display
+import UndoUI
 import ChatListTitleView
 import SwiftSignalKit
 import MergeLists
@@ -202,6 +203,32 @@ final class ChatListController: ViewController {
 
     /// Telegram's chat list preview: the chat itself grows out of the row, with actions under it. Tapping the preview
     /// opens the chat, as ChatListControllerImpl's peerContextAction does.
+    private weak var currentToast: UndoOverlayController?
+
+    /// Telegram's toast over the list; a new one replaces the one showing.
+    func presentToast(_ content: UndoOverlayContent, action: @escaping (UndoOverlayAction) -> Bool = { _ in return false }) {
+        let replacing = self.currentToast != nil
+        self.currentToast?.dismiss()
+        let controller = UndoOverlayController(presentationData: self.theme.presentationData, content: content, elevatedLayout: true, animateInAsReplacement: replacing, action: action)
+        self.currentToast = controller
+        self.present(controller, in: .current)
+    }
+
+    private func openRename(_ dialog: DialogModel) {
+        let store = self.context.store
+        let previous = dialog.title
+        let alert = renameChatController(context: self.context.telegram, presentationData: self.theme.presentationData, title: previous, apply: { [weak self] title in
+            store.rename(dialog.id, title: title)
+            self?.presentToast(.info(title: nil, text: "Chat renamed to **\(title)**", timeout: nil, customUndoText: self?.theme.presentationStrings.Undo_Undo), action: { action in
+                if case .undo = action {
+                    store.rename(dialog.id, title: previous)
+                }
+                return true
+            })
+        })
+        self.present(alert, in: .window(.root))
+    }
+
     private func openContextMenu(dialog: DialogModel, sourceNode: ContextControllerSourceNode, gesture: ContextGesture?) {
         let store = self.context.store
         let strings = self.theme.presentationStrings
@@ -238,6 +265,12 @@ final class ChatListController: ViewController {
                 store.setUnread(dialog.id, true)
             })))
         }
+        items.append(.action(ContextMenuActionItem(text: "Rename", icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Edit"), color: theme.contextMenu.primaryColor)
+        }, action: { [weak self] _, f in
+            f(.dismissWithoutContent)
+            self?.openRename(dialog)
+        })))
         items.append(.action(ContextMenuActionItem(text: "Duplicate", icon: { theme in
             return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Copy"), color: theme.contextMenu.primaryColor)
         }, action: { [weak self] _, f in

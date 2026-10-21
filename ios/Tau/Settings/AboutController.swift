@@ -37,15 +37,14 @@ final class AboutController: SettingsListController {
             items.append(SettingsTextItem(theme: theme, text: "Server", kind: .header))
             items.append(SettingsRowItem(theme: theme, icon: nil, title: "Computer", accessory: .value(server.hostname), position: first, action: nil))
             items.append(SettingsRowItem(theme: theme, icon: nil, title: "Address", accessory: .value(server.address), position: middle, action: nil))
-            items.append(SettingsRowItem(theme: theme, icon: nil, title: "pi", accessory: .disclosure(label: revision.isEmpty ? "—" : revision), position: last, action: revision.isEmpty ? nil : open("https://github.com/earendil-works/pi/commit/\(server.piRevision)")))
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: "pi", accessory: .disclosure(label: revision.isEmpty ? "—" : revision), position: last, action: revision.isEmpty ? nil : open("https://github.com/earendil-works/pi/tree/\(server.piRevision)")))
             items.append(SettingsTextItem(theme: theme, text: "The server runs pi-durable from pi's main branch at this commit.", kind: .footer))
         }
         items.append(SettingsTextItem(theme: theme, text: "Made With", kind: .header))
-        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Telegram for iOS", subtitle: "Interface · GPL-2.0", accessory: .disclosure(label: ""), position: first, action: open("https://github.com/TelegramMessenger/Telegram-iOS")))
-        items.append(SettingsRowItem(theme: theme, icon: nil, title: "pi", subtitle: "pi-durable, pi-ai · MIT", accessory: .disclosure(label: ""), position: middle, action: open("https://github.com/earendil-works/pi")))
-        items.append(SettingsRowItem(theme: theme, icon: nil, title: "SwiftMath", subtitle: "LaTeX · MIT", accessory: .disclosure(label: ""), position: middle, action: open("https://github.com/mgriebling/SwiftMath")))
-        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Prism", subtitle: "Syntax highlighting · MIT", accessory: .disclosure(label: ""), position: last, action: open("https://github.com/PrismJS/prism")))
-        items.append(SettingsTextItem(theme: theme, text: "tau's screens are Telegram's own code, so tau is free software under the GNU GPL as well.", kind: .footer))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Telegram for iOS", subtitle: "Interface", accessory: .disclosure(label: ""), position: first, action: open("https://github.com/TelegramMessenger/Telegram-iOS")))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "pi", subtitle: "pi-durable, pi-ai", accessory: .disclosure(label: ""), position: middle, action: open("https://github.com/earendil-works/pi")))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "SwiftMath", subtitle: "LaTeX", accessory: .disclosure(label: ""), position: middle, action: open("https://github.com/mgriebling/SwiftMath")))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Prism", subtitle: "Syntax highlighting", accessory: .disclosure(label: ""), position: last, action: open("https://github.com/PrismJS/prism")))
         return items
     }
 }

@@ -84,9 +84,11 @@ let package = Package(
         .library(name: "MediaAssetsContext", targets: ["MediaAssetsContext"]),
         .library(name: "GlassBarButtonComponent", targets: ["GlassBarButtonComponent"]),
         .library(name: "GlassControls", targets: ["GlassControls"]),
+        .library(name: "ViewControllerComponent", targets: ["ViewControllerComponent"]),
+        .library(name: "ActivityIndicatorComponent", targets: ["ActivityIndicatorComponent"]),
+        .library(name: "AlertComponent", targets: ["AlertComponent"]),
         .library(name: "MediaPickerUI", targets: ["MediaPickerUI"]),
         .library(name: "ImageBlur", targets: ["ImageBlur"]),
-        .library(name: "ViewControllerComponent", targets: ["ViewControllerComponent"]),
         .library(name: "ItemListUI", targets: ["ItemListUI"]),
         .library(name: "SwipeToDismissGesture", targets: ["SwipeToDismissGesture"]),
         .library(name: "GalleryUI", targets: ["GalleryUI"]),
@@ -95,6 +97,7 @@ let package = Package(
         .library(name: "ContextMenuScreen", targets: ["ContextMenuScreen"]),
         .library(name: "SearchUI", targets: ["SearchUI"]),
         .library(name: "ChatListTitleView", targets: ["ChatListTitleView"]),
+        .library(name: "AlertInputFieldComponent", targets: ["AlertInputFieldComponent"]),
         .library(name: "TelegramCore", targets: ["TelegramCore"]),
         .library(name: "Postbox", targets: ["Postbox"]),
         .library(name: "TelegramUIPreferences", targets: ["TelegramUIPreferences"]),
@@ -131,7 +134,6 @@ let package = Package(
         .library(name: "PresentationDataUtils", targets: ["PresentationDataUtils"]),
         .library(name: "ChatMessageBackground", targets: ["ChatMessageBackground"]),
         .library(name: "AvatarBackground", targets: ["AvatarBackground"]),
-        .library(name: "AlertComponent", targets: ["AlertComponent"]),
         .library(name: "TelegramAnimatedStickerNode", targets: ["TelegramAnimatedStickerNode"]),
         .library(name: "LegacyUI", targets: ["LegacyUI"]),
         .library(name: "DrawingUI", targets: ["DrawingUI"]),
@@ -1861,6 +1863,36 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "ViewControllerComponent",
+            dependencies: ["AccountContext", "ComponentDisplayAdapters", "ComponentFlow", "Display", "SwiftSignalKit", "TelegramPresentationData"],
+            path: "submodules/Components/ViewControllerComponent",
+            sources: [
+                "Sources/ViewControllerComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "ActivityIndicatorComponent",
+            dependencies: ["ComponentFlow"],
+            path: "submodules/Components/ActivityIndicatorComponent",
+            sources: [
+                "Sources/ActivityIndicatorComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AlertComponent",
+            dependencies: ["AccountContext", "ActivityIndicatorComponent", "AsyncDisplayKit", "ComponentDisplayAdapters", "ComponentFlow", "Display", "GlassBackgroundComponent", "Markdown", "MultilineTextComponent", "MultilineTextWithEntitiesComponent", "SwiftSignalKit", "TelegramCore", "TelegramPresentationData", "TextFormat", "ViewControllerComponent"],
+            path: "submodules/TelegramUI/Components/AlertComponent",
+            exclude: ["AlertInputFieldComponent"],
+            sources: [
+                "Sources/AlertActionComponent.swift",
+                "Sources/AlertComponent.swift",
+                "Sources/AlertContent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "MediaPickerUI",
             dependencies: ["AccountContext", "AlertComponent", "AnimatedCountLabelNode", "AnimatedStickerNode", "AppBundle", "AsyncDisplayKit", "AttachmentUI", "AvatarBackground", "BundleIconComponent", "Camera", "CameraLegacy", "ChatMessageBackground", "ChatSendMessageActionUI", "CheckNode", "ComponentDisplayAdapters", "ComponentFlow", "ContextUI", "Display", "EdgeEffect", "EmojiTextAttachmentView", "FastBlur", "GlassBackgroundComponent", "GlassBarButtonComponent", "GlassControls", "ImageBlur", "ImageObjectSeparation", "InvisibleInkDustNode", "ItemListUI", "LegacyComponents", "LegacyMediaPickerUI", "LegacyUI", "LottieComponent", "LottieSettings", "ManagedAnimationNode", "MediaAssetsContext", "MediaEditor", "MergeLists", "MoreButtonNode", "MosaicLayout", "MultilineTextComponent", "PhotoResources", "PlainButtonComponent", "Postbox", "PresentationDataUtils", "RadialStatusNode", "SSignalKit", "SegmentedControlNode", "SolidRoundedButtonNode", "SparseItemGrid", "SwiftSignalKit", "TelegramAnimatedStickerNode", "TelegramCore", "TelegramPresentationData", "TelegramStringFormatting", "TelegramUIPreferences", "TextFormat", "UndoUI", "ViewControllerComponent", "WallpaperBackgroundNode"],
             path: "submodules/MediaPickerUI",
@@ -1887,15 +1919,6 @@ let package = Package(
             path: "submodules/ImageBlur",
             sources: [
                 "Sources/ImageBlur.swift",
-            ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        .target(
-            name: "ViewControllerComponent",
-            dependencies: ["AccountContext", "ComponentDisplayAdapters", "ComponentFlow", "Display", "SwiftSignalKit", "TelegramPresentationData"],
-            path: "submodules/Components/ViewControllerComponent",
-            sources: [
-                "Sources/ViewControllerComponent.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
@@ -1998,6 +2021,15 @@ let package = Package(
                 "Sources/ChatListTitleLockView.swift",
                 "Sources/ChatListTitleProxyNode.swift",
                 "Sources/ChatListTitleView.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AlertInputFieldComponent",
+            dependencies: ["AccountContext", "AlertComponent", "AsyncDisplayKit", "BundleIconComponent", "ComponentFlow", "Display", "MultilineTextComponent", "PlainButtonComponent", "SwiftSignalKit", "TelegramCore", "TelegramPresentationData", "TextFormat"],
+            path: "submodules/TelegramUI/Components/AlertComponent/AlertInputFieldComponent",
+            sources: [
+                "Sources/AlertInputFieldComponent.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
@@ -2251,13 +2283,6 @@ let package = Package(
             dependencies: ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
             path: "tau-shims/AvatarBackground",
             sources: ["AvatarBackground.swift"],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        .target(
-            name: "AlertComponent",
-            dependencies: ["Display", "TelegramPresentationData", "AccountContext"],
-            path: "tau-shims/AlertComponent",
-            sources: ["AlertComponent.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(

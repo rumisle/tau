@@ -62,6 +62,8 @@ ROOTS = [
     "//submodules/SearchUI",
     "//submodules/TelegramUI/Components/ChatListTitleView",
     "//submodules/UndoUI",
+    "//submodules/TelegramUI/Components/AlertComponent",
+    "//submodules/TelegramUI/Components/AlertComponent/AlertInputFieldComponent",
 ]
 
 # tau's stand-ins, in ios/ThirdParty/telegram-shims/<name>, copied to tau-shims/<name>. name: deps (module names).
@@ -102,7 +104,6 @@ SHIMS = {
     "PresentationDataUtils": ["Display", "TelegramPresentationData", "SolidRoundedButtonNode", "SwiftSignalKit", "AccountContext"],
     "ChatMessageBackground": ["Display", "AsyncDisplayKit", "TelegramCore", "TelegramPresentationData", "WallpaperBackgroundNode"],
     "AvatarBackground": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
-    "AlertComponent": ["Display", "TelegramPresentationData", "AccountContext"],
     "TelegramAnimatedStickerNode": ["AnimatedStickerNode", "LottieSettings"],
     "LegacyUI": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],
     "DrawingUI": ["Display", "AsyncDisplayKit", "SwiftSignalKit", "ComponentFlow", "TelegramCore", "Postbox", "TelegramPresentationData", "AccountContext", "LegacyComponents", "TextFormat", "TelegramUIPreferences"],

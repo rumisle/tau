@@ -71,6 +71,8 @@ targets:
           - SearchBarNode
           - ChatListTitleView
           - UndoUI
+          - AlertComponent
+          - AlertInputFieldComponent
           - libprisma
           - ItemListUI
     settings:

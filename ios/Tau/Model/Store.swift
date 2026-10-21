@@ -67,6 +67,8 @@ protocol TauStore: AnyObject {
     func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?)
     /// Summarizes the context to free room; the transcript stays.
     func compact(_ id: Int)
+    /// A name the user gave; the server's automatic naming never replaces it.
+    func rename(_ id: Int, title: String)
     /// Starts a new context: the model forgets the conversation so far; the transcript stays.
     func resetContext(_ id: Int)
     /// What the conversation has spent, and how full its context is.

@@ -266,6 +266,12 @@ final class MockStore: TauStore {
     func resetContext(_ id: Int) {
     }
 
+    func rename(_ id: Int, title: String) {
+        self.dialogs[id]?.title = title
+        self.publishDialogs()
+        self.publish(id)
+    }
+
     func edit(messageId: Int, text: String, in id: Int, completion: @escaping (Int) -> Void) {
         self.edit(messageId: messageId, text: text, in: id)
         completion(id)

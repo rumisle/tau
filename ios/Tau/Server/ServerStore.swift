@@ -35,11 +35,15 @@ final class ServerStore: TauStore {
         var forkOf: Int?
         var forkAt: Int?
         var title: String?
+        /// Named by the user: the create asks for no automatic title.
+        var titleIsManual = false
     }
     /// Each conversation's model as the chat list reports it, for one whose replica is not loaded yet.
     private var dialogAgents: [Int: AgentSettings] = [:]
     /// A model or thinking level just chosen, shown until the conversation's own agent doc says so.
     private var agentOverrides: [Int: (settings: AgentSettings, token: Int, confirmed: Bool)] = [:]
+    /// A name just given, shown until the server's dialog says so; `previous` comes back if it is refused.
+    private var titleOverrides: [Int: (title: String, previous: String, token: Int)] = [:]
     private var nextAgentToken = 0
     private var drafts: [Int: Draft] = [:]
     private var nextDraftId = -1
@@ -287,9 +291,18 @@ final class ServerStore: TauStore {
     private func handlePush(_ push: JSONObject) {
         switch push.string("event") {
         case "dialog":
-            if let raw = push.object("dialog"), let dialog = self.dialogModel(raw) {
+            if let raw = push.object("dialog"), var dialog = self.dialogModel(raw) {
+                if let override = self.titleOverrides[dialog.id] {
+                    if dialog.title == override.title {
+                        self.titleOverrides[dialog.id] = nil
+                    } else {
+                        dialog.title = override.title
+                    }
+                }
                 self.dialogs[dialog.id] = dialog
                 self.publishDialogs()
+                // An open chat's title follows, as when the server names it after its first answer.
+                self.publish(dialog.id)
             }
         case "conv.commit":
             guard let id = push.int("conversationId"), let replica = self.replicas[id], replica.isSynced else {
@@ -489,6 +502,7 @@ final class ServerStore: TauStore {
                 state.messages += items.map { TranscriptBuilder.row(for: $0, outbox: self.outbox) }
                 state.busy = false
                 state.agent = self.agent(id)
+                state.title = self.dialog(id)?.title
                 return state
             }
         }
@@ -498,11 +512,13 @@ final class ServerStore: TauStore {
             let rows = items.map { TranscriptBuilder.row(for: $0, outbox: self.outbox) }
             var state = ConversationState(messages: rows, streaming: nil, busy: false)
             state.agent = self.agent(id)
+            state.title = self.dialog(id)?.title
             return state
         }
         let replica = self.replica(realId)
         var state = TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], images: self.images)
         state.agent = self.agent(realId)
+        state.title = self.dialog(id)?.title
         return state
     }
 
@@ -653,7 +669,11 @@ final class ServerStore: TauStore {
                 self.drafts[id] = draft
                 // The first message stands in as the title until the server names the conversation after the first
                 // answer.
-                self.outbox.enqueueCreate(requestId: createRequestId, cwd: draft.cwd, title: String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)), agent: draft.agent)
+                let title = draft.titleIsManual ? (draft.title ?? "") : String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48))
+                self.outbox.enqueueCreate(requestId: createRequestId, cwd: draft.cwd, title: title, agent: draft.agent)
+                if draft.titleIsManual {
+                    _ = self.outbox.renameCreate(createRequestId, title: title)
+                }
             }
             self.outbox.enqueue(text: text, attachments: attachments, conversationId: nil, createRequestId: createRequestId, mode: outboxMode, showsInQueue: false)
             self.statePromises[id]?.set(self.state(for: id))
@@ -1053,6 +1073,42 @@ final class ServerStore: TauStore {
         if let realId = self.resolve(id) {
             // Not repeated after a lost connection: two compactions in a row would summarize the summary.
             self.outbox.enqueueRequest("conversation.compact", conversationId: realId, params: [:], repeatable: false)
+        }
+    }
+
+    func rename(_ id: Int, title: String) {
+        if id < 0, var draft = self.drafts[id], draft.realId == nil {
+            draft.title = title
+            draft.titleIsManual = true
+            self.drafts[id] = draft
+            if let create = draft.createRequestId, !self.outbox.renameCreate(create, title: title) {
+                self.outbox.enqueueRequest("conversation.rename", createRequestId: create, params: ["title": title], repeatable: true)
+            }
+            self.statePromises[id]?.set(self.state(for: id))
+            return
+        }
+        guard let realId = self.resolve(id), let current = self.dialogs[realId] else {
+            return
+        }
+        self.nextAgentToken += 1
+        let token = self.nextAgentToken
+        let previous = self.titleOverrides[realId]?.previous ?? current.title
+        self.titleOverrides[realId] = (title, previous, token)
+        self.dialogs[realId]?.title = title
+        self.publishDialogs()
+        self.publish(realId)
+        // In order with the conversation's other requests, and again after a lost connection.
+        self.outbox.enqueueRequest("conversation.rename", conversationId: realId, params: ["title": title], repeatable: true) { [weak self] result in
+            guard let self, let override = self.titleOverrides[realId], override.token == token else {
+                return
+            }
+            if case let .failure(error) = result {
+                self.titleOverrides[realId] = nil
+                self.dialogs[realId]?.title = override.previous
+                self.publishDialogs()
+                self.publish(realId)
+                self.emit(realId, .notice("The chat could not be renamed: \(error.message)"))
+            }
         }
     }
 

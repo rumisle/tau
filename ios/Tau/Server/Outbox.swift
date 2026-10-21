@@ -71,7 +71,9 @@ struct OutgoingMessage: Codable, Equatable {
 struct PendingCreate: Codable, Equatable {
     let requestId: String
     let cwd: String?
-    let title: String
+    var title: String
+    /// False once the user named it: the server does not name it after its first answer.
+    var autoTitle: Bool?
     /// The model and thinking level chosen in the draft before it was sent; nil for the server's defaults.
     var provider: String?
     var modelId: String?
@@ -434,6 +436,17 @@ final class Outbox {
     /// A request for a conversation whose create is still on its way: sent once it exists, in order with its messages.
     func enqueueRequest(_ method: String, createRequestId: String, params: JSONObject, repeatable: Bool, completion: ((Result<JSONObject, RequestError>) -> Void)? = nil) {
         self.transients.append(Transient(seq: self.takeSeq(), conversationId: nil, createRequestId: createRequestId, method: method, params: params, repeatable: repeatable, completion: completion))
+    }
+
+    /// Names a conversation not created yet, while its create has not gone out. False once it has: rename it instead.
+    func renameCreate(_ requestId: String, title: String) -> Bool {
+        guard self.sendingCreate != requestId, let index = self.creates.firstIndex(where: { $0.requestId == requestId && $0.conversationId == nil }) else {
+            return false
+        }
+        self.creates[index].title = title
+        self.creates[index].autoTitle = false
+        self.save()
+        return true
     }
 
     /// Changes the agent a create asks for, while it has not gone out. False once it has: configure it instead.
@@ -946,7 +959,7 @@ final class Outbox {
             }
             return
         }
-        var params: JSONObject = ["requestId": create.requestId, "title": create.title, "autoTitle": true]
+        var params: JSONObject = ["requestId": create.requestId, "title": create.title, "autoTitle": create.autoTitle ?? true]
         var agent: JSONObject = [:]
         if let cwd = create.cwd {
             agent["cwd"] = cwd

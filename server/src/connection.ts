@@ -54,7 +54,11 @@ const SERIAL_METHODS = new Set([
 	"conversation.reset",
 	"conversation.compact",
 	"conversation.configure",
+	"conversation.rename",
 ]);
+
+/** Longest conversation title a rename takes. */
+const MAX_TITLE_CHARS = 64;
 
 /** What a connection needs from its socket. */
 export interface Socket {
@@ -251,9 +255,15 @@ export class Connection {
 			}
 			case "conversation.rename": {
 				const conversation = await this.#conversation(params);
-				const title = str(params, "title");
+				const title = str(params, "title").replace(/\s+/g, " ").trim();
+				if (title === "" || title.length > MAX_TITLE_CHARS) {
+					throw new ProtocolError("bad_request", `A title is 1 to ${MAX_TITLE_CHARS} characters`);
+				}
 				await conversation.commit(async (tx) => {
-					(await tx.doc(MetaDoc, conversation.id)).title = title;
+					const meta = await tx.doc(MetaDoc, conversation.id);
+					meta.title = title;
+					// A name the user gave is never replaced by an automatic one, even one being written now.
+					meta.autoTitle = false;
 				}, context);
 				return {};
 			}

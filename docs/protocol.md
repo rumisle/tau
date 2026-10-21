@@ -127,6 +127,9 @@ tool call, also within a running turn.
 ### `conversation.rename`
 `{ conversationId, title }` -> `{}`
 
+A title of 1 to 64 characters, whitespace collapsed. A renamed conversation is never named automatically again, even
+by a title being written when the rename arrives.
+
 ### `conversation.read`
 `{ conversationId, at: EntryId }` -> `{}`
 

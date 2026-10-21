@@ -55,3 +55,20 @@ public final class OriginalTextAttribute: NSObject {
         self.string = string
     }
 }
+
+/// Telegram's attribute names for links and entities in rendered text (TelegramAttributes.swift).
+public struct TelegramTextAttributes {
+    public static let URL = "UrlAttributeT"
+    public static let PeerMention = "TelegramPeerMention"
+    public static let PeerTextMention = "TelegramPeerTextMention"
+    public static let BotCommand = "TelegramBotCommand"
+    public static let Hashtag = "TelegramHashtag"
+    public static let Code = "TelegramCode"
+    public static let Pre = "TelegramPre"
+    public static let Spoiler = "TelegramSpoiler"
+}
+
+/// Message entities as attributes. tau has no Telegram messages: the text plain, in the base font.
+public func stringWithAppliedEntities(_ text: String, entities: [MessageTextEntity], baseColor: UIColor, linkColor: UIColor, baseFont: UIFont, linkFont: UIFont, boldFont: UIFont, italicFont: UIFont, boldItalicFont: UIFont, fixedFont: UIFont, blockQuoteFont: UIFont, message: Any?) -> NSAttributedString {
+    return NSAttributedString(string: text, attributes: [.font: baseFont, .foregroundColor: baseColor])
+}

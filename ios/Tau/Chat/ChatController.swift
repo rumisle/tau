@@ -348,10 +348,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     /// Telegram's toast at the bottom of the chat; a new one replaces the one showing, as in Telegram.
     private weak var currentToast: UndoOverlayController?
 
-    func presentToast(_ content: UndoOverlayContent) {
+    func presentToast(_ content: UndoOverlayContent, action: @escaping (UndoOverlayAction) -> Bool = { _ in return false }) {
         let replacing = self.currentToast != nil
         self.currentToast?.dismiss()
-        let controller = UndoOverlayController(presentationData: self.theme.presentationData, content: content, elevatedLayout: false, animateInAsReplacement: replacing, action: { _ in return false })
+        let controller = UndoOverlayController(presentationData: self.theme.presentationData, content: content, elevatedLayout: false, animateInAsReplacement: replacing, action: action)
         self.currentToast = controller
         self.present(controller, in: .current)
     }
@@ -581,6 +581,25 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
     /// A tap on the title: the conversation's settings in Telegram's context menu, as Telegram's title opens a peer's
     /// actions. Model and thinking level open as nested lists.
+    /// Telegram's title alert; the toast after it undoes the rename.
+    private func openRename() {
+        let store = self.context.store
+        let id = self.conversationId
+        guard let previous = store.dialog(id)?.title else {
+            return
+        }
+        let alert = renameChatController(context: self.context.telegram, presentationData: self.theme.presentationData, title: previous, apply: { [weak self] title in
+            store.rename(id, title: title)
+            self?.presentToast(.info(title: nil, text: "Chat renamed to **\(title)**", timeout: nil, customUndoText: self?.theme.presentationStrings.Undo_Undo), action: { action in
+                if case .undo = action {
+                    store.rename(id, title: previous)
+                }
+                return true
+            })
+        })
+        self.present(alert, in: .window(.root))
+    }
+
     private func openTitleMenu() {
         guard !self.isPreview, self.controllerNode.selectedIds == nil else {
             return
@@ -598,6 +617,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
 
         var items: [ContextMenuItem] = []
+        items.append(.action(ContextMenuActionItem(text: "Rename", icon: icon("Chat/Context Menu/Edit"), action: { [weak self] _, f in
+            f(.default)
+            self?.openRename()
+        })))
         items.append(.action(ContextMenuActionItem(text: "Model", textLayout: .secondLineWithValue(agent.modelId ?? "default"), icon: icon("Chat/Context Menu/Settings"), action: { [weak self] _, f in
             f(.default)
             guard let self else {

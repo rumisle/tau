@@ -26,7 +26,10 @@ final class RootTabController: ViewController {
 
     private(set) var selectedIndex: Int = 0
     private var currentController: ViewController?
-    private let tabBarView = ComponentView<Empty>()
+    private var tabBarView = ComponentView<Empty>()
+    /// The system's liquid lens draws nothing in the selected tab when the bar was set up outside a window, as when the
+    /// app opens straight into a chat: such a bar is made again once it is in one.
+    private var tabBarMadeOutsideWindow = false
     private var isChangingSelectedIndex = false
     private var validLayout: ContainerViewLayout?
 
@@ -163,6 +166,7 @@ final class RootTabController: ViewController {
         }
         if self.tabBarView.view == nil {
             tabBarTransition = .immediate
+            self.tabBarMadeOutsideWindow = self.view.window == nil
         }
         let tabBarSize = self.tabBarView.update(
             transition: tabBarTransition,
@@ -204,6 +208,24 @@ final class RootTabController: ViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         self.currentController?.viewDidAppear(animated)
+        // Once the navigation transition has put the root back in the window; at didMoveToWindow it is too early.
+        if self.tabBarMadeOutsideWindow {
+            Queue.mainQueue().after(0.1) { [weak self] in
+                self?.remakeTabBarIfNeeded()
+            }
+        }
+    }
+
+    private func remakeTabBarIfNeeded() {
+        guard self.tabBarMadeOutsideWindow, self.view.window != nil else {
+            return
+        }
+        self.tabBarMadeOutsideWindow = false
+        self.tabBarView.view?.removeFromSuperview()
+        self.tabBarView = ComponentView<Empty>()
+        if let layout = self.validLayout {
+            let _ = self.updateTabBar(layout: layout, transition: .immediate)
+        }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -216,3 +238,4 @@ final class RootTabController: ViewController {
         self.currentController?.viewDidDisappear(animated)
     }
 }
+

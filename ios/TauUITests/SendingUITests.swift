@@ -281,6 +281,47 @@ final class SendingUITests: XCTestCase {
         self.point(0.1, 0.08).tap()
         sleep(2)
         self.shot("tabbar-after-openchat")
+        // With the keyboard up in the chat.
+        self.point(0.5, 0.17).tap()
+        sleep(2)
+        self.focusInput()
+        self.point(0.1, 0.08).tap()
+        sleep(2)
+        self.shot("tabbar-after-keyboard")
+        self.launch(["-newChat", "YES"])
+        self.point(0.1, 0.08).tap()
+        sleep(2)
+        self.shot("tabbar-after-newchat")
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("tab bar")
+        self.send()
+        sleep(4)
+        self.point(0.1, 0.08).tap()
+        sleep(2)
+        self.shot("tabbar-after-newchat-sent")
+        // After the title menu.
+        self.point(0.5, 0.17).tap()
+        sleep(2)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.point(0.5, 0.9).tap()
+        sleep(1)
+        self.point(0.1, 0.08).tap()
+        sleep(2)
+        self.shot("tabbar-after-menu")
+        // After the rename alert.
+        self.point(0.5, 0.17).tap()
+        sleep(2)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Rename"].firstMatch.tap()
+        sleep(1)
+        self.app.buttons["Cancel"].firstMatch.tap()
+        sleep(1)
+        self.point(0.1, 0.08).tap()
+        sleep(2)
+        self.shot("tabbar-after-alert")
     }
 
     /// Send as Steer on a follow-up: it is queued again as a steer, and the panel says so.
@@ -498,4 +539,30 @@ final class SendingUITests: XCTestCase {
         sleep(14)
         self.shot("editoff-3-online")
     }
+
+    /// Rename from the title menu: Telegram's alert, the title changes at once, the toast offers Undo; the list follows.
+    func testRename() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("name me")
+        self.send()
+        sleep(4)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.shot("rename-0-menu")
+        self.app.descendants(matching: .any)["Rename"].firstMatch.tap()
+        sleep(1)
+        self.shot("rename-1-alert")
+        self.app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 40) + "Release notes")
+        sleep(1)
+        self.shot("rename-2-typed")
+        self.app.buttons["Done"].firstMatch.tap()
+        usleep(700_000)
+        self.shot("rename-3-renamed")
+        sleep(3)
+        self.point(0.1, 0.08).tap()
+        sleep(2)
+        self.shot("rename-4-list")
+    }
 }
+
