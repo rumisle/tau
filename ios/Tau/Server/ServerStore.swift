@@ -712,6 +712,74 @@ final class ServerStore: ConversationStore, TauServer {
         }
     }
 
+    func loadHistory(_ id: Int, through entryId: Int) {
+        guard let realId = self.resolve(id), let replica = self.replicas[realId], replica.hasOlder, let oldest = replica.minId, oldest > entryId else {
+            return
+        }
+        // In pages, each from the oldest loaded, so the transcript stays without gaps.
+        self.connection.request("conversation.history", ["conversationId": realId, "before": oldest, "limit": 500]) { [weak self] result in
+            guard let self, case let .success(value) = result else {
+                return
+            }
+            replica.upsert(value.objects("entries"))
+            replica.hasOlder = value.bool("hasOlder") ?? false
+            self.publish(realId)
+            self.cache.scheduleSave(replica)
+            if replica.hasOlder, let oldest = replica.minId, oldest > entryId {
+                self.loadHistory(id, through: entryId)
+            }
+        }
+    }
+
+    func search(_ query: String, typing: Bool, offset: Int) -> Signal<SearchPage, NoError> {
+        return self.search(query, typing: typing, offset: offset, limit: 20)
+    }
+
+    /// Nothing from a server that cannot answer: search shows what the others found.
+    func search(_ query: String, typing: Bool, offset: Int, limit: Int) -> Signal<SearchPage, NoError> {
+        return self.connection.request("search", ["query": query, "typing": typing, "offset": offset, "limit": limit])
+        |> map { value -> SearchPage in
+            let matches = value.objects("results").compactMap { result -> SearchMatch? in
+                guard let conversationId = result.int("conversationId"), let hit = result.objects("hits").first else {
+                    return nil
+                }
+                let ranges = (hit.array("ranges") ?? []).compactMap { pair -> NSRange? in
+                    guard let values = pair as? [NSNumber], values.count == 2 else {
+                        return nil
+                    }
+                    return NSRange(location: values[0].intValue, length: values[1].intValue - values[0].intValue)
+                }
+                return SearchMatch(conversationId: conversationId, entryId: hit.int("entryId"), kind: SearchMatch.Kind(rawValue: hit.string("kind") ?? "") ?? .assistant, text: hit.string("text") ?? "", ranges: ranges, date: Date(timeIntervalSince1970: (hit.double("time") ?? 0.0) / 1000.0), before: hit.bool("before") ?? false, after: hit.bool("after") ?? false, matches: result.int("matches") ?? 0, score: result.double("score") ?? 0.0)
+            }
+            let total = value.int("total") ?? matches.count
+            return SearchPage(matches: matches, hasMore: offset + matches.count < total, terms: ServerStore.searchTerms(value))
+        }
+        |> `catch` { _ -> Signal<SearchPage, NoError> in
+            return .single(SearchPage(matches: [], hasMore: false, terms: []))
+        }
+        |> deliverOnMainQueue
+    }
+
+    func searchConversation(_ id: Int, query: String, typing: Bool) -> Signal<ChatSearchResult, NoError> {
+        guard let realId = self.resolve(id) else {
+            return .single(ChatSearchResult(entryIds: [], terms: []))
+        }
+        return self.connection.request("search", ["query": query, "typing": typing, "conversationId": realId])
+        |> map { value -> ChatSearchResult in
+            return ChatSearchResult(entryIds: value.objects("hits").compactMap { $0.int("entryId") }, terms: ServerStore.searchTerms(value))
+        }
+        |> `catch` { _ -> Signal<ChatSearchResult, NoError> in
+            return .single(ChatSearchResult(entryIds: [], terms: []))
+        }
+        |> deliverOnMainQueue
+    }
+
+    private static func searchTerms(_ value: JSONObject) -> [SearchTerm] {
+        return value.objects("terms").map { term in
+            SearchTerm(tokens: (term.array("tokens") ?? []).compactMap { $0 as? String }, prefix: term.bool("prefix") ?? false, variants: (term.array("variants") ?? []).compactMap { $0 as? String })
+        }
+    }
+
     func loadOlder(_ id: Int) {
         guard let realId = self.resolve(id), let replica = self.replicas[realId], replica.hasOlder, let oldest = replica.minId else {
             return

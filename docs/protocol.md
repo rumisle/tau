@@ -82,6 +82,32 @@ One directory of the server's file system, for picking a conversation's `cwd`. `
 default the home directory. Directories come first; links to directories are `dir`. Dotfiles only with `hidden`. At most
 2000 entries. `parent` is absent at `/`.
 
+### `search`
+`{ query, typing?: boolean, conversationId?, kinds?: ("user" | "assistant" | "reasoning" | "title")[], offset?, limit? }`
+
+Full-text search over what the user and the model said and the model's reasoning; tool calls and output are not
+indexed (docs/search.md). Words must all appear, `"a phrase"` matches in order, `-word` leaves a conversation out; the
+last word matches as a prefix from two letters with `typing: true` (it is still being typed), longer rare words with
+one typo; CJK words match as substrings and identifiers by their parts.
+
+Without `conversationId`, conversations best first (default 20 from `offset`):
+
+```ts
+{
+  results: {
+    conversationId; score: number; matches: number; spread: boolean;
+    hits: { kind; entryId?; time: number; text: string; before: boolean; after: boolean; ranges: [number, number][] }[];
+  }[];
+  total: number;                       // conversations matching, at least
+  terms: { tokens: string[]; prefix: boolean; variants: string[] }[];   // the query as compiled, to mark words
+  ms: number;
+}
+```
+
+`hits[0]` is an excerpt of the best part, `ranges` the matched words in it (UTF-16). With `conversationId`, that
+conversation's matching entries, newest first, its origins' up to where it was forked included:
+`{ hits: { entryId, kind, time }[], terms }`.
+
 ### `dialogs.subscribe`
 `{}` -> `{ dialogs: Dialog[] }`, then `dialog` events.
 

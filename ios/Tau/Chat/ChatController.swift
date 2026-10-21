@@ -45,7 +45,11 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         return self.displayNode as! ChatControllerNode
     }
 
-    init(context: AppContext, conversationId: Int, isPreview: Bool = false) {
+    /// A message found by search, opened at with its words marked.
+    private let focus: ChatFocus?
+
+    init(context: AppContext, conversationId: Int, isPreview: Bool = false, focus: ChatFocus? = nil) {
+        self.focus = focus
         self.context = context
         self.conversationId = conversationId
         self.isPreview = isPreview
@@ -77,6 +81,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     }
 
     deinit {
+        self.chatSearchDisposable.dispose()
         self.titleTimer?.invalidate()
         self.stateDisposable.dispose()
         self.eventsDisposable.dispose()
@@ -294,6 +299,16 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.displayNode = ChatControllerNode(theme: self.theme, isPreview: self.isPreview)
         let node = self.controllerNode
         node.initialScrollState = self.context.store.scrollState(self.conversationId)
+        if let focus = self.focus {
+            node.focus = focus
+            node.searchHighlight = (entryIds: [focus.entryId], terms: focus.terms)
+            node.requestHistory = { [weak self] entryId in
+                guard let self else {
+                    return
+                }
+                self.context.store.loadHistory(self.conversationId, through: entryId)
+            }
+        }
         node.contentReady = { [weak self] in
             self?.readyPromise.set(.single(true))
         }
@@ -792,6 +807,12 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
 
         var items: [ContextMenuItem] = []
+        if self.lastState?.messages.isEmpty == false {
+            items.append(.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Search, icon: icon("Chat/Context Menu/Search"), action: { [weak self] _, f in
+                f(.default)
+                self?.activateChatSearch()
+            })))
+        }
         items.append(.action(ContextMenuActionItem(text: "Rename", icon: icon("Chat/Context Menu/Edit"), action: { [weak self] _, f in
             f(.default)
             self?.openRename()
@@ -1039,6 +1060,100 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             return
         }
         self.context.store.send(user.text, attachments: user.attachments, to: self.conversationId)
+    }
+
+    // MARK: - Search in the chat
+
+    private var searchNavigationNode: ChatSearchNavigationContentNode?
+    private let chatSearchDisposable = MetaDisposable()
+    private var chatSearchResult = ChatSearchResult(entryIds: [], terms: [])
+    private var chatSearchIndex = 0
+
+    /// Telegram's chat search: the field in place of the title, the results' count and arrows in place of the input
+    /// panel, and the matched words marked in the messages, the newest result first.
+    func activateChatSearch() {
+        guard self.searchNavigationNode == nil else {
+            return
+        }
+        let node = ChatSearchNavigationContentNode(theme: self.theme.presentationTheme, strings: self.theme.presentationStrings)
+        node.textUpdated = { [weak self] query in
+            self?.updateChatSearch(query)
+        }
+        node.dismiss = { [weak self] in
+            self?.deactivateChatSearch()
+        }
+        self.searchNavigationNode = node
+        self.controllerNode.inputPanelNode.deactivateInput()
+        self.navigationBar?.setContentNode(node, animated: true)
+        self.controllerNode.searchPanelState = (0, 0, false)
+        self.controllerNode.searchStep = { [weak self] delta in
+            self?.stepChatSearch(delta)
+        }
+        self.requestLayout(transition: .animated(duration: 0.4, curve: .spring))
+        node.activate()
+    }
+
+    func deactivateChatSearch() {
+        guard let node = self.searchNavigationNode else {
+            return
+        }
+        node.deactivate()
+        self.searchNavigationNode = nil
+        self.chatSearchDisposable.set(nil)
+        self.chatSearchResult = ChatSearchResult(entryIds: [], terms: [])
+        self.navigationBar?.setContentNode(nil, animated: true)
+        self.controllerNode.searchPanelState = nil
+        self.controllerNode.searchHighlight = nil
+        self.requestLayout(transition: .animated(duration: 0.4, curve: .spring))
+    }
+
+    private func updateChatSearch(_ text: String) {
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            self.chatSearchDisposable.set(nil)
+            self.chatSearchResult = ChatSearchResult(entryIds: [], terms: [])
+            self.searchNavigationNode?.isSearching = false
+            self.controllerNode.searchPanelState = (0, 0, false)
+            self.controllerNode.searchHighlight = nil
+            return
+        }
+        self.searchNavigationNode?.isSearching = true
+        self.controllerNode.searchPanelState = (0, self.chatSearchResult.entryIds.count, true)
+        let signal: Signal<ChatSearchResult, NoError> = (Signal<ChatSearchResult, NoError>.complete() |> delay(0.2, queue: Queue.mainQueue())) |> then(self.context.store.searchConversation(self.conversationId, query: query, typing: !text.hasSuffix(" ")))
+        self.chatSearchDisposable.set((signal |> deliverOnMainQueue).start(next: { [weak self] result in
+            guard let self else {
+                return
+            }
+            self.searchNavigationNode?.isSearching = false
+            self.chatSearchResult = result
+            self.chatSearchIndex = 0
+            self.controllerNode.searchHighlight = (entryIds: Set(result.entryIds), terms: result.terms)
+            self.controllerNode.searchPanelState = (0, result.entryIds.count, false)
+            self.showChatSearchResult()
+        }))
+    }
+
+    /// Up is older, Down newer.
+    private func stepChatSearch(_ delta: Int) {
+        let index = self.chatSearchIndex + delta
+        guard index >= 0, index < self.chatSearchResult.entryIds.count else {
+            return
+        }
+        self.chatSearchIndex = index
+        self.controllerNode.searchPanelState = (index, self.chatSearchResult.entryIds.count, false)
+        self.showChatSearchResult()
+    }
+
+    private func showChatSearchResult() {
+        guard self.chatSearchIndex < self.chatSearchResult.entryIds.count else {
+            return
+        }
+        let entryId = self.chatSearchResult.entryIds[self.chatSearchIndex]
+        if !self.controllerNode.scroll(toEntry: entryId, kind: .assistant, animated: true) {
+            // Further back than loaded: the history loads until it is there.
+            self.controllerNode.focus = ChatFocus(entryId: entryId, terms: self.chatSearchResult.terms)
+            self.context.store.loadHistory(self.conversationId, through: entryId)
+        }
     }
 
     /// Restore Full Context: a copy of this chat from before a compaction, opened over it; it exists once something

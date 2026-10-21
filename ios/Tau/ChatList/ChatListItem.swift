@@ -10,6 +10,8 @@ import TelegramPresentationData
 enum ChatListItemContent: Equatable {
     case dialog(DialogModel)
     case archive(ArchiveSummary)
+    /// A search's match in a conversation: Telegram's message search result, the excerpt with the words marked.
+    case message(DialogModel, SearchMatch)
 }
 
 /// The Archived Chats row: Telegram's group reference, which lists the chats inside.
@@ -29,6 +31,7 @@ final class ChatListInteraction {
     let delete: (DialogModel) -> Void
     /// A row opened its swipe actions; the others close, as with Telegram's setPeerIdWithRevealedOptions.
     var revealedOptionsChanged: (Int?) -> Void = { _ in }
+    var openSearchResult: (DialogModel, SearchMatch) -> Void = { _, _ in }
     var setPinned: (DialogModel, Bool) -> Void = { _, _ in }
 
     init(open: @escaping (DialogModel) -> Void, openArchive: @escaping () -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void, toggleRead: @escaping (DialogModel) -> Void, setArchived: @escaping (DialogModel, Bool) -> Void, delete: @escaping (DialogModel) -> Void) {
@@ -85,6 +88,8 @@ final class ChatListItem: ListViewItem {
             self.interaction.open(dialog)
         case .archive:
             self.interaction.openArchive()
+        case let .message(dialog, match):
+            self.interaction.openSearchResult(dialog, match)
         }
     }
 
@@ -450,6 +455,37 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                 } else {
                     textString = NSAttributedString(string: "No messages yet", font: textFont, textColor: theme.messageTextColor)
                 }
+            case let .message(dialog, match):
+                // As Telegram's message search result: the chat, when it was said, and two lines of what was said with
+                // the matched words in the title's color.
+                title = dialog.title
+                author = ""
+                date = match.date
+                busy = false
+                avatarKey = "\(dialog.id):\(dialog.title)"
+                badgeContent = .none
+                badgeImage = nil
+                let text = NSMutableAttributedString()
+                switch match.kind {
+                case .user:
+                    text.append(NSAttributedString(string: "You: ", font: textFont, textColor: theme.authorNameColor))
+                case .reasoning:
+                    text.append(NSAttributedString(string: "Thinking: ", font: textFont, textColor: theme.authorNameColor))
+                case .assistant, .title:
+                    break
+                }
+                let body = (match.before ? "…" : "") + match.text
+                let shift = match.before ? 1 : 0
+                let excerpt = NSMutableAttributedString(string: body.replacingOccurrences(of: "\n", with: " "), attributes: [.font: textFont, .foregroundColor: theme.messageTextColor])
+                for range in match.ranges {
+                    let shifted = NSRange(location: range.location + shift, length: range.length)
+                    if shifted.upperBound <= excerpt.length {
+                        excerpt.addAttribute(.foregroundColor, value: presentationTheme.chatList.messageHighlightedTextColor, range: shifted)
+                    }
+                }
+                text.append(excerpt)
+                textString = text
+                textLines = 2
             case let .archive(summary):
                 title = strings.ChatList_ArchivedChatsTitle
                 author = ""
@@ -502,7 +538,7 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
             let avatarImage: UIImage?
             if currentAvatarKey != avatarKey || item.theme !== self?.item?.theme {
                 switch item.content {
-                case let .dialog(dialog):
+                case let .dialog(dialog), let .message(dialog, _):
                     avatarImage = Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: avatarDiameter)
                 case .archive:
                     avatarImage = archiveAvatarImage(theme: presentationTheme, diameter: avatarDiameter)
@@ -580,7 +616,7 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                         left: leftRevealOptions(strings: strings, theme: presentationTheme, isUnread: dialog.unreadCount > 0 || dialog.markedUnread, isPinned: dialog.pinned != nil),
                         right: rightRevealOptions(strings: strings, theme: presentationTheme, archived: dialog.archived)
                     ))
-                case .archive:
+                case .archive, .message:
                     strongSelf.setRevealOptions((left: [], right: []))
                 }
             })

@@ -118,6 +118,13 @@ protocol ConversationStore: AnyObject {
     /// What the chat must act on: withdrawn text for the input field, and notices.
     func chatEvents(_ id: Int) -> Signal<ChatEvent, NoError>
     func loadOlder(_ id: Int)
+    /// Older history until `entryId` is loaded, to show a message found by search.
+    func loadHistory(_ id: Int, through entryId: Int)
+    /// Every server's conversations matching `query`, best first, a page of 20 from `offset`. `typing`: the last word
+    /// is still being written, and matches as a prefix.
+    func search(_ query: String, typing: Bool, offset: Int) -> Signal<SearchPage, NoError>
+    /// One conversation's messages matching `query`, newest first.
+    func searchConversation(_ id: Int, query: String, typing: Bool) -> Signal<ChatSearchResult, NoError>
 
     /// The conversation's model and thinking level (`pi.agent`).
     func agent(_ id: Int) -> AgentSettings

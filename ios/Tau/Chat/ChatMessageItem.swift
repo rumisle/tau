@@ -58,10 +58,13 @@ final class ChatMessageItem: ListViewItem {
     let wrapCode: Bool
     /// Where a message the agent just got from the queue was, in window coordinates: its bubble rises from there.
     let riseFrom: CGRect?
+    /// Search's words, marked in the text as Telegram marks a chat search's matches.
+    let highlightTerms: [SearchTerm]?
     let interaction: ChatMessageItemInteraction
 
-    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, wrapCode: Bool = true, riseFrom: CGRect? = nil, interaction: ChatMessageItemInteraction) {
+    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, wrapCode: Bool = true, riseFrom: CGRect? = nil, highlightTerms: [SearchTerm]? = nil, interaction: ChatMessageItemInteraction) {
         self.riseFrom = riseFrom
+        self.highlightTerms = highlightTerms
         self.theme = theme
         self.message = message
         self.isStreaming = isStreaming
@@ -215,6 +218,8 @@ final class ChatMessageItemNode: ListViewItemNode {
     private let failedNode = ASImageNode()
     private var statusImagesKey: String?
     private var textNodes: [InteractiveTextNode] = []
+    /// Telegram's LinkHighlightingNode behind each text node's matched words.
+    private var searchHighlightNodes: [LinkHighlightingNode] = []
     private var tableNodes: [ChatTableNode] = []
     private var imageNodes: [ASImageNode] = []
     /// The attachment each visible image node shows.
@@ -469,6 +474,8 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.contentNode.frame = bounds
         self.contextSourceNode.contentRect = self.contentFrame
         self.containerNode.targetNodeForActivationProgressContentRect = self.contentFrame
+        // Every row's apply ends here, its text laid out: search's marks follow the text.
+        self.updateSearchHighlight()
     }
 
     override func layoutForParams(_ params: ListViewItemLayoutParams, item: ListViewItem, neighbors: ListViewItemNeighbors) {
@@ -1514,6 +1521,43 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.toolBackgroundNode.isHidden = !visible
         self.toolTitleNode.isHidden = !visible
         self.toolTextNode.isHidden = !visible
+    }
+
+    /// ChatMessageTextBubbleContentNode.updateSearchTextHighlightState: the matched words' rects, behind the text.
+    private func updateSearchHighlight() {
+        var index = 0
+        if let item = self.item, let terms = item.highlightTerms, !terms.isEmpty {
+            let color = item.theme.presentationTheme.chat.message.incoming.textHighlightColor
+            for node in self.textNodes where node.supernode != nil && !node.isHidden {
+                guard let string = node.cachedLayout?.attributedString?.string else {
+                    continue
+                }
+                var rects: [CGRect] = []
+                for range in SearchText.ranges(in: string, terms: terms) {
+                    rects.append(contentsOf: node.rangeRects(in: range)?.rects ?? [])
+                }
+                guard !rects.isEmpty else {
+                    continue
+                }
+                let highlight: LinkHighlightingNode
+                if index < self.searchHighlightNodes.count {
+                    highlight = self.searchHighlightNodes[index]
+                } else {
+                    highlight = LinkHighlightingNode(color: color)
+                    self.searchHighlightNodes.append(highlight)
+                }
+                if highlight.supernode !== node.supernode {
+                    node.supernode?.insertSubnode(highlight, belowSubnode: node)
+                }
+                highlight.frame = node.frame
+                highlight.updateRects(rects.map { $0.insetBy(dx: -1.0, dy: 0.0) }, color: color)
+                index += 1
+            }
+        }
+        for node in self.searchHighlightNodes[index...] {
+            node.removeFromSupernode()
+        }
+        self.searchHighlightNodes.removeSubrange(index...)
     }
 
     private func setTextNodes(_ nodes: [InteractiveTextNode]) {

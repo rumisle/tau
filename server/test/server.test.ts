@@ -455,6 +455,31 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("search finds what was said, as it is written, with the word being typed", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Search me" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "s-1", content: "the quokka sleeps under CommandPalette 压缩上下文" });
+		await until(replica, () => idle(replica) && replica.ordered().some((entry) => entry.kind === "pi.assistant"));
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const found = await client.request("search", { query: "quokka" });
+		const result = found.results.find((each: { conversationId: number }) => each.conversationId === replica.id);
+		assert.ok(result, "the conversation is found");
+		assert.match(result.hits[0].text, /quokka/i);
+		const [start, end] = result.hits[0].ranges[0];
+		assert.equal(result.hits[0].text.slice(start, end).toLowerCase(), "quokka");
+		// The word being typed, an identifier's part, a CJK word, a typo, and the title.
+		for (const [query, typing] of [["quok", true], ["palette", false], ["压缩", false], ["quokke", false], ["search me", false]] as const) {
+			const response = await client.request("search", { query, typing });
+			assert.ok(response.results.some((each: { conversationId: number }) => each.conversationId === replica.id), query);
+		}
+		// In the chat: its matching entries, newest first.
+		const inChat = await client.request("search", { query: "quokka", conversationId: replica.id });
+		assert.ok(inChat.hits.length >= 1);
+		await client.close();
+	});
+
 	test("an overloaded provider is asked again until it answers", async () => {
 		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", { title: "Overloaded" });

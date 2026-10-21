@@ -19,6 +19,8 @@ import {
 import { readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import type { Dialogs } from "./dialogs.ts";
+import type { KindName } from "./search/index.ts";
+import type { Search } from "./search/service.ts";
 import { directory, listDirectory } from "./fs.ts";
 import { CreatesDoc, type Host, MetaDoc, SettingsDoc } from "./host.ts";
 import type { Notifier } from "./notifier.ts";
@@ -102,12 +104,14 @@ export class Connection {
 	#hello = false;
 	#closed = false;
 	readonly #notifier: Notifier | undefined;
+	readonly #search: Search | undefined;
 	/** This client's app is in the foreground (client.presence). */
 	#active = false;
 
-	constructor(host: Host, dialogs: Dialogs, socket: Socket, notifier?: Notifier) {
+	constructor(host: Host, dialogs: Dialogs, socket: Socket, notifier?: Notifier, search?: Search) {
 		this.#host = host;
 		this.#notifier = notifier;
+		this.#search = search;
 		this.#dialogs = dialogs;
 		this.#socket = socket;
 		const { context, cancel } = withCancel(BACKGROUND_CONTEXT);
@@ -220,6 +224,15 @@ export class Connection {
 					throw new ProtocolError("bad_request", "hidden must be a boolean");
 				}
 				return listDirectory(str(params, "path", true) ?? homedir(), { hidden: hidden === true });
+			}
+			case "search": {
+				if (this.#search === undefined) throw new ProtocolError("bad_request", "Search is not available");
+				const kinds = searchKinds(params.kinds);
+				const conversationId = int(params, "conversationId", true);
+				const query = str(params, "query");
+				const typing = params.typing === true;
+				if (conversationId !== undefined) return this.#search.searchConversation(conversationId, query, { kinds, typing });
+				return this.#search.search(query, { limit: Math.min(int(params, "limit", true) ?? 20, 100), offset: int(params, "offset", true) ?? 0, kinds, typing }, context);
 			}
 			case "dialogs.subscribe":
 				this.#stopDialogs ??= this.#dialogs.onDialog((dialog) => this.#push({ event: "dialog", dialog }));
@@ -781,4 +794,14 @@ function describe(error: unknown): { code: ErrorCode; message: string } {
 	const message = error instanceof Error ? error.message : String(error);
 	if (error instanceof Error && error.name === "StorageRequestError") return { code: "not_found", message };
 	return { code: "internal", message };
+}
+
+const SEARCH_KINDS: readonly KindName[] = ["user", "assistant", "reasoning", "title"];
+
+function searchKinds(value: unknown): KindName[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value) || value.some((kind) => !SEARCH_KINDS.includes(kind))) {
+		throw new ProtocolError("bad_request", `kinds must be some of ${SEARCH_KINDS.join(", ")}`);
+	}
+	return value as KindName[];
 }

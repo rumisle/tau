@@ -102,6 +102,8 @@ export type Host = {
 	readonly storage: Storage;
 	readonly models: MutableModels;
 	readonly serverId: string;
+	/** The SQLite file, when not in memory. */
+	readonly database?: string;
 	/** The model new conversations get: the one set from a client, else `--model`. */
 	readonly defaultModel: ModelRef;
 	setDefaultModel(model: ModelRef): Promise<void>;
@@ -184,6 +186,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		storage,
 		models,
 		serverId,
+		...(options.database === undefined ? {} : { database: options.database }),
 		get defaultModel() {
 			return defaultModel;
 		},

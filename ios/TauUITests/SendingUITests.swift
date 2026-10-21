@@ -870,4 +870,59 @@ final class SendingUITests: XCTestCase {
         self.app.descendants(matching: .any)["Unpin"].firstMatch.tap()
         sleep(1)
     }
+
+    /// Search as Telegram's: the field under the title; chats by title, then messages from the server's index, the
+    /// word being typed matching as a prefix; a message opens its chat at itself with the words marked.
+    func testSearch() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("the quokka eats a quince by the river")
+        self.send()
+        sleep(3)
+        self.app.terminate()
+        self.launch([])
+        self.shot("search-0-list")
+        let field = self.app.descendants(matching: .any)["chatSearch"].firstMatch
+        if field.waitForExistence(timeout: 3.0) {
+            field.tap()
+        } else {
+            self.point(0.5, 0.14).tap()
+        }
+        sleep(1)
+        self.type("quok")
+        sleep(2)
+        self.shot("search-1-typing")
+        self.type("ka river")
+        sleep(2)
+        self.shot("search-2-results")
+        // The first message result, under the Messages header.
+        self.point(0.5, 0.21).tap()
+        sleep(2)
+        self.shot("search-3-opened")
+    }
+
+    /// Search in a chat, from the title menu: the field replaces the title, the count and arrows the input panel, and
+    /// the newest match is shown with its words marked; Up goes to an older one.
+    func testChatSearch() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        for text in ["a kiwi in the morning", "nothing here", "another kiwi at night", "plain words"] {
+            self.type(text)
+            self.send()
+            sleep(3)
+        }
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Search"].firstMatch.tap()
+        sleep(1)
+        self.type("kiwi")
+        sleep(2)
+        self.shot("chatsearch-0-results")
+        self.app.descendants(matching: .any)["previous result"].firstMatch.tap()
+        sleep(1)
+        self.shot("chatsearch-1-older")
+        self.app.descendants(matching: .any)["closeSearch"].firstMatch.tap()
+        sleep(1)
+        self.shot("chatsearch-2-closed")
+    }
 }

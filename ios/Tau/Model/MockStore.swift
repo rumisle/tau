@@ -384,6 +384,17 @@ final class MockStore: TauStore, TauServer {
         }
     }
 
+    func loadHistory(_ id: Int, through entryId: Int) {
+    }
+
+    func search(_ query: String, typing: Bool, offset: Int) -> Signal<SearchPage, NoError> {
+        return .single(SearchPage(matches: [], hasMore: false, terms: []))
+    }
+
+    func searchConversation(_ id: Int, query: String, typing: Bool) -> Signal<ChatSearchResult, NoError> {
+        return .single(ChatSearchResult(entryIds: [], terms: []))
+    }
+
     func loadOlder(_ id: Int) {
     }
 

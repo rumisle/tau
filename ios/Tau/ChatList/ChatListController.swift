@@ -11,6 +11,8 @@ import EdgeEffect
 import ActivityIndicator
 import ContextUI
 import TelegramPresentationData
+import SearchBarNode
+import SearchUI
 
 private struct ChatListEntry: Comparable, Identifiable {
     let content: ChatListItemContent
@@ -24,6 +26,8 @@ private struct ChatListEntry: Comparable, Identifiable {
             return dialog.id
         case .archive:
             return Int.min
+        case let .message(dialog, _):
+            return dialog.id
         }
     }
 
@@ -113,6 +117,15 @@ final class ChatListController: ViewController {
             self.navigationItem.rightBarButtonItem = item
         }
         self.statusBar.statusBarStyle = self.theme.statusBarStyleValue
+        if mode == .main {
+            // Telegram's search field under the title, which scrolls away with the list.
+            let searchContentNode = NavigationBarSearchContentNode(theme: context.theme.presentationTheme, placeholder: context.theme.presentationStrings.Common_Search, activate: { [weak self] in
+                self?.activateSearch()
+            })
+            searchContentNode.placeholderNode.accessibilityIdentifier = "chatSearch"
+            self.searchContentNode = searchContentNode
+            self.navigationBar?.setContentNode(searchContentNode, animated: false)
+        }
         self.themeDisposable = (context.themeContext.theme |> deliverOnMainQueue).start(next: { [weak self] theme in
             self?.updateTheme(theme)
         })
@@ -147,6 +160,14 @@ final class ChatListController: ViewController {
             store.setPinned(dialog.id, pinned)
         }
         self.displayNode = ChatListControllerNode(context: self.context, theme: self.theme, mode: self.mode, interaction: interaction)
+        self.controllerNode.listOffsetChanged = { [weak self] offset in
+            self?.searchContentNode?.updateListVisibleContentOffset(offset)
+        }
+        self.controllerNode.listDidEndScrolling = { [weak self] list in
+            if let self, let searchContentNode = self.searchContentNode {
+                let _ = fixNavigationSearchableListNodeScrolling(list, searchNode: searchContentNode)
+            }
+        }
         self.dialogsDisposable.set((self.context.store.dialogsSignal() |> deliverOnMainQueue).start(next: { [weak self] dialogs in
             self?.latestDialogs = dialogs
             self?.controllerNode.update(dialogs: dialogs)
@@ -171,6 +192,7 @@ final class ChatListController: ViewController {
     override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
         super.containerLayoutUpdated(layout, transition: transition)
         self.controllerNode.containerLayoutUpdated(layout, navigationHeight: self.navigationLayout(layout: layout).navigationFrame.maxY, transition: transition)
+        self.controllerNode.updateSearchLayout(layout, navigationBarHeight: self.cleanNavigationHeight, transition: transition)
     }
 
     @objc private func composePressed() {
@@ -178,6 +200,35 @@ final class ChatListController: ViewController {
     }
 
     private var composeNode: ComposeButtonNode?
+    private var searchContentNode: NavigationBarSearchContentNode?
+
+    /// Telegram's search: the bar slides away, the field takes the top, results cover the list.
+    func activateSearch() {
+        guard self.displayNavigationBar, let searchContentNode = self.searchContentNode else {
+            return
+        }
+        self.controllerNode.activateSearch(placeholderNode: searchContentNode.placeholderNode, navigationBar: self.navigationBar, open: { [weak self] dialog, match in
+            self?.openSearchResult(dialog, match: match)
+        }, cancel: { [weak self] in
+            self?.deactivateSearch()
+        })
+        self.setDisplayNavigationBar(false, transition: .animated(duration: 0.5, curve: .spring))
+    }
+
+    func deactivateSearch() {
+        guard !self.displayNavigationBar, let searchContentNode = self.searchContentNode else {
+            return
+        }
+        self.setDisplayNavigationBar(true, transition: .animated(duration: 0.5, curve: .spring))
+        self.controllerNode.deactivateSearch(placeholderNode: searchContentNode.placeholderNode)
+    }
+
+    /// A found message: its chat, scrolled to it, with the words marked.
+    private func openSearchResult(_ dialog: DialogModel, match: SearchMatch?) {
+        let focus = match.flatMap { match in match.entryId.map { ChatFocus(entryId: $0, terms: self.controllerNode.searchTerms) } }
+        let controller = ChatController(context: self.context, conversationId: dialog.id, focus: focus)
+        (self.navigationController as? NavigationController)?.pushViewController(controller)
+    }
     /// The list as last shown, for where a new chat starts.
     private(set) var latestDialogs: [DialogModel] = []
 
@@ -402,6 +453,72 @@ final class ChatListControllerNode: ASDisplayNode {
         super.didLoad()
         self.bottomEdgeEffectView.isUserInteractionEnabled = false
         self.view.addSubview(self.bottomEdgeEffectView)
+        self.listNode.visibleContentOffsetChanged = { [weak self] offset, _ in
+            self?.listOffsetChanged?(offset)
+        }
+        self.listNode.didEndScrolling = { [weak self] _ in
+            if let self {
+                self.listDidEndScrolling?(self.listNode)
+            }
+        }
+    }
+
+    var listOffsetChanged: ((ListViewVisibleContentOffset) -> Void)?
+    var listDidEndScrolling: ((ListView) -> Void)?
+    private var searchDisplayController: SearchDisplayController?
+    private weak var searchContainerNode: ChatListSearchContainerNode?
+    private(set) var dialogs: [DialogModel] = []
+
+    var searchTerms: [SearchTerm] {
+        return self.searchContainerNode?.terms ?? []
+    }
+
+    func activateSearch(placeholderNode: SearchBarPlaceholderNode, navigationBar: NavigationBar?, open: @escaping (DialogModel, SearchMatch?) -> Void, cancel: @escaping () -> Void) {
+        guard let (layout, _) = self.validLayout, self.searchDisplayController == nil else {
+            return
+        }
+        // The same rows as the list, tapping into the chat; a message opens at itself.
+        let interaction = ChatListInteraction(open: { dialog in
+            open(dialog, nil)
+        }, openArchive: {}, contextAction: { _, _, gesture in
+            gesture?.cancel()
+        }, toggleRead: { _ in }, setArchived: { _, _ in }, delete: { _ in })
+        interaction.openSearchResult = { dialog, match in
+            open(dialog, match)
+        }
+        let content = ChatListSearchContainerNode(context: self.context, interaction: interaction, dialogs: { [weak self] in
+            return self?.dialogs ?? []
+        })
+        self.searchContainerNode = content
+        let controller = SearchDisplayController(presentationData: self.theme.presentationData, contentNode: content, cancel: cancel, fieldStyle: placeholderNode.fieldStyle)
+        self.searchDisplayController = controller
+        controller.containerLayoutUpdated(layout, navigationBarHeight: self.searchNavigationBarHeight ?? 0.0, transition: .immediate)
+        controller.activate(insertSubnode: { [weak self, weak placeholderNode] subnode, isSearchBar in
+            guard let self, let placeholderNode else {
+                return
+            }
+            if isSearchBar {
+                placeholderNode.supernode?.insertSubnode(subnode, aboveSubnode: placeholderNode)
+            } else if let navigationBar {
+                self.insertSubnode(subnode, belowSubnode: navigationBar)
+            } else {
+                self.addSubnode(subnode)
+            }
+        }, placeholder: placeholderNode)
+    }
+
+    func deactivateSearch(placeholderNode: SearchBarPlaceholderNode) {
+        if let controller = self.searchDisplayController {
+            controller.deactivate(placeholder: placeholderNode)
+            self.searchDisplayController = nil
+        }
+    }
+
+    private var searchNavigationBarHeight: CGFloat?
+
+    func updateSearchLayout(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, transition: ContainedViewLayoutTransition) {
+        self.searchNavigationBarHeight = navigationBarHeight
+        self.searchDisplayController?.containerLayoutUpdated(layout, navigationBarHeight: navigationBarHeight, transition: transition)
     }
 
     func updateTheme(_ theme: TauTheme) {
@@ -429,6 +546,7 @@ final class ChatListControllerNode: ASDisplayNode {
     }
 
     func update(dialogs: [DialogModel]) {
+        self.dialogs = dialogs
         guard self.validLayout != nil else {
             self.pendingDialogs = dialogs
             return

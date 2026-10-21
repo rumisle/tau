@@ -297,6 +297,8 @@ IMAGES = [
     "Chat List/PeerPinnedIcon",
     "Chat/Context Menu/Pin",
     "Chat/Context Menu/Unpin",
+    # The title menu's Search.
+    "Chat/Context Menu/Search",
 ]
 
 # Lottie animations LottieComponent.AppBundleContent loads by name, from submodules/TelegramUI/Resources/Animations.

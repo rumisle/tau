@@ -420,6 +420,44 @@ final class MultiStore: TauStore {
         return store.chatEvents(local)
     }
 
+    func loadHistory(_ id: Int, through entryId: Int) {
+        self.route(id).map { $0.0.loadHistory($0.1, through: entryId) }
+    }
+
+    /// Each server searched at once; their pages merged by score. A page past the first asks each for as many as it
+    /// must skip, so the merge stays in order.
+    func search(_ query: String, typing: Bool, offset: Int) -> Signal<SearchPage, NoError> {
+        let stores = self.configs.compactMap { config in self.stores[config.slot].map { (config.slot, $0) } }
+        guard !stores.isEmpty else {
+            return .single(SearchPage(matches: [], hasMore: false, terms: []))
+        }
+        let signals = stores.map { slot, store in
+            store.search(query, typing: typing, offset: 0, limit: offset + 20)
+            |> map { page -> SearchPage in
+                var page = page
+                page.matches = page.matches.map { match in
+                    var match = match
+                    match.conversationId = MultiStore.global(slot, match.conversationId)
+                    return match
+                }
+                return page
+            }
+        }
+        return combineLatest(signals)
+        |> map { pages -> SearchPage in
+            let merged = pages.flatMap(\.matches).sorted { $0.score > $1.score }
+            let slice = Array(merged.dropFirst(offset).prefix(20))
+            return SearchPage(matches: slice, hasMore: pages.contains(where: \.hasMore) || merged.count > offset + 20, terms: pages.first(where: { !$0.terms.isEmpty })?.terms ?? [])
+        }
+    }
+
+    func searchConversation(_ id: Int, query: String, typing: Bool) -> Signal<ChatSearchResult, NoError> {
+        guard let (store, local) = self.route(id) else {
+            return .single(ChatSearchResult(entryIds: [], terms: []))
+        }
+        return store.searchConversation(local, query: query, typing: typing)
+    }
+
     func loadOlder(_ id: Int) {
         self.route(id).map { $0.0.loadOlder($0.1) }
     }

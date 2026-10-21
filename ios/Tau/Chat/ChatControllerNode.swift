@@ -46,6 +46,21 @@ final class ChatControllerNode: ASDisplayNode {
     let historyNode: ListViewImpl
     let inputPanelNode: ChatInputPanelNode
     private let selectionPanel = SelectionPanelView()
+    /// In place of the input panel while the chat is searched: where in the results, and Up and Down to step.
+    private let searchPanel = ChatSearchPanelView()
+    /// The chat's own search: the result shown (0 the newest) of how many, nil while not searching.
+    var searchPanelState: (index: Int, count: Int, isSearching: Bool)? {
+        didSet {
+            if (oldValue == nil) != (self.searchPanelState == nil) {
+                self.updateDownButton(animated: true)
+            }
+            if let (layout, navigationHeight) = self.validLayout {
+                self.containerLayoutUpdated(layout, navigationHeight: navigationHeight, transition: .animated(duration: 0.25, curve: .easeInOut))
+            }
+        }
+    }
+    /// Up (+1, older) or Down (-1, newer) in the results.
+    var searchStep: ((Int) -> Void)?
     /// Blurs messages as they scroll under the input panel.
     private let bottomEdgeEffectView = EdgeEffectView()
     let wallpaperNode = WallpaperNode()
@@ -63,6 +78,40 @@ final class ChatControllerNode: ASDisplayNode {
     private var hasAppliedInitialState = false
     /// Where to open the history; consumed by the first transaction.
     var initialScrollState: ChatScrollState?
+    /// A message found by search, to open at; cleared once it is on screen.
+    var focus: ChatFocus?
+    /// Asks for older history until the entry is loaded, for `focus`.
+    var requestHistory: ((Int) -> Void)?
+    private var requestedHistoryFor: Int?
+    /// Messages whose matched words are marked, and the words.
+    var searchHighlight: (entryIds: Set<Int>, terms: [SearchTerm])? {
+        didSet {
+            self.reloadItems()
+        }
+    }
+
+    /// The row of an entry that shows what was found: its prompt, answer or reasoning.
+    private func row(of entryId: Int, kind: SearchMatch.Kind, in entries: [ChatHistoryEntry]) -> Int? {
+        let rows = entries.indices.filter { entries[$0].message.entryId == entryId }
+        let preferred = rows.first { index in
+            switch (kind, entries[index].message.role) {
+            case (.user, .user), (.assistant, .assistant), (.reasoning, .thinking):
+                return true
+            default:
+                return false
+            }
+        }
+        return preferred ?? rows.last
+    }
+
+    /// Scroll so the row of `entryId` is in the middle, as Telegram moves to a found message.
+    func scroll(toEntry entryId: Int, kind: SearchMatch.Kind, animated: Bool) -> Bool {
+        guard let index = self.row(of: entryId, kind: kind, in: self.entries) else {
+            return false
+        }
+        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous], scrollToItem: ListViewScrollToItem(index: index, position: .center(.top), animated: animated, curve: .Spring(duration: 0.4), directionHint: .Up), updateSizeAndInsets: nil, stationaryItemRange: nil, updateOpaqueState: nil)
+        return true
+    }
     private(set) var selectedIds: Set<Int>?
 
     var sendMessage: ((String) -> Void)?
@@ -143,10 +192,16 @@ final class ChatControllerNode: ASDisplayNode {
         self.bottomEdgeEffectView.isUserInteractionEnabled = false
         self.view.insertSubview(self.bottomEdgeEffectView, belowSubview: self.inputPanelNode.view)
         self.selectionPanel.alpha = 0.0
+        self.searchPanel.alpha = 0.0
+        self.searchPanel.isUserInteractionEnabled = false
+        self.searchPanel.step = { [weak self] delta in
+            self?.searchStep?(delta)
+        }
         self.selectionPanel.action = { [weak self] action in
             self?.selectionAction?(action)
         }
         self.view.addSubview(self.selectionPanel)
+        self.view.addSubview(self.searchPanel)
     }
 
     func updateTheme(_ theme: TauTheme) {
@@ -336,6 +391,22 @@ final class ChatControllerNode: ASDisplayNode {
                 scrollToItem = ListViewScrollToItem(index: 0, position: .top(0.0), animated: true, curve: .Default(duration: nil), directionHint: .Up)
             }
         }
+        // A message found by search: there once its entry is loaded, older history loading until it is.
+        if let focus = self.focus {
+            if let index = self.row(of: focus.entryId, kind: focus.kind, in: entries) {
+                self.focus = nil
+                self.initialScrollState = nil
+                options.insert(.Synchronous)
+                scrollToItem = ListViewScrollToItem(index: index, position: .center(.top), animated: false, curve: .Default(duration: nil), directionHint: .Up)
+            } else if state.hasOlder {
+                if self.requestedHistoryFor != focus.entryId || entries.count != previous.count {
+                    self.requestedHistoryFor = focus.entryId
+                    self.requestHistory?(focus.entryId)
+                }
+            } else if state.isLoaded && !entries.isEmpty {
+                self.focus = nil
+            }
+        }
         self.historyNode.transaction(deleteIndices: deletions, insertIndicesAndItems: insertions, updateIndicesAndItems: updates, options: options, scrollToItem: scrollToItem, updateOpaqueState: nil)
         if state.isLoaded, let contentReady = self.contentReady {
             self.contentReady = nil
@@ -462,7 +533,8 @@ final class ChatControllerNode: ASDisplayNode {
         if entry.message.role == .user, !self.riseSources.isEmpty {
             riseFrom = self.riseSources.removeValue(forKey: entry.message.text)
         }
-        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, wrapCode: self.wrapCode, riseFrom: riseFrom, interaction: self.interaction)
+        let highlight = self.searchHighlight.flatMap { highlight in entry.message.entryId.flatMap { highlight.entryIds.contains($0) ? highlight.terms : nil } }
+        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, wrapCode: self.wrapCode, riseFrom: riseFrom, highlightTerms: highlight, interaction: self.interaction)
     }
 
     /// Settings > Appearance > Wrap Lines in Code.
@@ -527,7 +599,8 @@ final class ChatControllerNode: ASDisplayNode {
             panelFrame = CGRect(origin: CGPoint(x: layout.safeInsets.left + panelSideInset, y: size.height - bottomInset - panelBottomGap - panelHeight), size: CGSize(width: panelWidth, height: panelHeight))
             transition.updateFrame(node: self.inputPanelNode, frame: panelFrame)
             let isSelecting = self.selectedIds != nil
-            let inputAlpha: CGFloat = isSelecting ? 0.0 : 1.0
+            let isSearchingChat = self.searchPanelState != nil
+            let inputAlpha: CGFloat = isSelecting || isSearchingChat ? 0.0 : 1.0
             if self.inputPanelNode.view.alpha != inputAlpha {
                 if transition.isAnimated {
                     UIView.animate(withDuration: 0.25, animations: {
@@ -537,7 +610,24 @@ final class ChatControllerNode: ASDisplayNode {
                     self.inputPanelNode.view.alpha = inputAlpha
                 }
             }
-            self.inputPanelNode.isUserInteractionEnabled = !isSelecting
+            self.inputPanelNode.isUserInteractionEnabled = !isSelecting && !isSearchingChat
+
+            let searchFrame = CGRect(x: panelFrame.minX, y: size.height - bottomInset - (keyboardHeight > 0.0 ? 8.0 : max(0.0, 8.0 - layout.intrinsicInsets.bottom)) - 48.0, width: panelWidth, height: 48.0)
+            transition.updateFrame(view: self.searchPanel, frame: searchFrame)
+            if let state = self.searchPanelState {
+                self.searchPanel.layout(size: searchFrame.size, theme: self.theme, index: state.index, count: state.count, isSearching: state.isSearching, transition: ComponentTransition(transition))
+            }
+            let searchAlpha: CGFloat = isSearchingChat ? 1.0 : 0.0
+            if self.searchPanel.alpha != searchAlpha {
+                if transition.isAnimated {
+                    UIView.animate(withDuration: 0.25, animations: {
+                        self.searchPanel.alpha = searchAlpha
+                    })
+                } else {
+                    self.searchPanel.alpha = searchAlpha
+                }
+            }
+            self.searchPanel.isUserInteractionEnabled = isSearchingChat
 
             let selectionFrame = CGRect(x: panelFrame.minX, y: size.height - max(layout.intrinsicInsets.bottom, 8.0) - 48.0, width: panelWidth, height: 48.0)
             transition.updateFrame(view: self.selectionPanel, frame: selectionFrame)
@@ -619,7 +709,8 @@ final class ChatControllerNode: ASDisplayNode {
             self.relayout(.immediate)
         }
         button.badge = self.unseenCount > 0 ? "\(self.unseenCount)" : ""
-        let visible = !self.isAtBottom && self.selectedIds == nil
+        // Search's arrows take its place while the chat is searched.
+        let visible = !self.isAtBottom && self.selectedIds == nil && self.searchPanelState == nil
         button.isUserInteractionEnabled = visible
         // View alpha on the container, not layer opacity: glass renders wrongly under a layer opacity.
         let alpha: CGFloat = visible ? 1.0 : 0.0
@@ -663,6 +754,72 @@ final class ChatControllerNode: ASDisplayNode {
         }
         let bottom = self.isPreview ? layout.size.height : self.inputPanelNode.frame.minY
         return CGRect(x: 0.0, y: navigationHeight, width: layout.size.width, height: max(0.0, bottom - navigationHeight))
+    }
+}
+
+/// The bar that replaces the input panel while the chat is searched, as Telegram's search panel: where in the results
+/// on a glass pill, and round glass Up and Down buttons, Up going to older results.
+private final class ChatSearchPanelView: UIView {
+    private let container = GlassBackgroundContainerView()
+    private let labelBackground = GlassBackgroundView()
+    private let label = UILabel()
+    private let upButton = SelectionGlassButtonView(icon: "Chat/Input/Search/UpButton", label: "Previous Result")
+    private let downButton = SelectionGlassButtonView(icon: "Chat/Input/Search/DownButton", label: "Next Result")
+    var step: ((Int) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        self.addSubview(self.container)
+        self.container.contentView.addSubview(self.labelBackground)
+        self.labelBackground.contentView.addSubview(self.label)
+        self.container.contentView.addSubview(self.upButton)
+        self.container.contentView.addSubview(self.downButton)
+        self.label.accessibilityIdentifier = "searchResultCount"
+        self.upButton.button.addTarget(self, action: #selector(self.upTapped), for: .touchUpInside)
+        self.downButton.button.addTarget(self, action: #selector(self.downTapped), for: .touchUpInside)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func upTapped() {
+        self.step?(1)
+    }
+
+    @objc private func downTapped() {
+        self.step?(-1)
+    }
+
+    func layout(size: CGSize, theme: TauTheme, index: Int, count: Int, isSearching: Bool, transition: ComponentTransition) {
+        transition.setFrame(view: self.container, frame: CGRect(origin: CGPoint(), size: size))
+        self.container.update(size: size, isDark: theme.overallDarkAppearance, transition: transition)
+        let strings = theme.presentationStrings
+        let text: String
+        if isSearching && count == 0 {
+            text = "Searching…"
+        } else if count == 0 {
+            text = strings.Conversation_SearchNoResults
+        } else {
+            // Telegram's "3 of 12", counting from the newest.
+            text = strings.Items_NOfM("\(index + 1)", "\(count)").string
+        }
+        self.label.text = text
+        self.label.font = Font.regular(15.0)
+        self.label.textColor = theme.chat.panelControlColor
+        let labelSize = self.label.sizeThatFits(CGSize(width: size.width - 120.0, height: 40.0))
+        let pill = CGRect(x: 0.0, y: floor((size.height - 40.0) / 2.0), width: ceil(labelSize.width) + 32.0, height: 40.0)
+        transition.setFrame(view: self.labelBackground, frame: pill)
+        self.labelBackground.update(size: pill.size, cornerRadius: 20.0, isDark: theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: false, transition: transition)
+        self.label.frame = CGRect(x: 16.0, y: floor((40.0 - labelSize.height) / 2.0), width: ceil(labelSize.width), height: ceil(labelSize.height))
+        let buttonSize = CGSize(width: 40.0, height: 40.0)
+        let y = floor((size.height - buttonSize.height) / 2.0)
+        transition.setFrame(view: self.downButton, frame: CGRect(origin: CGPoint(x: size.width - buttonSize.width, y: y), size: buttonSize))
+        transition.setFrame(view: self.upButton, frame: CGRect(origin: CGPoint(x: size.width - buttonSize.width * 2.0 - 8.0, y: y), size: buttonSize))
+        self.upButton.isEnabled = index + 1 < count
+        self.downButton.isEnabled = index > 0
+        self.upButton.update(theme: theme, size: buttonSize, transition: transition)
+        self.downButton.update(theme: theme, size: buttonSize, transition: transition)
     }
 }
 
