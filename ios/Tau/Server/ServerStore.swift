@@ -1045,6 +1045,24 @@ final class ServerStore: ConversationStore, TauServer {
 
     private var modelsCache: [ModelInfo]?
 
+    func storageUsage() -> StorageUsage {
+        var usage = StorageUsage()
+        usage.chats = self.cache.sizes().sorted { $0.bytes > $1.bytes }
+        usage.unsentBytes = self.outbox.diskBytes
+        usage.draftBytes = self.inputDrafts.diskBytes
+        return usage
+    }
+
+    func clearCache() {
+        // Open chats keep theirs: their transcripts are on screen and in memory.
+        let open = Set(self.watchers.filter { $0.value > 0 }.map(\.key))
+        self.cache.remove(except: open)
+        for (id, replica) in self.replicas where !open.contains(id) {
+            replica.removeAll()
+            self.replicas[id] = nil
+        }
+    }
+
     func cachedModel(provider: String, id: String) -> ModelInfo? {
         return self.modelsCache?.first { $0.provider == provider && $0.id == id }
     }
@@ -1299,6 +1317,24 @@ final class EntryCache {
         self.directory = base.appendingPathComponent("tau/\(safe)", isDirectory: true)
         try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
         self.serverId = try? String(contentsOf: self.directory.appendingPathComponent("server-id"), encoding: .utf8)
+    }
+
+    /// Each cached transcript's size.
+    func sizes() -> [(id: Int, bytes: Int64)] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: self.directory, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return files.compactMap { url in
+            guard url.pathExtension == "json", let id = Int(url.deletingPathExtension().lastPathComponent) else {
+                return nil
+            }
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return (id, Int64(size))
+        }
+    }
+
+    func remove(except kept: Set<Int>) {
+        for (id, _) in self.sizes() where !kept.contains(id) {
+            try? FileManager.default.removeItem(at: self.directory.appendingPathComponent("\(id).json"))
+        }
     }
 
     func reset(serverId: String) {

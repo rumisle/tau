@@ -645,4 +645,21 @@ final class SendingUITests: XCTestCase {
         self.point(0.88, 0.426).tap()
         sleep(1)
     }
+
+    /// Settings > Data and Storage, its storage and network screens, and clearing the cache.
+    func testDataAndStorage() {
+        self.launch(["-tab", "1"])
+        sleep(2)
+        self.app.descendants(matching: .any)["Data and Storage"].firstMatch.tap()
+        sleep(1)
+        self.shot("data-0")
+        self.app.descendants(matching: .any)["Storage Usage"].firstMatch.tap()
+        sleep(1)
+        self.shot("data-1-storage")
+        self.point(0.1, 0.08).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Network Usage"].firstMatch.tap()
+        sleep(1)
+        self.shot("data-2-network")
+    }
 }

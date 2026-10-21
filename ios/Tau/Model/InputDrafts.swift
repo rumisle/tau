@@ -47,6 +47,10 @@ final class InputDraftStorage {
         NotificationCenter.default.removeObserver(self)
     }
 
+    var diskBytes: Int64 {
+        return Int64((try? self.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+    }
+
     static func key(_ conversationId: Int) -> String {
         return conversationId < 0 ? InputDraftStorage.newChatKey : String(conversationId)
     }

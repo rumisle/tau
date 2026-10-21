@@ -25,6 +25,10 @@ protocol TauServer: AnyObject {
     /// Where the server pushes answers while no app is in the foreground (server/src/notifier.ts); nil: nowhere.
     var ntfy: NtfyTarget? { get }
     func setNtfy(_ target: NtfyTarget?)
+    /// What this phone keeps of the server's chats: their transcripts by conversation, and what waits to be sent.
+    func storageUsage() -> StorageUsage
+    /// Drops the cached transcripts of chats that are not open; they load again when opened.
+    func clearCache()
     /// Models the server has credentials for.
     func models() -> Signal<[ModelInfo], NoError>
     /// A model from the last list, if one came.
@@ -199,6 +203,23 @@ struct DirectoryListing: Equatable {
     var path: String
     var parent: String?
     var entries: [Entry]
+}
+
+/// Bytes on this phone for one server.
+struct StorageUsage: Equatable {
+    /// Cached transcripts, by conversation ID, largest first.
+    var chats: [(id: Int, bytes: Int64)] = []
+    /// Messages and photos not sent yet.
+    var unsentBytes: Int64 = 0
+    var draftBytes: Int64 = 0
+
+    var cacheBytes: Int64 {
+        return self.chats.reduce(0) { $0 + $1.bytes }
+    }
+
+    static func == (lhs: StorageUsage, rhs: StorageUsage) -> Bool {
+        return lhs.chats.map(\.id) == rhs.chats.map(\.id) && lhs.chats.map(\.bytes) == rhs.chats.map(\.bytes) && lhs.unsentBytes == rhs.unsentBytes && lhs.draftBytes == rhs.draftBytes
+    }
 }
 
 /// A new answer of a chat, for its banner.

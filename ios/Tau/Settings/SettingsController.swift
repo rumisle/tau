@@ -194,7 +194,12 @@ final class SettingsController: SettingsListController {
                 }
                 self.push(NotificationsController(context: self.context))
             }),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.data, title: "Data and Storage", accessory: .disclosure(label: ""), position: last, action: {}),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.data, title: "Data and Storage", accessory: .disclosure(label: ""), position: last, action: { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.push(DataStorageController(context: self.context))
+            }),
             SettingsTextItem(theme: theme, text: "", kind: .header),
             SettingsRowItem(theme: theme, icon: SettingsIcon.about, title: "About tau", accessory: .disclosure(label: version), position: single, action: { [weak self] in
                 guard let self else {

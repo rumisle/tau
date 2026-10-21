@@ -74,6 +74,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     private var socketStatus: ConnectionStatus = .connecting
     private let pathMonitor = NWPathMonitor()
     private var hasNetwork = true
+    /// Over a mobile network now: Network Usage counts it apart, as Telegram's does.
+    private var isCellular = false
 
     /// Pushes, on the main queue.
     var onPush: ((JSONObject) -> Void)?
@@ -90,7 +92,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     func start() {
         self.pathMonitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
+            let cellular = path.usesInterfaceType(.cellular)
             Queue.mainQueue().async {
+                self?.isCellular = cellular
                 self?.networkChanged(satisfied)
             }
         }
@@ -260,6 +264,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                 switch message {
                 case let .string(text):
                     data = text.data(using: .utf8)
+                    NetworkUsage.shared.add(address: self.url.absoluteString, cellular: self.isCellular, sent: 0, received: text.utf8.count)
                 case let .data(value):
                     data = value
                 @unknown default:
@@ -329,6 +334,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         let generation = self.generation
         // A big frame (photos) takes a while on a slow link: its answer may come later, and pings wait behind it.
         let bytes = text.utf8.count
+        NetworkUsage.shared.add(address: self.url.absoluteString, cellular: self.isCellular, sent: bytes, received: 0)
         let timeout = TauConnection.responseTimeout + Double(bytes) / 50_000.0
         if bytes > 256 * 1024 {
             self.largeRequests.insert(id)
@@ -368,6 +374,66 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         if task === self.task, error != nil {
             self.hello = nil
             self.reconnect(generation: self.generation)
+        }
+    }
+}
+
+/// Bytes to and from each server, on Wi-Fi and on mobile networks, as Telegram's Network Usage counts them. Kept in
+/// UserDefaults, written a moment after they change.
+final class NetworkUsage {
+    struct Counters: Codable, Equatable {
+        var wifiSent: Int64 = 0
+        var wifiReceived: Int64 = 0
+        var cellularSent: Int64 = 0
+        var cellularReceived: Int64 = 0
+    }
+
+    static let shared = NetworkUsage()
+    private let key = "network.usage"
+    private(set) var counters: [String: Counters] = [:]
+    private(set) var since: Date
+    private var saveScheduled = false
+
+    private init() {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: self.key), let stored = try? JSONDecoder().decode([String: Counters].self, from: data) {
+            self.counters = stored
+        }
+        self.since = defaults.object(forKey: self.key + ".since") as? Date ?? Date()
+        if defaults.object(forKey: self.key + ".since") == nil {
+            defaults.set(self.since, forKey: self.key + ".since")
+        }
+    }
+
+    func add(address: String, cellular: Bool, sent: Int, received: Int) {
+        var value = self.counters[address] ?? Counters()
+        if cellular {
+            value.cellularSent += Int64(sent)
+            value.cellularReceived += Int64(received)
+        } else {
+            value.wifiSent += Int64(sent)
+            value.wifiReceived += Int64(received)
+        }
+        self.counters[address] = value
+        if !self.saveScheduled {
+            self.saveScheduled = true
+            Queue.mainQueue().after(2.0) { [weak self] in
+                self?.save()
+            }
+        }
+    }
+
+    func reset() {
+        self.counters = [:]
+        self.since = Date()
+        UserDefaults.standard.set(self.since, forKey: self.key + ".since")
+        self.save()
+    }
+
+    private func save() {
+        self.saveScheduled = false
+        if let data = try? JSONEncoder().encode(self.counters) {
+            UserDefaults.standard.set(data, forKey: self.key)
         }
     }
 }

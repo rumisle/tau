@@ -147,6 +147,12 @@ final class Outbox {
         self.load()
     }
 
+    /// The outbox's files on disk: messages and their photos.
+    var diskBytes: Int64 {
+        let files = (try? FileManager.default.contentsOfDirectory(at: self.directory, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return files.reduce(0) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+    }
+
     // MARK: - Persistence
 
     private struct Stored: Codable {
