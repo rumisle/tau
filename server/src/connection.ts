@@ -14,7 +14,8 @@ import {
 	type EntryRecord,
 	type SubmissionId,
 } from "@earendil-works/pi-durable";
-import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
+import { homedir, hostname } from "node:os";
 import type { Dialogs } from "./dialogs.ts";
 import { directory, listDirectory } from "./fs.ts";
 import { CreatesDoc, type Host, MetaDoc } from "./host.ts";
@@ -69,6 +70,16 @@ type Subscription = {
 	/** Set once the subscribe response is out; submission pushes start then. */
 	live: boolean;
 };
+
+
+/** The pi commit the server links (PI_REVISION at the repository root), reported in `hello`. */
+const PI_REVISION = (() => {
+	try {
+		return readFileSync(new URL("../../PI_REVISION", import.meta.url), "utf-8").trim();
+	} catch {
+		return "";
+	}
+})();
 
 export class Connection {
 	readonly #host: Host;
@@ -127,7 +138,7 @@ export class Connection {
 			if (SERIAL_METHODS.has(method) && typeof params.conversationId === "number") {
 				// Queued now, before any await, so this socket's requests keep their order.
 				result = this.#host.serial.run(`conversation:${params.conversationId}`, () => this.#dispatch(method, params));
-			} else if (method === "conversation.create") {
+			} else if (method === "conversation.create" || method === "conversation.fork") {
 				result = this.#host.serial.run("create", () => this.#dispatch(method, params));
 			} else result = this.#dispatch(method, params);
 			this.#push({ id: request.id, result: await result });
@@ -206,6 +217,12 @@ export class Connection {
 			case "conversation.fork": {
 				const conversation = await this.#conversation(params);
 				const title = str(params, "title", true);
+				// As for creates: a repeated fork (after a lost response) returns the conversation the first one made.
+				const requestId = str(params, "requestId", true);
+				if (requestId !== undefined) {
+					const existing = (await harness.snapshot(CreatesDoc, context))?.requests[requestId];
+					if (existing !== undefined) return { dialog: await this.#dialogOf(existing as ConversationId) };
+				}
 				const fork = await conversation.fork(
 					int(params, "at") as EntryId,
 					{
@@ -215,6 +232,12 @@ export class Connection {
 							if (title !== undefined) meta.title = title;
 							// The fork's history was read in the original.
 							meta.read = int(params, "at");
+							if (requestId !== undefined) {
+								const creates = await tx.doc(CreatesDoc);
+								creates.requests[requestId] = id;
+								creates.order.push(requestId);
+								while (creates.order.length > MAX_CREATES) delete creates.requests[creates.order.shift()!];
+							}
 						},
 					},
 					context,
@@ -308,6 +331,9 @@ export class Connection {
 			defaultModel: this.#host.defaultModel,
 			defaultCwd: this.#host.cwd,
 			home: homedir(),
+			hostname: hostname(),
+			piRevision: PI_REVISION,
+			uptime: Math.round(process.uptime()),
 		};
 	}
 

@@ -93,6 +93,20 @@ final class MockStore: TauStore {
         return .single(.online)
     }
 
+    var serverInfo: ServerInfo? {
+        return nil
+    }
+
+    private var inputDrafts: [String: InputDraft] = [:]
+
+    func inputDraft(_ id: Int) -> InputDraft? {
+        return self.inputDrafts[InputDraftStorage.key(id)]
+    }
+
+    func setInputDraft(_ draft: InputDraft?, for id: Int) {
+        self.inputDrafts[InputDraftStorage.key(id)] = draft.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     var serverDescription: String {
         return "Demo data"
     }

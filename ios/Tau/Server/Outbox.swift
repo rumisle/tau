@@ -76,6 +76,9 @@ struct PendingCreate: Codable, Equatable {
     var provider: String?
     var modelId: String?
     var thinkingLevel: String?
+    /// A fork of this conversation at this entry, as an edit makes, instead of a new conversation.
+    var forkOf: Int?
+    var forkAt: Int?
     var conversationId: Int?
     var attempts: Int = 0
 }
@@ -307,11 +310,11 @@ final class Outbox {
     }
 
     /// A draft conversation to create; its messages wait for it.
-    func enqueueCreate(requestId: String, cwd: String?, title: String, agent: AgentSettings?) {
+    func enqueueCreate(requestId: String, cwd: String?, title: String, agent: AgentSettings?, forkOf: Int? = nil, forkAt: Int? = nil) {
         guard self.create(requestId) == nil else {
             return
         }
-        self.creates.append(PendingCreate(requestId: requestId, cwd: cwd, title: title, provider: agent?.provider, modelId: agent?.modelId, thinkingLevel: agent?.thinkingLevel))
+        self.creates.append(PendingCreate(requestId: requestId, cwd: cwd, title: title, provider: agent?.provider, modelId: agent?.modelId, thinkingLevel: agent?.thinkingLevel, forkOf: forkOf, forkAt: forkAt))
         self.save()
         self.pump()
     }
@@ -926,6 +929,21 @@ final class Outbox {
     private func pumpCreates() {
         let key = "create"
         guard !self.inFlight.contains(key), !self.backoff.contains(key), self.connection.isReady, let create = self.creates.first(where: { $0.conversationId == nil }) else {
+            return
+        }
+        if let forkOf = create.forkOf, let forkAt = create.forkAt {
+            // An edit: the conversation up to the edited message, under the same title.
+            self.inFlight.insert(key)
+            self.sendingCreate = create.requestId
+            self.connection.request("conversation.fork", ["conversationId": forkOf, "at": forkAt, "title": create.title, "requestId": create.requestId]) { [weak self] result in
+                guard let self else {
+                    return
+                }
+                self.inFlight.remove(key)
+                self.sendingCreate = nil
+                self.handleCreate(create.requestId, result: result)
+                self.pump()
+            }
             return
         }
         var params: JSONObject = ["requestId": create.requestId, "title": create.title, "autoTitle": true]

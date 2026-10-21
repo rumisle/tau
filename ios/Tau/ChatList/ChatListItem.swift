@@ -388,7 +388,13 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                     badgeContent = .none
                 }
                 badgeImage = badgeContent.isEmpty ? nil : PresentationResourcesChatList.badgeBackgroundActive(presentationTheme, diameter: badgeDiameter)
-                if let outgoing = dialog.outgoing {
+                if !dialog.busy, let draft = dialog.draft, !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // Telegram's draft: "Draft:" in red, then the text, at the time it was written.
+                    date = draft.date
+                    let text = NSMutableAttributedString(string: strings.DialogList_Draft + ": ", font: textFont, textColor: presentationTheme.chatList.messageDraftTextColor)
+                    text.append(NSAttributedString(string: draft.text.replacingOccurrences(of: "\n", with: " "), font: textFont, textColor: theme.messageTextColor))
+                    textString = text
+                } else if let outgoing = dialog.outgoing {
                     // As Telegram's list shows an outgoing message from the moment it is sent: the clock, or the red
                     // badge once refused.
                     date = outgoing.date

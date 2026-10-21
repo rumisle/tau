@@ -85,6 +85,19 @@ Rules that keep it predictable:
 8. **One database.** Messages written for one server database are failed, not sent, if the server reports another
    one: its conversation IDs name other conversations.
 
+## Edits and drafts
+
+An edit is a fork before the edited message with the new text as its first message (pi's `/tree` and edit work the
+same way). The fork is a create in the outbox: on disk, sent with a request ID that makes `conversation.fork`
+idempotent, and the edited message waits for it like any first message. Until the fork exists and its transcript has
+arrived, the chat shows the original up to the edit, then the new message with the clock.
+
+What is written and not sent is a draft (`Model/InputDrafts.swift`), as Telegram keeps a chat's input state: the
+message being written and, beside it while an edit is open, the edit's text and the message it edits. Drafts are on
+disk, written a moment after each change and when the app leaves the foreground, so a crash loses at most the last
+keystrokes. Opening the chat restores both; cancelling or sending the edit brings back the message that was being
+written. The chat list shows Telegram's red "Draft:". New Chat keeps one draft of its own.
+
 ## What the user sees
 
 Telegram's sending, with the agent's two ways of reading a message.

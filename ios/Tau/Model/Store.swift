@@ -7,6 +7,11 @@ protocol TauStore: AnyObject {
     var connectionStatus: Signal<ConnectionStatus, NoError> { get }
     /// Shown in Settings: where the store gets its data.
     var serverDescription: String { get }
+    /// What the connected server reported about itself; nil while not connected or on demo data.
+    var serverInfo: ServerInfo? { get }
+    /// A chat's unsent input (docs: InputDrafts.swift); a chat not created yet has the New Chat draft.
+    func inputDraft(_ id: Int) -> InputDraft?
+    func setInputDraft(_ draft: InputDraft?, for id: Int)
     /// The model new conversations get, as `provider/id`.
     var defaultModel: String? { get }
     /// Stops syncing, before the app switches to another store.
@@ -147,6 +152,12 @@ struct DirectoryListing: Equatable {
     var path: String
     var parent: String?
     var entries: [Entry]
+}
+
+struct ServerInfo: Equatable {
+    var address: String
+    var hostname: String
+    var piRevision: String
 }
 
 struct AgentSettings: Equatable {

@@ -179,7 +179,7 @@ final class SettingsController: SettingsListController {
                 })
                 (self.navigationController as? NavigationController)?.pushViewController(picker)
             }),
-            SettingsTextItem(theme: theme, text: "New chats use this model. Existing chats keep theirs; change one from its title.", kind: .footer),
+            SettingsTextItem(theme: theme, text: "New chats use this model.", kind: .footer),
             SettingsTextItem(theme: theme, text: "Preferences", kind: .header),
             SettingsRowItem(theme: theme, icon: SettingsIcon.appearance, title: "Appearance", accessory: .disclosure(label: context.themeContext.settings.theme.title), position: first, action: { [weak self] in
                 guard let self else {
@@ -190,15 +190,19 @@ final class SettingsController: SettingsListController {
             SettingsRowItem(theme: theme, icon: SettingsIcon.notifications, title: "Notifications", accessory: .disclosure(label: "Off"), position: middle, action: {}),
             SettingsRowItem(theme: theme, icon: SettingsIcon.data, title: "Data and Storage", accessory: .disclosure(label: ""), position: last, action: {}),
             SettingsTextItem(theme: theme, text: "", kind: .header),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.about, title: "About tau", accessory: .disclosure(label: version), position: single, action: {}),
-            SettingsTextItem(theme: theme, text: "tau is a client for pi-durable agents. Run the server with `npm start` in server/; on a phone, give it the computer's address, e.g. ws://192.168.1.10:7878 or a Tailscale name.", kind: .footer),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.about, title: "About tau", accessory: .disclosure(label: version), position: single, action: { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.push(AboutController(context: self.context))
+            }),
         ]
     }
 
     /// The server's address and token. Saving reconnects every screen to it.
     private func editServer() {
         let defaults = UserDefaults.standard
-        let alert = UIAlertController(title: "Server", message: "The tau server's WebSocket address, and its TAU_TOKEN if it has one.", preferredStyle: .alert)
+        let alert = UIAlertController(title: "Server", message: "The tau server's WebSocket address, and its TAU_TOKEN if it has one. Start a server with `npm start` in tau's server/ directory; from a phone, use the computer's address, such as ws://192.168.1.10:7878 or its Tailscale name.", preferredStyle: .alert)
         alert.addTextField { field in
             field.placeholder = defaultServerURL
             field.text = defaults.string(forKey: "server.url") ?? defaultServerURL

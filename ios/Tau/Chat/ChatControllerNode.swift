@@ -166,6 +166,15 @@ final class ChatControllerNode: ASDisplayNode {
         }
     }
 
+    /// As Telegram's ChatControllerNode while previewing: touches reach only the history's scrolling, so the preview
+    /// scrolls and a tap anywhere opens the chat instead of acting on a message.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if self.isPreview, self.bounds.contains(point) {
+            return self.historyNode.scroller
+        }
+        return super.hitTest(point, with: event)
+    }
+
     /// Telegram's toast (UndoOverlayController), which ChatController presents above the input panel.
     var presentToast: ((UndoOverlayContent) -> Void)?
 

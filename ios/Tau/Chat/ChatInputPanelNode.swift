@@ -48,6 +48,8 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         }
     }
     var cancelEditing: (() -> Void)?
+    /// After every change to the text, typed or set.
+    var textChanged: ((String) -> Void)?
     /// The text changed height, the send button appeared, or editing began; the owner lays out again.
     var requestLayout: ((ContainedViewLayoutTransition) -> Void)?
 
@@ -294,6 +296,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
 
     func textViewDidChange(_ textView: UITextView) {
         self.placeholderLabel.isHidden = !textView.text.isEmpty
+        self.textChanged?(self.text)
         let hasText = !self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard let width = self.validWidth else {
             return

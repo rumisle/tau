@@ -22,6 +22,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private var settingsDisposable: Disposable?
     private let titleView: ChatTitleView
     private var editingMessageId: Int?
+    /// The entry of the message being edited, which the draft keeps across launches.
+    private var editingEntryId: Int?
+    /// While editing, the message that was being written, which comes back when the edit ends (Telegram's
+    /// composeInputState beside editMessage).
+    private var composeText = ""
+    /// An edit the saved draft had, applied once its message is in the transcript.
+    private var pendingEditDraft: InputDraft?
     private var lastState: ConversationState?
     /// In a preview, a tap opens the chat.
     var previewTapped: (() -> Void)?
@@ -204,6 +211,18 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         node.inputPanelNode.cancelEditing = { [weak self] in
             self?.endEditing(clearText: true)
         }
+        if !self.isPreview {
+            // What was written and not sent, as it was left, even across a crash.
+            if let draft = self.context.store.inputDraft(self.conversationId) {
+                node.inputPanelNode.setText(draft.text)
+                if draft.editEntryId != nil {
+                    self.pendingEditDraft = draft
+                }
+            }
+            node.inputPanelNode.textChanged = { [weak self] _ in
+                self?.saveInputDraft()
+            }
+        }
 
         if self.isPreview {
             node.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.previewTapGesture)))
@@ -215,6 +234,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             }
             self.lastState = state
             self.controllerNode.update(state: state)
+            if let pending = self.pendingEditDraft, let message = state.messages.first(where: { $0.entryId != nil && $0.entryId == pending.editEntryId }) {
+                self.pendingEditDraft = nil
+                self.beginEditing(message, text: pending.editText ?? message.text, focus: false)
+            }
             if self.isOnScreen && UIApplication.shared.applicationState == .active {
                 self.context.store.markSeen(self.conversationId)
             }
@@ -348,19 +371,59 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                     navigationController.replaceTopController(ChatController(context: self.context, conversationId: newId), animated: false)
                 }
             })
-            self.endEditing(clearText: false)
+            // After the panel has cleared its field for the sent text.
+            Queue.mainQueue().async { [weak self] in
+                self?.endEditing(clearText: false)
+            }
         } else {
             self.context.store.send(text, attachments: attachments, to: self.conversationId)
         }
         self.controllerNode.wallpaperNode.animateEvent()
     }
 
+    /// The field holds `text` for `message` and Telegram's "Edit Message" panel shows above it; what was being written
+    /// waits until the edit ends.
+    private func beginEditing(_ message: ChatMessage, text: String, focus: Bool) {
+        if self.editingMessageId == nil {
+            self.composeText = self.controllerNode.inputPanelNode.text
+        }
+        self.editingMessageId = message.id
+        self.editingEntryId = message.entryId
+        self.controllerNode.inputPanelNode.setEditing(message.text)
+        self.controllerNode.inputPanelNode.setText(text)
+        if focus {
+            self.controllerNode.inputPanelNode.activateInput()
+        }
+    }
+
+    /// Cancelled or sent: the message that was being written comes back to the field.
     private func endEditing(clearText: Bool) {
         self.editingMessageId = nil
+        self.editingEntryId = nil
         self.controllerNode.inputPanelNode.setEditing(nil)
-        if clearText {
-            self.controllerNode.inputPanelNode.setText("")
+        let compose = self.composeText
+        self.composeText = ""
+        self.controllerNode.inputPanelNode.setText(compose)
+        self.saveInputDraft()
+    }
+
+    private func saveInputDraft() {
+        guard !self.isPreview else {
+            return
         }
+        var draft = InputDraft()
+        if let entryId = self.editingEntryId {
+            draft.text = self.composeText
+            draft.editEntryId = entryId
+            draft.editText = self.controllerNode.inputPanelNode.text
+        } else {
+            draft.text = self.controllerNode.inputPanelNode.text
+            if let pending = self.pendingEditDraft {
+                draft.editEntryId = pending.editEntryId
+                draft.editText = pending.editText
+            }
+        }
+        self.context.store.setInputDraft(draft, for: self.conversationId)
     }
 
     private func perform(_ action: ChatMessageAction, on message: ChatMessage) {
@@ -369,10 +432,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             UIPasteboard.general.string = message.text
             self.presentToast(.copy(text: self.theme.presentationStrings.Conversation_TextCopied))
         case .edit:
-            self.editingMessageId = message.id
-            self.controllerNode.inputPanelNode.setEditing(message.text)
-            self.controllerNode.inputPanelNode.setText(message.text)
-            self.controllerNode.inputPanelNode.activateInput()
+            self.beginEditing(message, text: message.text, focus: true)
         case .select:
             self.controllerNode.inputPanelNode.deactivateInput()
             self.controllerNode.setSelection([message.id])

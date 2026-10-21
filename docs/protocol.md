@@ -42,9 +42,10 @@ socket, so a client must not send one (content limits below are far under it).
 ## Methods
 
 ### `hello`
-`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultCwd: string, home: string }`
+`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number }`
 
 `defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
+`hostname` is the computer's name, `piRevision` the pi commit the server links, `uptime` seconds since it started.
 
 Must be the first request. A different `protocol` is rejected.
 
@@ -102,9 +103,10 @@ With `autoTitle`, the server names the conversation in a few words after its fir
 model) and pushes the new title as a `dialog` event; `title` stands in until then.
 
 ### `conversation.fork`
-`{ conversationId, at: EntryId, title? }` -> `{ dialog: Dialog }`
+`{ conversationId, at: EntryId, title?, requestId? }` -> `{ dialog: Dialog }`
 
-The fork starts read up to `at`, and in the main list.
+The fork starts read up to `at`, and in the main list. With `requestId`, a repeated fork returns the conversation the
+first one made, as for `conversation.create` (the two share their request IDs).
 
 ### `conversation.configure`
 `{ conversationId, agent: AgentPatch }` -> `{}`

@@ -31,6 +31,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         let defaultModel: String
         let defaultCwd: String
         let home: String
+        let hostname: String
+        /// The pi commit the server links.
+        let piRevision: String
     }
 
     let url: URL
@@ -150,7 +153,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                     serverId: value.string("serverId") ?? "",
                     defaultModel: model.map { "\($0.string("provider") ?? "")/\($0.string("modelId") ?? "")" } ?? "",
                     defaultCwd: value.string("defaultCwd") ?? "~",
-                    home: value.string("home") ?? "~"
+                    home: value.string("home") ?? "~",
+                    hostname: value.string("hostname") ?? "",
+                    piRevision: value.string("piRevision") ?? ""
                 )
                 self.hello = hello
                 self.startPinging(generation: generation)

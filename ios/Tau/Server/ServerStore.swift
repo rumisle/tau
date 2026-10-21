@@ -31,6 +31,10 @@ final class ServerStore: TauStore {
         var createRequestId: String?
         /// Chosen before the conversation exists; nil for the server's default model.
         var agent: AgentSettings?
+        /// An edit's fork: this conversation up to this entry, shown until the fork exists, under its title.
+        var forkOf: Int?
+        var forkAt: Int?
+        var title: String?
     }
     /// Each conversation's model as the chat list reports it, for one whose replica is not loaded yet.
     private var dialogAgents: [Int: AgentSettings] = [:]
@@ -39,10 +43,12 @@ final class ServerStore: TauStore {
     private var nextAgentToken = 0
     private var drafts: [Int: Draft] = [:]
     private var nextDraftId = -1
+    private let inputDrafts: InputDraftStorage
 
     init(url: URL, token: String?) {
         self.connection = TauConnection(url: url, token: token)
         self.outbox = Outbox(connection: self.connection, namespace: url.absoluteString)
+        self.inputDrafts = InputDraftStorage(namespace: url.absoluteString)
         self.cache = EntryCache(namespace: url.absoluteString)
         self.scroll = ScrollStateStorage(namespace: url.absoluteString)
         self.hiddenDialogs = Set(UserDefaults.standard.array(forKey: "hidden.\(url.absoluteString)") as? [Int] ?? [])
@@ -58,6 +64,11 @@ final class ServerStore: TauStore {
             self?.connected(hello)
         }
         self.setUpOutbox()
+        self.inputDrafts.changed = { [weak self] key in
+            if Int(key) != nil {
+                self?.publishDialogs()
+            }
+        }
         self.connection.start()
         NotificationCenter.default.addObserver(self, selector: #selector(self.didBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(self.didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
@@ -188,6 +199,32 @@ final class ServerStore: TauStore {
 
     var connectionStatus: Signal<ConnectionStatus, NoError> {
         return self.connection.status
+    }
+
+    /// A created conversation's draft is under its ID; New Chat has one draft; an edit's fork, until it exists, its own.
+    private func inputDraftKey(_ id: Int) -> String {
+        if let realId = self.resolve(id) {
+            return String(realId)
+        }
+        if let draft = self.drafts[id], draft.forkOf != nil {
+            return "fork\(-id)"
+        }
+        return InputDraftStorage.newChatKey
+    }
+
+    func inputDraft(_ id: Int) -> InputDraft? {
+        return self.inputDrafts.draft(self.inputDraftKey(id))
+    }
+
+    func setInputDraft(_ draft: InputDraft?, for id: Int) {
+        self.inputDrafts.set(draft, for: self.inputDraftKey(id))
+    }
+
+    var serverInfo: ServerInfo? {
+        guard let hello = self.connection.hello else {
+            return nil
+        }
+        return ServerInfo(address: self.connection.url.absoluteString, hostname: hello.hostname, piRevision: hello.piRevision)
     }
 
     var serverDescription: String {
@@ -370,6 +407,7 @@ final class ServerStore: TauStore {
         for id in Array(self.dialogs.keys) {
             self.dialogs[id]?.hasFailedMessage = self.hasFailedMessage(id)
             self.dialogs[id]?.outgoing = self.outgoingSummary(id)
+            self.dialogs[id]?.draft = self.inputDrafts.draft(String(id))
         }
         let visible = self.dialogs.values.filter { $0.parentConversationId == nil && !self.hiddenDialogs.contains($0.id) }
         let sorted = visible.sorted { lhs, rhs in
@@ -392,7 +430,7 @@ final class ServerStore: TauStore {
             }
             let cwd = draft.cwd ?? self.connection.hello?.defaultCwd ?? "~"
             let model = self.agent(id).modelId ?? ""
-            return DialogModel(id: id, title: "New chat", cwd: cwd, model: model, last: nil, busy: false)
+            return DialogModel(id: id, title: draft.title ?? "New chat", cwd: cwd, model: model, last: nil, busy: false)
         }
         return self.dialogs[id]
     }
@@ -437,6 +475,23 @@ final class ServerStore: TauStore {
     }
 
     private func state(for id: Int) -> ConversationState {
+        if let draft = self.drafts[id], let forkOf = draft.forkOf, let forkAt = draft.forkAt {
+            // An edit's fork until it exists and its transcript has come: the original up to the edit.
+            let forkReplica = draft.realId.flatMap { self.replicas[$0] }
+            if forkReplica.map({ !$0.isSynced && $0.entries.isEmpty }) ?? true {
+                let preview = ConversationReplica(id: id)
+                if let parent = self.replicas[forkOf] {
+                    preview.upsert(parent.entries.filter { $0.key <= forkAt }.map(\.value))
+                }
+                preview.isSynced = true
+                var state = TranscriptBuilder.build(replica: preview, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[forkOf] ?? [:], images: self.images)
+                let items = draft.createRequestId.map { self.outbox.items(forCreate: $0) } ?? draft.realId.map { self.outbox.items(for: $0) } ?? []
+                state.messages += items.map { TranscriptBuilder.row(for: $0, outbox: self.outbox) }
+                state.busy = false
+                state.agent = self.agent(id)
+                return state
+            }
+        }
         guard let realId = self.resolve(id) else {
             // A draft: its messages wait for the conversation to be created.
             let items = self.drafts[id]?.createRequestId.map { self.outbox.items(forCreate: $0) } ?? []
@@ -744,24 +799,30 @@ final class ServerStore: TauStore {
         guard let message = state.messages.first(where: { $0.id == messageId }), let entryId = message.entryId else {
             return
         }
-        // Fork at the entry before the edited message, so the fork's transcript ends just before it.
+        let parent = self.dialogs[realId]
+        // Fork at the entry before the edited message, so the fork's transcript ends just before it. Through the
+        // outbox, as a create: on disk, idempotent, and the edited message waits for it.
         guard let at = replica.entries.keys.filter({ $0 < entryId }).max() else {
-            // Editing the first message: a fresh conversation in the same directory.
-            let draft = self.createConversation(cwd: self.dialogs[realId]?.cwd)
-            self.send(text, attachments: message.attachments, to: draft)
-            completion(draft)
+            // Editing the first message: a fresh conversation in the same directory, with the same model.
+            let draftId = self.createConversation(cwd: parent?.cwd)
+            self.drafts[draftId]?.agent = self.agent(realId)
+            self.send(text, attachments: message.attachments, to: draftId)
+            completion(draftId)
             return
         }
-        let title = self.dialogs[realId]?.title ?? "Edited"
-        self.connection.request("conversation.fork", ["conversationId": realId, "at": at, "title": title]) { [weak self] result in
-            guard let self, case let .success(value) = result, let raw = value.object("dialog"), let dialog = self.dialogModel(raw) else {
-                return
-            }
-            self.dialogs[dialog.id] = dialog
-            self.publishDialogs()
-            self.send(text, attachments: message.attachments, to: dialog.id)
-            completion(dialog.id)
-        }
+        let draftId = self.nextDraftId
+        self.nextDraftId -= 1
+        let createRequestId = UUID().uuidString
+        var draft = Draft(cwd: parent?.cwd)
+        draft.agent = self.agent(realId)
+        draft.forkOf = realId
+        draft.forkAt = at
+        draft.title = parent?.title ?? "Edited"
+        draft.createRequestId = createRequestId
+        self.drafts[draftId] = draft
+        self.outbox.enqueueCreate(requestId: createRequestId, cwd: nil, title: draft.title ?? "Edited", agent: nil, forkOf: realId, forkAt: at)
+        self.outbox.enqueue(text: text, attachments: message.attachments, conversationId: nil, createRequestId: createRequestId, mode: .followUp, showsInQueue: false)
+        completion(draftId)
     }
 
     func duplicateConversation(_ id: Int, completion: @escaping (Int) -> Void) {

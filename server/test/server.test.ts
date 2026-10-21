@@ -393,6 +393,22 @@ describe("tau server", () => {
 		assert.equal(again.dialog.conversation.id, a.dialog.conversation.id);
 		await client.close();
 	});
+
+	test("a fork with a request ID happens once", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Parent" });
+		const id = dialog.conversation.id;
+		await client.request("conversation.submit", { conversationId: id, requestId: "fork-parent", content: "hi" });
+		const view = await client.request("conversation.subscribe", { conversationId: id });
+		const at = Math.max(...view.entries.map((entry: { id: number }) => entry.id));
+		const [a, b] = await Promise.all([
+			client.request("conversation.fork", { conversationId: id, at, requestId: "fork-once" }),
+			client.request("conversation.fork", { conversationId: id, at, requestId: "fork-once" }),
+		]);
+		assert.equal(a.dialog.conversation.id, b.dialog.conversation.id);
+		assert.notEqual(a.dialog.conversation.id, id);
+		await client.close();
+	});
 });
 
 describe("durability", () => {

@@ -432,4 +432,70 @@ final class SendingUITests: XCTestCase {
         self.point(0.5, 0.25).tap()
         sleep(2)
     }
+
+    /// What is written and not sent survives the app being killed, with an edit in progress beside it, as Telegram
+    /// keeps a chat's input state; the list shows Telegram's "Draft:".
+    func testDraftsSurviveRestart() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("first")
+        self.send()
+        sleep(4)
+        self.type("half written")
+        sleep(1)
+        self.launch([])
+        self.shot("drafts-0-list")
+        self.point(0.5, 0.17).tap()
+        sleep(2)
+        self.shot("drafts-1-restored")
+        // Edit the sent message, then kill the app mid-edit.
+        self.point(0.9, 0.74).press(forDuration: 1.0)
+        sleep(1)
+        self.shot("drafts-2-menu")
+        self.app.descendants(matching: .any)["Edit"].firstMatch.tap()
+        sleep(1)
+        self.type(" edited")
+        sleep(1)
+        self.shot("drafts-3-editing")
+        self.launch([])
+        self.point(0.5, 0.17).tap()
+        sleep(3)
+        self.shot("drafts-4-edit-restored")
+        // Cancelling the edit brings back what was being written.
+        let field = self.app.textViews.firstMatch.frame
+        self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.0)).withOffset(CGVector(dx: field.maxX - 20.0, dy: field.minY - 26.0)).tap()
+        sleep(1)
+        self.shot("drafts-5-cancelled")
+    }
+
+    /// An edit made offline is kept like a message: the chat shows its fork with the clock, and it goes out once the
+    /// server is back.
+    func testEditOffline() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("one")
+        self.send()
+        sleep(4)
+        self.type("two")
+        self.send()
+        sleep(4)
+        self.server("stop")
+        self.launch([])
+        self.point(0.5, 0.17).tap()
+        sleep(2)
+        self.shot("editoff-0")
+        // The second message, the last bubble above the answer.
+        self.point(0.9, 0.74).press(forDuration: 1.0)
+        sleep(1)
+        self.shot("editoff-1-menu")
+        self.app.descendants(matching: .any)["Edit"].firstMatch.tap()
+        sleep(1)
+        self.type(" b")
+        self.send()
+        sleep(2)
+        self.shot("editoff-2-fork-offline")
+        self.server("start")
+        sleep(14)
+        self.shot("editoff-3-online")
+    }
 }

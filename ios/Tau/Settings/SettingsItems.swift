@@ -109,6 +109,8 @@ final class SettingsRowItem: ListViewItem {
     enum Accessory: Equatable {
         case none
         case disclosure(label: String)
+        /// A value on the right without the arrow, as ItemListDisclosureItem with `disclosureStyle: .none`.
+        case value(String)
         case checkmark(Bool)
         /// Telegram's switch (Display's SwitchNode, as ItemListSwitchItem has); `toggled` gets the new value.
         case toggle(Bool)
@@ -249,6 +251,8 @@ final class SettingsRowItemNode: ListViewItemNode {
             case let .disclosure(label):
                 labelText = label
                 showsArrow = true
+            case let .value(label):
+                labelText = label
             case let .checkmark(value):
                 showsCheck = value
             }

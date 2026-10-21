@@ -22,6 +22,8 @@ struct DialogModel: Equatable {
     /// This device's latest message to it that is not in the transcript yet: shown as the last message, with the clock
     /// or the red badge.
     var outgoing: Outgoing?
+    /// What is written in its input field and not sent: Telegram's red "Draft:" in the list.
+    var draft: InputDraft?
 
     struct Outgoing: Equatable {
         var text: String
