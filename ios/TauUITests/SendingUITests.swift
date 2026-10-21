@@ -36,6 +36,14 @@ final class SendingUITests: XCTestCase {
         self.app.buttons["send"].firstMatch.tap()
     }
 
+    /// A long press on the user's message with this text, wherever the transcript put it.
+    private func pressMessage(_ text: String) {
+        let bubble = self.app.descendants(matching: .any).matching(identifier: "userMessage").matching(NSPredicate(format: "label == %@", text)).firstMatch
+        _ = bubble.waitForExistence(timeout: 5.0)
+        // The row spans the screen; the bubble is at its right.
+        bubble.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).press(forDuration: 1.0)
+    }
+
     private func focusInput() {
         self.point(0.5, 0.955).tap()
         sleep(1)
@@ -64,6 +72,12 @@ final class SendingUITests: XCTestCase {
 
     /// Ask ios/scripts/sending-tests.sh to stop, start or wipe the dev server, and wait until it has.
     private func server(_ action: String) {
+        if action == "stop" {
+            // A test that fails while the server is down must not leave it down for the next.
+            self.addTeardownBlock { [weak self] in
+                self?.server("start")
+            }
+        }
         let done = "/tmp/tau-ui/server-\(action)ed"
         try? FileManager.default.removeItem(atPath: done)
         FileManager.default.createFile(atPath: "/tmp/tau-ui/server-\(action)", contents: nil)
@@ -498,7 +512,7 @@ final class SendingUITests: XCTestCase {
         sleep(2)
         self.shot("drafts-1-restored")
         // Edit the sent message, then kill the app mid-edit.
-        self.point(0.9, 0.74).press(forDuration: 1.0)
+        self.pressMessage("first")
         sleep(1)
         self.shot("drafts-2-menu")
         self.app.descendants(matching: .any)["Edit"].firstMatch.tap()
@@ -533,8 +547,8 @@ final class SendingUITests: XCTestCase {
         self.point(0.5, 0.17).tap()
         sleep(2)
         self.shot("editoff-0")
-        // The second message, the last bubble above the answer.
-        self.point(0.9, 0.74).press(forDuration: 1.0)
+        // The second message.
+        self.pressMessage("two")
         sleep(1)
         self.shot("editoff-1-menu")
         self.app.descendants(matching: .any)["Edit"].firstMatch.tap()

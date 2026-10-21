@@ -611,6 +611,11 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.setToolVisible(false)
                     self.dateNode.isHidden = false
                     self.bubbleNode.isHidden = false
+                    // VoiceOver reads the message, and UI tests find it by its text; one with photos leaves them
+                    // their own elements.
+                    self.isAccessibilityElement = message.attachments.isEmpty
+                    self.accessibilityIdentifier = "userMessage"
+                    self.accessibilityLabel = message.text
 
                     // ChatMessageBubbleItemNode: a refused message moves 24 pt left for its red badge.
                     let failedInset: CGFloat = isFailed ? 24.0 : 0.0

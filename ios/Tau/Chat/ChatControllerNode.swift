@@ -345,19 +345,10 @@ final class ChatControllerNode: ASDisplayNode {
 
     static let waitingRowId = Int.min / 2
 
-    /// The agent has the message and nothing of its answer is on screen: not writing, no tool card spinning. Also a
-    /// message just sent, before the server has it.
+    /// The agent has the message and nothing of its answer is on screen: not writing, no tool card spinning. A message
+    /// still on its way has its clock instead: the agent has nothing to work on yet.
     private static func isWaiting(state: ConversationState, messages: [ChatMessage]) -> Bool {
-        guard let last = messages.last, !last.isStreaming else {
-            return false
-        }
-        if last.role == .user, last.delivery == .sending {
-            return true
-        }
-        guard state.busy else {
-            return false
-        }
-        if case .failed = last.delivery {
+        guard state.busy, let last = messages.last, !last.isStreaming, last.delivery == .delivered else {
             return false
         }
         // A call still running has its own spinner.

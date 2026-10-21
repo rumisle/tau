@@ -183,6 +183,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             return
         }
         let conversationId = isNewChat ? context.store.createConversation(server: context.store.servers.first?.slot ?? 0, cwd: nil) : defaults.integer(forKey: "openChat")
+        if isNewChat {
+            // A test's fresh chat: not what an earlier one left written.
+            context.store.setInputDraft(nil, for: conversationId)
+        }
         let chat = ChatController(context: context, conversationId: conversationId)
         navigationController.pushViewController(chat, animated: false)
         if let draft = defaults.string(forKey: "draft") {
