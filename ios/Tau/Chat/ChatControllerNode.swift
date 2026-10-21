@@ -282,7 +282,7 @@ final class ChatControllerNode: ASDisplayNode {
         }
         if ChatControllerNode.isWaiting(state: state, messages: messages) {
             // Working with nothing to show yet: the τ where the answer will start.
-            messages.append(ChatMessage(id: ChatControllerNode.waitingRowId, role: .assistant, text: "", date: Date(timeIntervalSince1970: 0.0), isStreaming: true, isWaiting: true))
+            messages.append(ChatMessage(id: ChatControllerNode.waitingRowId, role: .assistant, text: "", date: Date(timeIntervalSince1970: 0.0), isStreaming: true, isWaiting: true, retry: state.retry))
         }
         var entries = messages.enumerated().map { index, message in
             ChatHistoryEntry(message: message, index: index, isStreaming: message.isStreaming, selection: message.isStreaming ? nil : selectedIds.map { $0.contains(message.id) }, isExpanded: expanded.contains(message.id))

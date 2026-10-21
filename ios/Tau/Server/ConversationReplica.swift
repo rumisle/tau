@@ -155,6 +155,10 @@ enum TranscriptBuilder {
 
         /// The row of each subagent's latest spawn or message, whose answer is still to come.
         var subagentCallRows: [String: Int] = [:]
+        /// A model error not yet known to be the run's last: the server may be asking again. Its entry, content and
+        /// error; errors in the run it asked past.
+        var pendingError: (entry: JSONObject, id: Int, base: Int, date: Date, error: String)?
+        var retriedErrors = 0
 
         func addAssistant(content: [JSONObject], base: Int, date: Date, entryId: Int?, streaming: Bool, toolStart: Date? = nil) {
             for (index, block) in content.enumerated() {
@@ -196,9 +200,26 @@ enum TranscriptBuilder {
             }
         }
 
+        /// The run ended on the error: what the model wrote before it, and the error's card.
+        func flushError() {
+            guard let pending = pendingError else {
+                return
+            }
+            pendingError = nil
+            let message = pending.entry.objects("model").first ?? [:]
+            addAssistant(content: message.objects("content"), base: pending.base, date: pending.date, entryId: pending.id, streaming: false)
+            rows.append(ChatMessage(id: self.rowId(base: pending.id, block: 63), role: .service, text: pending.error, date: pending.date, entryId: pending.id, service: .failed(error: ModelErrorText.clean(pending.error))))
+            turnStart = nil
+            retriedErrors = 0
+        }
+
         for entry in replica.ordered() {
             guard let id = entry.int("id"), let kind = entry.string("kind") else {
                 continue
+            }
+            // A message after an error: the run had ended on it.
+            if kind == "pi.user" {
+                flushError()
             }
             let message = entry.objects("model").first ?? [:]
             let date = message.double("timestamp").map { Date(timeIntervalSince1970: $0 / 1000.0) } ?? Date()
@@ -230,19 +251,30 @@ enum TranscriptBuilder {
                 rows.append(ChatMessage(id: rowIdForUserEntry[id] ?? self.rowId(base: id, block: 0), role: .user, text: text, date: date, attachments: attachments, entryId: id))
             case "pi.assistant":
                 let base = entry.int("byTaskId") ?? id
+                if message.string("stopReason") == "error" {
+                    // Shown only if the run ends on it; a later attempt replaces it, as it does for the model, which
+                    // never reads failed responses.
+                    if pendingError != nil {
+                        retriedErrors += 1
+                    }
+                    pendingError = (entry, id, base, date, message.string("errorMessage") ?? "The model returned an error")
+                    continue
+                }
+                if pendingError != nil {
+                    pendingError = nil
+                    retriedErrors += 1
+                }
                 // Its calls start once it is written.
                 let written = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
                 addAssistant(content: message.objects("content"), base: base, date: date, entryId: id, streaming: false, toolStart: written)
-                if message.string("stopReason") == "error", let error = message.string("errorMessage") {
-                    rows.append(ChatMessage(id: self.rowId(base: base, block: 63), role: .assistant, text: "**Error:** \(error)", date: date, entryId: id))
-                }
                 // The end of a run: its answer says when it came and how long the run took, from the first message.
                 if message.string("stopReason") != "toolUse" {
                     let finished = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
                     if let last = rows.indices.last, rows[last].role == .assistant, rows[last].entryId == id {
-                        rows[last].turn = TurnInfo(finishedAt: finished, duration: turnStart.map { finished.timeIntervalSince($0) })
+                        rows[last].turn = TurnInfo(finishedAt: finished, duration: turnStart.map { finished.timeIntervalSince($0) }, retries: retriedErrors)
                     }
                     turnStart = nil
+                    retriedErrors = 0
                 }
             case "pi.tool-result":
                 guard let callId = message.string("toolCallId"), let index = toolRowIndex[callId], var tool = rows[index].tool else {
@@ -287,6 +319,10 @@ enum TranscriptBuilder {
 
         // What is running now.
         let live = replica.live
+        // An error at the end stands unless the run goes on: then the server is asking again.
+        if !replica.isBusy {
+            flushError()
+        }
         if let generation = live.object("generation"), let partial = generation.object("message"), let run = live.object("run"), let taskId = run.int("taskId") {
             addAssistant(content: partial.objects("content"), base: taskId, date: Date(), entryId: nil, streaming: true)
         }
@@ -339,6 +375,16 @@ enum TranscriptBuilder {
         state.runStartedAt = replica.isBusy ? turnStart : nil
         if let failure = live.object("compactionFailure"), let taskId = failure.int("taskId") {
             state.compactionFailure = CompactionFailure(taskId: taskId, error: failure.string("error") ?? "")
+        }
+        // The backoff, or the request after it; the error before it when the transcript has it.
+        // A request that has started writing is no longer a retry to wait on.
+        if replica.isBusy, let generation = live.object("generation"), generation.object("message")?.objects("content").isEmpty ?? true {
+            let attempt = generation.int("attempt") ?? 1
+            let retry = generation.object("retry")
+            let error = retry?.string("error") ?? pendingError?.error
+            if retry != nil || attempt > 1 {
+                state.retry = RetryState(attempt: retry == nil ? attempt : attempt + 1, at: retry?.double("at").map { Date(timeIntervalSince1970: $0 / 1000.0) }, reason: error.map(ModelErrorText.reason) ?? "error")
+            }
         }
         return state
     }

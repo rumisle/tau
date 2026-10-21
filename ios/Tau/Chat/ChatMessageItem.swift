@@ -89,6 +89,10 @@ final class ChatMessageItem: ListViewItem {
     }
 
     var selectable: Bool {
+        // An error card's only tap is its button.
+        if case .failed = self.message.service, self.selection == nil {
+            return false
+        }
         return self.selection != nil || self.message.tool != nil || self.message.service != nil
     }
 
@@ -234,6 +238,10 @@ final class ChatMessageItemNode: ListViewItemNode {
     private var timerTick: (() -> Void)?
     /// The τ in a compaction's pill.
     private var serviceTauNode: ChatWaitingNode?
+    /// Beside the waiting τ while the server retries: when it asks again, and why.
+    private var waitingLabelNode: ImmediateTextNode?
+    /// The error card's Retry button, for taps.
+    private var retryButtonFrame: CGRect?
     /// As in ChatMessageBubbleItemNode: the long-press source wraps the extractable container, whose content node the
     /// context menu lifts out of the list and puts back.
     let containerNode = ContextControllerSourceNode()
@@ -333,6 +341,10 @@ final class ChatMessageItemNode: ListViewItemNode {
             return
         }
         let point = recognizer.location(in: self.contentNode.view)
+        if let frame = self.retryButtonFrame, frame.contains(point) {
+            item.interaction.openTool(item.message)
+            return
+        }
         for (index, id) in self.imageAttachmentIds.enumerated() where index < self.imageNodes.count {
             if self.imageNodes[index].frame.contains(point) {
                 item.interaction.openImage(id)
@@ -740,6 +752,39 @@ final class ChatMessageItemNode: ListViewItemNode {
                         node.update(color: item.theme.accentColor)
                         // Where the answer's first letter will be.
                         node.frame = CGRect(origin: CGPoint(x: params.leftInset + freeTextInset + leftShift - 3.0, y: 2.0), size: size)
+                        if let retry = message.retry {
+                            let label = self.waitingLabelNode ?? ImmediateTextNode()
+                            label.displaysAsynchronously = false
+                            label.maximumNumberOfLines = 1
+                            if label.supernode !== self.contentNode {
+                                self.contentNode.addSubnode(label)
+                            }
+                            self.waitingLabelNode = label
+                            let labelX = node.frame.maxX + 6.0
+                            let maxWidth = params.width - params.rightInset - freeTextInset - labelX
+                            let color = theme.freeSecondaryTextColor
+                            self.setTimerTick { [weak label] in
+                                guard let label else {
+                                    return
+                                }
+                                var text: String
+                                if let at = retry.at, at.timeIntervalSinceNow > 0.5 {
+                                    text = "Retrying in \(formatElapsed(at.timeIntervalSinceNow.rounded(.up)))"
+                                } else {
+                                    text = "Retrying"
+                                }
+                                if retry.attempt > 2 {
+                                    text += " · attempt \(retry.attempt)"
+                                }
+                                text += " · " + retry.reason
+                                label.attributedText = NSAttributedString(string: text, font: Font.regular(14.0), textColor: color)
+                                let labelSize = label.updateLayout(CGSize(width: maxWidth, height: 20.0))
+                                label.frame = CGRect(origin: CGPoint(x: labelX, y: node.frame.midY - labelSize.height / 2.0), size: labelSize)
+                            }
+                        } else if let label = self.waitingLabelNode {
+                            self.waitingLabelNode = nil
+                            label.removeFromSupernode()
+                        }
                         self.contentFrame = .zero
                         self.layoutContainers(size: layout.contentSize)
                     })
@@ -799,6 +844,10 @@ final class ChatMessageItemNode: ListViewItemNode {
                 var footerApply: (() -> TextNode)?
                 if let turn = message.turn, !item.isStreaming, revealed == nil {
                     var text = messageTimeString(turn.finishedAt)
+                    if turn.retries > 0 {
+                        // The provider failed on the way, and the server asked again.
+                        text = (turn.retries == 1 ? "Retried once · " : "Retried \(turn.retries)× · ") + text
+                    }
                     if let duration = turn.duration, duration >= 1.0 {
                         text = "Worked for \(formatDuration(duration)) · " + text
                     }
@@ -954,6 +1003,69 @@ final class ChatMessageItemNode: ListViewItemNode {
                         }
                         self.setTimerTick(place)
                         self.layoutContainers(size: layout.contentSize)
+                    })
+
+                case let .failed(error):
+                    // Where the answer would be, as a card: what went wrong, and Retry, which sends the message again,
+                    // as an alert's button.
+                    let destructive = item.theme.presentationTheme.overallDarkAppearance ? UIColor(rgb: 0xff6961) : UIColor(rgb: 0xd70015)
+                    let cardWidth = min(contentWidth - freeTextInset * 2.0 - leftShift, 360.0)
+                    let cardInsets = UIEdgeInsets(top: 10.0, left: 12.0, bottom: 0.0, right: 12.0)
+                    let innerWidth = cardWidth - cardInsets.left - cardInsets.right
+                    let header = NSAttributedString(string: "The model failed", font: Font.semibold(15.0), textColor: destructive)
+                    let (headerLayout, headerApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: header, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: 30.0)))
+                    let body = NSAttributedString(string: error, font: Font.regular(14.0), textColor: theme.toolCardTextColor)
+                    let (bodyLayout, bodyApply) = makeSubagentTaskLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? 40 : 4, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: .greatestFiniteMagnitude)))
+                    let button = NSAttributedString(string: "Retry", font: Font.semibold(16.0), textColor: item.theme.accentColor)
+                    let (buttonLayout, buttonApply) = makeSubagentMetaLayout(TextNodeLayoutArguments(attributedString: button, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: 30.0)))
+                    let buttonHeight: CGFloat = 44.0
+                    let separatorY = cardInsets.top + headerLayout.size.height + 3.0 + bodyLayout.size.height + 10.0
+                    let cardHeight = separatorY + buttonHeight
+                    let mergedTop = above == .assistant || above == .tool
+                    let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: cardHeight), insets: UIEdgeInsets(top: mergedTop ? 6.0 : 10.0, left: 0.0, bottom: 6.0, right: 0.0))
+                    return (layout, { animation in
+                        guard let self else {
+                            return
+                        }
+                        self.item = item
+                        self.stopReveal()
+                        self.laidOutBlocks = []
+                        self.bubbleNode.isHidden = true
+                        self.dateNode.isHidden = true
+                        self.hideStatus()
+                        self.setTextNodes([])
+                        self.setTableNodes([])
+                        self.setToolVisible(true)
+                        self.setSubagentVisible(false)
+                        self.toolTextNode.isHidden = true
+                        for node in self.imageNodes {
+                            node.isHidden = true
+                        }
+                        for node in self.fileNodes {
+                            node.isHidden = true
+                        }
+                        self.isAccessibilityElement = true
+                        self.accessibilityIdentifier = "modelError"
+                        self.accessibilityLabel = error
+                        let card = CGRect(x: params.leftInset + freeTextInset - 4.0 + leftShift, y: 0.0, width: cardWidth, height: cardHeight)
+                        self.contentFrame = card
+                        self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
+                        animation.animator.updateFrame(layer: self.toolBackgroundNode.layer, frame: card, completion: nil)
+                        let _ = headerApply()
+                        self.toolTitleNode.frame = CGRect(origin: CGPoint(x: card.minX + cardInsets.left, y: card.minY + cardInsets.top), size: headerLayout.size)
+                        let _ = bodyApply()
+                        self.subagentTaskNode.isHidden = false
+                        self.subagentTaskNode.frame = CGRect(origin: CGPoint(x: card.minX + cardInsets.left, y: card.minY + cardInsets.top + headerLayout.size.height + 3.0), size: bodyLayout.size)
+                        self.subagentQuoteNode.isHidden = false
+                        self.subagentQuoteNode.backgroundColor = theme.toolCardTextColor.withMultipliedAlpha(0.25)
+                        self.subagentQuoteNode.frame = CGRect(x: card.minX, y: card.minY + separatorY, width: cardWidth, height: UIScreenPixel)
+                        self.subagentBarNode.frame = .zero
+                        let _ = buttonApply()
+                        self.subagentMetaNode.isHidden = false
+                        self.subagentMetaNode.frame = CGRect(origin: CGPoint(x: card.minX + floor((cardWidth - buttonLayout.size.width) / 2.0), y: card.minY + separatorY + floor((buttonHeight - buttonLayout.size.height) / 2.0)), size: buttonLayout.size)
+                        self.retryButtonFrame = CGRect(x: card.minX, y: card.minY + separatorY, width: cardWidth, height: buttonHeight)
+                        self.layoutContainers(size: layout.contentSize)
+                        self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                     })
 
                 case let .compacted(summary, reason):
@@ -1534,6 +1646,11 @@ final class ChatMessageItemNode: ListViewItemNode {
             self.waitingNode = nil
             node.removeFromSupernode()
         }
+        if let node = self.waitingLabelNode {
+            self.waitingLabelNode = nil
+            node.removeFromSupernode()
+        }
+        self.retryButtonFrame = nil
         if let node = self.serviceTauNode {
             self.serviceTauNode = nil
             node.removeFromSupernode()

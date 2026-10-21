@@ -796,4 +796,29 @@ final class SendingUITests: XCTestCase {
         sleep(2)
         self.shot("tick-1")
     }
+
+    /// Provider errors: while the server retries, the τ says when it asks again and why, and the answer that comes
+    /// says it was retried; an error that stands is a card with Retry, which sends the message again.
+    func testModelErrors() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!overloaded 2 hello")
+        self.send()
+        sleep(1)
+        self.shot("err-0-retrying")
+        sleep(2)
+        self.shot("err-1-retrying-again")
+        sleep(8)
+        self.shot("err-2-answered")
+        self.type("!fatal broken")
+        self.send()
+        sleep(3)
+        self.shot("err-3-failed")
+        let card = self.app.descendants(matching: .any).matching(identifier: "modelError").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5.0))
+        let frame = card.frame
+        self.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.maxY - 20.0)).tap()
+        sleep(3)
+        self.shot("err-4-retried")
+    }
 }

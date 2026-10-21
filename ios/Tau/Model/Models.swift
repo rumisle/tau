@@ -86,6 +86,18 @@ enum ServiceContent: Equatable {
     case compacting(since: Date)
     /// The summary that now stands in for what came before it, for the model.
     case compacted(summary: String, reason: String)
+    /// A run that ended on a model error, after the server's own retries: why, cleaned up to read.
+    case failed(error: String)
+}
+
+/// The server waiting to ask the model again after an error (durable's retry backoff, `pi.live.generation`).
+struct RetryState: Equatable {
+    /// The attempt the next request is; 2 for the first retry.
+    var attempt: Int
+    /// When it asks again; nil once the request is out.
+    var at: Date?
+    /// The error that led to it, in a few words.
+    var reason: String
 }
 
 /// When a run ended and how long it took, from its first message to its answer.
@@ -93,6 +105,8 @@ struct TurnInfo: Equatable {
     var finishedAt: Date
     /// Unknown when the run began before the loaded transcript.
     var duration: TimeInterval?
+    /// Model errors the server retried past in this run.
+    var retries: Int = 0
 }
 
 /// A tool call and, once it finished, its result: one card in the transcript.
@@ -200,6 +214,8 @@ struct ChatMessage: Equatable {
     var turn: TurnInfo?
     /// Not a message: the agent is working and has nothing to show yet (ChatWaitingNode).
     var isWaiting: Bool = false
+    /// On the waiting row: the server retrying after a model error.
+    var retry: RetryState?
     var service: ServiceContent?
 
     enum Delivery: Equatable {
@@ -254,6 +270,8 @@ struct ConversationState: Equatable {
     var runStartedAt: Date?
     /// The newest compaction that failed, until one succeeds: its task and why.
     var compactionFailure: CompactionFailure?
+    /// While the server retries after a model error.
+    var retry: RetryState?
 }
 
 struct CompactionFailure: Equatable {

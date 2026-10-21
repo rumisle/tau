@@ -331,7 +331,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             guard let self else {
                 return
             }
-            if let child = message.tool?.childConversationId {
+            if case .failed = message.service {
+                self.retryAfterError(message)
+            } else if let child = message.tool?.childConversationId {
                 // A subagent's own conversation, live, as any chat.
                 (self.navigationController as? NavigationController)?.pushViewController(ChatController(context: self.context, conversationId: child))
             } else {
@@ -974,6 +976,14 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 self?.perform(.copy, on: message)
             })))
         }
+        if case .failed = message.service {
+            items.append(.action(ContextMenuActionItem(text: "Retry", icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Reload"), color: theme.actionSheet.primaryTextColor)
+            }, action: { [weak self] _, f in
+                f(.default)
+                self?.retryAfterError(message)
+            })))
+        }
         if case .compacted = message.service, let entryId = message.entryId {
             // As an edit of an earlier message: the conversation goes on in a copy, from before the summary, with
             // everything the model saw then.
@@ -1019,6 +1029,16 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         let source = ChatMessageContextExtractedContentSource(chatNode: self.controllerNode, messageId: message.id)
         let controller = makeContextController(presentationData: self.theme.presentationData, source: .extracted(source), items: .single(ContextController.Items(content: .list(items))), recognizer: nil, gesture: gesture)
         self.presentInGlobalOverlay(controller)
+    }
+
+    /// Retry after a model error: the message before it, sent again. It is what happens anyway: the server's own
+    /// retries are over, and the model never read the failed answer.
+    private func retryAfterError(_ error: ChatMessage) {
+        let messages = self.lastState?.messages ?? []
+        guard let index = messages.firstIndex(where: { $0.id == error.id }), let user = messages[..<index].last(where: { $0.role == .user }) else {
+            return
+        }
+        self.context.store.send(user.text, attachments: user.attachments, to: self.conversationId)
     }
 
     /// Restore Full Context: a copy of this chat from before a compaction, opened over it; it exists once something

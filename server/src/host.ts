@@ -145,7 +145,9 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	}
 
 	// The dev model's chats are short: a manual compaction there keeps little verbatim, so it has something to summarize.
-	const settings: HarnessSettings = { toolExecution: "parallel", compaction: { modelOverrides: { [`${DEV_MODEL.provider}/${DEV_MODEL.modelId}`]: { keepRecentTokens: 200 } } } };
+	// Provider errors that may pass are asked again for a long while, as pi does: an agent left working should not stop
+	// for an overloaded provider. With 2 s doubling to a minute, 32 retries wait about half an hour.
+	const settings: HarnessSettings = { toolExecution: "parallel", retry: { maxRetries: 32 }, compaction: { modelOverrides: { [`${DEV_MODEL.provider}/${DEV_MODEL.modelId}`]: { keepRecentTokens: 200 } } } };
 	const harness = await Harness.open(
 		storage,
 		{

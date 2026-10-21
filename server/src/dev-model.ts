@@ -1,5 +1,6 @@
 // A free scripted model for development: streams an echo of each message, runs `$ <command>` through bash, and starts
-// a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, and waits before answering `~<seconds> <text>`.
+// a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`,
+// fails as an overloaded provider would `!overloaded <times> <text>` before answering, and fails for good `!fatal <text>`.
 import type { Message } from "@earendil-works/pi-ai";
 import {
 	type FauxProviderHandle,
@@ -12,6 +13,9 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 
 export const DEV_MODEL = { provider: "dev", modelId: "echo" } as const;
+
+/** Errors made so far for each `!overloaded` message. */
+const failures = new Map<string, number>();
 
 export function devProvider(options: { tokensPerSecond?: number } = {}): FauxProviderHandle {
 	const faux = fauxProvider({
@@ -31,6 +35,20 @@ export function devProvider(options: { tokensPerSecond?: number } = {}): FauxPro
 			await new Promise((resolve) => setTimeout(resolve, 3000));
 			const turns = context.messages.filter((message) => message.role === "user").length;
 			return fauxAssistantMessage([fauxText(`## Goal\nTry tau's compaction with the dev model.\n\n## Progress\n- ${turns} messages summarized\n- The echo model answered each one\n\n## Next Steps\n1. Keep chatting after the summary`)]);
+		}
+		// Provider errors: retried ones a number of times for this message, then the answer; a final one at once.
+		const text = last?.role === "user" ? userText(last.content) : "";
+		const overloaded = /^!overloaded (\d+) /.exec(text);
+		if (overloaded !== null && last?.role === "user") {
+			const key = `${text}@${last.timestamp}`;
+			const failed = failures.get(key) ?? 0;
+			if (failed < Number(overloaded[1])) {
+				failures.set(key, failed + 1);
+				return fauxAssistantMessage([], { stopReason: "error", errorMessage: '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}' });
+			}
+		}
+		if (text.startsWith("!fatal ")) {
+			return fauxAssistantMessage([fauxText("Let me look")], { stopReason: "error", errorMessage: '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}' });
 		}
 		return reply(context.messages);
 	};

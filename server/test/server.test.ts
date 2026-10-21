@@ -455,6 +455,18 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("an overloaded provider is asked again until it answers", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Overloaded" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "o-1", content: "!overloaded 1 hi" });
+		await until(replica, () => idle(replica) && replica.ordered().some((entry) => entry.kind === "pi.assistant" && (entry.model as any)?.[0]?.stopReason === "stop"), 10_000);
+		const errors = replica.ordered().filter((entry) => (entry.model as any)?.[0]?.stopReason === "error");
+		assert.equal(errors.length, 1);
+		await client.close();
+	});
+
 	test("a manual compaction places its summary while the conversation goes on", async () => {
 		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", { title: "Compacted" });
