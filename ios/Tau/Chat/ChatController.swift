@@ -1092,7 +1092,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.searchNavigationNode = node
         self.controllerNode.inputPanelNode.deactivateInput()
         self.navigationBar?.setContentNode(node, animated: true)
-        self.controllerNode.searchPanelState = (0, 0, false)
+        self.controllerNode.searchPanelState = (0, -1, false)
         self.controllerNode.searchStep = { [weak self] delta in
             self?.stepChatSearch(delta)
         }
@@ -1120,7 +1120,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self.chatSearchDisposable.set(nil)
             self.chatSearchResult = ChatSearchResult(entryIds: [], terms: [])
             self.searchNavigationNode?.isSearching = false
-            self.controllerNode.searchPanelState = (0, 0, false)
+            self.controllerNode.searchPanelState = (0, -1, false)
             self.controllerNode.searchHighlight = nil
             return
         }

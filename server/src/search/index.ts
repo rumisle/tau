@@ -399,6 +399,7 @@ export class SearchIndex {
 					ranges: cut.ranges.map((range: Range) => [range.start, range.end]),
 				});
 			}
+			if (hits.length === 0) continue;
 			results.push({ conversationId: item.conv.id, score: item.score, matches: item.candidate.matches, spread: item.candidate.spread, hits });
 		}
 		return { results, total: ranked.length, terms: compiled, ms: performance.now() - started };

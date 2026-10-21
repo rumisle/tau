@@ -1,5 +1,6 @@
 // WebSocket transport: one Connection per socket, optional bearer token.
 import { timingSafeEqual } from "node:crypto";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
@@ -28,7 +29,7 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 	const titler = new Titler(host);
 	const notifier = new Notifier(host);
 	// Beside the database, or in memory with it.
-	const search = new Search(host, host.database === undefined ? ":memory:" : `${host.database.replace(/\.db$/, "")}.search.db`);
+	const search = new Search(host, host.database === undefined ? ":memory:" : searchIndexPath(host.database));
 	const connections = new Set<Connection>();
 	const wss = new WebSocketServer({
 		host: options.host ?? "127.0.0.1",
@@ -82,4 +83,20 @@ function authorized(request: IncomingMessage, token: string | undefined): boolea
 	const a = Buffer.from(given);
 	const b = Buffer.from(token);
 	return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * The search index beside a database, made again when the database is not the one it was built from (a new file at
+ * the same path): its rows would point at conversations that are gone, or at others under their IDs. The database's
+ * inode, kept beside the index, tells.
+ */
+function searchIndexPath(database: string): string {
+	const path = `${database.replace(/\.db$/, "")}.search.db`;
+	const marker = `${path}.source`;
+	const source = existsSync(database) ? String(statSync(database).ino) : "";
+	if (existsSync(path) && (!existsSync(marker) || readFileSync(marker, "utf8") !== source)) {
+		for (const suffix of ["", "-wal", "-shm"]) rmSync(`${path}${suffix}`, { force: true });
+	}
+	writeFileSync(marker, source);
+	return path;
 }

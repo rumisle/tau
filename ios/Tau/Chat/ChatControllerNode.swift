@@ -796,7 +796,11 @@ private final class ChatSearchPanelView: UIView {
         self.container.update(size: size, isDark: theme.overallDarkAppearance, transition: transition)
         let strings = theme.presentationStrings
         let text: String
-        if isSearching && count == 0 {
+        // Nothing typed yet: no count, as Telegram's search panel until there is a query.
+        transition.setAlpha(view: self.labelBackground, alpha: count < 0 ? 0.0 : 1.0)
+        if count < 0 {
+            text = self.label.text ?? ""
+        } else if isSearching && count == 0 {
             text = "Searching…"
         } else if count == 0 {
             text = strings.Conversation_SearchNoResults

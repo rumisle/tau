@@ -899,6 +899,16 @@ final class SendingUITests: XCTestCase {
         self.point(0.5, 0.21).tap()
         sleep(2)
         self.shot("search-3-opened")
+        // Back: the search as it was; cleared, the chat just opened under Recent; Cancel, the list and the tab bar.
+        self.point(0.1, 0.08).tap()
+        sleep(2)
+        self.shot("search-4-back")
+        self.point(0.81, 0.095).tap()
+        sleep(2)
+        self.shot("search-5-recent")
+        self.point(0.93, 0.095).tap()
+        sleep(2)
+        self.shot("search-6-closed")
     }
 
     /// Search in a chat, from the title menu: the field replaces the title, the count and arrows the input panel, and

@@ -192,7 +192,8 @@ export class Search {
 		const { storage } = this.#host;
 		const load = async (conversationId: number, entryId: number, idx: number): Promise<string | undefined> => {
 			if (idx < 0) return this.#titles.get(conversationId);
-			const found = await storage.entry(conversationId as ConversationId, entryId as EntryId, context);
+			// A conversation the index knows and the storage does not (one that never committed) has no excerpt.
+			const found = await storage.entry(conversationId as ConversationId, entryId as EntryId, context).catch(() => undefined);
 			return found === undefined ? undefined : partText(found.entry, idx);
 		};
 		return this.index.search(query, load, { ...options, hits: 1 });
