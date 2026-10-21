@@ -1,4 +1,5 @@
-// A free scripted model for development: streams an echo of each message, and runs `$ <command>` through bash.
+// A free scripted model for development: streams an echo of each message, runs `$ <command>` through bash, and starts
+// a background subagent for `& <name>: <task>`.
 import type { Message } from "@earendil-works/pi-ai";
 import {
 	type FauxProviderHandle,
@@ -28,7 +29,8 @@ export function devProvider(options: { tokensPerSecond?: number } = {}): FauxPro
 }
 
 function reply(messages: readonly Message[]) {
-	const last = messages.at(-1);
+	// System messages carry prompt changes; the request is about the message before them.
+	const last = messages.findLast((message) => (message.role as string) !== "system");
 	if (last?.role === "toolResult") {
 		const output = last.content.map((part) => (part.type === "text" ? part.text : `[${part.type}]`)).join("");
 		return fauxAssistantMessage([fauxText(`Ran it${last.isError ? " (it failed)" : ""}:\n\n\`\`\`\n${output.trimEnd()}\n\`\`\``)]);
@@ -36,6 +38,10 @@ function reply(messages: readonly Message[]) {
 	const text = last?.role === "user" ? userText(last.content) : "";
 	if (text.startsWith("$ ")) {
 		return fauxAssistantMessage([fauxToolCall("bash", { command: text.slice(2) })], { stopReason: "toolUse" });
+	}
+	const subagent = /^& ([\w-]+): ([\s\S]+)$/.exec(text);
+	if (subagent !== null) {
+		return fauxAssistantMessage([fauxToolCall("subagent", { action: "spawn", name: subagent[1]!, message: subagent[2]! })], { stopReason: "toolUse" });
 	}
 	const turns = messages.filter((message) => message.role === "user").length;
 	return fauxAssistantMessage([

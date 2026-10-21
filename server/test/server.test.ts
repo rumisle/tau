@@ -413,6 +413,22 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("a background subagent never blocks its conversation, and its answer comes back", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Parent" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "spawn", content: "& reader: $ sleep 1 && echo found it" });
+		// The parent's run ends with the tool's reply while the subagent still works.
+		await until(replica, () => idle(replica) && kinds(replica).includes("pi.tool-result"));
+		const reports = () => replica.ordered().filter((entry) => entry.kind === "pi.user" && JSON.stringify(entry.model).includes('<subagent name=\\"reader\\"'));
+		assert.equal(reports().length, 0);
+		// The answer arrives later as a message of the parent, in the format the app shows as the subagent's card.
+		await until(replica, () => reports().length === 1 && idle(replica));
+		assert.match(JSON.stringify(reports()[0]!.model), /found it/);
+		await client.close();
+	});
+
 	test("a fork with a request ID happens once", async () => {
 		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", { title: "Parent" });

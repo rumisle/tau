@@ -33,6 +33,20 @@ struct DialogModel: Equatable {
     var outgoing: Outgoing?
     /// What is written in its input field and not sent: Telegram's red "Draft:" in the list.
     var draft: InputDraft?
+    /// Its background subagents working now, by name: the chat shows them as Telegram shows who is typing.
+    var workingSubagents: [String] = []
+
+    /// "reader working", "2 subagents working".
+    var subagentActivity: String? {
+        switch self.workingSubagents.count {
+        case 0:
+            return nil
+        case 1:
+            return "\(self.workingSubagents[0]) working"
+        default:
+            return "\(self.workingSubagents.count) subagents working"
+        }
+    }
 
     struct Outgoing: Equatable {
         var text: String
@@ -84,6 +98,8 @@ struct ToolCallInfo: Equatable {
     var output: String?
     /// A subagent's conversation, which the card opens.
     var childConversationId: Int?
+    /// Whether that subagent is working now: a background subagent works on after its call has returned.
+    var childBusy: Bool = false
     /// What the card shows for the coding tools.
     var detail: ToolDetail = .none
 }

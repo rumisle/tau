@@ -604,4 +604,22 @@ final class SendingUITests: XCTestCase {
         sleep(1)
         self.shot("multi-6-compose-menu")
     }
+
+    /// A background subagent: the chat is free at once, its card and the title say it works, and its answer arrives
+    /// as its card.
+    func testBackgroundSubagent() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("& reader: $ sleep 10 && echo found the bug")
+        self.send()
+        sleep(4)
+        self.shot("sub-0-working")
+        self.point(0.1, 0.08).tap()
+        sleep(2)
+        self.shot("sub-1-list")
+        sleep(10)
+        self.point(0.5, 0.17).tap()
+        sleep(3)
+        self.shot("sub-2-answered")
+    }
 }

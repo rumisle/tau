@@ -402,6 +402,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                     textString = NSAttributedString(string: "You: " + outgoing.text.replacingOccurrences(of: "\n", with: " "), font: textFont, textColor: theme.messageTextColor)
                 } else if dialog.busy {
                     textString = NSAttributedString(string: "working", font: textFont, textColor: theme.activityTextColor)
+                } else if let activity = dialog.subagentActivity {
+                    textString = NSAttributedString(string: activity, font: textFont, textColor: theme.activityTextColor)
                 } else if let last = dialog.last {
                     if last.role == .user {
                         // The agent reads at once: two checks, as a bot chat shows.

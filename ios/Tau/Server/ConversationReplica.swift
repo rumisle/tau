@@ -193,6 +193,12 @@ enum TranscriptBuilder {
                     }
                     return MessageAttachment(id: id * 64 + index, kind: .image(image))
                 }
+                if let report = SubagentReport(text) {
+                    // A background subagent's answer, posted as a message: its card, not the user's bubble.
+                    let tool = ToolCallInfo(callId: "report-\(id)", name: "subagent", summary: report.status == "answered" ? "\(report.name) answered" : "\(report.name) stopped", status: report.status == "answered" ? .done : .failed, output: report.text, childConversationId: report.conversationId)
+                    rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "subagent"), text: "", date: date, tool: tool, entryId: id))
+                    continue
+                }
                 rows.append(ChatMessage(id: rowIdForUserEntry[id] ?? self.rowId(base: id, block: 0), role: .user, text: text, date: date, attachments: attachments, entryId: id))
             case "pi.assistant":
                 let base = entry.int("byTaskId") ?? id
@@ -343,7 +349,19 @@ enum ToolSummary {
         case "write", "edit":
             return path()
         case "subagent":
-            return arguments.string("task") ?? ""
+            // The background tool names its subagent; the earlier one took a task.
+            if let name = arguments.string("name") {
+                let message = arguments.string("message") ?? ""
+                switch arguments.string("action") {
+                case "send":
+                    return "\(name) ← \(message)"
+                case "stop":
+                    return "Stop \(name)"
+                default:
+                    return message.isEmpty ? name : "\(name): \(message)"
+                }
+            }
+            return arguments.string("task") ?? (arguments.string("action") == "status" ? "Status" : "")
         default:
             guard let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]), let text = String(data: data, encoding: .utf8) else {
                 return ""
@@ -367,5 +385,42 @@ final class ImageDecoder {
         }
         self.cache[key] = image
         return image
+    }
+}
+
+/// A background subagent's answer as the server posts it (server/src/subagent.ts):
+/// `<subagent name="…" conversation="…" status="answered">…</subagent>`.
+struct SubagentReport {
+    let name: String
+    let conversationId: Int?
+    let status: String
+    let text: String
+
+    init?(_ message: String) {
+        guard message.hasPrefix("<subagent "), let headerEnd = message.firstIndex(of: ">") else {
+            return nil
+        }
+        let header = String(message[message.startIndex ..< headerEnd])
+        func attribute(_ key: String) -> String? {
+            guard let range = header.range(of: "\(key)=\"") else {
+                return nil
+            }
+            let rest = header[range.upperBound...]
+            guard let end = rest.firstIndex(of: "\"") else {
+                return nil
+            }
+            return String(rest[..<end]).replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&amp;", with: "&")
+        }
+        guard let name = attribute("name") else {
+            return nil
+        }
+        self.name = name
+        self.conversationId = attribute("conversation").flatMap(Int.init)
+        self.status = attribute("status") ?? "answered"
+        var body = String(message[message.index(after: headerEnd)...])
+        if body.hasSuffix("</subagent>") {
+            body = String(body.dropLast("</subagent>".count))
+        }
+        self.text = body.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

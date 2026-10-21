@@ -354,6 +354,10 @@ final class ServerStore: ConversationStore, TauServer {
                 self.publishDialogs()
                 // An open chat's title follows, as when the server names it after its first answer.
                 self.publish(dialog.id)
+                // A subagent's cards and its parent's activity follow it.
+                if let parent = dialog.parentConversationId {
+                    self.publish(parent)
+                }
             }
         case "conv.commit":
             guard let id = push.int("conversationId"), let replica = self.replicas[id], replica.isSynced else {
@@ -473,6 +477,16 @@ final class ServerStore: ConversationStore, TauServer {
             self.dialogs[id]?.outgoing = self.outgoingSummary(id)
             self.dialogs[id]?.draft = self.inputDrafts.draft(String(id))
         }
+        var working: [Int: [String]] = [:]
+        for dialog in self.dialogs.values where dialog.busy {
+            if let parent = dialog.parentConversationId {
+                // Background subagents are titled "name: task".
+                working[parent, default: []].append(dialog.title.components(separatedBy: ":").first ?? dialog.title)
+            }
+        }
+        for id in Array(self.dialogs.keys) {
+            self.dialogs[id]?.workingSubagents = (working[id] ?? []).sorted()
+        }
         let visible = self.dialogs.values.filter { $0.parentConversationId == nil && !self.hiddenDialogs.contains($0.id) }
         let sorted = visible.sorted { lhs, rhs in
             let l = lhs.last?.id ?? self.dialogOrder[lhs.id] ?? lhs.id
@@ -570,6 +584,12 @@ final class ServerStore: ConversationStore, TauServer {
         var state = TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], images: self.images)
         state.agent = self.agent(realId)
         state.title = self.dialog(id)?.title
+        // A background subagent works on after its call returned: its card follows its conversation.
+        for index in state.messages.indices {
+            if let child = state.messages[index].tool?.childConversationId {
+                state.messages[index].tool?.childBusy = self.dialogs[child]?.busy ?? false
+            }
+        }
         return state
     }
 

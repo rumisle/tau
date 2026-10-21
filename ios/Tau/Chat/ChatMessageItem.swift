@@ -1384,7 +1384,8 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
     case .none:
         if tool?.childConversationId != nil {
             // A subagent links to its own transcript first; its answer follows.
-            body.append(NSAttributedString(string: isActive ? "Working… Open subagent ›\n" : "Open subagent ›\n", font: Font.medium(14.0), textColor: accentColor))
+            let working = isActive || tool?.childBusy == true
+            body.append(NSAttributedString(string: working ? "Working… Open subagent ›\n" : "Open subagent ›\n", font: Font.medium(14.0), textColor: accentColor))
         }
         if !output.isEmpty {
             // Commands say how they went at the end; answers are read from the start.

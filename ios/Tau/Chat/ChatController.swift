@@ -122,7 +122,14 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         case .updating:
             status = .network(strings.ChatState_Updating)
         case .online:
-            status = busy ? .working("working") : .info("\(dialog.projectLabel) · \(model)")
+            if busy {
+                status = .working("working")
+            } else if let activity = dialog.subagentActivity {
+                // Its background subagents, as Telegram's title says who is typing.
+                status = .working(activity)
+            } else {
+                status = .info("\(dialog.projectLabel) · \(model)")
+            }
         }
         self.titleView.update(title: dialog.title, status: status)
         self.updateNewChatCard(dialog: dialog)

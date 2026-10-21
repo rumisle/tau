@@ -1,16 +1,23 @@
-// The `subagent` tool: the model hands a self-contained task to a child conversation and gets its answer back.
-// From durable's test/examples/22-subagent-foreground.ts. The child is owned by the tool call, so aborting the call
-// aborts it; its ID goes out in the call's details, which the app shows as a link into the child's own transcript.
+// The `subagent` tool: background subagents, after durable's test/examples/23-subagent-background.ts. The model starts
+// named subagents that keep working while it goes on, messages them (steer or follow-up), stops them, and asks how
+// they are doing; each answer comes back to this conversation as a message of its own once it arrives. A subagent
+// never blocks the conversation that started it: its conversation is owned by a background task, so this
+// conversation's Stop and idle waits leave it alone. Its ID goes out in the call's details, which the app shows as a
+// link into the subagent's own transcript.
 import type { Context } from "@earendil-works/chord";
 import { type AssistantMessage, Type } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
+	type ConversationId,
 	configure,
+	defineDoc,
 	defineExtension,
+	defineTask,
 	defineTool,
 	type EntryId,
 	type Extension,
-	type ToolExecutionApi,
+	LiveDoc,
+	type TaskId,
 } from "@earendil-works/pi-durable";
 import { MetaDoc } from "./host.ts";
 
@@ -22,41 +29,170 @@ function taskTitle(task: string): string {
 	return `${(space > 24 ? cut.slice(0, space) : line.slice(0, 48)).replace(/[,;:.\s]+$/, "")}…`;
 }
 
-async function answerText(api: ToolExecutionApi, answer: EntryId, context: Context): Promise<string> {
-	const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);
-	const message = entry?.model?.[0] as AssistantMessage | undefined;
-	return message?.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("") ?? "";
+function textOf(message: AssistantMessage | undefined): string {
+	return (message?.content ?? []).flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
-export const Subagent: Extension = defineExtension({
-	name: "subagent",
-	tools: [
-		defineTool({
-			name: "subagent",
-			description:
-				"Delegate a self-contained task to a subagent with the same tools and working directory, and get its final answer back. Use it for independent investigations that would otherwise fill this conversation with tool output. Several calls in one turn run in parallel.",
-			parameters: Type.Object({ task: Type.String({ description: "What the subagent should do and report back" }) }),
-			// A rerun after a crash finds the child it created and the submission it made.
-			replay: "safe",
-			execute: async (args, api, context) => {
-				const child = await api.commit(async (tx) => {
-					const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
-					if (existing !== undefined) return existing.id;
-					// A copy of this conversation's agent, without subagents of its own.
-					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					await configure(tx, created.id, { extensions: { remove: [Subagent] } });
-					// Named after its task, for the chat that opens it.
-					(await tx.doc(MetaDoc, created.id)).title = taskTitle(args.task);
-					return created.id;
-				}, context);
-				await api.details({ conversationId: child }, context);
-				const handle = (await api.conversation(child, context))!;
-				const request = { type: "input", content: args.task, requestId: `subagent:${api.taskId}` } as const;
-				const settled = await (await handle.submit(request, context)).wait(context);
-				if (settled.status !== "done" || settled.type !== "input") throw new Error(`Subagent ended: ${settled.status}`);
-				const text = await answerText(api, settled.answer, context);
-				return { output: [{ type: "text", text }], details: { conversationId: child } };
-			},
-		}),
-	],
+function escapeAttribute(value: string): string {
+	return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+/**
+ * How an answer comes back: `<subagent name="…" conversation="…" status="answered">…</subagent>`. The model reads it
+ * as a report; the app shows it as the subagent's card, not as the user's message.
+ */
+export function subagentReport(name: string, conversationId: ConversationId, status: "answered" | "failed", text: string): string {
+	return `<subagent name="${escapeAttribute(name)}" conversation="${conversationId}" status="${status}">\n${text}\n</subagent>`;
+}
+
+type Agent = {
+	conversationId: ConversationId;
+	/** Answers already reported: several messages can end in one answer, reported once. */
+	reported: EntryId[];
+};
+
+/** The conversation's subagents by name, and the reporter of each message to them. */
+const Subagents = defineDoc<{ agents: Record<string, Agent>; reporters: Record<string, TaskId> }>({
+	kind: "tau.subagents",
+	version: 1,
+	scope: "conversation",
+	history: "latest",
+	// A fork starts without subagents: they belong to the original.
+	fork: "initial",
+	initial: () => ({ agents: {}, reporters: {} }),
 });
+
+// A subagent outlives this conversation's turns: its conversation is owned by an anchor, a background task that
+// finishes at once. A background task is a boundary: this conversation's Stop and idle waits end there.
+const Anchor = defineTask<null, { phase: "done" }, null>({
+	name: "tau.subagent-anchor",
+	version: 1,
+	initial: () => ({ phase: "done" }),
+	phases: {
+		done: (_anchor, runtime, taskContext) =>
+			runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), taskContext),
+	},
+	abort: (_anchor, runtime, taskContext) =>
+		runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), taskContext),
+});
+
+// A reporter delivers one message to a subagent, waits for its answer, and posts the answer back. A background task
+// too; request IDs make a restart neither send the message nor report the answer twice.
+type ReporterInput = { name: string; conversationId: ConversationId; message: string; followUp: boolean };
+type ReporterState = { phase: "deliver" } | { phase: "report"; report?: string };
+const Reporter = defineTask<ReporterInput, ReporterState, null>({
+	name: "tau.subagent-reporter",
+	version: 1,
+	initial: () => ({ phase: "deliver" }),
+	phases: {
+		deliver: async (reporter, runtime, taskContext) => {
+			const { name, conversationId, message, followUp } = reporter.input;
+			const subagent = (await runtime.conversation(conversationId, taskContext))!;
+			const request = { type: "input", content: message, whenBusy: followUp ? "followUp" : "steer" } as const;
+			const submission = await subagent.submit({ ...request, requestId: `subagent:${reporter.id}` }, taskContext);
+			const settled = await submission.wait(taskContext);
+			await runtime.commit(async (tx) => {
+				const next = (report?: string) => ({ status: "running", checkpoint: { phase: "report", report } }) as const;
+				// Stopped, or withdrawn while queued: nothing to report.
+				if (settled.status === "unanswered") {
+					return next(settled.reason === "aborted" ? undefined : subagentReport(name, conversationId, "failed", `The subagent stopped: ${settled.reason}.`));
+				}
+				if (settled.type !== "input") return next();
+				const agent = (await tx.doc(Subagents, runtime.conversationId)).agents[name]!;
+				if (agent.reported.includes(settled.answer)) return next();
+				agent.reported.push(settled.answer);
+				const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as AssistantMessage | undefined;
+				return next(subagentReport(name, conversationId, "answered", textOf(answer)));
+			}, taskContext);
+		},
+		// As a follow-up: it starts a turn when this conversation is idle, or waits for its current answer.
+		report: async (reporter, runtime, taskContext) => {
+			const report = reporter.state.checkpoint.report;
+			if (report !== undefined) {
+				const main = (await runtime.conversation(runtime.conversationId, taskContext))!;
+				const input = { type: "input", content: report, whenBusy: "followUp" } as const;
+				await main.submit({ ...input, requestId: `subagent-report:${reporter.id}` }, taskContext);
+			}
+			await runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), taskContext);
+		},
+	},
+	abort: (_reporter, runtime, taskContext) =>
+		runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), taskContext),
+});
+
+const subagentTool = defineTool({
+	name: "subagent",
+	description:
+		"Run work in the background with named subagents, each with the same tools and working directory and its own " +
+		"conversation. They never block you: start them, keep answering, and each answer arrives later as a message " +
+		'starting with <subagent name="…">; it needs no reply unless the user should hear about it. Actions: spawn ' +
+		"(name, message: the task), send (name, message; followUp: true waits for its current answer instead of " +
+		"steering it), stop (name: stops its current work), status (name, or every subagent without one). Use subagents " +
+		"for independent investigations that would fill this conversation with tool output; start several to work in " +
+		"parallel.",
+	parameters: Type.Object({
+		action: Type.Union([Type.Literal("spawn"), Type.Literal("send"), Type.Literal("stop"), Type.Literal("status")]),
+		name: Type.Optional(Type.String({ description: "A short name, such as reader or tests" })),
+		message: Type.Optional(Type.String({ description: "The task for spawn, or the message for send" })),
+		followUp: Type.Optional(Type.Boolean()),
+	}),
+	// A call cut off by a crash is not run again: a repeated stop could stop newer work. The model sees the call was
+	// interrupted and can ask with status.
+	replay: "unsafe",
+	execute: async (args, api, callContext: Context) => {
+		const { action, name, message, followUp } = args;
+		const reply = (text: string, conversationId?: ConversationId) => ({
+			output: [{ type: "text" as const, text }],
+			...(conversationId === undefined || name === undefined ? {} : { details: { name, conversationId, action } }),
+		});
+		const registry = (await api.snapshot(Subagents, api.conversationId, callContext)) ?? { agents: {}, reporters: {} };
+
+		if (action === "status") {
+			const names = name === undefined ? Object.keys(registry.agents) : [name];
+			const lines: string[] = [];
+			for (const each of names) {
+				const found = Object.hasOwn(registry.agents, each) ? registry.agents[each] : undefined;
+				if (found === undefined) continue;
+				const busy = (await api.snapshot(LiveDoc, found.conversationId, callContext))?.run !== undefined;
+				lines.push(`${each}: ${busy ? "working" : "idle"}`);
+			}
+			return reply(lines.length === 0 ? "No subagents." : lines.join("\n"));
+		}
+		if (name === undefined || name.trim() === "") return reply(`${action} needs a name.`);
+		const agent = Object.hasOwn(registry.agents, name) ? registry.agents[name] : undefined;
+		if (action !== "spawn" && agent === undefined) return reply(`No subagent named ${name}.`);
+
+		if (action === "stop") {
+			await (await api.conversation(agent!.conversationId, callContext))!.abort(callContext);
+			return reply(`Stopped ${name}.`, agent!.conversationId);
+		}
+		if (message === undefined || message.trim() === "") return reply(`${action} needs a message.`);
+
+		const result = await api.commit(async (tx) => {
+			const state = await tx.doc(Subagents, api.conversationId);
+			// Both tasks belong to this conversation and are background: its Stop and idle waits skip them.
+			const background = { ownership: { kind: "conversation" }, background: true } as const;
+			if (action === "spawn") {
+				if (Object.hasOwn(state.agents, name)) return `${name} already exists; use send.`;
+				const anchor = await tx.createTask(Anchor, null, background);
+				// Owned by a task of this conversation: it starts as a copy of this agent.
+				const child = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
+				await configure(tx, child.id, {
+					extensions: { remove: [Subagent] },
+					instructions: `You are the subagent "${name}". Do the task you are given and answer with what you found.`,
+				});
+				(await tx.doc(MetaDoc, child.id)).title = `${name}: ${taskTitle(message)}`;
+				state.agents[name] = { conversationId: child.id, reported: [] };
+			}
+			const conversationId = state.agents[name]!.conversationId;
+			const input = { name, conversationId, message, followUp: action === "send" && followUp === true };
+			state.reporters[api.taskId] = await tx.createTask(Reporter, input, background);
+			return action === "send" ? `Sent to ${name}.` : `Started ${name}. Its answer will arrive as a message.`;
+		}, callContext);
+		const current = (await api.snapshot(Subagents, api.conversationId, callContext))?.agents[name];
+		return reply(result, current?.conversationId);
+	},
+});
+
+// The tasks come with the extension, so reporters still pending resume after a restart.
+export const Subagent: Extension = defineExtension({ name: "subagent", tasks: [Anchor, Reporter], tools: [subagentTool] });
