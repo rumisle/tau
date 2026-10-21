@@ -293,6 +293,10 @@ IMAGES = [
     "Chat/Input/Menu/ScheduleIcon",
     # The title menu's Subagents.
     "Chat/Context Menu/Bots",
+    # Pinned chats: the list's pin badge and the menu's Pin / Unpin.
+    "Chat List/PeerPinnedIcon",
+    "Chat/Context Menu/Pin",
+    "Chat/Context Menu/Unpin",
 ]
 
 # Lottie animations LottieComponent.AppBundleContent loads by name, from submodules/TelegramUI/Resources/Animations.
@@ -313,6 +317,8 @@ ANIMATIONS = [
     "anim_read.json",
     "anim_unread.json",
     "anim_delete.json",
+    "anim_pin.json",
+    "anim_unpin.json",
 ]
 
 # Local changes, applied in order with `git apply` after copying. Paths in them are relative to ios/ThirdParty/Telegram.

@@ -337,6 +337,8 @@ export class Connection {
 					}
 					if (params.archived === true) meta.archived = true;
 					else if (params.archived === false) delete meta.archived;
+					if (typeof params.pinned === "number" && Number.isFinite(params.pinned)) meta.pinned = params.pinned;
+					else if (params.pinned === false) delete meta.pinned;
 				}, context);
 				return {};
 			}

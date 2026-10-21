@@ -132,6 +132,7 @@ export class Dialogs {
 			unreadCount,
 			...(meta?.markedUnread === true ? { markedUnread: true as const } : {}),
 			...(meta?.archived === true ? { archived: true as const } : {}),
+			...(typeof meta?.pinned === "number" ? { pinned: meta.pinned } : {}),
 		};
 	}
 

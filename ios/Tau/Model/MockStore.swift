@@ -289,6 +289,11 @@ final class MockStore: TauStore, TauServer {
         self.publishDialogs()
     }
 
+    func setPinned(_ id: Int, _ pinned: Bool) {
+        self.dialogs[id]?.pinned = pinned ? Date().timeIntervalSince1970 * 1000.0 : nil
+        self.publishDialogs()
+    }
+
     func close() {
         for stream in self.streams.values {
             stream.invalidate()

@@ -38,6 +38,8 @@ export type MetaState = {
 	markedUnread?: boolean;
 	/** Out of the main chat list, in Archived Chats. */
 	archived?: boolean;
+	/** Pinned to the top of its list, as Telegram pins chats: when, so later pins sit higher. */
+	pinned?: number;
 	/**
 	 * Request IDs withdrawn before any submission had them, newest last: a submit that arrives later with one is
 	 * refused, so a message cancelled while its submit was in flight can never be admitted.

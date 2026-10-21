@@ -92,6 +92,8 @@ protocol ConversationStore: AnyObject {
     /// Mark as Read / Mark as Unread.
     func setUnread(_ id: Int, _ unread: Bool)
     func setArchived(_ id: Int, _ archived: Bool)
+    /// Pin to the top of the list, or unpin; a new pin goes above the others.
+    func setPinned(_ id: Int, _ pinned: Bool)
 
     /// Sends a message (docs/sending.md). While the agent works, a steer reaches it after its current step and a
     /// follow-up once its run ends; idle, both start a run.

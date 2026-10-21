@@ -45,6 +45,8 @@ export type Dialog = {
 	unreadCount: number;
 	markedUnread?: true;
 	archived?: true;
+	/** Pinned to the top of its list; higher first. */
+	pinned?: number;
 };
 
 export type AgentPatch = {

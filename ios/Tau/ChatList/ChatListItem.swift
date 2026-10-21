@@ -29,6 +29,7 @@ final class ChatListInteraction {
     let delete: (DialogModel) -> Void
     /// A row opened its swipe actions; the others close, as with Telegram's setPeerIdWithRevealedOptions.
     var revealedOptionsChanged: (Int?) -> Void = { _ in }
+    var setPinned: (DialogModel, Bool) -> Void = { _, _ in }
 
     init(open: @escaping (DialogModel) -> Void, openArchive: @escaping () -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void, toggleRead: @escaping (DialogModel) -> Void, setArchived: @escaping (DialogModel, Bool) -> Void, delete: @escaping (DialogModel) -> Void) {
         self.open = open
@@ -48,11 +49,14 @@ final class ChatListItem: ListViewItem {
     let theme: TauTheme
     let content: ChatListItemContent
     let interaction: ChatListInteraction
+    /// The last of the pinned chats: its separator runs the full width, as Telegram ends the pinned block.
+    let isLastPinned: Bool
 
-    init(theme: TauTheme, content: ChatListItemContent, interaction: ChatListInteraction) {
+    init(theme: TauTheme, content: ChatListItemContent, interaction: ChatListInteraction, isLastPinned: Bool = false) {
         self.theme = theme
         self.content = content
         self.interaction = interaction
+        self.isLastPinned = isLastPinned
     }
 
     var dialog: DialogModel? {
@@ -128,6 +132,8 @@ private let badgeDiameter: CGFloat = 20.0
 private let deleteIcon = ItemListRevealOptionIcon.animation(animation: "anim_delete", scale: 1.0, offset: 0.0, replaceColors: nil, flip: false, startFrame: 3)
 private let readIcon = ItemListRevealOptionIcon.animation(animation: "anim_read", scale: 1.0, offset: 0.0, replaceColors: nil, flip: false, startFrame: 5)
 private let unreadIcon = ItemListRevealOptionIcon.animation(animation: "anim_unread", scale: 1.0, offset: 0.0, replaceColors: [0x2194fa], flip: false, startFrame: 5)
+private let pinIcon = ItemListRevealOptionIcon.animation(animation: "anim_pin", scale: 1.0, offset: 0.0, replaceColors: nil, flip: false, startFrame: 3)
+private let unpinIcon = ItemListRevealOptionIcon.animation(animation: "anim_unpin", scale: 1.0, offset: 0.0, replaceColors: [0x1993fa], flip: false, startFrame: 5)
 private let archiveIcon = ItemListRevealOptionIcon.animation(animation: "anim_archive", scale: 1.0, offset: 2.0, replaceColors: [0xa9a9ad], flip: false, startFrame: 5)
 private let unarchiveIcon = ItemListRevealOptionIcon.animation(animation: "anim_unarchive", scale: 0.52, offset: -6.0, replaceColors: [0xa9a9ad], flip: false, startFrame: 5)
 
@@ -136,6 +142,8 @@ private enum RevealOptionKey: Int32 {
     case archive
     case unarchive
     case toggleMarkedUnread
+    case pin
+    case unpin
 }
 
 private func rightRevealOptions(strings: PresentationStrings, theme: PresentationTheme, archived: Bool) -> [ItemListRevealOption] {
@@ -150,13 +158,21 @@ private func rightRevealOptions(strings: PresentationStrings, theme: Presentatio
     return options
 }
 
-private func leftRevealOptions(strings: PresentationStrings, theme: PresentationTheme, isUnread: Bool) -> [ItemListRevealOption] {
+/// ChatListItem.swift's leftRevealOptions: Read or Unread, then Pin or Unpin.
+private func leftRevealOptions(strings: PresentationStrings, theme: PresentationTheme, isUnread: Bool, isPinned: Bool) -> [ItemListRevealOption] {
     let actions = theme.list.itemDisclosureActions
+    var options: [ItemListRevealOption] = []
     if isUnread {
-        return [ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Read, icon: readIcon, color: actions.inactive.fillColor, iconColor: actions.neutral1.foregroundColor, textColor: theme.chatList.dateTextColor)]
+        options.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Read, icon: readIcon, color: actions.inactive.fillColor, iconColor: actions.neutral1.foregroundColor, textColor: theme.chatList.dateTextColor))
     } else {
-        return [ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Unread, icon: unreadIcon, color: actions.accent.fillColor, iconColor: actions.accent.foregroundColor, textColor: theme.chatList.dateTextColor)]
+        options.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Unread, icon: unreadIcon, color: actions.accent.fillColor, iconColor: actions.accent.foregroundColor, textColor: theme.chatList.dateTextColor))
     }
+    if isPinned {
+        options.append(ItemListRevealOption(key: RevealOptionKey.unpin.rawValue, title: strings.DialogList_Unpin, icon: unpinIcon, color: actions.constructive.fillColor, iconColor: actions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+    } else {
+        options.append(ItemListRevealOption(key: RevealOptionKey.pin.rawValue, title: strings.DialogList_Pin, icon: pinIcon, color: actions.constructive.fillColor, iconColor: actions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+    }
+    return options
 }
 
 /// AvatarNode's archivedChatsIcon: the archive box on the theme's archive gradient.
@@ -186,6 +202,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
     /// and is where the preview grows from.
     private let contextContainer = ContextControllerSourceNode()
     private let mainContentContainerNode = ASDisplayNode()
+    /// Telegram's pinnedItemBackgroundColor under a pinned chat.
+    private let backgroundNode = ASDisplayNode()
     private let highlightedBackgroundNode: ASDisplayNode
     private let avatarNode: ASImageNode
     private let titleNode: TextNode
@@ -231,6 +249,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
 
         super.init(layerBacked: false, rotated: false, seeThrough: false)
 
+        self.backgroundNode.isLayerBacked = true
+        self.addSubnode(self.backgroundNode)
         self.addSubnode(self.separatorNode)
         self.addSubnode(self.contextContainer)
         self.contextContainer.addSubnode(self.mainContentContainerNode)
@@ -338,6 +358,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
             }
         case RevealOptionKey.toggleMarkedUnread.rawValue:
             item.interaction.toggleRead(dialog)
+        case RevealOptionKey.pin.rawValue, RevealOptionKey.unpin.rawValue:
+            item.interaction.setPinned(dialog, option.key == RevealOptionKey.pin.rawValue)
         default:
             break
         }
@@ -382,12 +404,17 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                 avatarKey = "\(dialog.id):\(dialog.title)"
                 if dialog.unreadCount > 0 {
                     badgeContent = .text(NSAttributedString(string: "\(dialog.unreadCount)", font: badgeFont, textColor: presentationTheme.chatList.unreadBadgeActiveTextColor))
-                } else if dialog.markedUnread {
+                } else if dialog.markedUnread || dialog.pinned != nil {
                     badgeContent = .blank
                 } else {
                     badgeContent = .none
                 }
-                badgeImage = badgeContent.isEmpty ? nil : PresentationResourcesChatList.badgeBackgroundActive(presentationTheme, diameter: badgeDiameter)
+                if dialog.unreadCount == 0 && !dialog.markedUnread && dialog.pinned != nil {
+                    // ChatListItem.swift: a pinned chat with nothing unread shows the pin where the badge goes.
+                    badgeImage = PresentationResourcesChatList.badgeBackgroundPinned(presentationTheme, diameter: badgeDiameter)
+                } else {
+                    badgeImage = badgeContent.isEmpty ? nil : PresentationResourcesChatList.badgeBackgroundActive(presentationTheme, diameter: badgeDiameter)
+                }
                 if !dialog.busy, let draft = dialog.draft, !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     // Telegram's draft: "Draft:" in red, then the text, at the time it was written.
                     date = draft.date
@@ -534,7 +561,11 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                 let badgeFrame = CGRect(x: contentRect.maxX - badgeSize.width, y: contentRect.maxY - badgeSize.height - 4.0, width: badgeSize.width, height: badgeSize.height)
                 transition.updateFrame(node: strongSelf.badgeNode, frame: badgeFrame)
 
-                let separatorX = leftInset + rawContentRect.origin.x
+                let isPinned = item.dialog?.pinned != nil
+                strongSelf.backgroundNode.isHidden = !isPinned
+                strongSelf.backgroundNode.backgroundColor = presentationTheme.chatList.pinnedItemBackgroundColor
+                strongSelf.backgroundNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -separatorHeight), size: CGSize(width: params.width, height: itemHeight + separatorHeight))
+                let separatorX = item.isLastPinned ? params.leftInset : leftInset + rawContentRect.origin.x
                 transition.updateFrame(node: strongSelf.separatorNode, frame: CGRect(origin: CGPoint(x: separatorX, y: itemHeight - separatorHeight), size: CGSize(width: params.width - separatorX, height: separatorHeight)))
                 strongSelf.highlightedBackgroundNode.frame = CGRect(origin: CGPoint(x: strongSelf.revealOffset, y: -separatorHeight), size: CGSize(width: params.width, height: itemHeight + separatorHeight))
                 let rowFrame = CGRect(origin: CGPoint(), size: CGSize(width: params.width, height: itemHeight))
@@ -546,7 +577,7 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                 switch item.content {
                 case let .dialog(dialog):
                     strongSelf.setRevealOptions((
-                        left: leftRevealOptions(strings: strings, theme: presentationTheme, isUnread: dialog.unreadCount > 0 || dialog.markedUnread),
+                        left: leftRevealOptions(strings: strings, theme: presentationTheme, isUnread: dialog.unreadCount > 0 || dialog.markedUnread, isPinned: dialog.pinned != nil),
                         right: rightRevealOptions(strings: strings, theme: presentationTheme, archived: dialog.archived)
                     ))
                 case .archive:

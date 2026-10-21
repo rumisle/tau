@@ -97,6 +97,7 @@ type Dialog = {
   unreadCount: number;                // assistant messages with text after `read`, at most 99
   markedUnread?: true;                // marked unread by hand
   archived?: true;                    // in Archived Chats, out of the main list
+  pinned?: number;                    // pinned to the top of its list, higher first (when it was pinned, in ms)
 };
 type EntrySummary = { id: number; kind: string; role?: string; text: string; timestamp?: number };
 ```
@@ -153,10 +154,11 @@ The user has seen the conversation up to `at`: moves `read` forward (never back)
 sends it while the chat is on screen, as entries arrive.
 
 ### `conversation.mark`
-`{ conversationId, unread?: boolean, archived?: boolean }` -> `{}`
+`{ conversationId, unread?: boolean, archived?: boolean, pinned?: number | false }` -> `{}`
 
 The chat list's actions: `unread: true` is Mark as Unread; `unread: false` is Mark as Read (`read` moves to the newest
-entry). `archived` moves the conversation into or out of Archived Chats.
+entry). `archived` moves the conversation into or out of Archived Chats. `pinned` pins it with that sort key (clients
+send the time, so the newest pin is on top across servers), `false` unpins it.
 
 ### `conversation.subscribe`
 `{ conversationId, after?: EntryId, limit?: number }` ->

@@ -821,4 +821,53 @@ final class SendingUITests: XCTestCase {
         sleep(3)
         self.shot("err-4-retried")
     }
+
+    /// Pinned chats, as Telegram's: Pin from the menu puts the chat on top with the pin where the badge goes; the
+    /// latest pin is first; a right swipe offers Unpin.
+    func testPinnedChats() {
+        for text in ["pin one", "pin two", "pin three"] {
+            self.launch(["-newChat", "YES"])
+            self.focusInput()
+            self.type(text)
+            self.send()
+            sleep(2)
+            self.app.terminate()
+        }
+        self.launch([])
+        // Pins an earlier run left.
+        for _ in 0 ..< 4 {
+            self.point(0.5, 0.17).press(forDuration: 1.0)
+            sleep(1)
+            let unpin = self.app.descendants(matching: .any)["Unpin"].firstMatch
+            if unpin.exists {
+                unpin.tap()
+                sleep(1)
+            } else {
+                self.point(0.5, 0.97).tap()
+                sleep(1)
+                break
+            }
+        }
+        self.point(0.5, 0.344).press(forDuration: 1.0)
+        sleep(1)
+        self.app.descendants(matching: .any)["Pin"].firstMatch.tap()
+        sleep(2)
+        self.point(0.5, 0.344).press(forDuration: 1.0)
+        sleep(1)
+        self.app.descendants(matching: .any)["Pin"].firstMatch.tap()
+        sleep(2)
+        self.shot("pin-0-list")
+        let row = self.point(0.3, 0.17)
+        row.press(forDuration: 0.05, thenDragTo: self.point(0.8, 0.17))
+        sleep(1)
+        self.shot("pin-1-swipe")
+        self.point(0.24, 0.165).tap()
+        sleep(2)
+        self.shot("pin-2-unpinned")
+        // Leave the list as found.
+        self.point(0.5, 0.17).press(forDuration: 1.0)
+        sleep(1)
+        self.app.descendants(matching: .any)["Unpin"].firstMatch.tap()
+        sleep(1)
+    }
 }

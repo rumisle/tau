@@ -16,6 +16,7 @@ private struct ChatListEntry: Comparable, Identifiable {
     let content: ChatListItemContent
     /// Position in the list; the store sorts by last activity.
     let index: Int
+    var isLastPinned = false
 
     var stableId: Int {
         switch self.content {
@@ -31,7 +32,7 @@ private struct ChatListEntry: Comparable, Identifiable {
     }
 
     static func == (lhs: ChatListEntry, rhs: ChatListEntry) -> Bool {
-        return lhs.content == rhs.content && lhs.index == rhs.index
+        return lhs.content == rhs.content && lhs.index == rhs.index && lhs.isLastPinned == rhs.isLastPinned
     }
 }
 
@@ -142,6 +143,9 @@ final class ChatListController: ViewController {
         }, delete: { dialog in
             store.deleteConversation(dialog.id)
         })
+        interaction.setPinned = { dialog, pinned in
+            store.setPinned(dialog.id, pinned)
+        }
         self.displayNode = ChatListControllerNode(context: self.context, theme: self.theme, mode: self.mode, interaction: interaction)
         self.dialogsDisposable.set((self.context.store.dialogsSignal() |> deliverOnMainQueue).start(next: { [weak self] dialogs in
             self?.latestDialogs = dialogs
@@ -320,6 +324,13 @@ final class ChatListController: ViewController {
                 store.setUnread(dialog.id, true)
             })))
         }
+        // ChatContextMenus.swift: Pin or Unpin after the read state.
+        items.append(.action(ContextMenuActionItem(text: dialog.pinned != nil ? strings.ChatList_Context_Unpin : strings.ChatList_Context_Pin, icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: dialog.pinned != nil ? "Chat/Context Menu/Unpin" : "Chat/Context Menu/Pin"), color: theme.contextMenu.primaryColor)
+        }, action: { _, f in
+            f(.default)
+            store.setPinned(dialog.id, dialog.pinned == nil)
+        })))
         items.append(.action(ContextMenuActionItem(text: "Rename", icon: { theme in
             return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Edit"), color: theme.contextMenu.primaryColor)
         }, action: { [weak self] _, f in
@@ -402,8 +413,14 @@ final class ChatListControllerNode: ASDisplayNode {
         }
     }
 
+    /// Telegram's order: pinned chats on top, the latest pin first, then the rest by activity as the store sorts them.
+    static func pinnedFirst(_ dialogs: [DialogModel]) -> [DialogModel] {
+        let pinned = dialogs.filter { $0.pinned != nil }.sorted { ($0.pinned ?? 0) > ($1.pinned ?? 0) }
+        return pinned + dialogs.filter { $0.pinned == nil }
+    }
+
     private func makeItem(_ entry: ChatListEntry) -> ListViewItem {
-        return ChatListItem(theme: self.theme, content: entry.content, interaction: self.interaction)
+        return ChatListItem(theme: self.theme, content: entry.content, interaction: self.interaction, isLastPinned: entry.isLastPinned)
     }
 
     private func reloadAllItems() {
@@ -423,11 +440,14 @@ final class ChatListControllerNode: ASDisplayNode {
             if !archived.isEmpty {
                 contents.append(.archive(ArchiveSummary(titles: archived.map { $0.title }, date: archived.compactMap { $0.last?.date }.max(), unreadCount: archived.reduce(0) { $0 + ($1.isUnread ? 1 : 0) })))
             }
-            contents += dialogs.filter { !$0.archived }.map { .dialog($0) }
+            contents += ChatListControllerNode.pinnedFirst(dialogs.filter { !$0.archived }).map { .dialog($0) }
         case .archive:
-            contents = dialogs.filter { $0.archived }.map { .dialog($0) }
+            contents = ChatListControllerNode.pinnedFirst(dialogs.filter { $0.archived }).map { .dialog($0) }
         }
-        let entries = contents.enumerated().map { ChatListEntry(content: $0.element, index: $0.offset) }
+        var entries = contents.enumerated().map { ChatListEntry(content: $0.element, index: $0.offset) }
+        if let last = entries.lastIndex(where: { if case let .dialog(dialog) = $0.content { return dialog.pinned != nil } else { return false } }), last < entries.count - 1 {
+            entries[last].isLastPinned = true
+        }
         let isInitial = self.entries.isEmpty
         let previous = self.entries
         self.entries = entries

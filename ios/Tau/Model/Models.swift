@@ -26,6 +26,8 @@ struct DialogModel: Equatable {
     var markedUnread: Bool = false
     /// In Archived Chats.
     var archived: Bool = false
+    /// Pinned to the top of its list: the sort key, higher first (when it was pinned).
+    var pinned: Double?
     /// A message to it was refused; Telegram marks the chat with a red badge.
     var hasFailedMessage: Bool = false
     /// This device's latest message to it that is not in the transcript yet: shown as the last message, with the clock

@@ -365,6 +365,10 @@ final class MultiStore: TauStore {
         self.route(id).map { $0.0.setUnread($0.1, unread) }
     }
 
+    func setPinned(_ id: Int, _ pinned: Bool) {
+        self.route(id).map { $0.0.setPinned($0.1, pinned) }
+    }
+
     func setArchived(_ id: Int, _ archived: Bool) {
         self.route(id).map { $0.0.setArchived($0.1, archived) }
     }

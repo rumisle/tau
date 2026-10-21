@@ -473,6 +473,7 @@ final class ServerStore: ConversationStore, TauServer {
             markedUnread: raw.bool("markedUnread") ?? false,
             archived: raw.bool("archived") ?? false
         )
+        dialog.pinned = raw.double("pinned")
         dialog.hasFailedMessage = self.hasFailedMessage(id)
         dialog.outgoing = self.outgoingSummary(id)
         // A read this device sent and the server has not reflected yet.
@@ -1050,6 +1051,17 @@ final class ServerStore: ConversationStore, TauServer {
         self.connection.request("conversation.mark", ["conversationId": realId, "unread": unread]) { _ in }
     }
 
+    func setPinned(_ id: Int, _ pinned: Bool) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        // The time, so the newest pin is on top across servers too.
+        let key = Date().timeIntervalSince1970 * 1000.0
+        self.dialogs[realId]?.pinned = pinned ? key : nil
+        self.publishDialogs()
+        self.connection.request("conversation.mark", ["conversationId": realId, "pinned": pinned ? key : false]) { _ in }
+    }
+
     func setArchived(_ id: Int, _ archived: Bool) {
         guard let realId = self.resolve(id) else {
             return
@@ -1406,6 +1418,9 @@ final class EntryCache {
             if let parent = dialog.parentConversationId {
                 row["parent"] = parent
             }
+            if let pinned = dialog.pinned {
+                row["pinned"] = pinned
+            }
             if let last = dialog.last {
                 row["last"] = ["id": last.id, "text": last.text, "date": last.date.timeIntervalSince1970, "user": last.role == .user]
             }
@@ -1431,7 +1446,9 @@ final class EntryCache {
             if let summary = row.object("last"), let entryId = summary.int("id") {
                 last = DialogModel.EntrySummary(id: entryId, role: (summary.bool("user") ?? false) ? .user : .assistant, text: summary.string("text") ?? "", date: Date(timeIntervalSince1970: summary.double("date") ?? 0))
             }
-            return DialogModel(id: id, title: row.string("title") ?? "", parentConversationId: row.int("parent"), cwd: row.string("cwd") ?? "~", model: row.string("model") ?? "", last: last, busy: false, unreadCount: row.int("unread") ?? 0, markedUnread: row.bool("markedUnread") ?? false, archived: row.bool("archived") ?? false)
+            var dialog = DialogModel(id: id, title: row.string("title") ?? "", parentConversationId: row.int("parent"), cwd: row.string("cwd") ?? "~", model: row.string("model") ?? "", last: last, busy: false, unreadCount: row.int("unread") ?? 0, markedUnread: row.bool("markedUnread") ?? false, archived: row.bool("archived") ?? false)
+            dialog.pinned = row.double("pinned")
+            return dialog
         }
     }
 }
