@@ -375,6 +375,15 @@ final class MultiStore: TauStore {
 
     func send(_ text: String, attachments: [MessageAttachment], to id: Int, mode: SendMode) {
         self.route(id).map { $0.0.send(text, attachments: attachments, to: $0.1, mode: mode) }
+        LiveActivityController.shared.watch(id)
+    }
+
+    /// A draft's global conversation ID once it is created.
+    func realId(_ id: Int) -> Int? {
+        guard let (store, local) = self.route(id) else {
+            return nil
+        }
+        return store.realId(local).map { MultiStore.global(store.slot, $0) }
     }
 
     func edit(messageId: Int, text: String, in id: Int, completion: @escaping (Int) -> Void) {
@@ -382,7 +391,11 @@ final class MultiStore: TauStore {
             return
         }
         let slot = store.slot
-        store.edit(messageId: messageId, text: text, in: local, completion: { completion(MultiStore.global(slot, $0)) })
+        store.edit(messageId: messageId, text: text, in: local, completion: { newId in
+            let id = MultiStore.global(slot, newId)
+            LiveActivityController.shared.watch(id)
+            completion(id)
+        })
     }
 
     func stop(_ id: Int) {
@@ -391,6 +404,7 @@ final class MultiStore: TauStore {
 
     func stopAndSend(_ text: String, attachments: [MessageAttachment], in id: Int) {
         self.route(id).map { $0.0.stopAndSend(text, attachments: attachments, in: $0.1) }
+        LiveActivityController.shared.watch(id)
     }
 
     func sendNow(_ queued: QueuedMessage, in id: Int) {

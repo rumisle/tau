@@ -46,6 +46,11 @@ final class NotificationsController: SettingsListController {
                 InAppNotificationSettings.vibrate = value
             }),
             SettingsTextItem(theme: theme, text: "While tau is open, an answer in another chat shows at the top of the screen.", kind: .footer),
+            SettingsTextItem(theme: theme, text: "Live Activity", kind: .header),
+            SettingsRowItem(theme: theme, icon: nil, title: "Chats You Wait On", accessory: .toggle(LiveActivityController.isEnabled), position: SettingsRowPosition(isFirst: true, isLast: true), action: nil, toggled: { value in
+                LiveActivityController.isEnabled = value
+            }),
+            SettingsTextItem(theme: theme, text: "A chat you send a message to shows on the Lock Screen and in the Dynamic Island until you see how it ended. Without Apple push it updates while tau runs, and says when it started once it cannot tell more.", kind: .footer),
         ]
         let servers = self.context.store.servers
         guard !self.context.store.isDemo else {

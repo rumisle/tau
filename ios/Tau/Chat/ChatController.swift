@@ -467,6 +467,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         if !self.isPreview {
             self.isOnScreen = true
             self.context.store.markSeen(self.conversationId)
+            LiveActivityController.shared.seen((self.context.store as? MultiStore)?.realId(self.conversationId) ?? self.conversationId)
         }
     }
 

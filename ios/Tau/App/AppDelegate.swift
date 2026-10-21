@@ -36,6 +36,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         themeContext.observeSystemStyle(hostView.systemUserInterfaceStyle)
         let context = AppContext(store: makeStore(), themeContext: themeContext)
         self.context = context
+        LiveActivityController.shared.attach(store: context.store)
 
         let makeRoot: () -> (RootTabController, ChatListController) = {
             let chatList = ChatListController(context: context)

@@ -961,4 +961,38 @@ final class SendingUITests: XCTestCase {
         sleep(2)
         self.shot("dict-3-append")
     }
+
+    /// The Live Activity: a message sent puts the chat in the island while it works, the minutes counting; on the lock
+    /// screen a card; done, a check.
+    func testLiveActivity() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("$ sleep 75 && echo the build passes")
+        self.send()
+        sleep(3)
+        XCUIDevice.shared.press(.home)
+        sleep(3)
+        self.shot("la-0-island")
+        // The island, held: its expanded view.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.025)).press(forDuration: 1.2)
+        sleep(2)
+        self.shot("la-1-expanded")
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
+        sleep(1)
+        XCUIDevice.shared.perform(NSSelectorFromString("pressLockButton"))
+        sleep(2)
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        sleep(2)
+        self.shot("la-2-lock")
+        // Back in the app until it answers, so the activity hears it.
+        XCUIDevice.shared.perform(NSSelectorFromString("pressLockButton"))
+        sleep(1)
+        self.app.activate()
+        sleep(75)
+        XCUIDevice.shared.press(.home)
+        sleep(3)
+        self.shot("la-3-done")
+        self.app.activate()
+    }
 }

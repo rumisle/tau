@@ -557,6 +557,11 @@ final class ServerStore: ConversationStore, TauServer {
 
     // MARK: - Conversations
 
+    /// A draft's conversation once it is created; another ID as it is.
+    func realId(_ id: Int) -> Int? {
+        return self.resolve(id)
+    }
+
     private func resolve(_ id: Int) -> Int? {
         if id < 0 {
             return self.drafts[id]?.realId

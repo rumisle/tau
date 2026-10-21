@@ -27,6 +27,7 @@ targets:
       - path: ThirdParty/tdesktop/background.tgv
         buildPhase: resources
     dependencies:
+      - target: TauWidgets
       - package: SwiftMath
       - package: TelegramFoundation
         products:
@@ -96,6 +97,26 @@ targets:
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Send photos to the agent."
         INFOPLIST_KEY_NSCameraUsageDescription: "Take a photo to send to the agent."
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Dictate messages to the agent."
+        # The Live Activity (TauWidgets, docs/live-activity.md).
+        INFOPLIST_KEY_NSSupportsLiveActivities: YES
+  TauWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: TauWidgets
+      - path: Tau/LiveActivity/TauActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau.widgets
+        PRODUCT_NAME: TauWidgets
+        INFOPLIST_FILE: TauWidgets/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
   TauUITests:
     type: bundle.ui-testing
     platform: iOS
