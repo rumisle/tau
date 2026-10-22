@@ -44,4 +44,4 @@ and what they saved. The Cost there includes the refreshes. Settings > Usage sho
 
 `--dev-cache-ttl <seconds>` gives the dev model a prompt cache of that lifetime, priced at four times Claude Opus so
 that warming its small prompts pays. `SendingUITests.testPromptCache` runs against one on port 7982 with 15 seconds,
-which `ios/scripts/sending-tests.sh` starts; the server test "keeps a working conversation's prompt cache warm" uses 11.
+which `ios/scripts/sending-tests.sh` and `ios/scripts/uitests.py` start; the server test "keeps a working conversation's prompt cache warm" uses 11.

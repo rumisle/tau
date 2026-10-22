@@ -2,12 +2,16 @@ import XCTest
 
 /// Drives the app inside the simulator and saves a screenshot per step to /tmp/tau-ui, for checking the UI from the
 /// command line: `ios/scripts/uitest.sh [test name]`.
+/// Where screenshots go, and the server requests of SendingUITests: TAU_UI_DIR, one per simulator when
+/// ios/scripts/uitests.sh runs several.
+let uiDirectory = ProcessInfo.processInfo.environment["TAU_UI_DIR"] ?? "/tmp/tau-ui"
+
 final class TauUITests: XCTestCase {
     private var app: XCUIApplication!
 
     override func setUp() {
         continueAfterFailure = true
-        try? FileManager.default.createDirectory(atPath: "/tmp/tau-ui", withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: uiDirectory, withIntermediateDirectories: true)
     }
 
     private func launch(_ arguments: [String] = []) {
@@ -20,7 +24,7 @@ final class TauUITests: XCTestCase {
 
     private func shot(_ name: String) {
         let data = XCUIScreen.main.screenshot().pngRepresentation
-        try? data.write(to: URL(fileURLWithPath: "/tmp/tau-ui/\(name).png"))
+        try? data.write(to: URL(fileURLWithPath: "\(uiDirectory)/\(name).png"))
     }
 
     private func point(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate {

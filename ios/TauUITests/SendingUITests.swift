@@ -4,15 +4,18 @@ import XCTest
 /// dev/echo model on port 7979, whose `$ <command>` messages run bash, so `$ sleep N` keeps the agent working for N
 /// seconds. `ios/scripts/sending-tests.sh [test ...]` runs these and stops and starts the server when a test asks;
 /// screenshots go to /tmp/tau-ui.
+/// The dev server: TAU_DEV_SERVER, which ios/scripts/uitests.sh gives each simulator its own of.
+let devServer = ProcessInfo.processInfo.environment["TAU_DEV_SERVER"] ?? "ws://127.0.0.1:7979"
+
 final class SendingUITests: XCTestCase {
     private var app: XCUIApplication!
 
     override func setUp() {
         continueAfterFailure = true
-        try? FileManager.default.createDirectory(atPath: "/tmp/tau-ui", withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: uiDirectory, withIntermediateDirectories: true)
     }
 
-    private func launch(_ arguments: [String], server: String = "ws://127.0.0.1:7979") {
+    private func launch(_ arguments: [String], server: String = devServer) {
         self.app = XCUIApplication()
         self.app.launchArguments = ["-server.url", server, "-wrapCode", "YES", "-theme", "dark"] + arguments
         self.app.launch()
@@ -21,7 +24,7 @@ final class SendingUITests: XCTestCase {
 
     private func shot(_ name: String) {
         let data = XCUIScreen.main.screenshot().pngRepresentation
-        try? data.write(to: URL(fileURLWithPath: "/tmp/tau-ui/\(name).png"))
+        try? data.write(to: URL(fileURLWithPath: "\(uiDirectory)/\(name).png"))
     }
 
     private func point(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate {
@@ -78,9 +81,9 @@ final class SendingUITests: XCTestCase {
                 self?.server("start")
             }
         }
-        let done = "/tmp/tau-ui/server-\(action)ed"
+        let done = "\(uiDirectory)/server-\(action)ed"
         try? FileManager.default.removeItem(atPath: done)
-        FileManager.default.createFile(atPath: "/tmp/tau-ui/server-\(action)", contents: nil)
+        FileManager.default.createFile(atPath: "\(uiDirectory)/server-\(action)", contents: nil)
         for _ in 0 ..< 60 where !FileManager.default.fileExists(atPath: done) {
             usleep(250_000)
         }
@@ -252,7 +255,7 @@ final class SendingUITests: XCTestCase {
         self.app.terminate()
         self.server("start")
         self.app = XCUIApplication()
-        self.app.launchArguments = ["-server.url", "ws://127.0.0.1:7979", "-theme", "dark"]
+        self.app.launchArguments = ["-server.url", devServer, "-theme", "dark"]
         self.app.launch()
         sleep(3)
         self.shot("kill-1-list")
@@ -1090,6 +1093,14 @@ final class SendingUITests: XCTestCase {
     /// Folders: seeded on first launch (the biggest project), the tabs under the search field, a tab's list, a swipe
     /// back to All, a tab's menu, Settings > Chat Folders, a new folder and its chat picker.
     func testFolders() {
+        // Two chats in one project, so the seed makes its folder: the server may be new.
+        for text in ["folder one", "folder two"] {
+            self.launch(["-newChat", "YES"])
+            self.focusInput()
+            self.type(text)
+            self.send()
+            sleep(2)
+        }
         self.launch(["-folders", "YES"])
         sleep(3)
         self.shot("fold-0-tabs")
