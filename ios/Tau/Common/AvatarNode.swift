@@ -25,12 +25,17 @@ enum Avatar {
         return initials.isEmpty ? "?" : initials.joined()
     }
 
+    /// Rows lay out on background queues, several lists at once while folders are swiped: the cache is shared.
+    private static let lock = NSLock()
     private static var cache: [String: UIImage] = [:]
 
     static func image(letters: String, colorIndex: Int, diameter: CGFloat) -> UIImage? {
         let key = "\(letters)|\(colorIndex)|\(diameter)"
-        if let image = cache[key] {
-            return image
+        lock.lock()
+        let cached = cache[key]
+        lock.unlock()
+        if let cached {
+            return cached
         }
         let colors = gradientColors[abs(colorIndex) % gradientColors.count]
         let image = generateImage(CGSize(width: diameter, height: diameter), rotatedContext: { size, context in
@@ -52,7 +57,9 @@ enum Avatar {
             string.draw(at: CGPoint(x: (size.width - glyphs.width) / 2.0 - glyphs.minX, y: baseline - letterFont.ascender))
             UIGraphicsPopContext()
         })
+        lock.lock()
         cache[key] = image
+        lock.unlock()
         return image
     }
 }

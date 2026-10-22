@@ -827,6 +827,10 @@ final class ChatListPaneNode: ASDisplayNode {
     }
 
     func updateLayout(size: CGSize, insets: UIEdgeInsets, transition: ContainedViewLayoutTransition) {
+        // A drag lays the panes out every frame, moving them, not resizing them: nothing for the list to do.
+        if let (currentSize, currentInsets) = self.validLayout, currentSize == size, currentInsets == insets {
+            return
+        }
         let isFirstLayout = self.validLayout == nil
         self.validLayout = (size, insets)
         transition.updateFrame(node: self.listNode, frame: CGRect(origin: CGPoint(), size: size))
@@ -1089,17 +1093,14 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         }
     }
 
-    /// The selected list and its neighbors where they belong for the drag; the others go.
+    /// The selected list and its neighbors where they belong; the others go. The neighbors stay whether or not a drag is
+    /// on, as in Telegram's ChatListContainerNode: the one a swipe leaves slides out with the spring, and the next drag
+    /// finds its neighbor laid out.
     private func updatePanes(transition: ContainedViewLayoutTransition) {
         guard let (layout, navigationHeight) = self.validLayout, let selectedIndex = self.folderIds.firstIndex(of: self.selectedId) else {
             return
         }
-        var valid: [ChatListFolderId] = [self.selectedId]
-        if self.transitionFraction != 0.0 || self.panRecognizer?.state == .began || self.panRecognizer?.state == .changed {
-            for index in max(0, selectedIndex - 1) ... min(self.folderIds.count - 1, selectedIndex + 1) {
-                valid.append(self.folderIds[index])
-            }
-        }
+        let valid = (max(0, selectedIndex - 1) ... min(self.folderIds.count - 1, selectedIndex + 1)).map { self.folderIds[$0] }
         for id in valid where self.panes[id] == nil && !self.disablePaneOperations {
             self.addPane(id)
         }
