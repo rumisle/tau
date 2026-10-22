@@ -250,6 +250,7 @@ IMAGES = [
     "Item List/Icons/Cellular",
     "Item List/Icons/Stats",
     "Item List/Icons/Bot",
+    "Item List/Icons/Speed",
     "Chat/Attach Menu/Camera",
     "Chat/Context Menu/Copy",
     "Chat/Context Menu/Edit",

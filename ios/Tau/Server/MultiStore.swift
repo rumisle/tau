@@ -386,12 +386,12 @@ final class MultiStore: TauStore {
         return store.realId(local).map { MultiStore.global(store.slot, $0) }
     }
 
-    func edit(messageId: Int, text: String, in id: Int, completion: @escaping (Int) -> Void) {
+    func edit(messageId: Int, text: String, attachments: [MessageAttachment], in id: Int, completion: @escaping (Int) -> Void) {
         guard let (store, local) = self.route(id) else {
             return
         }
         let slot = store.slot
-        store.edit(messageId: messageId, text: text, in: local, completion: { newId in
+        store.edit(messageId: messageId, text: text, attachments: attachments, in: local, completion: { newId in
             let id = MultiStore.global(slot, newId)
             LiveActivityController.shared.watch(id)
             completion(id)

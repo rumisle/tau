@@ -22,6 +22,9 @@ protocol TauServer: AnyObject {
     /// The thinking level new conversations get, fitted to their model by the server.
     var defaultThinkingLevel: String { get }
     func setDefaultThinkingLevel(_ level: String)
+    /// When it keeps prompt caches warm: "off", "streaming" (while a run works) or "idle" (also after it).
+    var cacheWarming: String { get }
+    func setCacheWarming(_ mode: String)
     /// Where the server pushes answers while no app is in the foreground (server/src/notifier.ts); nil: nowhere.
     var ntfy: NtfyTarget? { get }
     func setNtfy(_ target: NtfyTarget?)
@@ -103,7 +106,7 @@ protocol ConversationStore: AnyObject {
     func send(_ text: String, attachments: [MessageAttachment], to id: Int, mode: SendMode)
     /// Rewrites a user message: the conversation continues from a fork just before it. Returns the conversation the
     /// chat should show from now on.
-    func edit(messageId: Int, text: String, in id: Int, completion: @escaping (Int) -> Void)
+    func edit(messageId: Int, text: String, attachments: [MessageAttachment], in id: Int, completion: @escaping (Int) -> Void)
     /// Stops the agent. Queued messages come back to the input field, as pi's Escape returns them to the editor.
     func stop(_ id: Int)
     /// Stops the agent, as `stop`, and sends a new message at once.

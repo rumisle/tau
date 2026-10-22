@@ -4,6 +4,7 @@ import Display
 import SwiftSignalKit
 import InteractiveTextComponent
 import StreamingTextReveal
+import MosaicLayout
 import ChatMessageSelectionNode
 import ActivityIndicator
 import TextSelectionNode
@@ -171,6 +172,51 @@ private let bubbleTailInset: CGFloat = 6.0
 private let bubbleMinimumSize = CGSize(width: 40.0, height: 35.0)
 private let textInsets = UIEdgeInsets(top: 6.0 + UIScreenPixel, left: 11.0, bottom: 6.0 - UIScreenPixel, right: 11.0)
 private let mediaInset: CGFloat = 2.0
+
+/// Telegram's photo sizes in a bubble (ChatMessageItemLayoutConstants.image on a phone): at most 300 by 380 pt, at least
+/// 170 wide; several as an album, 1 pt apart.
+private func photoMosaic(_ sizes: [CGSize], maxWidth: CGFloat) -> (frames: [(CGRect, MosaicItemPosition)], size: CGSize) {
+    guard !sizes.isEmpty else {
+        return ([], CGSize())
+    }
+    let maxSize = CGSize(width: 300.0, height: 380.0).fittedToWidthOrSmaller(maxWidth)
+    if sizes.count == 1 {
+        var size = sizes[0].aspectFitted(maxSize)
+        size.width = max(size.width, min(170.0, maxSize.width))
+        size.height = max(size.height, 74.0)
+        let frame = CGRect(origin: CGPoint(), size: CGSize(width: floor(size.width), height: floor(size.height)))
+        return ([(frame, [.top, .bottom, .left, .right])], frame.size)
+    }
+    let (frames, size) = chatMessageBubbleMosaicLayout(maxSize: maxSize, itemSizes: sizes)
+    return (frames, size)
+}
+
+/// A photo's corners as Telegram rounds them in a bubble (ChatMessageBubbleContentCalclulateImageCorners): those on the
+/// bubble's edge as the bubble, 15 pt, or 7 where the bubble meets a neighbour; those inside an album square; the bottom
+/// ones square above a caption. A mask, since each corner has its own radius.
+private func photoCorners(_ layer: CALayer, position: MosaicItemPosition, captioned: Bool, mergedTop: Bool, mergedBottom: Bool) {
+    let topLeft: CGFloat = position.contains(.top) && position.contains(.left) ? 15.0 : 0.0
+    let topRight: CGFloat = position.contains(.top) && position.contains(.right) ? (mergedTop ? 7.0 : 15.0) : 0.0
+    let bottomLeft: CGFloat = !captioned && position.contains(.bottom) && position.contains(.left) ? 15.0 : 0.0
+    let bottomRight: CGFloat = !captioned && position.contains(.bottom) && position.contains(.right) ? (mergedBottom ? 7.0 : 15.0) : 0.0
+    let rect = CGRect(origin: CGPoint(), size: layer.bounds.size)
+    let path = CGMutablePath()
+    path.move(to: CGPoint(x: rect.minX + topLeft, y: rect.minY))
+    path.addLine(to: CGPoint(x: rect.maxX - topRight, y: rect.minY))
+    path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.minY), tangent2End: CGPoint(x: rect.maxX, y: rect.minY + topRight), radius: topRight)
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - bottomRight))
+    path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.maxY), tangent2End: CGPoint(x: rect.maxX - bottomRight, y: rect.maxY), radius: bottomRight)
+    path.addLine(to: CGPoint(x: rect.minX + bottomLeft, y: rect.maxY))
+    path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.maxY), tangent2End: CGPoint(x: rect.minX, y: rect.maxY - bottomLeft), radius: bottomLeft)
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + topLeft))
+    path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.minY), tangent2End: CGPoint(x: rect.minX + topLeft, y: rect.minY), radius: topLeft)
+    path.closeSubpath()
+    let mask = (layer.mask as? CAShapeLayer) ?? CAShapeLayer()
+    mask.frame = rect
+    mask.path = path
+    layer.mask = mask
+    layer.cornerRadius = 0.0
+}
 private let defaultSpacing: CGFloat = 4.0
 private let mergedSpacing: CGFloat = 1.0
 /// Margins of bubble-less assistant text.
@@ -583,21 +629,22 @@ final class ChatMessageItemNode: ListViewItemNode {
                 // Telegram's ChatMessageItemWidthFill: phones leave 36 pt beside a bubble.
                 let fillWidth = contentWidth <= 500.0 ? contentWidth - 36.0 : floor(contentWidth * 0.85)
                 let maxContentWidth = fillWidth - bubbleEdgeInset * 2.0 - bubbleTailInset
-                // Photos fill the bubble width and the caption wraps to it, as Telegram's media bubbles; files are rows
-                // above the text.
-                var imageSizes: [CGSize] = []
+                // Photos as Telegram's media bubbles: one fitted into 300 by 380 pt, several as an album
+                // (chatMessageBubbleMosaicLayout, as ChatMessageBubbleItemNode lays out a grouped message), the
+                // caption wrapping to their width. Files are rows above the text.
+                var photoSizes: [CGSize] = []
                 var files: [(name: String, size: Int64)] = []
-                let imageWidth = min(maxContentWidth - mediaInset * 2.0, 260.0)
                 for attachment in message.attachments {
                     switch attachment.kind {
                     case let .image(image):
-                        let aspect = image.size.height / max(1.0, image.size.width)
-                        imageSizes.append(CGSize(width: imageWidth, height: min(320.0, floor(imageWidth * aspect))))
+                        photoSizes.append(image.size.width > 0.0 && image.size.height > 0.0 ? image.size : CGSize(width: 256.0, height: 256.0))
                     case let .file(name, size):
                         files.append((name, size))
                     }
                 }
-                let maxTextWidth = imageSizes.isEmpty ? maxContentWidth - textInsets.left - textInsets.right : imageWidth + mediaInset * 2.0 - textInsets.left - textInsets.right
+                let photos = photoMosaic(photoSizes, maxWidth: maxContentWidth - mediaInset * 2.0)
+                let imageSizes = photos.frames.map(\.0.size)
+                let maxTextWidth = photoSizes.isEmpty ? maxContentWidth - textInsets.left - textInsets.right : photos.size.width + mediaInset * 2.0 - textInsets.left - textInsets.right
 
                 var style = MarkdownStyle(fontSize: messageFontSize, textColor: theme.outgoing.primaryTextColor, linkColor: theme.outgoing.linkTextColor, accentColor: theme.outgoing.primaryTextColor)
                 style.math = false
@@ -631,15 +678,11 @@ final class ChatMessageItemNode: ListViewItemNode {
                     textAreaSize.height += fileSize.height + 6.0
                 }
 
-                var mediaHeight: CGFloat = 0.0
-                var mediaWidth: CGFloat = 0.0
-                for size in imageSizes {
-                    mediaHeight += size.height + mediaInset
-                    mediaWidth = max(mediaWidth, size.width + mediaInset * 2.0)
-                }
-                if !imageSizes.isEmpty {
-                    mediaHeight += mediaInset
-                }
+                let mediaHeight: CGFloat = imageSizes.isEmpty ? 0.0 : photos.size.height + mediaInset * 2.0
+                let mediaWidth: CGFloat = imageSizes.isEmpty ? 0.0 : photos.size.width + mediaInset * 2.0
+                // Captioned, the photos' bottom corners meet the text (Telegram's contentMergedCornerRadius); a corner by
+                // a neighbouring bubble is the merged radius, as the bubble's own.
+                let captioned = hasText || !files.isEmpty
 
                 let bubbleSize = CGSize(
                     width: max(bubbleMinimumSize.width, max(mediaWidth, textAreaSize.width + textInsets.left + textInsets.right)) + bubbleTailInset,
@@ -679,7 +722,6 @@ final class ChatMessageItemNode: ListViewItemNode {
                         let imageNode = ASImageNode()
                         imageNode.contentMode = .scaleAspectFill
                         imageNode.clipsToBounds = true
-                        imageNode.cornerRadius = 14.0
                         imageNode.displaysAsynchronously = false
                         imageNode.isAccessibilityElement = true
                         imageNode.accessibilityIdentifier = "photo"
@@ -687,25 +729,25 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.imageNodes.append(imageNode)
                         self.contentNode.addSubnode(imageNode)
                     }
-                    var y = mediaInset
                     var imageIndex = 0
                     self.imageAttachmentIds = []
                     for attachment in message.attachments {
                         if case let .image(image) = attachment.kind {
                             let imageNode = self.imageNodes[imageIndex]
+                            let (frame, position) = photos.frames[imageIndex]
                             imageNode.image = image
                             imageNode.isHidden = false
                             imageNode.alpha = attachment.id == self.hiddenAttachmentId ? 0.0 : 1.0
                             self.imageAttachmentIds.append(attachment.id)
-                            imageNode.frame = CGRect(origin: CGPoint(x: backgroundFrame.minX + mediaInset, y: y), size: imageSizes[imageIndex])
-                            y += imageSizes[imageIndex].height + mediaInset
+                            imageNode.frame = frame.offsetBy(dx: backgroundFrame.minX + mediaInset, dy: mediaInset)
+                            photoCorners(imageNode.layer, position: position, captioned: captioned, mergedTop: mergedTop, mergedBottom: mergedBottom)
                             imageIndex += 1
                         }
                     }
                     for index in imageIndex ..< self.imageNodes.count {
                         self.imageNodes[index].isHidden = true
                     }
-                    var contentY = imageSizes.isEmpty ? textInsets.top : y + 4.0
+                    var contentY = imageSizes.isEmpty ? textInsets.top : mediaHeight + 4.0
 
                     while self.fileNodes.count < files.count {
                         let fileNode = FileAttachmentNode()

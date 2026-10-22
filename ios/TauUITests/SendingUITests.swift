@@ -998,6 +998,101 @@ final class SendingUITests: XCTestCase {
         self.shot("pc-6-settings-usage")
     }
 
+    /// Photos: the attachment menu through each step, then albums of two, three and five in Telegram's mosaic, one with
+    /// a caption.
+    func testPhotoAlbums() {
+        self.launch(["-newChat", "YES"])
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        func openPicker(_ name: String) {
+            self.app.buttons["attach"].firstMatch.tap()
+            sleep(2)
+            for label in ["Allow Full Access", "Allow Access to All Photos", "Allow"] where springboard.buttons[label].exists {
+                springboard.buttons[label].tap()
+                sleep(2)
+                break
+            }
+            self.shot("album-\(name)-0-open")
+        }
+        func pick(_ cells: [(CGFloat, CGFloat)], _ name: String) {
+            for (index, cell) in cells.enumerated() {
+                self.point(cell.0, cell.1).tap()
+                usleep(700_000)
+                if index == 0 {
+                    self.shot("album-\(name)-1-one")
+                }
+            }
+            sleep(1)
+            self.shot("album-\(name)-2-picked")
+        }
+        func send(_ name: String) {
+            let button = self.app.descendants(matching: .any)["attachment-send"].firstMatch
+            if button.waitForExistence(timeout: 2) {
+                button.tap()
+            }
+            sleep(3)
+            self.shot("album-\(name)-3-sent")
+        }
+        openPicker("a")
+        pick([(0.5, 0.49), (0.83, 0.49)], "a")
+        send("a")
+        openPicker("b")
+        pick([(0.5, 0.49), (0.83, 0.49), (0.5, 0.64)], "b")
+        self.point(0.4, 0.955).tap()
+        sleep(1)
+        self.shot("album-b-2-keyboard")
+        self.app.typeText("three of them")
+        sleep(1)
+        self.shot("album-b-2-caption")
+        send("b")
+        openPicker("c")
+        pick([(0.5, 0.49), (0.83, 0.49), (0.5, 0.64), (0.83, 0.64), (0.17, 0.79)], "c")
+        self.app.swipeUp()
+        sleep(1)
+        self.shot("album-c-2-expanded")
+        send("c")
+        // Text written first, then photos: it becomes their caption.
+        self.focusInput()
+        self.type("a caption I wrote first")
+        openPicker("d")
+        pick([(0.5, 0.49)], "d")
+        self.shot("album-d-2-caption")
+        send("d")
+        // Editing a message, then photos: the edit becomes their caption, and the edited message has them.
+        self.focusInput()
+        self.type("plain words")
+        self.send()
+        sleep(4)
+        self.pressMessage("plain words")
+        sleep(1)
+        self.app.descendants(matching: .any)["Edit"].firstMatch.tap()
+        sleep(1)
+        self.type(" and a photo")
+        openPicker("e")
+        pick([(0.83, 0.49)], "e")
+        self.shot("album-e-2-caption")
+        send("e")
+        sleep(3)
+        self.shot("album-e-4-forked")
+        // Written, then the menu closed without sending: the field has it back, as edited in the caption.
+        self.focusInput()
+        self.type("kept")
+        openPicker("f")
+        pick([(0.5, 0.49)], "f")
+        self.point(0.4, 0.955).tap()
+        sleep(1)
+        self.app.typeText(" too")
+        self.shot("album-f-2-edited")
+        self.point(0.096, 0.117).tap()
+        sleep(1)
+        self.shot("album-f-3-closing")
+        for label in ["Discard", "Discard Selection", "Cancel"] where self.app.buttons[label].exists {
+            self.app.buttons[label].tap()
+            break
+        }
+        sleep(2)
+        self.shot("album-f-4-returned")
+    }
+
     /// Dictation, with the stand-in engine: the microphone listens and the words come in dimmed until fixed, with a red
     /// dot and the time in the field; with text written, the field's own microphone adds to it.
     func testDictation() {

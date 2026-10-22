@@ -554,7 +554,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             // The conversation continues from a fork before the edited message; show the fork in this chat's place.
             // The keyboard goes down first, while this chat is still on screen to take the layout change.
             self.controllerNode.inputPanelNode.deactivateInput()
-            self.context.store.edit(messageId: messageId, text: text, in: self.conversationId, completion: { [weak self] newId in
+            // Photos attached while editing join the message's own.
+            let original = self.lastState?.messages.first(where: { $0.id == messageId })?.attachments ?? []
+            self.context.store.edit(messageId: messageId, text: text, attachments: original + attachments, in: self.conversationId, completion: { [weak self] newId in
                 guard let self, newId != self.conversationId, let navigationController = self.navigationController as? NavigationController else {
                     return
                 }
@@ -1240,11 +1242,19 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
     // MARK: - Attachments
 
-    /// Telegram's attachment menu (TelegramAttachmentMenu.swift); files and the full camera use the system pickers.
+    /// Telegram's attachment menu (TelegramAttachmentMenu.swift); files and the full camera use the system pickers. What
+    /// is written in the field, a new message or an edit, moves into the menu's caption, and goes with the photos; a menu
+    /// closed without sending puts the caption back. The field is hidden while the menu is up: its glass send button,
+    /// which no alpha fades, showed past the sheet's corner.
     private func openAttachments() {
-        self.controllerNode.inputPanelNode.deactivateInput()
-        let caption = self.controllerNode.inputPanelNode.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let menu = makeTelegramAttachmentMenu(context: self.context.telegram, presentationData: self.theme.presentationData, completion: { [weak self] result in
+        let inputPanel = self.controllerNode.inputPanelNode
+        inputPanel.deactivateInput()
+        let written = inputPanel.text
+        var caption = written
+        var sent = false
+        let menu = makeTelegramAttachmentMenu(context: self.context.telegram, presentationData: self.theme.presentationData, initialCaption: written.trimmingCharacters(in: .whitespacesAndNewlines), captionChanged: { text in
+            caption = text
+        }, completion: { [weak self] result in
             guard let self else {
                 return
             }
@@ -1253,10 +1263,11 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 guard !images.isEmpty else {
                     return
                 }
+                sent = true
                 let attachments = images.map { MessageAttachment(id: self.context.store.mintAttachmentId(), kind: .image($0)) }
-                let text = pickedCaption.isEmpty ? caption : pickedCaption
-                if !text.isEmpty {
-                    self.controllerNode.inputPanelNode.setText("")
+                let text = (pickedCaption.isEmpty ? caption : pickedCaption).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !written.isEmpty && self.editingMessageId == nil {
+                    inputPanel.setText("")
                 }
                 self.send(text: text, attachments: attachments)
             case .files:
@@ -1274,6 +1285,18 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 self.view.window?.rootViewController?.present(camera, animated: true)
             }
         })
+        inputPanel.isHidden = true
+        menu.willDismiss = { [weak inputPanel] in
+            inputPanel?.isHidden = false
+        }
+        let dismissed = menu.didDismiss
+        menu.didDismiss = { [weak inputPanel] in
+            dismissed()
+            inputPanel?.isHidden = false
+            if !sent, caption.trimmingCharacters(in: .whitespacesAndNewlines) != written.trimmingCharacters(in: .whitespacesAndNewlines) {
+                inputPanel?.setText(caption)
+            }
+        }
         self.present(menu, in: .window(.root))
     }
 

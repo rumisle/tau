@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
+import { CACHE_WARMING_MODES, type CacheWarmingMode } from "./cache.ts";
 import type { Dialogs } from "./dialogs.ts";
 import type { KindName } from "./search/index.ts";
 import type { Search } from "./search/service.ts";
@@ -216,7 +217,12 @@ export class Connection {
 					}
 					await this.#host.setDefaultThinkingLevel(level as ModelThinkingLevel);
 				}
-				return { defaultModel: this.#host.defaultModel, defaultThinkingLevel: this.#host.defaultThinkingLevel };
+				const warming = str(params, "cacheWarming", true);
+				if (warming !== undefined) {
+					if (!CACHE_WARMING_MODES.includes(warming as CacheWarmingMode)) throw new ProtocolError("bad_request", `Unknown cache warming mode ${warming}`);
+					await this.#host.setCacheWarming(warming as CacheWarmingMode);
+				}
+				return { defaultModel: this.#host.defaultModel, defaultThinkingLevel: this.#host.defaultThinkingLevel, cacheWarming: this.#host.cacheWarming };
 			}
 			case "fs.list": {
 				const hidden = params.hidden;
@@ -407,6 +413,7 @@ export class Connection {
 			serverId: this.#host.serverId,
 			defaultModel: this.#host.defaultModel,
 			defaultThinkingLevel: this.#host.defaultThinkingLevel,
+			cacheWarming: this.#host.cacheWarming,
 			ntfy: (await this.#host.harness.snapshot(SettingsDoc, this.#context))?.ntfy ?? null,
 			defaultCwd: this.#host.cwd,
 			home: homedir(),

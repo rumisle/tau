@@ -5,9 +5,18 @@ The next request that starts with it reads it at a tenth of the input price; onc
 again at 1.25 times the price. A run that waits on a long tool call, a build or a test suite, loses it, and the next
 request of the run pays for the whole prompt again.
 
-The server keeps it, as pi's coding agent does (`packages/coding-agent/src/core/cache-warmer.ts`, default mode
-`streaming`): while a run works, its last request is sent again with a one-token cap shortly before the entry expires.
-`server/src/cache.ts` is the code.
+The server keeps it, as pi's coding agent does (`packages/coding-agent/src/core/cache-warmer.ts`): while a run works,
+its last request is sent again with a one-token cap shortly before the entry expires, and, in pi's `idle` mode, for half
+an hour after the run. `server/src/cache.ts` is the code.
+
+## Modes
+
+Settings > a server > Keep Warm sets pi's three modes for the whole server (`settings.configure { cacheWarming }`):
+
+- **Off**.
+- **While Working** (`streaming`): only while a run works.
+- **Also When Idle** (`idle`, tau's default): after the run too, for a user's chat (not a subagent's), up to 30 minutes
+  after its last request.
 
 ## When it refreshes
 
@@ -18,13 +27,14 @@ The server keeps it, as pi's coding agent does (`packages/coding-agent/src/core/
   `max_tokens`, which the cache is keyed on.
 - **At 90% of the lifetime**, keeping ten seconds of margin: 4.5 minutes for Anthropic. A refresh that would go too late
   (after sleep, or a blocked event loop) is not sent; it would write the entry instead of reading it.
-- **When it pays**: the run's next request is certain, so a refresh goes when what a miss costs more than a read (the
-  write price less the read price of the last prompt) exceeds the refresh's own cost by $0.05, pi's threshold.
+- **When it pays**: a refresh goes when the chance of a next request times what a miss costs more than a read (the
+  write price less the read price of the last prompt) exceeds the refresh's own cost by $0.05, pi's threshold. While
+  the run works the chance is 1; between runs it is pi's measured 15%, so idle warming keeps only big prompts (at
+  Claude Opus prices, above about 140k tokens; at Haiku's, never). The idle decision is made when the run ends, so the
+  chat says at once whether it is kept.
 - **It stops** when the run ends, when another request replaces it, when the context is compacted or reset, when the
   conversation's model changes, or an hour after the request it keeps.
 
-An idle chat lets its cache go. Whether the user writes again before it expires is a guess (pi measured 15%), and at
-that chance a refresh rarely pays.
 
 ## What it records
 

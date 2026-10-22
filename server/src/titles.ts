@@ -51,7 +51,8 @@ export class Titler {
 		const handle = await harness.conversation(id, context);
 		if (handle === undefined) return;
 		const firstUser = [...(await handle.entries({}, 50, undefined, context)).items].reverse().find((entry) => entry.kind === "pi.user");
-		const question = text(firstUser?.model?.[0]);
+		// Photos alone: the answer says what they are.
+		const question = text(firstUser?.model?.[0]) || (hasImage(firstUser?.model?.[0]) ? "(photos)" : "");
 		const reply = text(answer.model?.[0]);
 		if (question === "") return;
 		const agent = await harness.snapshot(AgentDoc, id, context);
@@ -86,6 +87,10 @@ function text(message: Message | AssistantMessage | undefined): string {
 		.flatMap((part) => (part.type === "text" ? [part.text] : []))
 		.join(" ")
 		.trim();
+}
+
+function hasImage(message: Message | AssistantMessage | undefined): boolean {
+	return message !== undefined && typeof message.content !== "string" && message.content.some((part) => part.type === "image");
 }
 
 /** At most `max` characters, cut at a word boundary. */

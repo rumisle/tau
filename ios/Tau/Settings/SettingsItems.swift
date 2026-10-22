@@ -27,6 +27,7 @@ enum SettingsIcon {
     static let server = renderSettingsIcon(name: "Item List/Icons/Proxy", backgroundColors: [colorGreen])
     static let model = renderSettingsIcon(name: "Item List/Icons/AITools", backgroundColors: [colorPurple])
     static let thinking = renderSettingsIcon(name: "Item List/Icons/Tips", backgroundColors: [colorOrange])
+    static let cache = renderSettingsIcon(name: "Item List/Icons/Speed", backgroundColors: [colorRed])
     static let storage = renderSettingsIcon(name: "Item List/Icons/Pie", backgroundColors: [colorGreen])
     static let network = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorBlue])
     static let usage = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorPurple])

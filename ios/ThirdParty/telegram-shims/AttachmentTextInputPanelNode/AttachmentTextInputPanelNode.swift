@@ -50,6 +50,7 @@ public final class AttachmentTextInputPanelNode: ASDisplayNode, UITextViewDelega
     override public func didLoad() {
         super.didLoad()
         self.view.addSubview(self.glassContainer)
+        self.glassContainer.isHidden = self.alpha < 0.01
         self.glassContainer.contentView.addSubview(self.fieldBackground)
         self.fieldBackground.contentView.addSubview(self.textView)
         self.fieldBackground.contentView.addSubview(self.textPlaceholderNode.view)
@@ -131,6 +132,20 @@ public final class AttachmentTextInputPanelNode: ASDisplayNode, UITextViewDelega
     }
 
     public func animateIn(transition: ContainedViewLayoutTransition) {
+    }
+
+    /// AttachmentPanel hides the panel by its alpha, which glass ignores: its send button showed past the sheet's corner
+    /// while nothing was selected. Hidden with it, then.
+    override public var alpha: CGFloat {
+        get {
+            return super.alpha
+        }
+        set {
+            super.alpha = newValue
+            if self.isNodeLoaded {
+                self.glassContainer.isHidden = newValue < 0.01
+            }
+        }
     }
 
     public var isFocused: Bool {

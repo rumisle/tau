@@ -193,6 +193,37 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("keeps an idle chat's big prompt warm in idle mode, and stops when the setting says so", async () => {
+		// Twelve thousand tokens: between runs a refresh pays (a 15% chance of a miss at four times Opus prices) where a
+		// small prompt's does not.
+		const warm = await openHost({ devTokensPerSecond: 20_000, devCacheTtl: 11, cwd: tmpdir() });
+		const warmServer = await serve(warm);
+		try {
+			const client = await TauClient.connect(warmServer.url);
+			const caches: ({ warming?: true; warms?: number } | undefined)[] = [];
+			client.on((push: Push) => {
+				if (push.event === "dialog") caches.push((push.dialog as { cache?: { warming?: true; warms?: number } }).cache);
+			});
+			await client.request("dialogs.subscribe");
+			const { dialog } = await client.request("conversation.create", {});
+			const replica = new ConversationReplica(dialog.conversation.id);
+			await replica.sync(client);
+			await chat(client, replica, `remember this: ${"lorem ipsum dolor sit amet ".repeat(1_800)}`, "i1");
+			await new Promise((resolve) => setTimeout(resolve, 3_500));
+			const idle = caches.at(-1);
+			assert.equal(idle?.warming, true, "kept warm after the run");
+			assert.ok((idle?.warms ?? 0) >= 2, `refreshed ${idle?.warms} times while idle`);
+			const { cacheWarming } = await client.request("settings.configure", { cacheWarming: "streaming" });
+			assert.equal(cacheWarming, "streaming");
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			assert.equal(caches.at(-1)?.warming, undefined, "only while working now");
+			await client.close();
+		} finally {
+			await warmServer.close();
+			await warm.close();
+		}
+	});
+
 	test("keeps a working conversation's prompt cache warm, and lets an idle one's go", async () => {
 		// An 11 s lifetime refreshes every second; a 13 s command outlives it, so only refreshes keep the cache for the
 		// answer after it.
@@ -212,7 +243,7 @@ describe("tau server", () => {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 			const first = pushes.at(-1)?.cache;
 			assert.equal(first?.ttl, 11_000);
-			assert.equal(first?.warming, undefined, "an idle conversation is not kept warm");
+			assert.equal(first?.warming, undefined, "an idle conversation with a small prompt is not kept warm: it would not pay");
 			assert.equal(first?.warms, undefined);
 			const { submission } = await client.request("conversation.submit", { conversationId: replica.id, requestId: "w2", content: "$ sleep 13" });
 			await until(replica, () => replica.submissions.get(submission.id)?.status === "done" && idle(replica), 30_000);

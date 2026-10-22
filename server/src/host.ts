@@ -22,7 +22,7 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { CacheWarmer } from "./cache.ts";
+import { CacheWarmer, type CacheWarmingMode } from "./cache.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
 import { Serial } from "./serial.ts";
 import { Subagent } from "./subagent.ts";
@@ -78,6 +78,8 @@ export const SettingsDoc = defineDoc<{
 	defaultThinkingLevel?: ModelThinkingLevel;
 	/** Where pushes go (src/notifier.ts); none until a client turns them on. */
 	ntfy?: { server: string; topic: string };
+	/** When prompt caches are kept warm (src/cache.ts); "idle" until a client changes it. */
+	cacheWarming?: CacheWarmingMode;
 }>({
 	kind: "tau.settings",
 	version: 1,
@@ -117,6 +119,8 @@ export type Host = {
 	readonly serial: Serial;
 	/** Keeps working conversations' prompt caches warm (src/cache.ts). */
 	readonly cache: CacheWarmer;
+	readonly cacheWarming: CacheWarmingMode;
+	setCacheWarming(mode: CacheWarmingMode): Promise<void>;
 	readonly cwd: string;
 	close(): Promise<void>;
 };
@@ -132,7 +136,8 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const models = createModels({ credentials: options.credentials });
 	for (const provider of builtinProviders()) models.setProvider(provider);
 	models.setProvider(devProvider({ tokensPerSecond: options.devTokensPerSecond, cacheTtl: options.devCacheTtl }).provider);
-	const cache = new CacheWarmer();
+	let cacheWarming: CacheWarmingMode = "idle";
+	const cache = new CacheWarmer({ mode: () => cacheWarming });
 
 	const registry = createRegistry();
 	registry.install(CodingTools);
@@ -177,7 +182,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		},
 		context,
 	);
-	cache.attach(harness);
+	cache.attach(harness, async (id) => (await storage.conversation(id, context))?.owner !== undefined);
 	const serverId = await harness.commit(async (tx) => {
 		const doc = await tx.doc(ServerDoc);
 		if (doc.id === "") doc.id = randomUUID();
@@ -186,6 +191,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const savedSettings = await harness.snapshot(SettingsDoc, context);
 	if (savedSettings?.defaultModel !== undefined) defaultModel = savedSettings.defaultModel;
 	let defaultThinkingLevel: ModelThinkingLevel = savedSettings?.defaultThinkingLevel ?? "off";
+	if (savedSettings?.cacheWarming !== undefined) cacheWarming = savedSettings.cacheWarming;
 	// Continue runs the last process left unfinished.
 	harness.resume();
 
@@ -215,6 +221,16 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		},
 		serial: new Serial(),
 		cache,
+		get cacheWarming() {
+			return cacheWarming;
+		},
+		async setCacheWarming(mode) {
+			await harness.commit(async (tx) => {
+				(await tx.doc(SettingsDoc)).cacheWarming = mode;
+			}, context);
+			cacheWarming = mode;
+			cache.modeChanged();
+		},
 		cwd,
 		close: () => {
 			cache.close();

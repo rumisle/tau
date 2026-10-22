@@ -319,6 +319,18 @@ final class ServerStore: ConversationStore, TauServer {
         self.infoChanged?()
     }
 
+    private var cacheWarmingOverride: String?
+
+    var cacheWarming: String {
+        return self.cacheWarmingOverride ?? self.connection.hello?.cacheWarming ?? "idle"
+    }
+
+    func setCacheWarming(_ mode: String) {
+        self.cacheWarmingOverride = mode
+        self.connection.request("settings.configure", ["cacheWarming": mode]) { _ in }
+        self.infoChanged?()
+    }
+
     /// Set from Settings until the next `hello` reports it.
     private var defaultModelOverride: String?
 
@@ -341,6 +353,7 @@ final class ServerStore: ConversationStore, TauServer {
     private func connected(_ hello: TauConnection.Hello) {
         self.defaultModelOverride = nil
         self.defaultThinkingOverride = nil
+        self.cacheWarmingOverride = nil
         self.ntfyOverride = nil
         self.sendPresence()
         self.infoChanged?()
@@ -872,8 +885,9 @@ final class ServerStore: ConversationStore, TauServer {
                 draft.createRequestId = createRequestId
                 self.drafts[id] = draft
                 // The first message stands in as the title until the server names the conversation after the first
-                // answer.
-                let title = draft.titleIsManual ? (draft.title ?? "") : String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48))
+                // answer; photos alone as Telegram's list names them.
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = draft.titleIsManual ? (draft.title ?? "") : (trimmed.isEmpty ? attachmentsTitle(attachments) : String(trimmed.prefix(48)))
                 if let forkOf = draft.forkOf, let forkAt = draft.forkAt {
                     // A copy made before its message (Restore Full Context): the fork, then the message.
                     self.outbox.enqueueCreate(requestId: createRequestId, cwd: nil, title: draft.title ?? title, agent: nil, forkOf: forkOf, forkAt: forkAt)
@@ -1020,7 +1034,8 @@ final class ServerStore: ConversationStore, TauServer {
 
     // MARK: - Forks
 
-    func edit(messageId: Int, text: String, in id: Int, completion: @escaping (Int) -> Void) {
+    /// `attachments`: the edited message's, its own and any added while editing.
+    func edit(messageId: Int, text: String, attachments: [MessageAttachment], in id: Int, completion: @escaping (Int) -> Void) {
         guard let realId = self.resolve(id), let replica = self.replicas[realId] else {
             return
         }
@@ -1035,7 +1050,7 @@ final class ServerStore: ConversationStore, TauServer {
             // Editing the first message: a fresh conversation in the same directory, with the same model.
             let draftId = self.createConversation(cwd: parent?.cwd)
             self.drafts[draftId]?.agent = self.agent(realId)
-            self.send(text, attachments: message.attachments, to: draftId)
+            self.send(text, attachments: attachments, to: draftId)
             completion(draftId)
             return
         }
@@ -1050,7 +1065,7 @@ final class ServerStore: ConversationStore, TauServer {
         draft.createRequestId = createRequestId
         self.drafts[draftId] = draft
         self.outbox.enqueueCreate(requestId: createRequestId, cwd: nil, title: draft.title ?? "Edited", agent: nil, forkOf: realId, forkAt: at)
-        self.outbox.enqueue(text: text, attachments: message.attachments, conversationId: nil, createRequestId: createRequestId, mode: .followUp, showsInQueue: false)
+        self.outbox.enqueue(text: text, attachments: attachments, conversationId: nil, createRequestId: createRequestId, mode: .followUp, showsInQueue: false)
         completion(draftId)
     }
 
@@ -1543,4 +1558,22 @@ final class EntryCache {
             return dialog
         }
     }
+}
+
+/// A message of attachments alone, as a title: "Photo", "3 Photos", or its file's name.
+func attachmentsTitle(_ attachments: [MessageAttachment]) -> String {
+    var photos = 0
+    var file: String?
+    for attachment in attachments {
+        switch attachment.kind {
+        case .image:
+            photos += 1
+        case let .file(name, _):
+            file = file ?? name
+        }
+    }
+    if photos > 0 {
+        return photos == 1 ? "Photo" : "\(photos) Photos"
+    }
+    return file ?? "New chat"
 }

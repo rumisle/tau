@@ -73,6 +73,7 @@ targets:
           - SearchBarNode
           - SegmentedControlNode
           - HorizontalTabsComponent
+          - MosaicLayout
           - HeaderPanelContainerComponent
           - ChatListTitleView
           - UndoUI

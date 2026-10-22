@@ -2,8 +2,8 @@
 // prompt of a request cached for a while (Anthropic: five minutes); the next request that starts with it reads it at a
 // tenth of the price instead of writing it again at more than the full one. A run that waits longer than that, on a
 // long tool call, would lose it: so while a run works, its last request is sent again with a one-token cap shortly
-// before the entry expires, when that is expected to save more than it costs. An idle chat lets its cache go, as pi's
-// default "streaming" mode does: whether the user writes again in time is a guess, and seldom worth the refresh.
+// before the entry expires, when that is expected to save more than it costs. In pi's "idle" mode, tau's default, it
+// goes on for half an hour after the run, weighed by the chance that the user writes again before the entry expires.
 //
 // The harness reaches models only through `HarnessOptions.models`; `wrap()` gives it one whose `streamSimple` sees
 // every request as it is sent. The generation hook `beforeRequest` tells which conversation a provider session ID is.
@@ -36,6 +36,17 @@ import {
 const MINIMUM_SAVINGS = 0.05;
 /** Warming never goes on longer than this after the real request it keeps, as pi's safety limit. */
 const MAX_WARMING_MS = 60 * 60_000;
+/** Between runs, less long: the chance below is less sure the older the request. */
+const MAX_IDLE_WARMING_MS = 30 * 60_000;
+/**
+ * The chance that the user writes again before the entry expires while the chat is idle: pi's, measured from its own
+ * use; per-session estimates were no better.
+ */
+const IDLE_CONTINUATION = 0.15;
+
+/** pi's `cacheWarming` setting: never, while a run works, or also between runs. */
+export type CacheWarmingMode = "off" | "streaming" | "idle";
+export const CACHE_WARMING_MODES: readonly CacheWarmingMode[] = ["off", "streaming", "idle"];
 
 /** What a conversation's prompt cache did; the counters are its whole life. */
 export type CacheState = {
@@ -108,6 +119,8 @@ type Run = {
 	timer?: ReturnType<typeof setTimeout>;
 	/** Latest time a refresh may go: later, the entry may be gone and it would write, not read. */
 	deadline: number;
+	/** "idle" once the run that sent it has ended. */
+	phase: "streaming" | "idle";
 };
 
 /** A conversation's cache entry as its requests left it. */
@@ -130,6 +143,8 @@ export class CacheWarmer {
 	readonly #entries = new Map<ConversationId, Entry>();
 	/** Provider session ID to conversation, from `beforeRequest`. */
 	readonly #sessions = new Map<string, ConversationId>();
+	/** Conversations whose first request comes before their session ID exists: found when it is sent. */
+	readonly #unmapped = new Set<ConversationId>();
 	readonly #changeListeners = new Set<(id: ConversationId) => void>();
 	readonly #warmListeners = new Set<(record: WarmRecord) => void>();
 	/** Commits of `tau.cache`, in order per conversation. */
@@ -137,9 +152,13 @@ export class CacheWarmer {
 	#unsubscribe?: () => void;
 	#closed = false;
 	readonly #now: () => number;
+	readonly #mode: () => CacheWarmingMode;
+	/** Whether a conversation is a subagent's, which is not warmed between runs: no user writes to it. */
+	#owned: (id: ConversationId) => Promise<boolean> = async () => false;
 
-	constructor(options: { now?: () => number } = {}) {
+	constructor(options: { now?: () => number; mode?: () => CacheWarmingMode } = {}) {
 		this.#now = options.now ?? Date.now;
+		this.#mode = options.mode ?? (() => "idle");
 	}
 
 	/** Learns which conversation each request is for. */
@@ -147,6 +166,7 @@ export class CacheWarmer {
 		beforeRequest: async (_request, api, context) => {
 			const provider = await api.snapshot(ProviderDoc, api.conversationId, context);
 			if (provider !== undefined) this.#sessions.set(provider.sessionId, api.conversationId);
+			else this.#unmapped.add(api.conversationId);
 			return undefined;
 		},
 	});
@@ -169,14 +189,15 @@ export class CacheWarmer {
 		});
 	}
 
-	/** After the harness opens: runs that end stop warming. */
-	attach(harness: Harness): void {
+	/** After the harness opens: runs that end go idle, or stop. */
+	attach(harness: Harness, owned?: (id: ConversationId) => Promise<boolean>): void {
 		this.#harness = harness;
+		if (owned !== undefined) this.#owned = owned;
 		this.#unsubscribe = harness.subscribeCommits((publication) => {
 			for (const change of publication.changes) {
 				if (change.type === "document" && change.conversationId !== undefined && change.record.kind === LiveDoc.definition.kind) {
 					const live = change.value as { run?: unknown } | null;
-					if (live?.run === undefined) this.#stop(change.conversationId);
+					if (live?.run === undefined) void this.#settled(change.conversationId);
 				} else if (change.type === "entry" && (change.value.kind === "pi.compaction" || change.value.kind === "pi.reset")) {
 					// The next request starts with another prompt.
 					this.#stop(change.value.conversationId);
@@ -189,6 +210,14 @@ export class CacheWarmer {
 		this.#closed = true;
 		this.#unsubscribe?.();
 		for (const id of [...this.#runs.keys()]) this.#stop(id);
+	}
+
+	/** The setting changed: what it no longer allows stops. */
+	modeChanged(): void {
+		const mode = this.#mode();
+		for (const [id, run] of [...this.#runs]) {
+			if (mode === "off" || (mode === "streaming" && run.phase === "idle")) this.#stop(id);
+		}
 	}
 
 	/** Whether a refresh is scheduled for the conversation now. */
@@ -210,16 +239,34 @@ export class CacheWarmer {
 
 	#sent(model: Model<Api>, context: ModelContext, options: ModelsSimpleStreamOptions | undefined, events: AssistantMessageEventStream): void {
 		// The conversation's own requests only: compaction completes instead of streaming, titles have no session.
-		const id = options?.sessionId === undefined ? undefined : this.#sessions.get(options.sessionId);
-		if (id === undefined || options === undefined || this.#closed) return;
+		const session = options?.sessionId;
+		if (session === undefined || options === undefined || this.#closed) return;
 		const ttl = promptCacheTtl(model, options);
 		if (ttl === undefined) return;
 		const startedAt = this.#now();
-		this.#start(id, model, context, options, ttl, startedAt);
-		void events.result().then(
-			(message) => this.#answered(id, model, message, ttl, startedAt),
-			() => undefined,
-		);
+		const begin = (id: ConversationId): void => {
+			if (this.#mode() === "off") this.#stop(id);
+			else this.#start(id, model, context, options, ttl, startedAt);
+			void events.result().then(
+				(message) => this.#answered(id, model, message, ttl, startedAt),
+				() => undefined,
+			);
+		};
+		const id = this.#sessions.get(session);
+		if (id !== undefined) begin(id);
+		else if (this.#unmapped.size > 0) void this.#resolve(session).then((found) => found !== undefined && begin(found));
+	}
+
+	/** Which of the conversations that had no session ID at their request has this one now. */
+	async #resolve(session: string): Promise<ConversationId | undefined> {
+		for (const id of [...this.#unmapped]) {
+			const provider = await this.#harness?.snapshot(ProviderDoc, id, BACKGROUND_CONTEXT).catch(() => undefined);
+			if (provider === undefined) continue;
+			this.#unmapped.delete(id);
+			this.#sessions.set(provider.sessionId, id);
+			if (provider.sessionId === session) return id;
+		}
+		return undefined;
 	}
 
 	#start(id: ConversationId, model: Model<Api>, context: ModelContext, options: ModelsSimpleStreamOptions, ttl: number, startedAt: number): void {
@@ -232,15 +279,44 @@ export class CacheWarmer {
 		}
 		// The request's own signal ends with its attempt; a refresh has its own.
 		const { signal: _signal, ...rest } = options;
-		const run: Run = { model, context, options: rest, ttl, delay, startedAt, controller: new AbortController(), deadline: 0 };
+		const run: Run = { model, context, options: rest, ttl, delay, startedAt, controller: new AbortController(), deadline: 0, phase: "streaming" };
 		this.#runs.set(id, run);
 		this.#schedule(id, run, startedAt);
 		if (!had && this.#runs.get(id) === run) this.#changed(id);
 	}
 
+	/** The run ended: in idle mode its last request stays warm while that pays, for a user's chat. */
+	async #settled(id: ConversationId): Promise<void> {
+		const run = this.#runs.get(id);
+		if (run === undefined) return;
+		const keeps = this.#mode() === "idle" && !(await this.#owned(id).catch(() => true));
+		// A request that came meanwhile has its own warming.
+		if (this.#runs.get(id) !== run) return;
+		if (!keeps) {
+			this.#stop(id);
+			return;
+		}
+		run.phase = "idle";
+		const entry = this.#entries.get(id);
+		const now = this.#now();
+		// Decided now, not at the refresh: the chat says whether it is kept warm.
+		if (entry === undefined || !this.#pays(run, entry.promptTokens) || run.startedAt + MAX_IDLE_WARMING_MS < now + run.delay) {
+			this.#stop(id);
+			return;
+		}
+		this.#changed(id);
+	}
+
+	/** pi's decision: the chance of a next request times what a miss costs over a read, less the refresh, is enough. */
+	#pays(run: Run, promptTokens: number): boolean {
+		const { warmCost, missCost } = economics(run.model, promptTokens);
+		const chance = run.phase === "idle" ? IDLE_CONTINUATION : 1;
+		return promptTokens > 0 && chance * missCost - warmCost >= MINIMUM_SAVINGS;
+	}
+
 	#schedule(id: ConversationId, run: Run, from: number): void {
 		const next = from + run.delay;
-		if (next > run.startedAt + MAX_WARMING_MS) {
+		if (next > run.startedAt + (run.phase === "idle" ? MAX_IDLE_WARMING_MS : MAX_WARMING_MS)) {
 			this.#stop(id);
 			return;
 		}
@@ -256,13 +332,17 @@ export class CacheWarmer {
 		const now = this.#now();
 		const entry = this.#entries.get(id);
 		const models = this.#models;
-		if (now > run.deadline || entry === undefined || models === undefined || !(await this.#current(id, run))) {
+		if (now > run.deadline || models === undefined || !(await this.#current(id, run))) {
 			this.#stop(id);
 			return;
 		}
-		// While the run works its next request is certain: a refresh pays when a miss costs more than the read.
-		const { warmCost, missCost } = economics(run.model, entry.promptTokens);
-		if (missCost - warmCost < MINIMUM_SAVINGS) {
+		// A chat's first request, still answering: how big its prompt is comes with the answer.
+		if (entry === undefined) {
+			this.#schedule(id, run, now);
+			return;
+		}
+		// While the run works its next request is certain; between runs, it is a chance.
+		if (!this.#pays(run, entry.promptTokens) || (run.phase === "idle" && this.#mode() !== "idle") || this.#mode() === "off") {
 			this.#stop(id);
 			return;
 		}

@@ -227,6 +227,14 @@ final class ServerController: SettingsListController {
             self.push(ThinkingLevelController(context: self.context, slot: self.slot))
         }))
         items.append(SettingsTextItem(theme: theme, text: "New chats use this model.", kind: .footer))
+        items.append(SettingsTextItem(theme: theme, text: "Prompt Cache", kind: .header))
+        items.append(SettingsRowItem(theme: theme, icon: SettingsIcon.cache, title: "Keep Warm", accessory: .disclosure(label: cacheWarmingTitle(server.cacheWarming)), position: SettingsRowPosition(isFirst: true, isLast: true), action: { [weak self] in
+            guard let self else {
+                return
+            }
+            self.push(CacheWarmingController(context: self.context, slot: self.slot))
+        }))
+        items.append(SettingsTextItem(theme: theme, text: "The server refreshes a chat's prompt cache before it expires when that costs less than writing it again.", kind: .footer))
         if store.servers.count > 1 {
             items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
             items.append(SettingsRowItem(theme: theme, icon: nil, title: "Delete Server", titleColor: theme.list.itemDestructiveColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: true), action: { [weak self] in
@@ -305,6 +313,47 @@ func thinkingTitle(_ level: String) -> String {
         return "Extra High"
     default:
         return level.capitalized
+    }
+}
+
+func cacheWarmingTitle(_ mode: String) -> String {
+    switch mode {
+    case "off":
+        return "Off"
+    case "streaming":
+        return "While Working"
+    default:
+        return "Also When Idle"
+    }
+}
+
+/// Settings > a server > Keep Warm: pi's cache warming modes, which the server applies to all its chats.
+final class CacheWarmingController: SettingsListController {
+    private let slot: Int
+
+    init(context: AppContext, slot: Int) {
+        self.slot = slot
+        super.init(context: context, title: "Keep Warm")
+    }
+
+    required init(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func items(theme: TauTheme) -> [ListViewItem] {
+        guard let server = self.context.store.server(self.slot) else {
+            return []
+        }
+        let modes = ["off", "streaming", "idle"]
+        var items: [ListViewItem] = [SettingsTextItem(theme: theme, text: "Prompt Cache", kind: .header)]
+        for (index, mode) in modes.enumerated() {
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: cacheWarmingTitle(mode), accessory: .checkmark(server.cacheWarming == mode), position: SettingsRowPosition(isFirst: index == 0, isLast: index == modes.count - 1), action: { [weak self] in
+                server.setCacheWarming(mode)
+                self?.reload()
+            }))
+        }
+        items.append(SettingsTextItem(theme: theme, text: "A provider keeps the start of a chat cached for a few minutes, and charges a tenth for it. While an agent works through a long command, the server refreshes it so the next step reads it; when idle too, for half an hour after, if the chance that you write again makes that worth it.", kind: .footer))
+        return items
     }
 }
 

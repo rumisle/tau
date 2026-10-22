@@ -18,8 +18,10 @@ enum TelegramAttachmentResult {
 
 /// Telegram's attachment menu (AttachmentUI's AttachmentController with MediaPickerUI's MediaPickerScreenImpl, both
 /// copied), as ChatControllerOpenAttachmentMenu presents it: a glass sheet with the photo grid and its camera tile,
-/// the tab bar of Gallery and File, and the caption field once photos are selected.
-func makeTelegramAttachmentMenu(context: TauAccountContext, presentationData: PresentationData, completion: @escaping (TelegramAttachmentResult) -> Void) -> AttachmentController {
+/// the tab bar of Gallery and File, and the caption field once photos are selected. What is written in the chat's field
+/// becomes the caption (`initialCaption`, as ChatControllerOpenAttachmentMenu's `setCaption(inputText)`); `captionChanged`
+/// hears it as it is edited, so a menu closed without sending can give it back.
+func makeTelegramAttachmentMenu(context: TauAccountContext, presentationData: PresentationData, initialCaption: String = "", captionChanged: @escaping (String) -> Void = { _ in }, completion: @escaping (TelegramAttachmentResult) -> Void) -> AttachmentController {
     let updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>) = (presentationData, .single(presentationData))
     let controller = AttachmentController(context: context, updatedPresentationData: updatedPresentationData, style: .glass, chatLocation: nil, buttons: [.gallery, .file], initialButton: .gallery)
     controller.requestController = { [weak controller] type, present in
@@ -36,7 +38,15 @@ func makeTelegramAttachmentMenu(context: TauAccountContext, presentationData: Pr
                     completion(.photos(images, caption: caption))
                 })
             }
-            present(picker, picker.mediaPickerContext)
+            var pickerContext = picker.mediaPickerContext
+            if let base = pickerContext {
+                if !initialCaption.isEmpty {
+                    base.setCaption(NSAttributedString(string: initialCaption))
+                }
+                // The menu gives the picker each keystroke of the caption through its context.
+                pickerContext = CaptionObservingPickerContext(base: base, captionChanged: captionChanged)
+            }
+            present(picker, pickerContext)
             return true
         case .file:
             controller?.dismiss(animated: true)
@@ -110,5 +120,57 @@ private func resolveLegacyMediaSignals(_ signals: [Any], completion: @escaping (
     }
     group.notify(queue: .main) {
         completion(images.keys.sorted().compactMap { images[$0] }, caption)
+    }
+}
+
+/// The picker's context, telling `captionChanged` each caption the menu sets.
+private final class CaptionObservingPickerContext: AttachmentMediaPickerContext {
+    private let base: AttachmentMediaPickerContext
+    private let captionChanged: (String) -> Void
+
+    init(base: AttachmentMediaPickerContext, captionChanged: @escaping (String) -> Void) {
+        self.base = base
+        self.captionChanged = captionChanged
+    }
+
+    var selectionCount: Signal<Int, NoError> { self.base.selectionCount }
+    var caption: Signal<NSAttributedString?, NoError> { self.base.caption }
+    var hasCaption: Bool { self.base.hasCaption }
+    var captionIsAboveMedia: Signal<Bool, NoError> { self.base.captionIsAboveMedia }
+    var canMakePaidContent: Bool { self.base.canMakePaidContent }
+    var price: Int64? { self.base.price }
+    var hasTimers: Bool { self.base.hasTimers }
+    var loadingProgress: Signal<CGFloat?, NoError> { self.base.loadingProgress }
+    var mainButtonState: Signal<AttachmentMainButtonState?, NoError> { self.base.mainButtonState }
+    var secondaryButtonState: Signal<AttachmentMainButtonState?, NoError> { self.base.secondaryButtonState }
+    var bottomPanelBackgroundColor: Signal<UIColor?, NoError> { self.base.bottomPanelBackgroundColor }
+
+    func setCaptionIsAboveMedia(_ captionIsAboveMedia: Bool) {
+        self.base.setCaptionIsAboveMedia(captionIsAboveMedia)
+    }
+
+    func setPrice(_ price: Int64) {
+        self.base.setPrice(price)
+    }
+
+    func mainButtonAction() {
+        self.base.mainButtonAction()
+    }
+
+    func secondaryButtonAction() {
+        self.base.secondaryButtonAction()
+    }
+
+    func setCaption(_ caption: NSAttributedString) {
+        self.base.setCaption(caption)
+        self.captionChanged(caption.string)
+    }
+
+    func send(mode: AttachmentMediaPickerSendMode, attachmentMode: AttachmentMediaPickerAttachmentMode, parameters: ChatSendMessageActionSheetController.SendParameters?) {
+        self.base.send(mode: mode, attachmentMode: attachmentMode, parameters: parameters)
+    }
+
+    func schedule(parameters: ChatSendMessageActionSheetController.SendParameters?) {
+        self.base.schedule(parameters: parameters)
     }
 }

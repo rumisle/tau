@@ -87,8 +87,18 @@ function expiringCache(base: Provider, ttl: number): Provider {
 			const now = Date.now();
 			const expired = session === undefined || now - (used.get(session) ?? Number.NEGATIVE_INFINITY) > ttl;
 			if (session !== undefined) used.set(session, now);
-			const inner = base.streamSimple(model, context, streamOptions);
 			const outer = createAssistantMessageEventStream();
+			// A cap of a few tokens, as a cache refresh sends: a real provider stops at once, after reading the prompt.
+			const cap = streamOptions?.maxTokens;
+			if (cap !== undefined && cap <= 16) {
+				const prompt = Math.ceil(context.messages.map((message) => JSON.stringify(message.content)).join("").length / 4);
+				const usage = { input: 0, output: cap, cacheRead: expired ? 0 : prompt, cacheWrite: expired ? prompt : 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+				const message: AssistantMessage = { role: "assistant", content: [{ type: "text", text: "." }], api: model.api, provider: model.provider, model: model.id, usage, stopReason: "length", timestamp: now };
+				adjust(model, message, false, cap);
+				queueMicrotask(() => outer.push({ type: "done", reason: "length", message }));
+				return outer;
+			}
+			const inner = base.streamSimple(model, context, streamOptions);
 			void (async () => {
 				for await (const event of inner) {
 					if (event.type === "done") adjust(model, event.message, expired, streamOptions?.maxTokens);

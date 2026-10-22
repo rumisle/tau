@@ -30,6 +30,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         let serverId: String
         let defaultModel: String
         let defaultThinkingLevel: String
+        /// When the server keeps prompt caches warm: "off", "streaming" or "idle" (server/src/cache.ts).
+        let cacheWarming: String
         let defaultCwd: String
         let home: String
         let hostname: String
@@ -159,6 +161,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                     serverId: value.string("serverId") ?? "",
                     defaultModel: model.map { "\($0.string("provider") ?? "")/\($0.string("modelId") ?? "")" } ?? "",
                     defaultThinkingLevel: value.string("defaultThinkingLevel") ?? "off",
+                    cacheWarming: value.string("cacheWarming") ?? "idle",
                     defaultCwd: value.string("defaultCwd") ?? "~",
                     home: value.string("home") ?? "~",
                     hostname: value.string("hostname") ?? "",

@@ -42,7 +42,7 @@ socket, so a client must not send one (content limits below are far under it).
 ## Methods
 
 ### `hello`
-`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number }`
+`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number }`
 
 `defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
 `hostname` is the computer's name, `piRevision` the pi commit the server links, `uptime` seconds since it started.
@@ -62,7 +62,7 @@ Whether this client's app is in the foreground, showing its own banners: while a
 nothing (docs/notifications.md). A closed connection counts as inactive.
 
 ### `settings.configure`
-`{ defaultModel?: ModelRef, defaultThinkingLevel?: string, ntfy?: { server, topic } | null }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string }`
+`{ defaultModel?: ModelRef, defaultThinkingLevel?: string, cacheWarming?: "off" | "streaming" | "idle", ntfy?: { server, topic } | null }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming }`
 
 `ntfy` sets or clears where answers are pushed; `hello` reports it as `ntfy`.
 

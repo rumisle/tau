@@ -201,6 +201,12 @@ final class MockStore: TauStore, TauServer {
         self.defaultThinkingLevel = level
     }
 
+    private(set) var cacheWarming = "idle"
+
+    func setCacheWarming(_ mode: String) {
+        self.cacheWarming = mode
+    }
+
     var servers: [TauServer] {
         return [self]
     }
@@ -446,7 +452,7 @@ final class MockStore: TauStore, TauServer {
         self.publish(id)
     }
 
-    func edit(messageId: Int, text: String, in id: Int, completion: @escaping (Int) -> Void) {
+    func edit(messageId: Int, text: String, attachments: [MessageAttachment], in id: Int, completion: @escaping (Int) -> Void) {
         self.edit(messageId: messageId, text: text, in: id)
         completion(id)
     }
