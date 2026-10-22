@@ -614,11 +614,12 @@ export class Connection {
 
 	async #history(params: Record<string, unknown>): Promise<unknown> {
 		const conversation = await this.#conversation(params);
-		const before = int(params, "before");
+		// Without `before`, the newest: what a client preloading a chat it has not opened asks for.
+		const before = int(params, "before", true);
 		const after = int(params, "after", true);
 		const page = await conversation.entries(
 			{
-				maxEntryId: (before - 1) as EntryId,
+				...(before === undefined ? {} : { maxEntryId: (before - 1) as EntryId }),
 				...(after === undefined ? {} : { minEntryId: (after + 1) as EntryId }),
 				order: "descending",
 			},

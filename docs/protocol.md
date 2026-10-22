@@ -261,10 +261,12 @@ Subscribing again replaces the previous subscription of that conversation.
 `{ conversationId }` -> `{}`
 
 ### `conversation.history`
-`{ conversationId, before: EntryId, after?: EntryId, limit?: number }` -> `{ entries: EntryRecord[], hasOlder: boolean }`
+`{ conversationId, before?: EntryId, after?: EntryId, limit?: number }` -> `{ entries: EntryRecord[], hasOlder: boolean }`
 
-Entries with `after < id < before`, newest `limit` (default 50, max 500), ascending. `hasOlder` is true when more
-entries remain in that range, below `entries[0]`.
+Entries with `after < id < before`, newest `limit` (default 50, max 500), ascending; without `before`, the newest. `hasOlder`
+is true when more entries remain in that range, below `entries[0]`. With `after` and without `before` it brings a cached
+transcript up to date without subscribing, as the app preloads the chats at the top of its list (docs/chat-open.md);
+`hasOlder` then means a gap between the cache and `entries`.
 
 ### `conversation.submit`
 `{ conversationId, requestId: string, content: string | ContentBlock[], whenBusy?: "steer" | "followUp" | "reject" }`

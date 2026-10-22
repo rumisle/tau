@@ -408,10 +408,65 @@ final class ChatControllerNode: ASDisplayNode {
             }
         }
         self.historyNode.transaction(deleteIndices: deletions, insertIndicesAndItems: insertions, updateIndicesAndItems: updates, options: options, scrollToItem: scrollToItem, updateOpaqueState: nil)
-        if state.isLoaded, let contentReady = self.contentReady {
+        // Nothing here yet and the server's still to come: Telegram's spinner until it does. Shown with the chat as it
+        // opens, gone with an animation.
+        self.updateIsLoading(!state.isLoaded && entries.isEmpty, animated: self.contentReady == nil)
+        if let contentReady = self.contentReady {
             self.contentReady = nil
             contentReady()
         }
+    }
+
+    // MARK: - Loading
+
+    private var loadingNode: ChatLoadingNode?
+    private var isLoadingValue = false
+    private var loadingInsets = UIEdgeInsets()
+
+    /// As Telegram's ChatControllerNode.updateIsLoading for a one-to-one chat.
+    private func updateIsLoading(_ isLoading: Bool, animated: Bool) {
+        guard isLoading != self.isLoadingValue else {
+            return
+        }
+        self.isLoadingValue = isLoading
+        if isLoading {
+            let loadingNode: ChatLoadingNode
+            if let current = self.loadingNode {
+                loadingNode = current
+            } else {
+                loadingNode = ChatLoadingNode(theme: self.theme.presentationTheme, chatWallpaper: self.theme.wallpaper)
+                self.loadingNode = loadingNode
+                self.insertSubnode(loadingNode, belowSubnode: self.historyNode)
+                self.layoutLoadingNode(transition: .immediate)
+            }
+            loadingNode.isHidden = false
+            loadingNode.layer.removeAllAnimations()
+            loadingNode.alpha = 1.0
+            if animated {
+                loadingNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.3)
+            }
+        } else if let loadingNode = self.loadingNode {
+            loadingNode.alpha = 0.0
+            if animated {
+                loadingNode.layer.animateScale(from: 1.0, to: 0.1, duration: 0.3, removeOnCompletion: false)
+                loadingNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.3, completion: { [weak loadingNode] completed in
+                    loadingNode?.layer.removeAllAnimations()
+                    if completed {
+                        loadingNode?.isHidden = true
+                    }
+                })
+            } else {
+                loadingNode.isHidden = true
+            }
+        }
+    }
+
+    private func layoutLoadingNode(transition: ContainedViewLayoutTransition) {
+        guard let loadingNode = self.loadingNode, let (layout, _) = self.validLayout else {
+            return
+        }
+        transition.updateFrame(node: loadingNode, frame: CGRect(origin: CGPoint(), size: layout.size))
+        loadingNode.updateLayout(size: layout.size, insets: self.loadingInsets, transition: transition)
     }
 
     static let waitingRowId = Int.min / 2
@@ -438,7 +493,8 @@ final class ChatControllerNode: ASDisplayNode {
         return true
     }
 
-    /// Called once, when the first known transcript is laid out.
+    /// Called once, when the first update is laid out: what the phone has, or the loading spinner. As Telegram's
+    /// history node is ready with its loading state, a chat never waits for the network to open.
     var contentReady: (() -> Void)?
 
     private func reloadItems() {
@@ -686,6 +742,9 @@ final class ChatControllerNode: ASDisplayNode {
         )
         transition.updateFrame(node: self.wallpaperNode, frame: CGRect(origin: CGPoint(), size: size))
         self.wallpaperNode.updateLayout(size: size, transition: transition)
+        // Centered in what the transcript would fill, as Telegram's visible area: between the bar and the panel.
+        self.loadingInsets = UIEdgeInsets(top: navigationHeight, left: layout.safeInsets.left, bottom: size.height - panelFrame.minY + 8.0, right: layout.safeInsets.right)
+        self.layoutLoadingNode(transition: transition)
         transition.updateFrame(node: self.historyNode, frame: CGRect(origin: CGPoint(), size: size))
         let (duration, curve) = listViewAnimationDurationAndCurve(transition: transition)
         self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: nil, updateSizeAndInsets: ListViewUpdateSizeAndInsets(size: size, insets: historyInsets, duration: duration, curve: curve), stationaryItemRange: nil, updateOpaqueState: nil)

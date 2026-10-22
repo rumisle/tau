@@ -379,6 +379,7 @@ final class ServerStore: ConversationStore, TauServer {
                 self.inputDrafts.removeConversationDrafts()
             }
             self.media.clear()
+            self.preloadedThrough = [:]
             self.cache.reset(serverId: hello.serverId)
             for replica in self.replicas.values {
                 replica.upsertReset()
@@ -576,6 +577,121 @@ final class ServerStore: ConversationStore, TauServer {
         }
         self.dialogsPromise.set(sorted)
         self.cache.saveDialogs(Array(self.dialogs.values))
+        self.schedulePreload()
+    }
+
+    // MARK: - Preloading
+
+    /// The chats at the top of the list, as Telegram's ChatHistoryPreloadManager keeps the top of its list: how many.
+    private static let preloadedChats = 30
+    private var preloadTimer: SwiftSignalKit.Timer?
+    private var preloadQueue: [(id: Int, lastId: Int)] = []
+    private var isPreloading = false
+    /// The newest message each chat's cache was brought up to, by this preloading or found there.
+    private var preloadedThrough: [Int: Int] = [:]
+
+    /// A second after the list changes, as Telegram waits: the chats at its top whose cache is behind their newest
+    /// message get their new entries fetched, one at a time, so opening one shows it at once. Not while connecting,
+    /// and at most once a second while chats change.
+    private func schedulePreload() {
+        guard self.preloadTimer == nil, self.connection.hello != nil else {
+            return
+        }
+        let timer = SwiftSignalKit.Timer(timeout: 1.0, repeat: false, completion: { [weak self] in
+            guard let self else {
+                return
+            }
+            self.preloadTimer = nil
+            self.startPreload()
+        }, queue: Queue.mainQueue())
+        self.preloadTimer = timer
+        timer.start()
+    }
+
+    private func startPreload() {
+        // The list's order, pinned first; not the archive, nor a subagent's chat. A working chat waits for its answer:
+        // its entries are still coming, and it is fetched once it ends.
+        let listed = self.dialogs.values.filter { $0.parentConversationId == nil && !$0.archived && !self.hiddenDialogs.contains($0.id) }
+        let ordered = listed.sorted { lhs, rhs in
+            if (lhs.pinned != nil) != (rhs.pinned != nil) {
+                return lhs.pinned != nil
+            }
+            if let l = lhs.pinned, let r = rhs.pinned, l != r {
+                return l > r
+            }
+            return (lhs.last?.id ?? 0) > (rhs.last?.id ?? 0)
+        }
+        self.preloadQueue = ordered.prefix(ServerStore.preloadedChats).compactMap { dialog in
+            guard let lastId = dialog.last?.id, !dialog.busy, (self.preloadedThrough[dialog.id] ?? 0) < lastId else {
+                return nil
+            }
+            return (dialog.id, lastId)
+        }
+        if !self.isPreloading {
+            self.preloadNext()
+        }
+    }
+
+    private func preloadNext() {
+        guard !self.preloadQueue.isEmpty, self.connection.hello != nil else {
+            self.isPreloading = false
+            return
+        }
+        self.isPreloading = true
+        let (id, lastId) = self.preloadQueue.removeFirst()
+        if (self.watchers[id] ?? 0) > 0 {
+            // Open: its subscription brings everything.
+            self.preloadNext()
+        } else if let replica = self.replicas[id] {
+            self.preload(id, after: replica.maxId, through: lastId)
+        } else {
+            self.cache.maxId(id) { [weak self] maxId in
+                self?.preload(id, after: maxId, through: lastId)
+            }
+        }
+    }
+
+    /// The entries after `after`, the cache's newest, into the cache: in memory when the chat was opened this run, on
+    /// disk otherwise. More than a hundred missing is a gap, and the newest hundred replace the cache, as a subscribe's
+    /// gap does.
+    private func preload(_ id: Int, after: Int?, through lastId: Int) {
+        if let after, after >= lastId {
+            self.preloadedThrough[id] = lastId
+            self.preloadNext()
+            return
+        }
+        var params: JSONObject = ["conversationId": id, "limit": 100]
+        if let after {
+            params["after"] = after
+        }
+        self.connection.request("conversation.history", params) { [weak self] result in
+            guard let self else {
+                return
+            }
+            guard case let .success(value) = result else {
+                // Offline, or an older server: the next connection's list starts again.
+                self.preloadQueue = []
+                self.isPreloading = false
+                return
+            }
+            let entries = value.objects("entries")
+            let hasOlder = value.bool("hasOlder") ?? false
+            let replacing = after == nil || hasOlder
+            if (self.watchers[id] ?? 0) > 0 {
+                // Opened meanwhile: its subscribe brings these too.
+            } else if let replica = self.replicas[id] {
+                if replacing {
+                    replica.removeAll()
+                    replica.hasOlder = hasOlder
+                }
+                replica.upsert(entries)
+                self.cache.scheduleSave(replica)
+            } else {
+                self.cache.merge(id, entries: entries, replacing: replacing, hasOlder: hasOlder)
+            }
+            self.preloadedThrough[id] = lastId
+            self.preloadNext()
+        }
     }
 
     func dialogsSignal() -> Signal<[DialogModel], NoError> {
@@ -1245,6 +1361,7 @@ final class ServerStore: ConversationStore, TauServer {
         // Open chats keep theirs: their transcripts are on screen and in memory.
         let open = Set(self.watchers.filter { $0.value > 0 }.map(\.key))
         self.cache.remove(except: open)
+        self.preloadedThrough = [:]
         self.media.clear()
         for (id, replica) in self.replicas where !open.contains(id) {
             replica.removeAll()
@@ -1511,6 +1628,11 @@ final class EntryCache {
     private let directory: URL
     private var saveTimers: [Int: SwiftSignalKit.Timer] = [:]
     private(set) var serverId: String?
+    /// Every read and write of a transcript file, in order: a chat's save, a preload's merge and a reset never interleave,
+    /// and a load sees what was queued before it.
+    private let io = DispatchQueue(label: "tau.entry-cache", qos: .utility)
+    /// The newest entries a file keeps.
+    private static let keptEntries = 300
 
     init(namespace: String) {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -1533,23 +1655,74 @@ final class EntryCache {
     }
 
     func remove(except kept: Set<Int>) {
-        for (id, _) in self.sizes() where !kept.contains(id) {
-            try? FileManager.default.removeItem(at: self.directory.appendingPathComponent("\(id).json"))
+        self.io.sync {
+            for (id, _) in self.sizes() where !kept.contains(id) {
+                try? FileManager.default.removeItem(at: self.directory.appendingPathComponent("\(id).json"))
+            }
         }
     }
 
     func reset(serverId: String) {
-        try? FileManager.default.removeItem(at: self.directory)
-        try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
-        try? serverId.write(to: self.directory.appendingPathComponent("server-id"), atomically: true, encoding: .utf8)
+        self.io.sync {
+            try? FileManager.default.removeItem(at: self.directory)
+            try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
+            try? serverId.write(to: self.directory.appendingPathComponent("server-id"), atomically: true, encoding: .utf8)
+        }
         self.serverId = serverId
     }
 
     func load(_ id: Int) -> (entries: [JSONObject], hasOlder: Bool)? {
+        return self.io.sync {
+            self.read(id)
+        }
+    }
+
+    private func read(_ id: Int) -> (entries: [JSONObject], hasOlder: Bool)? {
         guard let data = try? Data(contentsOf: self.directory.appendingPathComponent("\(id).json")), let object = (try? JSONSerialization.jsonObject(with: data)) as? JSONObject else {
             return nil
         }
         return (object.objects("entries"), object.bool("hasOlder") ?? true)
+    }
+
+    private func write(_ id: Int, entries: [JSONObject], hasOlder: Bool) {
+        if let data = try? JSONSerialization.data(withJSONObject: ["entries": entries, "hasOlder": hasOlder]) {
+            try? data.write(to: self.directory.appendingPathComponent("\(id).json"), options: .atomic)
+        }
+    }
+
+    /// The newest entry ID a conversation's file has, read off the main queue; nil without one.
+    func maxId(_ id: Int, completion: @escaping (Int?) -> Void) {
+        self.io.async {
+            let maxId = self.read(id)?.entries.compactMap { $0.int("id") }.max()
+            DispatchQueue.main.async {
+                completion(maxId)
+            }
+        }
+    }
+
+    /// Adds a preload's entries to a conversation's file: after what it has, or in place of it (`replacing`, when there
+    /// was a gap between the two, or nothing was cached). `hasOlder` is the server's when replacing.
+    func merge(_ id: Int, entries: [JSONObject], replacing: Bool, hasOlder: Bool) {
+        self.io.async {
+            var byId: [Int: JSONObject] = [:]
+            var older = hasOlder
+            if !replacing, let cached = self.read(id) {
+                older = cached.hasOlder
+                for entry in cached.entries {
+                    if let entryId = entry.int("id") {
+                        byId[entryId] = entry
+                    }
+                }
+            }
+            for entry in entries {
+                if let entryId = entry.int("id") {
+                    byId[entryId] = entry
+                }
+            }
+            let sorted = byId.keys.sorted()
+            let kept = sorted.suffix(EntryCache.keptEntries).compactMap { byId[$0] }
+            self.write(id, entries: kept, hasOlder: older || sorted.count > kept.count)
+        }
     }
 
     /// Writes a conversation's newest entries a moment after the last change, off the main queue.
@@ -1560,13 +1733,11 @@ final class EntryCache {
                 return
             }
             self.saveTimers[replica.id] = nil
-            let entries = Array(replica.ordered().suffix(300))
+            let entries = Array(replica.ordered().suffix(EntryCache.keptEntries))
             let hasOlder = replica.hasOlder || replica.entries.count > entries.count
-            let url = self.directory.appendingPathComponent("\(replica.id).json")
-            DispatchQueue.global(qos: .utility).async {
-                if let data = try? JSONSerialization.data(withJSONObject: ["entries": entries, "hasOlder": hasOlder]) {
-                    try? data.write(to: url, options: .atomic)
-                }
+            let id = replica.id
+            self.io.async {
+                self.write(id, entries: entries, hasOlder: hasOlder)
             }
         }, queue: Queue.mainQueue())
         self.saveTimers[replica.id] = timer

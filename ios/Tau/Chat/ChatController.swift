@@ -312,9 +312,6 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         node.contentReady = { [weak self] in
             self?.readyPromise.set(.single(true))
         }
-        Queue.mainQueue().after(0.35) { [weak self] in
-            self?.readyPromise.set(.single(true))
-        }
         // The position also survives the app being suspended and killed with the chat open.
         NotificationCenter.default.addObserver(self, selector: #selector(self.saveScrollState), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(self.applicationDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)

@@ -696,6 +696,56 @@ final class SendingUITests: XCTestCase {
         self.shot("data-2-network")
     }
 
+    /// Settings > Data and Storage > Storage Usage > Clear Cache: the transcripts leave the phone.
+    private func clearCache() {
+        self.launch(["-tab", "1"])
+        self.app.descendants(matching: .any)["Data and Storage"].firstMatch.tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Storage Usage"].firstMatch.tap()
+        sleep(1)
+        self.app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Clear Cache'")).firstMatch.tap()
+        sleep(1)
+        // The sheet's button, by where it is: XCUITest finds the sheet's buttons not hittable.
+        self.app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Clear ' AND NOT (label BEGINSWITH 'Clear Cache')")).firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        sleep(1)
+    }
+
+    private func userMessage(_ text: String) -> XCUIElement {
+        return self.app.descendants(matching: .any).matching(identifier: "userMessage").matching(NSPredicate(format: "label == %@", text)).firstMatch
+    }
+
+    /// A chat never waits for the network to open: the top of the list is preloaded, so one not opened since its
+    /// transcript left the phone shows with the server gone; with nothing on the phone it opens with Telegram's spinner,
+    /// and the transcript takes its place when the server is back.
+    func testOpenWithoutWaiting() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("preload me")
+        self.send()
+        sleep(4)
+        self.clearCache()
+        // The list brings the chat back to the phone.
+        self.launch([])
+        sleep(3)
+        self.server("stop")
+        self.launch([])
+        self.point(0.5, 0.24).tap()
+        sleep(1)
+        self.shot("open-0-preloaded")
+        XCTAssertTrue(self.userMessage("preload me").exists, "preloaded")
+
+        self.clearCache()
+        self.launch([])
+        self.point(0.5, 0.24).tap()
+        sleep(1)
+        self.shot("open-1-loading")
+        XCTAssertFalse(self.userMessage("preload me").exists)
+        self.server("start")
+        sleep(5)
+        self.shot("open-2-loaded")
+        XCTAssertTrue(self.userMessage("preload me").exists, "loaded once the server is back")
+    }
+
     /// The τ while the agent has written nothing yet, then the answer with when it came and how long it took.
     func testWaitingAndFooter() {
         self.launch(["-newChat", "YES"])

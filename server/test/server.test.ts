@@ -168,6 +168,29 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("history without before brings a cached tail up to date, and says when there is a gap", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", {});
+		const id = dialog.conversation.id;
+		const live = new ConversationReplica(id);
+		await live.sync(client);
+		await chat(client, live, "first", "1");
+		const ids = () => live.ordered().map((entry) => entry.id);
+		const cached = ids().at(-1)!;
+		for (let i = 0; i < 3; i++) await chat(client, live, `more ${i}`, `more${i}`);
+
+		// The newest, never subscribing: what the app preloads for a chat it has not opened.
+		const newest = await client.request("conversation.history", { conversationId: id, limit: 4 });
+		assert.deepEqual(newest.entries.map((entry: { id: number }) => entry.id), ids().slice(-4));
+		assert.equal(newest.hasOlder, true);
+		const after = await client.request("conversation.history", { conversationId: id, after: cached, limit: 100 });
+		assert.deepEqual(after.entries.map((entry: { id: number }) => entry.id), ids().filter((entryId) => entryId > cached));
+		assert.equal(after.hasOlder, false, "everything since the cache: no gap");
+		const gap = await client.request("conversation.history", { conversationId: id, after: cached, limit: 2 });
+		assert.equal(gap.hasOlder, true, "more than limit since the cache: a gap");
+		await client.close();
+	});
+
 	test("dialogs: listed, pushed on create and on run start and end", async () => {
 		const client = await TauClient.connect(server.url);
 		const pushes: { busy: boolean; id: number; last?: { kind: string } }[] = [];
