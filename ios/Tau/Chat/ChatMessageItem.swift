@@ -33,6 +33,10 @@ final class ChatMessageItemInteraction {
     var presentInGlobalOverlay: (ViewController, Any?) -> Void = { _, _ in }
     /// The chat's view, which text selection keeps its knobs and menu inside.
     var rootView: () -> UIView? = { nil }
+    /// How much of each streaming answer has been revealed, by message: a row that leaves the screen and comes back gets
+    /// a new node, which goes on from here instead of revealing the answer again from its first letter. Read by layouts
+    /// on background queues.
+    let revealProgress = Atomic<[Int: Int]>(value: [:])
 
     init(requestRelayout: @escaping (Int) -> Void, toggleSelection: @escaping (Int) -> Void, openContextMenu: @escaping (Int, ChatMessageItemNode, ContextGesture?) -> Void, openTool: @escaping (ChatMessage) -> Void, openImage: @escaping (Int) -> Void) {
         self.requestRelayout = requestRelayout
@@ -99,6 +103,12 @@ final class ChatMessageItem: ListViewItem {
         return self.selection != nil || self.message.tool != nil || self.message.service != nil
     }
 
+    /// Rows whose updates add to their end: the answer as it streams, a tool's output, a card that expands. A user's
+    /// bubble only changes as a whole.
+    var growsAtEnd: Bool {
+        return self.message.role != .user
+    }
+
     func selected(listView: ListView) {
         listView.clearHighlightAnimated(false)
         if self.selection != nil {
@@ -129,10 +139,19 @@ final class ChatMessageItem: ListViewItem {
                 return
             }
             let makeLayout = nodeValue.asyncLayout()
+            let growsAtEnd = self.growsAtEnd
             async {
                 let (layout, apply) = makeLayout(self, params, neighbors)
                 Queue.mainQueue().async {
-                    completion(layout, { _ in apply(animation) })
+                    completion(layout, { info in
+                        apply(animation)
+                        // As Telegram's expanding bubbles (ChatMessageTextBubbleContentNode): a row that grows at its
+                        // end grows down the screen. At the end of the chat the list still follows it; scrolled back,
+                        // what is being read stays where it is and the new text goes on below.
+                        if growsAtEnd {
+                            info.setInvertOffsetDirection()
+                        }
+                    })
                 }
             }
         }
@@ -530,6 +549,8 @@ final class ChatMessageItemNode: ListViewItemNode {
         let makeSubagentAnswerLayout = InteractiveTextNode.asyncLayout(self.subagentAnswerNode)
         let existingTextNodes = self.textNodes
         let existingTableNodes = self.tableNodes
+        // Taken here, on the main thread, with the cells each has now.
+        let existingTableLayouts = existingTableNodes.map { ChatTableNode.asyncLayout($0) }
         let currentRevealCount = self.revealController.map { Int($0.revealedCount) }
 
         let layoutImpl: (ChatMessageItem, ListViewItemLayoutParams, ListViewItemNeighbors) -> (ListViewItemNodeLayout, (ListViewItemUpdateAnimation) -> Void) = { [weak self] item, params, neighbors in
@@ -814,10 +835,24 @@ final class ChatMessageItemNode: ListViewItemNode {
                 var textIndex = 0
                 var tableIndex = 0
                 var start = 0
+                // A streaming answer's text is drawn as it is laid out: drawn in the background, a block laid out again
+                // on every step showed blank until it was drawn, and with steps coming faster than that, stayed blank.
+                let drawsSynchronously = item.isStreaming || currentRevealCount != nil
+                func textNode(_ index: Int) -> InteractiveTextNode? {
+                    if index < existingTextNodes.count {
+                        return existingTextNodes[index]
+                    }
+                    guard drawsSynchronously else {
+                        return nil
+                    }
+                    let node = InteractiveTextNode()
+                    node.displaysAsynchronously = false
+                    return node
+                }
                 for block in blocks {
                     switch block {
                     case let .text(string):
-                        let existing = textIndex < existingTextNodes.count ? existingTextNodes[textIndex] : nil
+                        let existing = textNode(textIndex)
                         let (layout, apply) = InteractiveTextNode.asyncLayout(existing)(InteractiveTextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
                         laidOut.append(.text(start: start, length: string.length, layout: layout))
                         textApplies.append(apply)
@@ -825,7 +860,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         textIndex += 1
                     case let .code(string):
                         // As wide as its longest line; the row shows it through a horizontal scroller.
-                        let existing = textIndex < existingTextNodes.count ? existingTextNodes[textIndex] : nil
+                        let existing = textNode(textIndex)
                         let (layout, apply) = InteractiveTextNode.asyncLayout(existing)(InteractiveTextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: 100_000.0, height: .greatestFiniteMagnitude)))
                         laidOut.append(.text(start: start, length: string.length, layout: layout))
                         textApplies.append(apply)
@@ -833,7 +868,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                         textIndex += 1
                     case let .table(table):
                         let node = tableIndex < existingTableNodes.count ? existingTableNodes[tableIndex] : ChatTableNode()
-                        let (size, apply) = ChatTableNode.asyncLayout(node)(table, tableStyle, maxTextWidth)
+                        let makeTableLayout = tableIndex < existingTableLayouts.count ? existingTableLayouts[tableIndex] : ChatTableNode.asyncLayout(node)
+                        let (size, apply) = makeTableLayout(table, tableStyle, maxTextWidth)
                         laidOut.append(.table(start: start, length: table.characterCount, size: size))
                         tableApplies.append((node, apply))
                         tableIndex += 1
@@ -842,8 +878,10 @@ final class ChatMessageItemNode: ListViewItemNode {
                 }
                 let totalLength = start
 
-                // While streaming, the row is as tall as the content revealed so far.
-                let revealed: Int? = (item.isStreaming || currentRevealCount != nil) ? (currentRevealCount ?? 0) : nil
+                // While streaming, the row is as tall as the content revealed so far; a new node for a streaming answer
+                // goes on from what the last one had revealed.
+                let carriedReveal = currentRevealCount ?? (item.isStreaming ? item.interaction.revealProgress.with { $0[message.id] } : nil)
+                let revealed: Int? = (item.isStreaming || carriedReveal != nil) ? (carriedReveal ?? 0) : nil
                 let textHeight = contentHeight(laidOut, revealed: revealed)
                 // The end of a run: when the answer came and how long the run took, at the bottom right as Telegram
                 // dates a message.
@@ -894,7 +932,15 @@ final class ChatMessageItemNode: ListViewItemNode {
                         node.isHidden = true
                     }
 
-                    let applyArguments = InteractiveTextNode.ApplyArguments(animation: animation, spoilerTextColor: theme.freeTextColor, spoilerEffectColor: theme.freeTextColor, areContentAnimationsEnabled: true, spoilerExpandRect: nil)
+                    // While the answer streams its blocks only grow, and new text comes in through the reveal: their
+                    // frames move at once. Animating them on every step left each block chasing an animation that the
+                    // next step replaced, so blocks drifted into each other until the stream ended. The row's own height
+                    // still animates in the list.
+                    let contentAnimation: ListViewItemUpdateAnimation = revealed != nil ? .None : animation
+                    for node in existingTextNodes {
+                        node.displaysAsynchronously = !drawsSynchronously
+                    }
+                    let applyArguments = InteractiveTextNode.ApplyArguments(animation: contentAnimation, spoilerTextColor: theme.freeTextColor, spoilerEffectColor: theme.freeTextColor, areContentAnimationsEnabled: true, spoilerExpandRect: nil)
                     let textNodes = textApplies.map { $0(applyArguments) }
                     self.setTextNodes(textNodes)
                     for (node, apply) in tableApplies {
@@ -919,20 +965,20 @@ final class ChatMessageItemNode: ListViewItemNode {
                             if scrolls {
                                 // The scroller spans the row, so code scrolls out to the screen's edges.
                                 let scroller = self.codeScroller(for: node)
-                                animation.animator.updateFrame(layer: scroller.layer, frame: CGRect(x: 0.0, y: y, width: params.width, height: layout.size.height), completion: nil)
+                                contentAnimation.animator.updateFrame(layer: scroller.layer, frame: CGRect(x: 0.0, y: y, width: params.width, height: layout.size.height), completion: nil)
                                 node.frame = CGRect(origin: CGPoint(x: x, y: 0.0), size: layout.size)
                                 scroller.view.contentSize = CGSize(width: max(params.width, x + layout.size.width + freeTextInset), height: layout.size.height)
                             } else {
                                 if node.supernode !== self.contentNode {
                                     self.contentNode.insertSubnode(node, belowSubnode: self.dateNode)
                                 }
-                                animation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: x, y: y), size: layout.size), completion: nil)
+                                contentAnimation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: x, y: y), size: layout.size), completion: nil)
                             }
                             y += layout.size.height
                         case let .table(_, _, size):
                             let node = tableApplies[tableCursor].0
                             tableCursor += 1
-                            animation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: x, y: y), size: size), completion: nil)
+                            contentAnimation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: x, y: y), size: size), completion: nil)
                             y += size.height
                         }
                     }
@@ -1759,7 +1805,8 @@ final class ChatMessageItemNode: ListViewItemNode {
             if let controller = self.revealController {
                 controller.observeUpdate(latestLength: totalLength, at: now)
             } else {
-                let controller = TextRevealController(initialRevealedCount: 0, initialLength: 0)
+                let carried = min(totalLength, item.interaction.revealProgress.with { $0[item.message.id] } ?? 0)
+                let controller = TextRevealController(initialRevealedCount: carried, initialLength: carried)
                 controller.observeUpdate(latestLength: totalLength, at: now)
                 self.revealController = controller
             }
@@ -1769,7 +1816,7 @@ final class ChatMessageItemNode: ListViewItemNode {
             self.applyReveal(nil)
             return
         }
-        self.applyReveal(Int(self.revealController?.revealedCount ?? 0))
+        self.applyReveal(Int(self.revealController?.revealedCount ?? 0), force: true)
 
         guard self.revealLink == nil else {
             return
@@ -1781,6 +1828,16 @@ final class ChatMessageItemNode: ListViewItemNode {
             }
             let previous = Int(controller.revealedCount)
             let (count, isComplete) = controller.tick(now: CACurrentMediaTime())
+            let id = item.message.id
+            let _ = item.interaction.revealProgress.modify { progress in
+                var progress = progress
+                if isComplete {
+                    progress.removeValue(forKey: id)
+                } else {
+                    progress[id] = count
+                }
+                return progress
+            }
             if isComplete {
                 self.revealController = nil
                 self.revealLink = nil
@@ -1798,7 +1855,8 @@ final class ChatMessageItemNode: ListViewItemNode {
     }
 
     /// Shows `revealed` characters across the blocks; nil shows everything.
-    private func applyReveal(_ revealed: Int?) {
+    /// `force` after a layout: segments it made start with nothing hidden, so they take the count even where it is the same.
+    private func applyReveal(_ revealed: Int?, force: Bool = false) {
         var textCursor = 0
         var tableCursor = 0
         for block in self.laidOutBlocks {
@@ -1809,8 +1867,14 @@ final class ChatMessageItemNode: ListViewItemNode {
                 }
                 let node = self.textNodes[textCursor]
                 textCursor += 1
-                if let revealed, revealed < start + length {
-                    node.updateRevealCharacterCount(count: max(0, revealed - start), animated: true)
+                // Until the reveal ends every block keeps a count, its whole length once the reveal has passed it. A
+                // block the reveal caught up with and that then grew again went from no count back to one, and its
+                // mask came back animated: what was on screen faded out and in again.
+                if let revealed {
+                    let count = min(length, max(0, revealed - start))
+                    if force || node.revealCharacterCount != count {
+                        node.updateRevealCharacterCount(count: count, animated: true)
+                    }
                 } else if node.revealCharacterCount != nil {
                     node.updateRevealCharacterCount(count: nil, animated: false)
                 }

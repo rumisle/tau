@@ -2120,7 +2120,9 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
         }
         
         let animateContents = self.isDisplayingContentsUnderSpoilers != nil && self.isDisplayingContentsUnderSpoilers != cachedLayout.displayContentsUnderSpoilers && arguments.animation.isAnimated
-        let synchronous = animateContents
+        // tau: a node drawn synchronously (a streaming answer) draws its segments at once, so a segment laid out again is
+        // never blank while it is drawn.
+        let synchronous = animateContents || !self.displaysAsynchronously
         self.isDisplayingContentsUnderSpoilers = cachedLayout.displayContentsUnderSpoilers
         
         let topLeftOffset = CGPoint(x: cachedLayout.insets.left, y: cachedLayout.insets.top)
@@ -2174,8 +2176,14 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
             let contentItemLayer: TextContentItemLayer
             var itemSpoilerExpandRect: CGRect?
             var itemAnimateContents = animateContents && contentItemAnimation.isAnimated
+            var keepsDrawing = false
             if let current = self.contentItemLayers[itemId] {
                 contentItemLayer = current
+                contentItemLayer.renderNode.displaysAsynchronously = self.displaysAsynchronously
+                // tau: unchanged, it keeps its drawing; the rest of it is laid out as ever.
+                if !animateContents, arguments.spoilerExpandRect == nil, let previous = current.params, previous.item.drawsSame(as: contentItem), previous.spoilerTextColor.isEqual(arguments.spoilerTextColor) {
+                    keepsDrawing = true
+                }
                 
                 if arguments.animation.isAnimated, let spoilerExpandRect = arguments.spoilerExpandRect {
                     itemSpoilerExpandRect = spoilerExpandRect.offsetBy(dx: -contentItemFrame.minX, dy: -contentItemFrame.minY)
@@ -2198,7 +2206,8 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
                 animation: contentItemAnimation,
                 synchronously: synchronous,
                 animateContents: itemAnimateContents,
-                spoilerExpandRect: itemSpoilerExpandRect
+                spoilerExpandRect: itemSpoilerExpandRect,
+                keepsDrawing: keepsDrawing
             )
             
             contentItemAnimation.animator.updateFrame(layer: contentItemLayer, frame: contentItemFrame, completion: nil)
@@ -2396,6 +2405,39 @@ final class TextContentItem {
         self.contentOffset = contentOffset
         self.segment = segment
         self.displayContentsUnderSpoilers = displayContentsUnderSpoilers
+    }
+
+    /// tau: whether `other` draws what this does: the same characters, on the same lines, in the same places. A text
+    /// laid out again because more was added at its end (a streaming answer) keeps the drawing of the segments before.
+    func drawsSame(as other: TextContentItem) -> Bool {
+        guard self.size == other.size, self.contentOffset == other.contentOffset, self.displayContentsUnderSpoilers == other.displayContentsUnderSpoilers else {
+            return false
+        }
+        let lines = self.segment.lines
+        let otherLines = other.segment.lines
+        guard lines.count == otherLines.count, !lines.isEmpty, self.segment.spoilers.isEmpty, other.segment.spoilers.isEmpty else {
+            return false
+        }
+        if let quote = self.segment.blockQuote, let otherQuote = other.segment.blockQuote {
+            guard quote.frame == otherQuote.frame, quote.tintColor.isEqual(otherQuote.tintColor), quote.backgroundColor.isEqual(otherQuote.backgroundColor), quote.isCollapsed == otherQuote.isCollapsed else {
+                return false
+            }
+        } else if (self.segment.blockQuote == nil) != (other.segment.blockQuote == nil) {
+            return false
+        }
+        for (line, otherLine) in zip(lines, otherLines) {
+            guard line.frame == otherLine.frame, line.range == otherLine.range, line.isTruncated == otherLine.isTruncated else {
+                return false
+            }
+        }
+        guard let first = lines.first?.range, let last = lines.last?.range, let string = self.attributedString, let otherString = other.attributedString else {
+            return false
+        }
+        let range = NSRange(location: first.location, length: last.location + last.length - first.location)
+        guard range.location + range.length <= string.length, range.location + range.length <= otherString.length else {
+            return false
+        }
+        return string.attributedSubstring(from: range).isEqual(to: otherString.attributedSubstring(from: range))
     }
 }
 
@@ -3139,8 +3181,11 @@ final class TextContentItemLayer: SimpleLayer {
         animation: ListViewItemUpdateAnimation,
         synchronously: Bool,
         animateContents: Bool,
-        spoilerExpandRect: CGRect?
+        spoilerExpandRect: CGRect?,
+        keepsDrawing: Bool = false
     ) {
+        // tau: what it drew is what it would draw.
+        let previousRenderParams = keepsDrawing ? self.renderNode.params : nil
         self.params = params
 
         let contentFrame = CGRect(origin: CGPoint(), size: params.item.size)
@@ -3392,7 +3437,9 @@ final class TextContentItemLayer: SimpleLayer {
         
         self.renderNode.params = RenderParams(size: contentFrame.size, item: params.item, mask: staticContentMask)
         self.updateRevealMask(animateNewSegments: false)
-        if synchronously {
+        if let previousRenderParams, previousRenderParams.size == contentFrame.size, (previousRenderParams.mask == nil) == (staticContentMask == nil), staticContentMask == nil, self.renderNode.layer.contents != nil {
+            // tau: the same text in the same place: the drawing stands.
+        } else if synchronously {
             if let spoilerExpandRect, animation.isAnimated {
                 let localSpoilerExpandRect = spoilerExpandRect.offsetBy(dx: -self.renderNodeContainer.frame.minX, dy: -self.renderNodeContainer.frame.minY)
                 

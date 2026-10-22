@@ -1,6 +1,8 @@
 // A free scripted model for development: streams an echo of each message, runs `$ <command>` through bash, and starts
 // a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`,
 // fails as an overloaded provider would `!overloaded <times> <text>` before answering, and fails for good `!fatal <text>`.
+// `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
+// streams.
 import type { Message } from "@earendil-works/pi-ai";
 import {
 	type FauxProviderHandle,
@@ -77,6 +79,8 @@ function reply(messages: readonly Message[]) {
 		}
 		return fauxAssistantMessage([fauxToolCall("subagent", { action: "spawn", name: subagent[1]!, message: subagent[3]!, ...options })], { stopReason: "toolUse" });
 	}
+	const doc = /^!doc (\d+)/.exec(text);
+	if (doc !== null) return fauxAssistantMessage([fauxText(longDocument(Number(doc[1])))]);
 	const turns = messages.filter((message) => message.role === "user").length;
 	return fauxAssistantMessage([
 		fauxThinking(`The user said ${JSON.stringify(text)}. Turn ${turns}.`),
@@ -87,4 +91,24 @@ function reply(messages: readonly Message[]) {
 function userText(content: Extract<Message, { role: "user" }>["content"]): string {
 	if (typeof content === "string") return content;
 	return content.map((part) => (part.type === "text" ? part.text : "[image]")).join("");
+}
+
+/** A long answer of every kind of block, `sections` times over, numbered so a screen shows where it is. */
+export function longDocument(sections: number): string {
+	const parts: string[] = [];
+	for (let index = 1; index <= sections; index++) {
+		parts.push(`## Section ${index}`);
+		parts.push(
+			`Paragraph ${index}.1: the server commits each step of the run before showing it, so a restart picks up where it stopped. ` +
+				`This sentence is long enough to wrap over several lines on a phone, which is the point of it.`,
+		);
+		parts.push(`- point ${index}.a, short\n- point ${index}.b, a little longer than the first one\n- point ${index}.c`);
+		if (index % 2 === 1) {
+			parts.push("```swift\nfunc section" + index + "() -> Int {\n    let value = " + index + " * 2\n    return value + 1\n}\n```");
+		} else {
+			parts.push(`| Name | Value |\n| --- | --- |\n| alpha ${index} | ${index * 3} |\n| beta ${index} | ${index * 5} |`);
+		}
+		parts.push(`Paragraph ${index}.2 ends the section with $e^{i\\pi} + 1 = 0$ inline and one more line of text after it.`);
+	}
+	return parts.join("\n\n");
 }

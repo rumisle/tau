@@ -82,6 +82,13 @@ enum MathText {
             // Fenced code blocks pass through untouched.
             if atLineStart, hasPrefix("```", at: index) || hasPrefix("~~~", at: index) {
                 inFence.toggle()
+                // The fence line passes through whole: its backticks are no inline code. Read as one, a closing fence
+                // ran to the next block's opening one and left every formula between them as text.
+                while index < characters.count && characters[index] != "\n" {
+                    output.append(characters[index])
+                    index += 1
+                }
+                continue
             }
             if inFence || formulas.count >= maxFormulas {
                 output.append(character)

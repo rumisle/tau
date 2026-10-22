@@ -22,7 +22,7 @@ struct MarkdownStyle {
 }
 
 /// A rendered table: header cells, then body rows, each cell already styled.
-struct MarkdownTable {
+struct MarkdownTable: Equatable {
     var header: [NSAttributedString]
     var rows: [[NSAttributedString]]
 

@@ -1107,6 +1107,73 @@ final class SendingUITests: XCTestCase {
         self.shot("fold-13-none")
     }
 
+    /// Reading back while a long answer streams: scrolled up a little, then a lot, then back to the end; every half second
+    /// a screenshot, to see blocks overlap or the row jump.
+    func testStreamingScroll() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!doc 24")
+        self.send()
+        sleep(6)
+        self.app.swipeDown()
+        self.shot("ss-00")
+        for index in 1 ... 12 {
+            usleep(500_000)
+            self.shot(String(format: "ss-%02d", index))
+        }
+        self.point(0.5, 0.4).press(forDuration: 0.05, thenDragTo: self.point(0.5, 0.55))
+        for index in 13 ... 24 {
+            usleep(500_000)
+            self.shot(String(format: "ss-%02d", index))
+        }
+        self.app.swipeUp()
+        self.app.swipeUp()
+        for index in 25 ... 30 {
+            usleep(500_000)
+            self.shot(String(format: "ss-%02d", index))
+        }
+        // The arrow to the end: there the list follows the answer again.
+        self.point(0.92, 0.885).tap()
+        for index in 31 ... 40 {
+            usleep(500_000)
+            self.shot(String(format: "ss-%02d", index))
+        }
+        // Done: the whole answer as it stays, from its end back to its start.
+        sleep(30)
+        self.shot("ss-done-0")
+        for index in 1 ... 3 {
+            self.app.swipeDown()
+            self.app.swipeDown()
+            sleep(1)
+            self.shot("ss-done-\(index)")
+        }
+    }
+
+    /// The streaming answer leaves the screen (the user reads an older one) and comes back: it goes on where it was,
+    /// not revealed again from its first letter.
+    func testStreamingRecycle() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!doc 4")
+        self.send()
+        sleep(14)
+        self.type("!doc 24")
+        self.send()
+        sleep(8)
+        for _ in 0 ..< 6 {
+            self.app.swipeDown()
+        }
+        self.shot("sr-00")
+        sleep(2)
+        for _ in 0 ..< 6 {
+            self.app.swipeUp()
+        }
+        for index in 1 ... 8 {
+            usleep(250_000)
+            self.shot(String(format: "sr-%02d", index))
+        }
+    }
+
     /// A pinned chat on top, then the list scrolled and back, the search field collapsing and coming back: the list
     /// must settle (an inset that followed the collapsing field looped until the stack ran out).
     func testPinnedListScrolls() {
