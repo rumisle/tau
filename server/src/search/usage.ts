@@ -1,6 +1,7 @@
 // What the models cost, by day, model and conversation, for the app's Usage screen. Durable keeps each conversation's
 // totals (`pi.usage`) but not when they were spent; this ledger keeps one row per answer, written with the search index
-// (./service.ts) from the same commits, so it needs no pass of its own.
+// (./service.ts) from the same commits, so it needs no pass of its own. Prompt cache refreshes (../cache.ts) are no
+// answers: they have a table of their own, and count as the model `tau/cache-warming`.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 
 export type UsageRow = {
@@ -15,6 +16,11 @@ export type UsageRow = {
 	cacheWrite: number;
 	cost: number;
 };
+
+/** The model the Usage screen shows cache refreshes as. */
+export const CACHE_WARMING_MODEL = "tau/cache-warming";
+
+export type WarmRow = { conversationId: number; time: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 
 export type UsageTotals = { cost: number; input: number; output: number; cacheRead: number; cacheWrite: number; replies: number };
 
@@ -33,6 +39,7 @@ const DAY = 86_400_000;
 export class UsageLedger {
 	readonly #db: DatabaseSync;
 	readonly #insert: StatementSync;
+	readonly #insertWarm: StatementSync;
 
 	constructor(db: DatabaseSync) {
 		this.#db = db;
@@ -40,6 +47,14 @@ export class UsageLedger {
 			entry INTEGER PRIMARY KEY, conv INTEGER NOT NULL, time INTEGER NOT NULL, model TEXT NOT NULL,
 			input INTEGER NOT NULL, output INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL, cost REAL NOT NULL)`);
 		db.exec("CREATE INDEX IF NOT EXISTS usage_time ON usage (time)");
+		db.exec(`CREATE TABLE IF NOT EXISTS warm (
+			conv INTEGER NOT NULL, time INTEGER NOT NULL,
+			input INTEGER NOT NULL, output INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL, cost REAL NOT NULL)`);
+		// Answers and refreshes as one; \`answer\` tells them apart.
+		db.exec(`CREATE VIEW IF NOT EXISTS spend AS
+			SELECT conv, time, model, input, output, cache_read, cache_write, cost, 1 AS answer FROM usage
+			UNION ALL SELECT conv, time, '${CACHE_WARMING_MODEL}', input, output, cache_read, cache_write, cost, 0 FROM warm`);
+		this.#insertWarm = db.prepare("INSERT INTO warm (conv, time, input, output, cache_read, cache_write, cost) VALUES (?, ?, ?, ?, ?, ?, ?)");
 		this.#insert = db.prepare("INSERT OR IGNORE INTO usage (entry, conv, time, model, input, output, cache_read, cache_write, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
 	}
 
@@ -56,6 +71,10 @@ export class UsageLedger {
 		}
 	}
 
+	addWarm(row: WarmRow): void {
+		this.#insertWarm.run(row.conversationId, row.time, row.input, row.output, row.cacheRead, row.cacheWrite, row.cost);
+	}
+
 	/**
 	 * The last `days` days up to now (0: all), days cut at the client's midnight: `tzOffset` is its minutes east of
 	 * UTC, as JavaScript's `-getTimezoneOffset()`.
@@ -63,12 +82,12 @@ export class UsageLedger {
 	report(days: number, tzOffset: number, now = Date.now()): UsageReport {
 		const shift = tzOffset * 60_000;
 		const today = Math.floor((now + shift) / DAY);
-		const first = days > 0 ? today - days + 1 : Math.floor((((this.#db.prepare("SELECT min(time) AS t FROM usage").get() as { t: number | null }).t ?? now) + shift) / DAY);
+		const first = days > 0 ? today - days + 1 : Math.floor((((this.#db.prepare("SELECT min(time) AS t FROM spend").get() as { t: number | null }).t ?? now) + shift) / DAY);
 		const since = first * DAY - shift;
 		const span = (today - first + 1) * DAY;
-		const sums = "sum(cost) AS cost, sum(input) AS input, sum(output) AS output, sum(cache_read) AS cacheRead, sum(cache_write) AS cacheWrite, count(*) AS replies";
+		const sums = "sum(cost) AS cost, sum(input) AS input, sum(output) AS output, sum(cache_read) AS cacheRead, sum(cache_write) AS cacheWrite, sum(answer) AS replies";
 		const byDay = this.#db
-			.prepare(`SELECT CAST((time + ?) / ${DAY} AS INTEGER) AS day, model, ${sums} FROM usage WHERE time >= ? GROUP BY day, model`)
+			.prepare(`SELECT CAST((time + ?) / ${DAY} AS INTEGER) AS day, model, ${sums} FROM spend WHERE time >= ? GROUP BY day, model`)
 			.all(shift, since) as ({ day: number; model: string } & UsageTotals)[];
 		const daysOut: UsageReport["days"] = [];
 		for (let day = first; day <= today; day++) daysOut.push({ day: new Date(day * DAY).toISOString().slice(0, 10), models: {} });
@@ -76,16 +95,17 @@ export class UsageLedger {
 			const slot = daysOut[row.day - first];
 			if (slot !== undefined) slot.models[row.model] = totals(row);
 		}
-		const models = (this.#db.prepare(`SELECT model, ${sums} FROM usage WHERE time >= ? GROUP BY model ORDER BY cost DESC`).all(since) as ({ model: string } & UsageTotals)[]).map(
+		// A model's replies; the refreshes' row counts the refreshes.
+		const models = (this.#db.prepare(`SELECT model, ${sums.replace("sum(answer)", "count(*)")} FROM spend WHERE time >= ? GROUP BY model ORDER BY cost DESC`).all(since) as ({ model: string } & UsageTotals)[]).map(
 			(row) => ({ model: row.model, ...totals(row) }),
 		);
 		const conversations = (
-			this.#db.prepare(`SELECT conv AS conversationId, ${sums} FROM usage WHERE time >= ? GROUP BY conv ORDER BY cost DESC LIMIT 20`).all(since) as ({
+			this.#db.prepare(`SELECT conv AS conversationId, ${sums} FROM spend WHERE time >= ? GROUP BY conv ORDER BY cost DESC LIMIT 20`).all(since) as ({
 				conversationId: number;
 			} & UsageTotals)[]
 		).map((row) => ({ conversationId: row.conversationId, ...totals(row) }));
-		const all = this.#db.prepare(`SELECT ${sums}, count(DISTINCT conv) AS conversations FROM usage WHERE time >= ?`).get(since) as UsageTotals & { conversations: number };
-		const previous = this.#db.prepare(`SELECT ${sums} FROM usage WHERE time >= ? AND time < ?`).get(since - span, since) as UsageTotals;
+		const all = this.#db.prepare(`SELECT ${sums}, count(DISTINCT conv) AS conversations FROM spend WHERE time >= ?`).get(since) as UsageTotals & { conversations: number };
+		const previous = this.#db.prepare(`SELECT ${sums} FROM spend WHERE time >= ? AND time < ?`).get(since - span, since) as UsageTotals;
 		return { days: daysOut, models, conversations, total: { ...totals(all), conversations: all.conversations ?? 0 }, previous: totals(previous) };
 	}
 }

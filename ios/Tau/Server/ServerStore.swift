@@ -40,6 +40,8 @@ final class ServerStore: ConversationStore, TauServer {
     }
     /// Each conversation's model as the chat list reports it, for one whose replica is not loaded yet.
     private var dialogAgents: [Int: AgentSettings] = [:]
+    /// Each conversation's prompt cache, from its Dialog.
+    private var promptCaches: [Int: PromptCache] = [:]
     /// A model or thinking level just chosen, shown until the conversation's own agent doc says so.
     private var agentOverrides: [Int: (settings: AgentSettings, token: Int, confirmed: Bool)] = [:]
     /// A name just given, shown until the server's dialog says so; `previous` comes back if it is refused.
@@ -442,6 +444,11 @@ final class ServerStore: ConversationStore, TauServer {
             return nil
         }
         let agent = raw.object("agent") ?? [:]
+        if let cache = raw.object("cache"), let at = cache.double("at"), let ttl = cache.double("ttl") {
+            self.promptCaches[id] = PromptCache(at: Date(timeIntervalSince1970: at / 1000.0), ttl: ttl / 1000.0, warming: cache.bool("warming") ?? false, warms: cache.int("warms") ?? 0, cost: cache.double("cost") ?? 0.0, saved: cache.double("saved") ?? 0.0)
+        } else {
+            self.promptCaches[id] = nil
+        }
         if let model = agent.object("model"), let modelId = model.string("modelId") {
             self.dialogAgents[id] = AgentSettings(provider: model.string("provider"), modelId: modelId, thinkingLevel: agent.string("thinkingLevel"))
         }
@@ -1256,7 +1263,7 @@ final class ServerStore: ConversationStore, TauServer {
                 break
             }
         }
-        return ConversationUsage(models: models, contextTokens: contextTokens, contextWindow: contextWindow)
+        return ConversationUsage(models: models, contextTokens: contextTokens, contextWindow: contextWindow, cache: self.promptCaches[realId])
     }
 
     func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?) {

@@ -18,6 +18,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/protocol.md` | The wire protocol: sync model, methods, pushes, op format |
 | `docs/notifications.md` | When the user hears about an answer: Telegram's in-app banners, pushes through ntfy while the app is closed, and the way to Apple's push |
 | `docs/sending.md` | How a message reaches the model: steer and follow-up, refusals, the client's outbox state machine, and what the user sees |
+| `docs/cache.md` | Prompt cache warming: refreshing a working run's cache before it expires, when that pays |
 | `docs/streaming.md` | Reading while an answer streams: what moved, overlapped and blanked, and why it no longer does |
 | `docs/search.md` | Search: the index each server keeps as entries are written (`server/src/search`), matching and ranking, and the benchmark |
 | `docs/live-activity.md` | The Live Activity and Dynamic Island (`ios/TauWidgets`): which chats, what they show, and what waits for APNs |
@@ -47,4 +48,4 @@ Model credentials come from pi's `~/.pi/agent/auth.json` (the same logins as the
 usual provider environment variables. The `dev/echo` model is free: it echoes, runs `$ <command>` through bash, starts a subagent for
 `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`, fails as an overloaded provider
 `!overloaded <times> <text>` or for good `!fatal <text>`, streams a long Markdown answer for `!doc <sections>`, and writes a
-short summary when asked to compact.
+short summary when asked to compact. `--dev-cache-ttl <seconds>` gives it a prompt cache and prices, to try cache warming.

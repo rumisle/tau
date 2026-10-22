@@ -952,6 +952,49 @@ final class SendingUITests: XCTestCase {
         self.shot("usage-2-models")
     }
 
+    /// The prompt cache, against a dev server whose model keeps it 15 s (`--dev-cache-ttl 15`, `TAU_CACHE_SERVER`,
+    /// default port 7982): "warm" in the Usage row, the cache's time left in its submenu while a command keeps the run
+    /// working and refreshes keep it, then what they cost and saved, then expired. Settings > Usage counts the refreshes.
+    func testPromptCache() {
+        self.launch(["-newChat", "YES"], server: ProcessInfo.processInfo.environment["TAU_CACHE_SERVER"] ?? "ws://127.0.0.1:7982")
+        self.focusInput()
+        self.type("hello")
+        self.send()
+        sleep(4)
+        self.type("$ sleep 24")
+        self.send()
+        sleep(9)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.shot("pc-0-menu")
+        self.app.descendants(matching: .any)["Usage"].firstMatch.tap()
+        sleep(1)
+        self.shot("pc-1-usage")
+        sleep(2)
+        self.shot("pc-2-ticking")
+        self.point(0.5, 0.9).tap()
+        sleep(18)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Usage"].firstMatch.tap()
+        sleep(1)
+        self.shot("pc-3-done")
+        sleep(16)
+        self.shot("pc-4-expired")
+        self.point(0.5, 0.9).tap()
+        sleep(1)
+        self.point(0.5, 0.075).tap()
+        sleep(1)
+        self.shot("pc-5-menu-cold")
+        self.launch(["-tab", "1"], server: ProcessInfo.processInfo.environment["TAU_CACHE_SERVER"] ?? "ws://127.0.0.1:7982")
+        sleep(2)
+        self.app.descendants(matching: .any)["Usage"].firstMatch.tap()
+        sleep(2)
+        self.app.swipeUp()
+        sleep(1)
+        self.shot("pc-6-settings-usage")
+    }
+
     /// Dictation, with the stand-in engine: the microphone listens and the words come in dimmed until fixed, with a red
     /// dot and the time in the field; with text written, the field's own microphone adds to it.
     func testDictation() {

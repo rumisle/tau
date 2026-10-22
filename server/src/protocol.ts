@@ -47,6 +47,8 @@ export type Dialog = {
 	archived?: true;
 	/** Pinned to the top of its list; higher first. */
 	pinned?: number;
+	/** Its prompt cache (src/cache.ts): it expires `ttl` ms after `at`; `warming` while refreshes keep it. */
+	cache?: { ttl: number; at: number; warming?: true; warms?: number; cost?: number; saved?: number };
 };
 
 export type AgentPatch = {

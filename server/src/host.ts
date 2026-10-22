@@ -22,6 +22,7 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { CacheWarmer } from "./cache.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
 import { Serial } from "./serial.ts";
 import { Subagent } from "./subagent.ts";
@@ -94,6 +95,8 @@ export type HostOptions = {
 	credentials?: CredentialStore;
 	/** Speed of the dev model, for tests. */
 	devTokensPerSecond?: number;
+	/** A prompt cache lifetime for the dev model, in seconds, with prices to make warming it pay: to try warming. */
+	devCacheTtl?: number;
 	onReport?: (error: unknown, info: ReportInfo) => void;
 };
 
@@ -112,6 +115,8 @@ export type Host = {
 	setDefaultThinkingLevel(level: ModelThinkingLevel): Promise<void>;
 	/** Orders the requests that change a conversation, across connections (src/serial.ts). */
 	readonly serial: Serial;
+	/** Keeps working conversations' prompt caches warm (src/cache.ts). */
+	readonly cache: CacheWarmer;
 	readonly cwd: string;
 	close(): Promise<void>;
 };
@@ -126,7 +131,8 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 
 	const models = createModels({ credentials: options.credentials });
 	for (const provider of builtinProviders()) models.setProvider(provider);
-	models.setProvider(devProvider({ tokensPerSecond: options.devTokensPerSecond }).provider);
+	models.setProvider(devProvider({ tokensPerSecond: options.devTokensPerSecond, cacheTtl: options.devCacheTtl }).provider);
+	const cache = new CacheWarmer();
 
 	const registry = createRegistry();
 	registry.install(CodingTools);
@@ -138,6 +144,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 				section("preamble", () => PREAMBLE, { tag: false }),
 				section("cwd", (input) => input.env?.cwd),
 			],
+			hooks: [cache.hook],
 		}),
 	);
 
@@ -155,7 +162,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const harness = await Harness.open(
 		storage,
 		{
-			models,
+			models: cache.wrap(models),
 			registry,
 			settings,
 			env: ({ cwd: conversationCwd }) => new NodeExecutionEnv({ cwd: conversationCwd ?? cwd }),
@@ -170,6 +177,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		},
 		context,
 	);
+	cache.attach(harness);
 	const serverId = await harness.commit(async (tx) => {
 		const doc = await tx.doc(ServerDoc);
 		if (doc.id === "") doc.id = randomUUID();
@@ -206,7 +214,11 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 			defaultThinkingLevel = level;
 		},
 		serial: new Serial(),
+		cache,
 		cwd,
-		close: () => harness.close(context),
+		close: () => {
+			cache.close();
+			return harness.close(context);
+		},
 	};
 }

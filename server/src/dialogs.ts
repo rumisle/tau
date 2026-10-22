@@ -12,6 +12,7 @@ import {
 	LiveDoc,
 	type SubmissionRecord,
 } from "@earendil-works/pi-durable";
+import { CacheDoc } from "./cache.ts";
 import { type Host, MetaDoc } from "./host.ts";
 import type { Dialog, EntrySummary } from "./protocol.ts";
 
@@ -38,9 +39,11 @@ export class Dialogs {
 	readonly #dirty = new Set<ConversationId>();
 	#flushing = false;
 	readonly #unsubscribe: () => void;
+	readonly #unsubscribeCache: () => void;
 
 	constructor(host: Host) {
 		this.#host = host;
+		this.#unsubscribeCache = host.cache.onChange((id) => this.#touch(id));
 		this.#unsubscribe = host.harness.subscribeCommits((publication) => {
 			for (const change of publication.changes) {
 				if (change.type === "entry") this.#touch(change.value.conversationId);
@@ -49,7 +52,7 @@ export class Dialogs {
 					for (const listener of this.#submissionListeners) listener(change.value);
 				} else if (change.type === "document" && change.conversationId !== undefined) {
 					const kind = change.record.kind;
-					if (kind === MetaDoc.definition.kind || kind === AgentDoc.definition.kind) this.#touch(change.conversationId);
+					if (kind === MetaDoc.definition.kind || kind === AgentDoc.definition.kind || kind === CacheDoc.definition.kind) this.#touch(change.conversationId);
 					else if (kind === LiveDoc.definition.kind) {
 						// pi.live changes on every streamed chunk; only a run starting or ending matters here.
 						const busy = change.value !== null && (change.value as { run?: unknown }).run !== undefined;
@@ -65,6 +68,7 @@ export class Dialogs {
 
 	close(): void {
 		this.#unsubscribe();
+		this.#unsubscribeCache();
 		this.#dialogListeners.clear();
 		this.#submissionListeners.clear();
 	}
@@ -98,6 +102,7 @@ export class Dialogs {
 		const meta = await harness.snapshot(MetaDoc, conversation.id, context);
 		const live = await harness.snapshot(LiveDoc, conversation.id, context);
 		const agent = await harness.snapshot(AgentDoc, conversation.id, context);
+		const cache = await harness.snapshot(CacheDoc, conversation.id, context);
 		let last: EntryRecord | undefined;
 		let unreadCount = 0;
 		if (handle !== undefined) {
@@ -133,6 +138,16 @@ export class Dialogs {
 			...(meta?.markedUnread === true ? { markedUnread: true as const } : {}),
 			...(meta?.archived === true ? { archived: true as const } : {}),
 			...(typeof meta?.pinned === "number" ? { pinned: meta.pinned } : {}),
+			...(cache?.ttl === undefined || cache.at === undefined
+				? {}
+				: {
+						cache: {
+							ttl: cache.ttl,
+							at: cache.at,
+							...(this.#host.cache.isWarming(conversation.id) ? { warming: true as const } : {}),
+							...(cache.warms === undefined ? {} : { warms: cache.warms, cost: cache.cost ?? 0, saved: cache.saved ?? 0 }),
+						},
+					}),
 		};
 	}
 

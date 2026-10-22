@@ -1,5 +1,6 @@
 // tau server: `node src/main.ts [--db path] [--port n] [--host addr] [--model provider/id] [--cwd dir] [--memory]
-//   [--dev-tps n]` (speed of the dev/echo model, tokens per second)
+//   [--dev-tps n] [--dev-cache-ttl s]` (speed of the dev/echo model, tokens per second; a prompt cache lifetime that makes it
+//   charge as a costly model, to try cache warming)
 // TAU_TOKEN, when set, is required from clients.
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -18,6 +19,7 @@ const { values } = parseArgs({
 		model: { type: "string" },
 		cwd: { type: "string" },
 		"dev-tps": { type: "string" },
+		"dev-cache-ttl": { type: "string" },
 	},
 });
 
@@ -28,6 +30,7 @@ const host = await openHost({
 	model,
 	...(values.cwd === undefined ? {} : { cwd: await directory(values.cwd.startsWith("~") ? values.cwd : resolve(values.cwd)) }),
 	...(values["dev-tps"] === undefined ? {} : { devTokensPerSecond: Number(values["dev-tps"]) }),
+	...(values["dev-cache-ttl"] === undefined ? {} : { devCacheTtl: Number(values["dev-cache-ttl"]) }),
 	credentials,
 });
 if (host.models.getModel(model.provider, model.modelId) === undefined) {

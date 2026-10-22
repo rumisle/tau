@@ -853,18 +853,23 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             })))
         }
         items.append(.separator)
-        let usage = store.usage(id)
-        items.append(.action(ContextMenuActionItem(text: "Usage", textLayout: .secondLineWithValue(usageSummary(usage)), icon: icon("Chat/Context Menu/Info"), action: { [weak self] controller, _ in
+        let accent = self.theme.presentationData.theme.list.itemAccentColor
+        let openUsage: (ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void = { [weak self] controller, _ in
             guard let self else {
                 return
             }
-            controller?.pushItems(items: .single(ContextController.Items(content: .list(self.usageItems(usage, icon: icon)))))
-        })))
+            controller?.pushItems(items: .single(ContextController.Items(content: .list(self.usageItems(icon: icon)))))
+        }
+        // Read again each second while shown, so "warm" goes when the cache expires.
+        items.append(.custom(TickingContextItem({
+            return ContextMenuActionItem(text: "Usage", textLayout: .secondLineWithAttributedValue(usageSummary(store.usage(id), accent: accent)), icon: icon("Chat/Context Menu/Info"), action: openUsage)
+        }), false))
+        // Arrows meeting in a box: the context pressed into a summary.
         if self.compactingSince != nil {
             // Its pill in the chat shows it working; the chat goes on meanwhile.
-            items.append(.action(ContextMenuActionItem(text: "Compacting Context…", textColor: .disabled, icon: icon("Chat/Context Menu/Clear"), action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)))
+            items.append(.action(ContextMenuActionItem(text: "Compacting Context…", textColor: .disabled, icon: icon("Chat/Context Menu/CellMergeV"), action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)))
         } else {
-            items.append(.action(ContextMenuActionItem(text: "Compact Context", icon: icon("Chat/Context Menu/Clear"), action: { _, f in
+            items.append(.action(ContextMenuActionItem(text: "Compact Context", icon: icon("Chat/Context Menu/CellMergeV"), action: { _, f in
                 f(.default)
                 store.compact(id)
             })))
@@ -923,8 +928,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         return .single(ContextController.Items(content: .list(items)))
     }
 
-    /// The usage submenu: how full the context is, then the conversation's spend, by model when it used several.
-    private func usageItems(_ usage: ConversationUsage, icon: @escaping (String) -> (PresentationTheme) -> UIImage?) -> [ContextMenuItem] {
+    /// The usage submenu, in groups: how full the context is and what the chat cost; its prompt cache, live, and what
+    /// keeping it warm cost and saved; the tokens; the models, when it used several.
+    private func usageItems(icon: @escaping (String) -> (PresentationTheme) -> UIImage?) -> [ContextMenuItem] {
+        let store = self.context.store
+        let id = self.conversationId
+        let usage = store.usage(id)
+        let accent = self.theme.presentationData.theme.list.itemAccentColor
         var items: [ContextMenuItem] = [.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Back, icon: icon("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
             controller?.popItems()
         })), .separator]
@@ -932,12 +942,25 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             items.append(.action(ContextMenuActionItem(text: title, textLayout: .secondLineWithValue(value), icon: { _ in nil }, action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)))
         }
         row("Context", contextDescription(usage))
+        row("Cost", formatCost(usage.cost))
+        if let cache = usage.cache {
+            items.append(.separator)
+            items.append(.custom(TickingContextItem({
+                let current = store.usage(id).cache ?? cache
+                return ContextMenuActionItem(text: "Prompt Cache", textLayout: .secondLineWithAttributedValue(promptCacheStatus(current, accent: accent)), icon: { _ in nil }, action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)
+            }), false))
+            if cache.warms > 0 {
+                var kept = "\(cache.warms)× · \(formatCost(cache.cost))"
+                if cache.saved > 0.0 {
+                    kept += " · saved \(formatCost(cache.saved))"
+                }
+                row("Kept Warm", kept)
+            }
+        }
         let total = usage.total
-        row("Cost", formatCost(total.cost))
-        row("Input", formatTokens(total.input))
-        row("Output", formatTokens(total.output))
-        row("Cache Read", formatTokens(total.cacheRead))
-        row("Cache Write", formatTokens(total.cacheWrite))
+        items.append(.separator)
+        row("Tokens", "\(formatTokens(total.input)) in · \(formatTokens(total.output)) out")
+        row("Cached", "\(formatTokens(total.cacheRead)) read · \(formatTokens(total.cacheWrite)) written")
         if usage.models.count > 1 {
             items.append(.separator)
             for (model, value) in usage.models {
@@ -1526,19 +1549,43 @@ func formatCost(_ cost: Double) -> String {
     }
 }
 
-/// "41k of 200k (21%)", or what is known of it.
+/// "21% · 41k of 200k", or what is known of it.
 private func contextDescription(_ usage: ConversationUsage) -> String {
     guard let tokens = usage.contextTokens else {
         return "Empty"
     }
-    guard let window = usage.contextWindow, window > 0 else {
+    guard let window = usage.contextWindow, let percent = usage.contextPercent else {
         return "\(formatTokens(tokens)) tokens"
     }
-    let percent = Int((Double(tokens) / Double(window) * 100.0).rounded())
-    return "\(formatTokens(tokens)) of \(formatTokens(window)) (\(percent)%)"
+    return "\(percent)% · \(formatTokens(tokens)) of \(formatTokens(window))"
 }
 
-/// The usage row's second line: the context's fill, then the spend.
-private func usageSummary(_ usage: ConversationUsage) -> String {
-    return "\(contextDescription(usage)) · \(formatCost(usage.total.cost))"
+/// The usage row's second line: how full the context is, the spend, and "warm" in the accent color while the prompt
+/// cache lasts. The numbers behind them are a level down.
+private func usageSummary(_ usage: ConversationUsage, accent: UIColor) -> NSAttributedString {
+    let context = usage.contextPercent.map { "\($0)%" } ?? (usage.contextTokens == nil ? "Empty" : "\(formatTokens(usage.contextTokens ?? 0)) tokens")
+    let summary = NSMutableAttributedString(string: "\(context) · \(formatCost(usage.cost))")
+    if usage.cache?.isWarm() == true {
+        summary.append(NSAttributedString(string: " · "))
+        summary.append(NSAttributedString(string: "warm", attributes: [.foregroundColor: accent]))
+    }
+    return summary
+}
+
+/// "Warm · 4:12 left" in the accent color while it lasts, then how long ago it expired.
+private func promptCacheStatus(_ cache: PromptCache, accent: UIColor, now: Date = Date()) -> NSAttributedString {
+    let left = cache.expiresAt.timeIntervalSince(now)
+    if left > 0.0 {
+        let seconds = Int(left.rounded(.up))
+        return NSAttributedString(string: String(format: "Warm · %d:%02d left", seconds / 60, seconds % 60), attributes: [.foregroundColor: accent])
+    }
+    let ago = -left
+    if ago < 60.0 {
+        return NSAttributedString(string: "Expired just now")
+    } else if ago < 3600.0 {
+        return NSAttributedString(string: "Expired \(Int(ago / 60.0)) min ago")
+    } else if ago < 86400.0 {
+        return NSAttributedString(string: "Expired \(Int(ago / 3600.0)) h ago")
+    }
+    return NSAttributedString(string: "Expired")
 }

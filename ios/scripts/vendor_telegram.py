@@ -294,6 +294,7 @@ IMAGES = [
     "Chat/Input/Menu/ScheduleIcon",
     # The title menu's Subagents.
     "Chat/Context Menu/Bots",
+    "Chat/Context Menu/CellMergeV",
     # Pinned chats: the list's pin badge and the menu's Pin / Unpin.
     "Chat List/PeerPinnedIcon",
     "Chat/Context Menu/Pin",

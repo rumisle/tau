@@ -2,8 +2,9 @@
 // a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`,
 // fails as an overloaded provider would `!overloaded <times> <text>` before answering, and fails for good `!fatal <text>`.
 // `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
-// streams.
-import type { Message } from "@earendil-works/pi-ai";
+// streams. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
+// that long after it was last used, to try cache warming (src/cache.ts) without paying for it.
+import { type Api, calculateCost, createAssistantMessageEventStream, type AssistantMessage, type Message, type Model, type Provider } from "@earendil-works/pi-ai";
 import {
 	type FauxProviderHandle,
 	type FauxResponseFactory,
@@ -19,10 +20,13 @@ export const DEV_MODEL = { provider: "dev", modelId: "echo" } as const;
 /** Errors made so far for each `!overloaded` message. */
 const failures = new Map<string, number>();
 
-export function devProvider(options: { tokensPerSecond?: number } = {}): FauxProviderHandle {
+/** Per million tokens: four times Claude Opus, so that warming the dev model's small prompts (a thousand tokens) pays. */
+const CACHED_COST = { input: 60, output: 300, cacheRead: 6, cacheWrite: 75 };
+
+export function devProvider(options: { tokensPerSecond?: number; cacheTtl?: number } = {}): { provider: Provider } & Omit<FauxProviderHandle, "provider"> {
 	const faux = fauxProvider({
 		provider: DEV_MODEL.provider,
-		models: [{ id: DEV_MODEL.modelId, name: "Dev echo", reasoning: true, contextWindow: 200_000, maxTokens: 8_192 }],
+		models: [{ id: DEV_MODEL.modelId, name: "Dev echo", reasoning: true, contextWindow: 200_000, maxTokens: 8_192, ...(options.cacheTtl === undefined ? {} : { cost: CACHED_COST }) }],
 		tokensPerSecond: options.tokensPerSecond ?? 80,
 	});
 	// Faux responses are consumed one per request; this one queues itself again so the model never runs dry.
@@ -55,7 +59,47 @@ export function devProvider(options: { tokensPerSecond?: number } = {}): FauxPro
 		return reply(context.messages);
 	};
 	faux.setResponses([respond]);
-	return faux;
+	if (options.cacheTtl === undefined) return faux;
+	faux.models[0].promptCache = { short: options.cacheTtl };
+	return { ...faux, provider: expiringCache(faux.provider, options.cacheTtl * 1000) };
+}
+
+/**
+ * The faux provider's cache never expires and costs nothing: this one forgets a session's prompt `ttl` after its last
+ * request, caps the output at `maxTokens` as a provider would, and prices the usage.
+ */
+function expiringCache(base: Provider, ttl: number): Provider {
+	const used = new Map<string, number>();
+	const adjust = (model: Model<Api>, message: AssistantMessage, expired: boolean, maxTokens: number | undefined): void => {
+		const usage = message.usage;
+		if (expired) {
+			usage.cacheWrite += usage.cacheRead;
+			usage.cacheRead = 0;
+		}
+		if (maxTokens !== undefined) usage.output = Math.min(usage.output, maxTokens);
+		usage.totalTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+		usage.cost = calculateCost(model, usage);
+	};
+	return {
+		...base,
+		streamSimple(model, context, streamOptions) {
+			const session = streamOptions?.sessionId;
+			const now = Date.now();
+			const expired = session === undefined || now - (used.get(session) ?? Number.NEGATIVE_INFINITY) > ttl;
+			if (session !== undefined) used.set(session, now);
+			const inner = base.streamSimple(model, context, streamOptions);
+			const outer = createAssistantMessageEventStream();
+			void (async () => {
+				for await (const event of inner) {
+					if (event.type === "done") adjust(model, event.message, expired, streamOptions?.maxTokens);
+					else if (event.type === "error") adjust(model, event.error, expired, streamOptions?.maxTokens);
+					outer.push(event);
+				}
+				outer.end(await inner.result());
+			})();
+			return outer;
+		},
+	};
 }
 
 function reply(messages: readonly Message[]) {

@@ -119,7 +119,8 @@ minutes east of UTC). From a ledger of every answer's `usage` the server keeps w
 type Totals = { cost: number; input: number; output: number; cacheRead: number; cacheWrite: number; replies: number };
 {
   days: { day: "2026-10-21"; models: Record<string, Totals> }[];     // oldest first, every day of the span
-  models: (Totals & { model: string })[];                            // `provider/modelId`, costliest first
+  models: (Totals & { model: string })[];                            // `provider/modelId`, costliest first; prompt cache
+                                                                     // refreshes as `tau/cache-warming`, their count in `replies`
   conversations: (Totals & { conversationId })[];                    // the 20 costliest
   total: Totals & { conversations: number };
   previous: Totals;                                                  // the span just before, for the change
@@ -142,6 +143,13 @@ type Dialog = {
   markedUnread?: true;                // marked unread by hand
   archived?: true;                    // in Archived Chats, out of the main list
   pinned?: number;                    // pinned to the top of its list, higher first (when it was pinned, in ms)
+  cache?: PromptCache;                // its prompt cache, once a request wrote one (docs/cache.md)
+};
+type PromptCache = {
+  ttl: number;                        // ms the provider keeps it
+  at: number;                         // epoch ms it was last written or read; it expires at `at + ttl`
+  warming?: true;                     // a run works and refreshes keep it
+  warms?: number; cost?: number; saved?: number; // refreshes over the conversation's life, their cost, what they saved
 };
 type EntrySummary = { id: number; kind: string; role?: string; text: string; timestamp?: number };
 ```

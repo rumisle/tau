@@ -193,6 +193,49 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("keeps a working conversation's prompt cache warm, and lets an idle one's go", async () => {
+		// An 11 s lifetime refreshes every second; a 13 s command outlives it, so only refreshes keep the cache for the
+		// answer after it.
+		const warm = await openHost({ devTokensPerSecond: 2_000, devCacheTtl: 11, cwd: tmpdir() });
+		const warmServer = await serve(warm);
+		try {
+			const client = await TauClient.connect(warmServer.url);
+			const pushes: { cache?: { ttl: number; at: number; warming?: true; warms?: number; cost?: number; saved?: number } }[] = [];
+			client.on((push: Push) => {
+				if (push.event === "dialog") pushes.push(push.dialog as (typeof pushes)[number]);
+			});
+			await client.request("dialogs.subscribe");
+			const { dialog } = await client.request("conversation.create", {});
+			const replica = new ConversationReplica(dialog.conversation.id);
+			await replica.sync(client);
+			await chat(client, replica, "hello", "w1");
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			const first = pushes.at(-1)?.cache;
+			assert.equal(first?.ttl, 11_000);
+			assert.equal(first?.warming, undefined, "an idle conversation is not kept warm");
+			assert.equal(first?.warms, undefined);
+			const { submission } = await client.request("conversation.submit", { conversationId: replica.id, requestId: "w2", content: "$ sleep 13" });
+			await until(replica, () => replica.submissions.get(submission.id)?.status === "done" && idle(replica), 30_000);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			assert.ok(pushes.some((push) => push.cache?.warming === true), "warming while the command runs");
+			const last = pushes.at(-1)?.cache;
+			assert.equal(last?.warming, undefined, "no longer once the run ends");
+			assert.ok((last?.warms ?? 0) >= 8, `refreshed ${last?.warms} times`);
+			assert.ok((last?.cost ?? 0) > 0);
+			assert.ok((last?.saved ?? 0) > 0, "the answer after the command read what refreshes kept");
+			// The Usage screen counts the refreshes as a model of their own, and not as answers.
+			const report = (await client.request("usage.report", { days: 1 })) as { models: { model: string; replies: number; cost: number }[]; total: { replies: number } };
+			const refreshes = report.models.find((each) => each.model === "tau/cache-warming");
+			assert.equal(refreshes?.replies, last?.warms);
+			assert.ok(Math.abs((refreshes?.cost ?? 0) - (last?.cost ?? 0)) < 1e-9);
+			assert.equal(report.total.replies, 3, "hello, the command call, and the answer after it");
+			await client.close();
+		} finally {
+			await warmServer.close();
+			await warm.close();
+		}
+	});
+
 	test("read marks, Mark as Unread, archive, and the default model", async () => {
 		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", {});

@@ -199,13 +199,51 @@ struct ConversationUsage: Equatable {
     /// first response of a context.
     var contextTokens: Int?
     var contextWindow: Int?
+    /// Its prompt cache, once a request wrote one; nil for models that declare no cache lifetime.
+    var cache: PromptCache? = nil
 
     var total: TokenUsage {
         return self.models.reduce(TokenUsage()) { $0 + $1.usage }
     }
 
+    /// The whole spend: the answers, and the refreshes that kept the cache warm.
+    var cost: Double {
+        return self.total.cost + (self.cache?.cost ?? 0.0)
+    }
+
+    /// "24%" of the context window, or what is known of it.
+    var contextPercent: Int? {
+        guard let tokens = self.contextTokens, let window = self.contextWindow, window > 0 else {
+            return nil
+        }
+        return Int((Double(tokens) / Double(window) * 100.0).rounded())
+    }
+
     static func == (lhs: ConversationUsage, rhs: ConversationUsage) -> Bool {
-        return lhs.models.map(\.model) == rhs.models.map(\.model) && lhs.models.map(\.usage) == rhs.models.map(\.usage) && lhs.contextTokens == rhs.contextTokens && lhs.contextWindow == rhs.contextWindow
+        return lhs.models.map(\.model) == rhs.models.map(\.model) && lhs.models.map(\.usage) == rhs.models.map(\.usage) && lhs.contextTokens == rhs.contextTokens && lhs.contextWindow == rhs.contextWindow && lhs.cache == rhs.cache
+    }
+}
+
+/// A conversation's prompt cache as the server keeps it (server/src/cache.ts): the provider keeps the prompt of the
+/// last request a few minutes, and the next request that starts with it pays a tenth for it. While a run works the
+/// server refreshes it before it expires; `warming` while it does.
+struct PromptCache: Equatable {
+    /// When the last request or refresh wrote or read it.
+    var at: Date
+    /// How long the provider keeps it after that.
+    var ttl: TimeInterval
+    var warming: Bool
+    /// Refreshes over the conversation's life, what they cost, and what the requests they kept it for saved.
+    var warms: Int
+    var cost: Double
+    var saved: Double
+
+    var expiresAt: Date {
+        return self.at.addingTimeInterval(self.ttl)
+    }
+
+    func isWarm(now: Date = Date()) -> Bool {
+        return now < self.expiresAt
     }
 }
 
