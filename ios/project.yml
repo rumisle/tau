@@ -74,6 +74,7 @@ targets:
           - SegmentedControlNode
           - HorizontalTabsComponent
           - MosaicLayout
+          - AudioBlob
           - HeaderPanelContainerComponent
           - ChatListTitleView
           - UndoUI

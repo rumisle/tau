@@ -72,6 +72,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             navigationController.updateTheme(theme.navigationControllerTheme)
             // System controls (keyboard, menus) follow the theme; with Auto-Night they follow the phone, which drives it.
             window.overrideUserInterfaceStyle = themeContext.settings.autoNight ? .unspecified : (theme.overallDarkAppearance ? .dark : .light)
+            LiveActivityController.shared.setAccent(theme.accent.rgb(for: theme.builtin))
         })
 
         window.makeKeyAndVisible()
@@ -146,6 +147,17 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let aliases: [String: TauTheme.Builtin] = ["light": .classic, "dark": .tintedNight]
             if let builtin = aliases[name] ?? TauTheme.Builtin(rawValue: name) {
                 context.themeContext.force(builtin)
+            }
+        }
+        // -accent pink|blue|…: the accent of the theme in effect.
+        if let name = defaults.string(forKey: "accent"), let accent = TauTheme.Accent(rawValue: name) {
+            let builtin = context.themeContext.current.builtin
+            context.themeContext.update { $0.accents[builtin] = accent }
+        }
+        // -appearance YES: Settings > Appearance on top.
+        if defaults.bool(forKey: "appearance") {
+            Queue.mainQueue().after(0.5) {
+                navigationController.pushViewController(AppearanceController(context: context), animated: false)
             }
         }
         // -wrapCode YES|NO

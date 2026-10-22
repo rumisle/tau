@@ -81,6 +81,7 @@ export class Search {
 	#pendingUsage: UsageRow[] = [];
 	readonly #unsubscribe: () => void;
 	readonly #unsubscribeWarm: () => void;
+	readonly #unsubscribeCompaction: () => void;
 	/** Entries committed while the backfill runs, indexed after it. */
 	#pending: IndexEntry[] = [];
 	#flushScheduled = false;
@@ -94,6 +95,9 @@ export class Search {
 		this.usage = new UsageLedger(this.index.db);
 		this.#unsubscribeWarm = host.cache.onWarm(({ conversationId, time, usage }) =>
 			this.usage.addWarm({ conversationId, time, input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost.total }),
+		);
+		this.#unsubscribeCompaction = host.compaction.onUsage(({ conversationId, time, usage }) =>
+			this.usage.addCompaction({ conversationId, time, input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost.total }),
 		);
 		this.#unsubscribe = host.harness.subscribeCommits((publication) => {
 			for (const change of publication.changes) {
@@ -116,6 +120,7 @@ export class Search {
 	close(): void {
 		this.#unsubscribe();
 		this.#unsubscribeWarm();
+		this.#unsubscribeCompaction();
 		this.index.close();
 	}
 

@@ -20,6 +20,10 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/sending.md` | How a message reaches the model: steer and follow-up, refusals, the client's outbox state machine, and what the user sees |
 | `docs/chat-open.md` | Opening a chat at once: ready without the network, Telegram's spinner, the top of the list preloaded |
 | `docs/media.md` | Images by reference: a photo or a tool's image laid out from its size, fetched when shown |
+| `docs/compaction.md` | Compaction: durable's, started at 90% of the window (at most 700k tokens), with the summary asked for after the conversation's cached context |
+| `docs/skills.md` | Skills: `.agents/skills` in the system prompt, as a section durable updates with a delta |
+| `docs/dictation.md` | Dictation in the composer: Telegram's field with the microphone in it and Send that morphs in, and Aqua Voice's realtime API |
+| `docs/appearance.md` | Themes and accent colors, as Telegram's Appearance: each built-in theme with its own accent, Telegram's pink by default, the Live Activity in it |
 | `docs/cache.md` | Prompt cache warming: refreshing a working run's cache before it expires, when that pays |
 | `docs/streaming.md` | Reading while an answer streams: what moved, overlapped and blanked, and why it no longer does |
 | `docs/search.md` | Search: the index each server keeps as entries are written (`server/src/search`), matching and ranking, and the benchmark |

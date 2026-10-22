@@ -19,6 +19,7 @@ import {
 import { readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { CACHE_WARMING_MODES, type CacheWarmingMode } from "./cache.ts";
+import { type CompactionThreshold, MAX_COMPACTION_RATIO, MIN_COMPACTION_RATIO, MIN_COMPACTION_TOKENS } from "./compaction.ts";
 import type { Dialogs } from "./dialogs.ts";
 import { entryImages, withMediaRefs } from "./media.ts";
 import type { KindName } from "./search/index.ts";
@@ -225,7 +226,9 @@ export class Connection {
 					if (!CACHE_WARMING_MODES.includes(warming as CacheWarmingMode)) throw new ProtocolError("bad_request", `Unknown cache warming mode ${warming}`);
 					await this.#host.setCacheWarming(warming as CacheWarmingMode);
 				}
-				return { defaultModel: this.#host.defaultModel, defaultThinkingLevel: this.#host.defaultThinkingLevel, cacheWarming: this.#host.cacheWarming };
+				const compaction = obj(params, "compaction");
+				if (compaction !== undefined) await this.#host.setCompactionThreshold(compactionThreshold(compaction, this.#host.compactionThreshold));
+				return { defaultModel: this.#host.defaultModel, defaultThinkingLevel: this.#host.defaultThinkingLevel, cacheWarming: this.#host.cacheWarming, compaction: this.#host.compactionThreshold };
 			}
 			case "fs.list": {
 				const hidden = params.hidden;
@@ -429,6 +432,7 @@ export class Connection {
 			defaultModel: this.#host.defaultModel,
 			defaultThinkingLevel: this.#host.defaultThinkingLevel,
 			cacheWarming: this.#host.cacheWarming,
+			compaction: this.#host.compactionThreshold,
 			ntfy: (await this.#host.harness.snapshot(SettingsDoc, this.#context))?.ntfy ?? null,
 			defaultCwd: this.#host.cwd,
 			home: homedir(),
@@ -836,4 +840,26 @@ function searchKinds(value: unknown): KindName[] | undefined {
 		throw new ProtocolError("bad_request", `kinds must be some of ${SEARCH_KINDS.join(", ")}`);
 	}
 	return value as KindName[];
+}
+
+/** A `settings.configure` compaction change over `current`: any of `enabled`, `ratio`, `maxTokens`, checked. */
+function compactionThreshold(params: Record<string, unknown>, current: CompactionThreshold): CompactionThreshold {
+	const next = { ...current };
+	if (params.enabled !== undefined) {
+		if (typeof params.enabled !== "boolean") throw new ProtocolError("bad_request", "compaction.enabled must be a boolean");
+		next.enabled = params.enabled;
+	}
+	if (params.ratio !== undefined) {
+		if (typeof params.ratio !== "number" || !(params.ratio >= MIN_COMPACTION_RATIO && params.ratio <= MAX_COMPACTION_RATIO)) {
+			throw new ProtocolError("bad_request", `compaction.ratio must be between ${MIN_COMPACTION_RATIO} and ${MAX_COMPACTION_RATIO}`);
+		}
+		next.ratio = params.ratio;
+	}
+	if (params.maxTokens !== undefined) {
+		if (typeof params.maxTokens !== "number" || !Number.isSafeInteger(params.maxTokens) || params.maxTokens < MIN_COMPACTION_TOKENS) {
+			throw new ProtocolError("bad_request", `compaction.maxTokens must be an integer of at least ${MIN_COMPACTION_TOKENS}`);
+		}
+		next.maxTokens = params.maxTokens;
+	}
+	return next;
 }

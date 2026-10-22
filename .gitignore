@@ -5,3 +5,4 @@ data/
 *.sqlite-*
 .DS_Store
 ios/Tau.xcodeproj/
+ios/Tau/Secrets/

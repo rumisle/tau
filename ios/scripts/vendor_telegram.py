@@ -37,6 +37,7 @@ ROOTS = [
     "//submodules/TelegramUI/Components/InteractiveTextComponent",
     "//submodules/TelegramUI/Components/TabBarComponent",
     "//submodules/TelegramUI/Components/StreamingTextReveal",
+    "//submodules/AudioBlob",
     "//submodules/TelegramPresentationData",
     "//submodules/ContextUI",
     "//submodules/TelegramUI/Components/ContextControllerImpl",

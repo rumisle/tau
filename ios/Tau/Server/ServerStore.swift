@@ -345,6 +345,18 @@ final class ServerStore: ConversationStore, TauServer {
         self.infoChanged?()
     }
 
+    private var compactionOverride: CompactionThreshold?
+
+    var compaction: CompactionThreshold {
+        return self.compactionOverride ?? self.connection.hello?.compaction ?? .standard
+    }
+
+    func setCompaction(_ threshold: CompactionThreshold) {
+        self.compactionOverride = threshold
+        self.connection.request("settings.configure", ["compaction": threshold.json]) { _ in }
+        self.infoChanged?()
+    }
+
     /// Set from Settings until the next `hello` reports it.
     private var defaultModelOverride: String?
 
@@ -368,6 +380,7 @@ final class ServerStore: ConversationStore, TauServer {
         self.defaultModelOverride = nil
         self.defaultThinkingOverride = nil
         self.cacheWarmingOverride = nil
+        self.compactionOverride = nil
         self.ntfyOverride = nil
         self.sendPresence()
         self.infoChanged?()

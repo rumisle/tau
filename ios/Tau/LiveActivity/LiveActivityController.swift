@@ -37,6 +37,9 @@ final class LiveActivityController {
     /// Each minute while a chat works, for its minutes.
     private var minuteTimer: SwiftSignalKit.Timer?
 
+    /// The theme's accent, which the activity shows its state in.
+    private var accent: UInt32?
+
     private static let doneLifetime: TimeInterval = 30.0 * 60.0
     private static let staleAfter: TimeInterval = 120.0
 
@@ -83,6 +86,17 @@ final class LiveActivityController {
         let chat = TauActivityAttributes.Chat(id: id, serverId: serverId, localId: local, title: dialog.title, state: .working, since: Date(), finishedAt: nil, detail: nil)
         self.rows[id] = Row(chat: chat, watchedAt: Date())
         self.publish(alert: nil)
+    }
+
+    /// The accent changed (Settings > Appearance): a shown activity takes it at once.
+    func setAccent(_ rgb: UInt32) {
+        guard self.accent != rgb else {
+            return
+        }
+        self.accent = rgb
+        if !self.rows.isEmpty {
+            self.publish(alert: nil)
+        }
     }
 
     /// The chat was opened: how it ended has been seen.
@@ -156,7 +170,7 @@ final class LiveActivityController {
             chat.minutes = Int((chat.finishedAt ?? now).timeIntervalSince(chat.since) / 60.0)
             return chat
         }
-        let state = TauActivityAttributes.ContentState(chats: Array(ordered.prefix(3)), more: max(0, ordered.count - 3))
+        let state = TauActivityAttributes.ContentState(chats: Array(ordered.prefix(3)), more: max(0, ordered.count - 3), accent: self.accent)
         if ordered.isEmpty {
             self.endAll()
             return

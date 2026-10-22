@@ -32,6 +32,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         let defaultThinkingLevel: String
         /// When the server keeps prompt caches warm: "off", "streaming" or "idle" (server/src/cache.ts).
         let cacheWarming: String
+        /// When the server compacts (server/src/compaction.ts).
+        let compaction: CompactionThreshold
         let defaultCwd: String
         let home: String
         let hostname: String
@@ -163,6 +165,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                     defaultModel: model.map { "\($0.string("provider") ?? "")/\($0.string("modelId") ?? "")" } ?? "",
                     defaultThinkingLevel: value.string("defaultThinkingLevel") ?? "off",
                     cacheWarming: value.string("cacheWarming") ?? "idle",
+                    compaction: value.object("compaction").map { compaction in
+                        CompactionThreshold(enabled: compaction.bool("enabled") ?? true, ratio: compaction.double("ratio") ?? 0.9, maxTokens: compaction.int("maxTokens") ?? 700_000)
+                    } ?? .standard,
                     defaultCwd: value.string("defaultCwd") ?? "~",
                     home: value.string("home") ?? "~",
                     hostname: value.string("hostname") ?? "",

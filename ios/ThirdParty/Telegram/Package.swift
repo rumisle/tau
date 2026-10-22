@@ -50,13 +50,17 @@ let package = Package(
         .library(name: "TabSelectionRecognizer", targets: ["TabSelectionRecognizer"]),
         .library(name: "TabBarComponent", targets: ["TabBarComponent"]),
         .library(name: "StreamingTextReveal", targets: ["StreamingTextReveal"]),
+        .library(name: "ShelfPack", targets: ["ShelfPack"]),
+        .library(name: "MetalEngine", targets: ["MetalEngine"]),
+        .library(name: "AnimatedTextComponent", targets: ["AnimatedTextComponent"]),
+        .library(name: "CallScreen", targets: ["CallScreen"]),
+        .library(name: "AudioBlob", targets: ["AudioBlob"]),
         .library(name: "TextSelectionNode", targets: ["TextSelectionNode"]),
         .library(name: "TextNodeWithEntities", targets: ["TextNodeWithEntities"]),
         .library(name: "ManagedAnimationNode", targets: ["ManagedAnimationNode"]),
         .library(name: "RadialStatusNode", targets: ["RadialStatusNode"]),
         .library(name: "Lottie", targets: ["Lottie"]),
         .library(name: "AnimationUI", targets: ["AnimationUI"]),
-        .library(name: "AnimatedTextComponent", targets: ["AnimatedTextComponent"]),
         .library(name: "UndoUI", targets: ["UndoUI"]),
         .library(name: "PlainButtonComponent", targets: ["PlainButtonComponent"]),
         .library(name: "MultilineTextWithEntitiesComponent", targets: ["MultilineTextWithEntitiesComponent"]),
@@ -1329,6 +1333,88 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
+            name: "ShelfPack",
+            dependencies: [],
+            path: "submodules/Utils/ShelfPack",
+            sources: [
+                "Sources/ShelfPack.mm",
+            ],
+            publicHeadersPath: "PublicHeaders",
+            cSettings: [],
+            cxxSettings: [],
+            linkerSettings: [.linkedFramework("Foundation")]
+        ),
+        .target(
+            name: "MetalEngine",
+            dependencies: ["Display", "ShelfPack"],
+            path: "submodules/MetalEngine",
+            sources: [
+                "Sources/AlignUp.swift",
+                "Sources/MetalBinaryArchiveSerialization.swift",
+                "Sources/MetalEngine.swift",
+                "Sources/MetalPipelineCache.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AnimatedTextComponent",
+            dependencies: ["BundleIconComponent", "ComponentFlow", "Display", "MultilineTextComponent", "SwiftSignalKit", "TelegramPresentationData"],
+            path: "submodules/TelegramUI/Components/AnimatedTextComponent",
+            sources: [
+                "Sources/AnimatedTextComponent.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "CallScreen",
+            dependencies: ["AnimatedTextComponent", "AppBundle", "ComponentFlow", "Display", "MetalEngine", "MultilineTextComponent", "SwiftSignalKit", "TelegramPresentationData", "UIKitRuntimeUtils"],
+            path: "submodules/TelegramUI/Components/Calls/CallScreen",
+            sources: [
+                "Sources/Animation/Animation.swift",
+                "Sources/Animation/AnimationManager.swift",
+                "Sources/Animation/Bezier.swift",
+                "Sources/CallScreen.swift",
+                "Sources/Components/AvatarLayer.swift",
+                "Sources/Components/BackButtonView.swift",
+                "Sources/Components/ButtonGroupView.swift",
+                "Sources/Components/CallBackgroundLayer.swift",
+                "Sources/Components/CallBlobsLayer.swift",
+                "Sources/Components/CloseButtonView.swift",
+                "Sources/Components/ConferenceButtonView.swift",
+                "Sources/Components/ContentOverlayButton.swift",
+                "Sources/Components/ContentView.swift",
+                "Sources/Components/EmojiExpandedInfoView.swift",
+                "Sources/Components/EmojiTooltipView.swift",
+                "Sources/Components/KeyEmojiView.swift",
+                "Sources/Components/NoticeView.swift",
+                "Sources/Components/PrivateCallPictureInPictureView.swift",
+                "Sources/Components/PrivateCallVideoLayer.swift",
+                "Sources/Components/RatingView.swift",
+                "Sources/Components/RoundedCornersView.swift",
+                "Sources/Components/StatusView.swift",
+                "Sources/Components/TitleView.swift",
+                "Sources/Components/VideoContainerView.swift",
+                "Sources/Components/VideoShadowsView.swift",
+                "Sources/Components/WeakSignalView.swift",
+                "Sources/ContentOverlayLayer.swift",
+                "Sources/Media/VideoInput.swift",
+                "Sources/MirroringLayer.swift",
+                "Sources/OverlayMaskContainerView.swift",
+                "Sources/PrivateCallScreen.swift",
+                "Sources/Utils/Interpolate.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "AudioBlob",
+            dependencies: ["AsyncDisplayKit", "CallScreen", "Display", "GlassBackgroundComponent", "LegacyComponents", "MetalEngine"],
+            path: "submodules/AudioBlob",
+            sources: [
+                "Sources/BlobView.swift",
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "TextSelectionNode",
             dependencies: ["AsyncDisplayKit", "Display", "TelegramPresentationData", "TextFormat"],
             path: "submodules/TextSelectionNode",
@@ -1566,15 +1652,6 @@ let package = Package(
             path: "submodules/AnimationUI",
             sources: [
                 "Sources/AnimationNode.swift",
-            ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        .target(
-            name: "AnimatedTextComponent",
-            dependencies: ["BundleIconComponent", "ComponentFlow", "Display", "MultilineTextComponent", "SwiftSignalKit", "TelegramPresentationData"],
-            path: "submodules/TelegramUI/Components/AnimatedTextComponent",
-            sources: [
-                "Sources/AnimatedTextComponent.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

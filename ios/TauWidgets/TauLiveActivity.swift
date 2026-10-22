@@ -2,9 +2,41 @@ import SwiftUI
 import WidgetKit
 import ActivityKit
 
-/// The app icon's pinks: the accent, and the lighter top of its gradient.
-private let tauPink = Color(red: 0xF2 / 255.0, green: 0x56 / 255.0, blue: 0x9A / 255.0)
-private let tauPinkLight = Color(red: 0xFF / 255.0, green: 0x8D / 255.0, blue: 0xBF / 255.0)
+/// The app's accent (Settings > Appearance), which the app sends with each update; before it does, Telegram's pink.
+private let defaultAccent: UInt32 = 0xEB6CA4
+
+extension TauActivityAttributes.ContentState {
+    /// On the activity's dark background: black, Day's darkest accent, would vanish, so it shows as white.
+    var accentValue: UInt32 {
+        let value = self.accent ?? defaultAccent
+        let r = Double((value >> 16) & 0xff), g = Double((value >> 8) & 0xff), b = Double(value & 0xff)
+        return (0.299 * r + 0.587 * g + 0.114 * b) < 40.0 ? 0xFFFFFF : value
+    }
+}
+
+private struct AccentKey: EnvironmentKey {
+    static let defaultValue: UInt32 = defaultAccent
+}
+
+extension EnvironmentValues {
+    var tauAccent: UInt32 {
+        get { self[AccentKey.self] }
+        set { self[AccentKey.self] = newValue }
+    }
+}
+
+/// The accent, and a lighter one for the top of the working ring's gradient.
+private func tauAccentTint(_ value: UInt32) -> Color {
+    return rgb(value)
+}
+
+private func tauAccentLight(_ value: UInt32) -> Color {
+    let mix = { (channel: UInt32) -> Double in
+        let c = Double(channel & 0xff) / 255.0
+        return c + (1.0 - c) * 0.35
+    }
+    return Color(red: mix(value >> 16), green: mix(value >> 8), blue: mix(value))
+}
 private let failedRed = Color(red: 0xFF / 255.0, green: 0x45 / 255.0, blue: 0x3A / 255.0)
 
 private func rgb(_ value: UInt32) -> Color {
@@ -84,6 +116,7 @@ struct ChatAvatar: View {
     let chat: TauActivityAttributes.Chat
     let diameter: CGFloat
     let isStale: Bool
+    @Environment(\.tauAccent) private var accent
 
     var body: some View {
         let (bottom, top) = avatarGradients[abs(self.chat.id) % avatarGradients.count]
@@ -103,7 +136,7 @@ struct ChatAvatar: View {
         .overlay {
             if self.chat.state == .working {
                 Circle()
-                    .strokeBorder(LinearGradient(colors: [tauPinkLight, tauPink], startPoint: .top, endPoint: .bottom), lineWidth: ring)
+                    .strokeBorder(LinearGradient(colors: [tauAccentLight(self.accent), tauAccentTint(self.accent)], startPoint: .top, endPoint: .bottom), lineWidth: ring)
                     .opacity(self.isStale ? 0.4 : 1.0)
             }
         }
@@ -112,7 +145,7 @@ struct ChatAvatar: View {
                 Image(systemName: self.chat.state == .done ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                     .font(.system(size: badge, weight: .semibold))
                     .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, self.chat.state == .done ? tauPink : failedRed)
+                    .foregroundStyle(.white, self.chat.state == .done ? tauAccentTint(self.accent) : failedRed)
                     .background(Circle().fill(Color(red: 0.07, green: 0.07, blue: 0.08)).padding(-1.5))
             }
         }
@@ -124,15 +157,16 @@ struct ChatAvatar: View {
 struct ChatStateLabel: View {
     let chat: TauActivityAttributes.Chat
     let isStale: Bool
+    @Environment(\.tauAccent) private var accent
 
     var body: some View {
         switch self.chat.state {
         case .working:
             Text(self.isStale ? "since \(self.chat.since.formatted(date: .omitted, time: .shortened))" : minutesText(self.chat.minutes))
-                .foregroundStyle(tauPink)
+                .foregroundStyle(tauAccentTint(self.accent))
         case .done:
             Text("Done")
-                .foregroundStyle(tauPink)
+                .foregroundStyle(tauAccentTint(self.accent))
         case .failed:
             Text("Failed")
                 .foregroundStyle(failedRed)
@@ -224,7 +258,8 @@ struct LockScreenView: View {
             .environment(\.colorScheme, .dark)
             .foregroundStyle(.white)
             .activityBackgroundTint(Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.82))
-            .activitySystemActionForegroundColor(tauPink)
+            .activitySystemActionForegroundColor(tauAccentTint(self.context.state.accentValue))
+            .environment(\.tauAccent, self.context.state.accentValue)
             .widgetURL(self.context.state.chats.count == 1 ? self.context.state.chats[0].url : nil)
     }
 }
@@ -234,6 +269,7 @@ struct LockScreenView: View {
 struct CompactTrailing: View {
     let state: TauActivityAttributes.ContentState
     let isStale: Bool
+    @Environment(\.tauAccent) private var accent
 
     var body: some View {
         let working = self.state.working
@@ -243,17 +279,17 @@ struct CompactTrailing: View {
                 .monospacedDigit()
                 .foregroundStyle(.black)
                 .frame(minWidth: 20.0, minHeight: 20.0)
-                .background(Capsule().fill(tauPink))
+                .background(Capsule().fill(tauAccentTint(self.accent)))
         } else if let chat = working.first {
             if self.isStale {
                 Image(systemName: "hourglass")
                     .font(.system(size: 15.0, weight: .semibold))
-                    .foregroundStyle(tauPink)
+                    .foregroundStyle(tauAccentTint(self.accent))
             } else {
                 Text(minutesText(chat.minutes, compact: true))
                     .font(.system(size: 15.0, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(tauPink)
+                    .foregroundStyle(tauAccentTint(self.accent))
             }
         } else {
             StateMark(failed: self.state.hasFailed, size: 20.0)
@@ -265,12 +301,13 @@ struct CompactTrailing: View {
 struct StateMark: View {
     let failed: Bool
     let size: CGFloat
+    @Environment(\.tauAccent) private var accent
 
     var body: some View {
         Image(systemName: self.failed ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
             .font(.system(size: self.size, weight: .semibold))
             .symbolRenderingMode(.palette)
-            .foregroundStyle(.black, self.failed ? failedRed : tauPink)
+            .foregroundStyle(.black, self.failed ? failedRed : tauAccentTint(self.accent))
     }
 }
 
@@ -279,20 +316,23 @@ struct TauLiveActivity: Widget {
         ActivityConfiguration(for: TauActivityAttributes.self) { context in
             LockScreenView(context: context)
         } dynamicIsland: { context in
-            DynamicIsland {
+            let accent = context.state.accentValue
+            let tint = tauAccentTint(accent)
+            return DynamicIsland {
                 // The top line, either side of the camera: the τ and what is going on; how long, or the check.
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 6.0) {
                         TauGlyph()
-                            .fill(tauPink)
+                            .fill(tint)
                             .frame(width: 18.0, height: 18.0)
                         Text(context.state.headline)
                             .font(.system(size: 15.0, weight: .semibold))
-                            .foregroundStyle(context.state.working.isEmpty && context.state.hasFailed ? failedRed : tauPink)
+                            .foregroundStyle(context.state.working.isEmpty && context.state.hasFailed ? failedRed : tint)
                             .lineLimit(1)
                     }
                     .padding(.leading, 6.0)
                     .frame(maxHeight: .infinity, alignment: .center)
+                    .environment(\.tauAccent, accent)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Group {
@@ -306,36 +346,42 @@ struct TauLiveActivity: Widget {
                             ChatStateLabel(chat: chat, isStale: context.isStale)
                                 .font(.system(size: 15.0, weight: .semibold))
                                 .monospacedDigit()
-                                .foregroundStyle(tauPink)
+                                .foregroundStyle(tint)
                         }
                     }
                     .padding(.trailing, 6.0)
                     .frame(maxHeight: .infinity, alignment: .center)
+                    .environment(\.tauAccent, accent)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     ChatRows(state: context.state, isStale: context.isStale, diameter: 36.0, spacing: 10.0, island: true)
                         .padding(.horizontal, 6.0)
                         .padding(.top, 6.0)
+                        .environment(\.tauAccent, accent)
                 }
             } compactLeading: {
                 TauGlyph()
-                    .fill(tauPink)
+                    .fill(tint)
                     .frame(width: 20.0, height: 20.0)
                     .padding(.leading, 2.0)
             } compactTrailing: {
                 CompactTrailing(state: context.state, isStale: context.isStale)
                     .padding(.trailing, 2.0)
+                    .environment(\.tauAccent, accent)
             } minimal: {
-                if context.state.working.isEmpty {
-                    StateMark(failed: context.state.hasFailed, size: 20.0)
-                } else {
-                    TauGlyph()
-                        .fill(tauPink)
-                        .frame(width: 18.0, height: 18.0)
+                Group {
+                    if context.state.working.isEmpty {
+                        StateMark(failed: context.state.hasFailed, size: 20.0)
+                    } else {
+                        TauGlyph()
+                            .fill(tint)
+                            .frame(width: 18.0, height: 18.0)
+                    }
                 }
+                .environment(\.tauAccent, accent)
             }
             .widgetURL(context.state.chats.count == 1 ? context.state.chats[0].url : nil)
-            .keylineTint(tauPink)
+            .keylineTint(tint)
         }
     }
 }

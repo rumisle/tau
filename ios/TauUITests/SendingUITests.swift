@@ -1167,10 +1167,10 @@ final class SendingUITests: XCTestCase {
         self.shot("mi-4-relaunched")
     }
 
-    /// Dictation, with the stand-in engine: the microphone listens and the words come in dimmed until fixed, with a red
-    /// dot and the time in the field; with text written, the field's own microphone adds to it.
+    /// Dictation, with the stand-in engine: the field's microphone listens, as the listening button at the field's end
+    /// shows, and the words come in; with text written, the microphone adds to it, and Send comes back after.
     func testDictation() {
-        self.launch(["-newChat", "YES"])
+        self.launch(["-newChat", "YES", "-mockDictation", "YES"])
         self.app.descendants(matching: .any)["microphone"].firstMatch.tap()
         sleep(1)
         self.shot("dict-0-listening")
@@ -1182,9 +1182,13 @@ final class SendingUITests: XCTestCase {
         self.focusInput()
         self.type(" Then")
         sleep(1)
-        self.app.descendants(matching: .any)["dictate"].firstMatch.tap()
+        self.app.descendants(matching: .any)["microphone"].firstMatch.tap()
         sleep(2)
         self.shot("dict-3-append")
+        self.app.descendants(matching: .any)["stopDictation"].firstMatch.tap()
+        sleep(1)
+        XCTAssertTrue(self.app.descendants(matching: .any)["send"].firstMatch.waitForExistence(timeout: 3))
+        self.shot("dict-4-send")
     }
 
     /// The Live Activity: a message sent puts the chat in the island while it works, the minutes counting; on the lock

@@ -14,6 +14,7 @@ import {
 	fauxThinking,
 	fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
+import { FOLLOW_UP_OPENING } from "./compaction.ts";
 
 export const DEV_MODEL = { provider: "dev", modelId: "echo" } as const;
 
@@ -36,8 +37,14 @@ export function devProvider(options: { tokensPerSecond?: number; cacheTtl?: numb
 		const last = context.messages.findLast((message) => (message.role as string) !== "system");
 		const wait = last?.role === "user" ? /^~(\d+(?:\.\d+)?) /.exec(userText(last.content)) : null;
 		if (wait !== null) await new Promise((resolve) => setTimeout(resolve, Number(wait[1]) * 1000));
-		// A compaction's summarization: a few seconds, and a summary shaped like a real one.
-		if (context.messages.some((message) => (message.role as string) === "system" && JSON.stringify(message).includes("summarization assistant"))) {
+		// A compaction's summarization, durable's own or tau's follow-up to the context (src/compaction.ts): a few seconds,
+		// and a summary shaped like a real one.
+		const followUp = last?.role === "user" && userText(last.content).startsWith(FOLLOW_UP_OPENING);
+		// `!no-follow-up` anywhere in the chat: the follow-up calls a tool instead, so durable's own summary is made.
+		if (followUp && context.messages.some((message) => message.role === "user" && userText(message.content).includes("!no-follow-up"))) {
+			return fauxAssistantMessage([fauxToolCall("read", { path: "README.md" })], { stopReason: "toolUse" });
+		}
+		if (followUp || context.messages.some((message) => (message.role as string) === "system" && JSON.stringify(message).includes("summarization assistant"))) {
 			await new Promise((resolve) => setTimeout(resolve, 3000));
 			const turns = context.messages.filter((message) => message.role === "user").length;
 			return fauxAssistantMessage([fauxText(`## Goal\nTry tau's compaction with the dev model.\n\n## Progress\n- ${turns} messages summarized\n- The echo model answered each one\n\n## Next Steps\n1. Keep chatting after the summary`)]);
@@ -136,6 +143,8 @@ function reply(messages: readonly Message[]) {
 		}
 		return fauxAssistantMessage([fauxToolCall("subagent", { action: "spawn", name: subagent[1]!, message: subagent[3]!, ...options })], { stopReason: "toolUse" });
 	}
+	// `!quiet …`: a short answer to a message of any length, as for a big paste.
+	if (text.startsWith("!quiet")) return fauxAssistantMessage([fauxText("Noted.")]);
 	const doc = /^!doc (\d+)/.exec(text);
 	if (doc !== null) return fauxAssistantMessage([fauxText(longDocument(Number(doc[1])))]);
 	const turns = messages.filter((message) => message.role === "user").length;

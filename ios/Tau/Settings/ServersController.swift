@@ -235,6 +235,14 @@ final class ServerController: SettingsListController {
             self.push(CacheWarmingController(context: self.context, slot: self.slot))
         }))
         items.append(SettingsTextItem(theme: theme, text: "The server refreshes a chat's prompt cache before it expires when that costs less than writing it again.", kind: .footer))
+        items.append(SettingsTextItem(theme: theme, text: "Context", kind: .header))
+        items.append(SettingsRowItem(theme: theme, icon: SettingsIcon.compaction, title: "Auto-Compact", accessory: .disclosure(label: compactionTitle(server.compaction)), position: SettingsRowPosition(isFirst: true, isLast: true), action: { [weak self] in
+            guard let self else {
+                return
+            }
+            self.push(CompactionController(context: self.context, slot: self.slot))
+        }))
+        items.append(SettingsTextItem(theme: theme, text: "When a chat's context fills up, the model summarizes the older part, and the chat goes on from the summary and the latest messages.", kind: .footer))
         if store.servers.count > 1 {
             items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
             items.append(SettingsRowItem(theme: theme, icon: nil, title: "Delete Server", titleColor: theme.list.itemDestructiveColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: true), action: { [weak self] in
@@ -324,6 +332,73 @@ func cacheWarmingTitle(_ mode: String) -> String {
         return "While Working"
     default:
         return "Also When Idle"
+    }
+}
+
+func compactionTitle(_ threshold: CompactionThreshold) -> String {
+    return threshold.enabled ? "At \(Int((threshold.ratio * 100.0).rounded()))%" : "Off"
+}
+
+private func tokensTitle(_ tokens: Int) -> String {
+    if tokens >= 1_000_000 && tokens % 1_000_000 == 0 {
+        return "\(tokens / 1_000_000)M tokens"
+    }
+    return "\(tokens / 1000)K tokens"
+}
+
+/// Settings > a server > Auto-Compact: when the server compacts its chats, as a share of the model's window with a cap
+/// for the largest windows.
+final class CompactionController: SettingsListController {
+    private let slot: Int
+    private static let ratios: [Double] = [0.5, 0.7, 0.8, 0.9, 0.95]
+    private static let caps: [Int] = [200_000, 400_000, 700_000, 1_000_000]
+
+    init(context: AppContext, slot: Int) {
+        self.slot = slot
+        super.init(context: context, title: "Auto-Compact")
+    }
+
+    required init(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func items(theme: TauTheme) -> [ListViewItem] {
+        guard let server = self.context.store.server(self.slot) else {
+            return []
+        }
+        let current = server.compaction
+        var items: [ListViewItem] = [SettingsTextItem(theme: theme, text: "Compact At", kind: .header)]
+        let ratios = CompactionController.ratios
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Off", accessory: .checkmark(!current.enabled), position: SettingsRowPosition(isFirst: true, isLast: false), action: { [weak self] in
+            var updated = current
+            updated.enabled = false
+            server.setCompaction(updated)
+            self?.reload()
+        }))
+        for (index, ratio) in ratios.enumerated() {
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: "\(Int((ratio * 100.0).rounded()))% of the Window", accessory: .checkmark(current.enabled && abs(current.ratio - ratio) < 0.001), position: SettingsRowPosition(isFirst: false, isLast: index == ratios.count - 1), action: { [weak self] in
+                var updated = current
+                updated.enabled = true
+                updated.ratio = ratio
+                server.setCompaction(updated)
+                self?.reload()
+            }))
+        }
+        items.append(SettingsTextItem(theme: theme, text: "Off, a chat is compacted only when its context overflows, or when you ask from its menu.", kind: .footer))
+        if current.enabled {
+            items.append(SettingsTextItem(theme: theme, text: "But No Later Than", kind: .header))
+            let caps = CompactionController.caps
+            for (index, cap) in caps.enumerated() {
+                items.append(SettingsRowItem(theme: theme, icon: nil, title: tokensTitle(cap), accessory: .checkmark(current.maxTokens == cap), position: SettingsRowPosition(isFirst: index == 0, isLast: index == caps.count - 1), action: { [weak self] in
+                    var updated = current
+                    updated.maxTokens = cap
+                    server.setCompaction(updated)
+                    self?.reload()
+                }))
+            }
+            items.append(SettingsTextItem(theme: theme, text: "In the largest windows a very long context answers worse and costs more at every step. The summary is asked for after the chat's cached context, so it costs little.", kind: .footer))
+        }
+        return items
     }
 }
 

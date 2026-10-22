@@ -28,6 +28,7 @@ enum SettingsIcon {
     static let model = renderSettingsIcon(name: "Item List/Icons/AITools", backgroundColors: [colorPurple])
     static let thinking = renderSettingsIcon(name: "Item List/Icons/Tips", backgroundColors: [colorOrange])
     static let cache = renderSettingsIcon(name: "Item List/Icons/Speed", backgroundColors: [colorRed])
+    static let compaction = renderSettingsIcon(name: "Item List/Icons/Data", backgroundColors: [colorOrange])
     static let storage = renderSettingsIcon(name: "Item List/Icons/Pie", backgroundColors: [colorGreen])
     static let network = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorBlue])
     static let usage = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorPurple])
@@ -696,6 +697,197 @@ final class SettingsInputItemNode: ListViewItemNode, UITextFieldDelegate {
         textField.resignFirstResponder()
         return false
     }
+}
+
+// MARK: - Accent colors
+
+/// A row of color swatches, as Telegram's ThemeSettingsAccentColorItem: each a ring around a fill; the fill covers the
+/// ring until chosen, then shrinks inside it. Scrolls sideways when the colors do not fit.
+final class SettingsAccentColorsItem: ListViewItem {
+    let theme: TauTheme
+    let colors: [(id: String, color: UIColor)]
+    let selected: String
+    let position: SettingsRowPosition
+    let select: (String) -> Void
+
+    init(theme: TauTheme, colors: [(id: String, color: UIColor)], selected: String, position: SettingsRowPosition = SettingsRowPosition(isFirst: true, isLast: true), select: @escaping (String) -> Void) {
+        self.theme = theme
+        self.colors = colors
+        self.selected = selected
+        self.position = position
+        self.select = select
+    }
+
+    var neighborDescriptor: AnyEquatable {
+        return .noNeighborInfluence
+    }
+
+    var selectable: Bool {
+        return false
+    }
+
+    func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
+        Queue.mainQueue().async {
+            let node = SettingsAccentColorsItemNode()
+            let layout = node.update(item: self, params: params, animated: false)
+            node.contentSize = layout.contentSize
+            node.insets = layout.insets
+            completion(node, { return (nil, { _ in }) })
+        }
+    }
+
+    func updateNode(async: @escaping (@escaping () -> Void) -> Void, node: @escaping () -> ListViewItemNode, params: ListViewItemLayoutParams, neighbors: ListViewItemNeighbors, animation: ListViewItemUpdateAnimation, completion: @escaping (ListViewItemNodeLayout, @escaping (ListViewItemApply) -> Void) -> Void) {
+        Queue.mainQueue().async {
+            guard let nodeValue = node() as? SettingsAccentColorsItemNode else {
+                return
+            }
+            let layout = nodeValue.update(item: self, params: params, animated: true)
+            completion(layout, { _ in })
+        }
+    }
+}
+
+final class SettingsAccentColorsItemNode: ListViewItemNode {
+    /// Telegram's swatch, in a cell a little narrower than its 60 pt, so a last one peeks out where they scroll.
+    private static let cellSize = CGSize(width: 56.0, height: 58.0)
+    private static let swatchSize = CGSize(width: 40.0, height: 40.0)
+
+    private final class Swatch {
+        let id: String
+        let button = UIButton(type: .custom)
+        let ring = UIImageView()
+        let fill = UIImageView()
+        var color: UIColor?
+        var isSelected: Bool?
+
+        init(id: String) {
+            self.id = id
+            self.ring.isUserInteractionEnabled = false
+            self.fill.isUserInteractionEnabled = false
+            self.button.addSubview(self.ring)
+            self.button.addSubview(self.fill)
+            self.button.isAccessibilityElement = true
+            self.button.accessibilityIdentifier = "accent-\(id)"
+            self.button.accessibilityLabel = id.capitalized
+        }
+    }
+
+    private let backgroundNode = ASDisplayNode()
+    private let scrollView = UIScrollView()
+    private var swatches: [Swatch] = []
+    private var item: SettingsAccentColorsItem?
+
+    init() {
+        super.init(layerBacked: false, rotated: false, seeThrough: false)
+        self.backgroundNode.isLayerBacked = true
+        self.addSubnode(self.backgroundNode)
+        self.scrollView.showsHorizontalScrollIndicator = false
+        self.scrollView.alwaysBounceHorizontal = false
+        self.view.addSubview(self.scrollView)
+    }
+
+    func update(item: SettingsAccentColorsItem, params: ListViewItemLayoutParams, animated: Bool) -> ListViewItemNodeLayout {
+        let previous = self.item
+        self.item = item
+        let theme = item.theme.list
+        let sectionLeft = params.leftInset + sectionSideInset
+        let sectionWidth = params.width - params.leftInset - params.rightInset - sectionSideInset * 2.0
+        let height: CGFloat = SettingsAccentColorsItemNode.cellSize.height + 16.0
+        let frame = CGRect(x: sectionLeft, y: 0.0, width: sectionWidth, height: height)
+        self.backgroundNode.backgroundColor = theme.itemBlocksBackgroundColor
+        self.backgroundNode.frame = frame
+        var corners: CACornerMask = []
+        if item.position.isFirst {
+            corners.formUnion([.layerMinXMinYCorner, .layerMaxXMinYCorner])
+        }
+        if item.position.isLast {
+            corners.formUnion([.layerMinXMaxYCorner, .layerMaxXMaxYCorner])
+        }
+        self.backgroundNode.layer.cornerRadius = corners.isEmpty ? 0.0 : sectionCornerRadius
+        self.backgroundNode.layer.maskedCorners = corners
+        self.backgroundNode.layer.cornerCurve = .continuous
+        self.scrollView.frame = frame
+        self.scrollView.layer.cornerRadius = self.backgroundNode.layer.cornerRadius
+        self.scrollView.layer.maskedCorners = corners
+        self.scrollView.layer.cornerCurve = .continuous
+
+        if previous.map({ $0.colors.map(\.id) }) != item.colors.map(\.id) {
+            for swatch in self.swatches {
+                swatch.button.removeFromSuperview()
+            }
+            self.swatches = item.colors.map { color in
+                let swatch = Swatch(id: color.id)
+                swatch.button.addTarget(self, action: #selector(self.tapped(_:)), for: .touchUpInside)
+                self.scrollView.addSubview(swatch.button)
+                return swatch
+            }
+        }
+        let cell = SettingsAccentColorsItemNode.cellSize
+        // Spread over the row when they fit, as Telegram's; otherwise side by side from an inset, scrolling.
+        let sideInset: CGFloat = 6.0
+        let fits = CGFloat(self.swatches.count) * cell.width + sideInset * 2.0 <= sectionWidth
+        let spacing = fits && self.swatches.count > 1 ? (sectionWidth - sideInset * 2.0 - CGFloat(self.swatches.count) * cell.width) / CGFloat(self.swatches.count - 1) : 0.0
+        let swatchSize = SettingsAccentColorsItemNode.swatchSize
+        for (index, swatch) in self.swatches.enumerated() {
+            let color = item.colors[index].color
+            let isSelected = swatch.id == item.selected
+            swatch.button.frame = CGRect(x: sideInset + CGFloat(index) * (cell.width + spacing), y: 8.0, width: cell.width, height: cell.height)
+            let swatchFrame = CGRect(x: floor((cell.width - swatchSize.width) / 2.0), y: floor((cell.height - swatchSize.height) / 2.0), width: swatchSize.width, height: swatchSize.height)
+            if swatch.color != color {
+                swatch.color = color
+                // On a list of nearly the same color, a hairline keeps white on a light theme and black on a dark one.
+                let edge = color.argb == theme.itemBlocksBackgroundColor.argb || (color.lightness > 0.9 && !item.theme.overallDarkAppearance) || (color.lightness < 0.1 && item.theme.overallDarkAppearance)
+                swatch.ring.image = accentRingImage(color: edge ? theme.itemSecondaryTextColor.withMultipliedAlpha(0.5) : color)
+                swatch.fill.image = accentFillImage(color: color, stroke: edge ? theme.itemSecondaryTextColor.withMultipliedAlpha(0.3) : nil)
+            }
+            swatch.ring.bounds = CGRect(origin: CGPoint(), size: swatchFrame.size)
+            swatch.ring.center = CGPoint(x: swatchFrame.midX, y: swatchFrame.midY)
+            swatch.fill.bounds = CGRect(origin: CGPoint(), size: swatchFrame.size)
+            swatch.fill.center = CGPoint(x: swatchFrame.midX, y: swatchFrame.midY)
+            if swatch.isSelected != isSelected {
+                let transition: ContainedViewLayoutTransition = animated && swatch.isSelected != nil ? .animated(duration: 0.3, curve: .easeInOut) : .immediate
+                swatch.isSelected = isSelected
+                transition.updateTransformScale(layer: swatch.fill.layer, scale: isSelected ? 1.0 : 1.2)
+            }
+            swatch.button.accessibilityTraits = isSelected ? [.button, .selected] : .button
+        }
+        let contentWidth = CGFloat(self.swatches.count) * (cell.width + spacing) - spacing + sideInset * 2.0
+        self.scrollView.contentSize = CGSize(width: max(contentWidth, sectionWidth), height: height)
+        return ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets())
+    }
+
+    @objc private func tapped(_ button: UIButton) {
+        guard let swatch = self.swatches.first(where: { $0.button === button }) else {
+            return
+        }
+        self.item?.select(swatch.id)
+    }
+}
+
+/// Telegram's ring: a 2 pt stroke at the swatch's edge.
+private func accentRingImage(color: UIColor) -> UIImage? {
+    return generateImage(CGSize(width: 40.0, height: 40.0), rotatedContext: { size, context in
+        let bounds = CGRect(origin: CGPoint(), size: size)
+        context.clear(bounds)
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(2.0)
+        context.strokeEllipse(in: bounds.insetBy(dx: 1.0, dy: 1.0))
+    })
+}
+
+/// Telegram's fill: 4 pt inside the ring, which a scale of 1.2 covers.
+private func accentFillImage(color: UIColor, stroke: UIColor?) -> UIImage? {
+    return generateImage(CGSize(width: 40.0, height: 40.0), rotatedContext: { size, context in
+        let bounds = CGRect(origin: CGPoint(), size: size)
+        context.clear(bounds)
+        context.setFillColor(color.cgColor)
+        context.fillEllipse(in: bounds.insetBy(dx: 4.0, dy: 4.0))
+        if let stroke {
+            context.setStrokeColor(stroke.cgColor)
+            context.setLineWidth(1.0)
+            context.strokeEllipse(in: bounds.insetBy(dx: 4.5, dy: 4.5))
+        }
+    })
 }
 
 // MARK: - Animated header

@@ -6,6 +6,8 @@
 #                                   (TAU_TEAM: signing team, default TEAMID; TAU_DEVICE: device name or id)
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Aqua Voice's sign-in from this Mac, for dictation (gitignored; see the script).
+command -v uv >/dev/null && uv run --quiet scripts/aqua_secrets.py || true
 if command -v xcodegen >/dev/null; then xcodegen generate --quiet; else nix shell nixpkgs#xcodegen -c xcodegen generate --quiet; fi
 derived="${TAU_DERIVED_DATA:-/tmp/tau-dd}"
 bundle=com.rumisle.tau

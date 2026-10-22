@@ -23,8 +23,10 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { CacheWarmer, type CacheWarmingMode } from "./cache.ts";
+import { type CompactionThreshold, compactionOverrides, DEFAULT_COMPACTION_THRESHOLD, FollowUpCompaction } from "./compaction.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
 import { Serial } from "./serial.ts";
+import { skillsSection } from "./skills.ts";
 import { Subagent } from "./subagent.ts";
 
 /** Per-conversation metadata the chat list shows. */
@@ -80,6 +82,8 @@ export const SettingsDoc = defineDoc<{
 	ntfy?: { server: string; topic: string };
 	/** When prompt caches are kept warm (src/cache.ts); "idle" until a client changes it. */
 	cacheWarming?: CacheWarmingMode;
+	/** When compaction starts (src/compaction.ts); 90% of the window, at most 700k tokens, until a client changes it. */
+	compaction?: CompactionThreshold;
 }>({
 	kind: "tau.settings",
 	version: 1,
@@ -100,6 +104,8 @@ export type HostOptions = {
 	/** A prompt cache lifetime for the dev model, in seconds, with prices to make warming it pay: to try warming. */
 	devCacheTtl?: number;
 	onReport?: (error: unknown, info: ReportInfo) => void;
+	/** Whose `.agents/skills` the prompt lists besides the conversation directory's (src/skills.ts); default home. */
+	skillsHome?: string;
 };
 
 export type Host = {
@@ -121,6 +127,10 @@ export type Host = {
 	readonly cache: CacheWarmer;
 	readonly cacheWarming: CacheWarmingMode;
 	setCacheWarming(mode: CacheWarmingMode): Promise<void>;
+	/** Compaction as a follow-up to the conversation's cached context (src/compaction.ts). */
+	readonly compaction: FollowUpCompaction;
+	readonly compactionThreshold: CompactionThreshold;
+	setCompactionThreshold(threshold: CompactionThreshold): Promise<void>;
 	readonly cwd: string;
 	close(): Promise<void>;
 };
@@ -138,6 +148,11 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	models.setProvider(devProvider({ tokensPerSecond: options.devTokensPerSecond, cacheTtl: options.devCacheTtl }).provider);
 	let cacheWarming: CacheWarmingMode = "idle";
 	const cache = new CacheWarmer({ mode: () => cacheWarming });
+	// Provider errors that may pass are asked again for a long while, as pi does: an agent left working should not stop
+	// for an overloaded provider. With 2 s doubling to a minute, 32 retries wait about half an hour.
+	const retry = { maxRetries: 32, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
+	const compaction = new FollowUpCompaction({ retry: () => retry });
+	let compactionThreshold: CompactionThreshold = DEFAULT_COMPACTION_THRESHOLD;
 
 	const registry = createRegistry();
 	registry.install(CodingTools);
@@ -148,8 +163,9 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 			sections: [
 				section("preamble", () => PREAMBLE, { tag: false }),
 				section("cwd", (input) => input.env?.cwd),
+				skillsSection(options.skillsHome),
 			],
-			hooks: [cache.hook],
+			hooks: [cache.hook, compaction.hook],
 		}),
 	);
 
@@ -161,15 +177,19 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	}
 
 	// The dev model's chats are short: a manual compaction there keeps little verbatim, so it has something to summarize.
-	// Provider errors that may pass are asked again for a long while, as pi does: an agent left working should not stop
-	// for an overloaded provider. With 2 s doubling to a minute, 32 retries wait about half an hour.
-	const settings: HarnessSettings = { toolExecution: "parallel", retry: { maxRetries: 32 }, compaction: { modelOverrides: { [`${DEV_MODEL.provider}/${DEV_MODEL.modelId}`]: { keepRecentTokens: 200 } } } };
+	const ownOverrides = { [`${DEV_MODEL.provider}/${DEV_MODEL.modelId}`]: { keepRecentTokens: 200 } };
+	// Read by the harness at each use; the per-model thresholds are worked out again only when the setting changes.
+	let settings: HarnessSettings = {};
+	const updateSettings = () => {
+		settings = { toolExecution: "parallel", retry, compaction: { modelOverrides: compactionOverrides(models, compactionThreshold, ownOverrides) } };
+	};
+	updateSettings();
 	const harness = await Harness.open(
 		storage,
 		{
 			models: cache.wrap(models),
 			registry,
-			settings,
+			settings: () => settings,
 			env: ({ cwd: conversationCwd }) => new NodeExecutionEnv({ cwd: conversationCwd ?? cwd }),
 			conversationCreated: async (tx, conversation) => {
 				const meta = await tx.doc(MetaDoc, conversation.id);
@@ -183,6 +203,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		context,
 	);
 	cache.attach(harness, async (id) => (await storage.conversation(id, context))?.owner !== undefined);
+	compaction.attach(harness);
 	const serverId = await harness.commit(async (tx) => {
 		const doc = await tx.doc(ServerDoc);
 		if (doc.id === "") doc.id = randomUUID();
@@ -192,6 +213,10 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	if (savedSettings?.defaultModel !== undefined) defaultModel = savedSettings.defaultModel;
 	let defaultThinkingLevel: ModelThinkingLevel = savedSettings?.defaultThinkingLevel ?? "off";
 	if (savedSettings?.cacheWarming !== undefined) cacheWarming = savedSettings.cacheWarming;
+	if (savedSettings?.compaction !== undefined) {
+		compactionThreshold = savedSettings.compaction;
+		updateSettings();
+	}
 	// Continue runs the last process left unfinished.
 	harness.resume();
 
@@ -230,6 +255,17 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 			}, context);
 			cacheWarming = mode;
 			cache.modeChanged();
+		},
+		compaction,
+		get compactionThreshold() {
+			return compactionThreshold;
+		},
+		async setCompactionThreshold(threshold) {
+			await harness.commit(async (tx) => {
+				(await tx.doc(SettingsDoc)).compaction = { ...threshold };
+			}, context);
+			compactionThreshold = threshold;
+			updateSettings();
 		},
 		cwd,
 		close: () => {

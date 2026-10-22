@@ -1,0 +1,4 @@
+module ShelfPack {
+    header "ShelfPack/ShelfPack.h"
+    export *
+}

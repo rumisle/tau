@@ -25,6 +25,9 @@ protocol TauServer: AnyObject {
     /// When it keeps prompt caches warm: "off", "streaming" (while a run works) or "idle" (also after it).
     var cacheWarming: String { get }
     func setCacheWarming(_ mode: String)
+    /// When the server compacts a chat's context (server/src/compaction.ts).
+    var compaction: CompactionThreshold { get }
+    func setCompaction(_ threshold: CompactionThreshold)
     /// Where the server pushes answers while no app is in the foreground (server/src/notifier.ts); nil: nowhere.
     var ntfy: NtfyTarget? { get }
     func setNtfy(_ target: NtfyTarget?)
@@ -290,6 +293,20 @@ struct ChatAnswer: Equatable {
 }
 
 /// An ntfy server and a topic only this user's phone subscribes to.
+/// Compaction starts at `ratio` of the model's window, but never past `maxTokens`; off: only when the context overflows
+/// or on request.
+struct CompactionThreshold: Equatable {
+    var enabled: Bool
+    var ratio: Double
+    var maxTokens: Int
+
+    static let standard = CompactionThreshold(enabled: true, ratio: 0.9, maxTokens: 700_000)
+
+    var json: [String: Any] {
+        return ["enabled": self.enabled, "ratio": self.ratio, "maxTokens": self.maxTokens]
+    }
+}
+
 struct NtfyTarget: Equatable {
     var server: String
     var topic: String

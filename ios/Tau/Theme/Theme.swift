@@ -73,6 +73,105 @@ final class TauTheme {
         }
     }
 
+    /// Telegram's accent colors (PresentationThemeBaseColor, without presets and custom colors), which tint a built-in
+    /// theme through `customizePresentationTheme`, as Telegram's Appearance > color row does. Each theme keeps its own.
+    enum Accent: String, CaseIterable {
+        case blue
+        case cyan
+        case green
+        case pink
+        case orange
+        case purple
+        case red
+        case yellow
+        case gray
+        case black
+        case white
+
+        /// tau's: Telegram's pink.
+        static let standard: Accent = .pink
+
+        var baseColor: PresentationThemeBaseColor {
+            switch self {
+            case .blue:
+                return .blue
+            case .cyan:
+                return .cyan
+            case .green:
+                return .green
+            case .pink:
+                return .pink
+            case .orange:
+                return .orange
+            case .purple:
+                return .purple
+            case .red:
+                return .red
+            case .yellow:
+                return .yellow
+            case .gray:
+                return .gray
+            case .black:
+                return .black
+            case .white:
+                return .white
+            }
+        }
+
+        /// Telegram's values (PresentationThemeBaseColor.color).
+        var rgb: UInt32 {
+            switch self {
+            case .blue:
+                return 0x0088ff
+            case .cyan:
+                return 0x00c2ed
+            case .green:
+                return 0x29b327
+            case .pink:
+                return 0xeb6ca4
+            case .orange:
+                return 0xf08200
+            case .purple:
+                return 0x9472ee
+            case .red:
+                return 0xd33213
+            case .yellow:
+                return 0xedb400
+            case .gray:
+                return 0x6d839e
+            case .black:
+                return 0x000000
+            case .white:
+                return 0xffffff
+            }
+        }
+
+        /// As `PresentationThemeAccentColor.colorFor(baseTheme:)`: Night's blue is its own.
+        func rgb(for builtin: Builtin) -> UInt32 {
+            if builtin == .night && self == .blue {
+                return 0x3e88f7
+            }
+            return self.rgb
+        }
+
+        /// The colors Telegram offers each theme (ThemePickerController): black only for Day, white only for Night,
+        /// and no gray for Night.
+        static func available(for builtin: Builtin) -> [Accent] {
+            return Accent.allCases.filter { accent in
+                switch accent {
+                case .black:
+                    return builtin == .day
+                case .white:
+                    return builtin == .night
+                case .gray:
+                    return builtin != .night
+                default:
+                    return true
+                }
+            }
+        }
+    }
+
     struct ChatList {
         var backgroundColor: UIColor
         var itemSeparatorColor: UIColor
@@ -157,6 +256,7 @@ final class TauTheme {
     }
 
     let builtin: Builtin
+    let accent: Accent
     let presentationTheme: PresentationTheme
     let presentationStrings: PresentationStrings
     let presentationData: PresentationData
@@ -171,27 +271,46 @@ final class TauTheme {
     let statusBarStyle: NavigationStatusBarStyle
 
     var name: String {
-        return self.builtin.rawValue
+        return "\(self.builtin.rawValue)-\(self.accent.rawValue)"
     }
 
-    private static var cache: [Builtin: TauTheme] = [:]
+    private static var cache: [String: TauTheme] = [:]
 
-    static func builtin(_ builtin: Builtin) -> TauTheme {
-        if let theme = TauTheme.cache[builtin] {
+    static func builtin(_ builtin: Builtin, accent: Accent = .standard) -> TauTheme {
+        let accent = Accent.available(for: builtin).contains(accent) ? accent : .standard
+        let key = "\(builtin.rawValue)|\(accent.rawValue)"
+        if let theme = TauTheme.cache[key] {
             return theme
         }
-        let theme = TauTheme(builtin: builtin)
-        TauTheme.cache[builtin] = theme
+        let theme = TauTheme(builtin: builtin, accent: accent)
+        TauTheme.cache[key] = theme
         return theme
     }
 
-    private init(builtin: Builtin) {
-        let theme = makeDefaultPresentationTheme(reference: builtin.reference, serviceBackgroundColor: nil)
+    /// The chat's plain background: the theme's own, except Tinted Night's, which Telegram derives from the accent, as
+    /// its other backgrounds (customizeDefaultDarkTintedPresentationTheme's `additionalBackgroundColor`), a step darker as
+    /// tau's default one is.
+    private static func plainBackground(_ builtin: Builtin, accent: Accent) -> UInt32 {
+        guard builtin == .tintedNight, accent != .blue else {
+            return builtin.plainBackground
+        }
+        let hsb = UIColor(rgb: accent.rgb).hsb
+        let accentColor = UIColor(hue: hsb.0, saturation: hsb.1, brightness: max(hsb.2, 0.18), alpha: 1.0)
+        return accentColor.withMultiplied(hue: 1.024, saturation: 0.573, brightness: 0.18 * 0.72).rgb
+    }
+
+    private init(builtin: Builtin, accent: Accent) {
         let base = defaultPresentationData()
+        let plain = makeDefaultPresentationTheme(reference: builtin.reference, serviceBackgroundColor: nil)
+        // As Telegram makes a built-in theme with an accent (makePresentationTheme(mediaBox:themeReference:accentColor:)):
+        // editing, so the accent also colors the outgoing bubbles. Blue is the themes' own accent: unchanged.
+        let theme = accent == .blue ? plain : customizePresentationTheme(plain, editing: true, accentColor: UIColor(rgb: accent.rgb(for: builtin)), outgoingAccentColor: nil, backgroundColors: [], bubbleColors: [], animateBubbleColors: false, baseColor: accent.baseColor)
         self.builtin = builtin
+        self.accent = accent
         self.presentationTheme = theme
         self.presentationStrings = base.strings
-        let wallpaper = TelegramWallpaper.color(builtin.plainBackground)
+        let plainBackground = TauTheme.plainBackground(builtin, accent: accent)
+        let wallpaper = TelegramWallpaper.color(plainBackground)
         self.wallpaper = wallpaper
         self.presentationData = base.withUpdated(theme: theme).withUpdated(chatWallpaper: wallpaper)
         self.overallDarkAppearance = theme.overallDarkAppearance
@@ -257,7 +376,7 @@ final class TauTheme {
         let input = theme.chat.inputPanel
         let service = theme.chat.serviceMessage.components.withDefaultWallpaper
         let dark = theme.overallDarkAppearance
-        let chatBackgroundColor = UIColor(rgb: builtin.plainBackground)
+        let chatBackgroundColor = UIColor(rgb: plainBackground)
         // Pills and cards: Telegram's color for a plain wallpaper (the background, darker, see-through) on a light
         // one; a lift of white on a dark one, where darker would vanish.
         let serviceFill = dark ? UIColor(white: 1.0, alpha: 0.08) : serviceColor(with: chatBackgroundColor)

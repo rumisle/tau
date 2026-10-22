@@ -207,6 +207,12 @@ final class MockStore: TauStore, TauServer {
         self.cacheWarming = mode
     }
 
+    private(set) var compaction = CompactionThreshold.standard
+
+    func setCompaction(_ threshold: CompactionThreshold) {
+        self.compaction = threshold
+    }
+
     var servers: [TauServer] {
         return [self]
     }

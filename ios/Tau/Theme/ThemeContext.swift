@@ -13,8 +13,15 @@ final class ThemeContext {
         var nightTheme: TauTheme.Builtin
         /// Long lines in code blocks wrap; otherwise a block scrolls sideways.
         var wrapCode: Bool
+        /// Each theme's accent, as Telegram's `themeSpecificAccentColors`; a theme without one has tau's.
+        var accents: [TauTheme.Builtin: TauTheme.Accent]
 
-        static let `default` = Settings(theme: .classic, autoNight: true, nightTheme: .night, wrapCode: true)
+        static let `default` = Settings(theme: .classic, autoNight: true, nightTheme: .night, wrapCode: true, accents: [:])
+
+        func accent(for builtin: TauTheme.Builtin) -> TauTheme.Accent {
+            let accent = self.accents[builtin] ?? .standard
+            return TauTheme.Accent.available(for: builtin).contains(accent) ? accent : .standard
+        }
     }
 
     /// Before version 2 the default night theme was Tinted Night; Telegram's is Night.
@@ -44,6 +51,11 @@ final class ThemeContext {
             }
             if let value = stored["wrapCode"] as? Bool {
                 settings.wrapCode = value
+            }
+            for (key, value) in stored["accents"] as? [String: String] ?? [:] {
+                if let builtin = TauTheme.Builtin(rawValue: key), let accent = TauTheme.Accent(rawValue: value) {
+                    settings.accents[builtin] = accent
+                }
             }
         }
         self.settings = settings
@@ -80,7 +92,8 @@ final class ThemeContext {
         var settings = self.settings
         f(&settings)
         self.settings = settings
-        UserDefaults.standard.set(["version": ThemeContext.settingsVersion, "theme": settings.theme.rawValue, "autoNight": settings.autoNight, "nightTheme": settings.nightTheme.rawValue, "wrapCode": settings.wrapCode], forKey: ThemeContext.settingsKey)
+        let accents = Dictionary(uniqueKeysWithValues: settings.accents.map { ($0.key.rawValue, $0.value.rawValue) })
+        UserDefaults.standard.set(["version": ThemeContext.settingsVersion, "theme": settings.theme.rawValue, "autoNight": settings.autoNight, "nightTheme": settings.nightTheme.rawValue, "wrapCode": settings.wrapCode, "accents": accents], forKey: ThemeContext.settingsKey)
         self.settingsPromise.set(settings)
         self.apply()
     }
@@ -103,9 +116,9 @@ final class ThemeContext {
 
     private static func resolve(_ settings: Settings, system: WindowUserInterfaceStyle) -> TauTheme {
         if settings.autoNight, system == .dark, !settings.theme.isDark {
-            return .builtin(settings.nightTheme)
+            return .builtin(settings.nightTheme, accent: settings.accent(for: settings.nightTheme))
         }
-        return .builtin(settings.theme)
+        return .builtin(settings.theme, accent: settings.accent(for: settings.theme))
     }
 }
 

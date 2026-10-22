@@ -1,7 +1,8 @@
 // What the models cost, by day, model and conversation, for the app's Usage screen. Durable keeps each conversation's
 // totals (`pi.usage`) but not when they were spent; this ledger keeps one row per answer, written with the search index
 // (./service.ts) from the same commits, so it needs no pass of its own. Prompt cache refreshes (../cache.ts) are no
-// answers: they have a table of their own, and count as the model `tau/cache-warming`.
+// answers: they have a table of their own, and count as the model `tau/cache-warming`. Compactions that follow the
+// cached context (../compaction.ts) count as `tau/compaction`.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 
 export type UsageRow = {
@@ -19,6 +20,9 @@ export type UsageRow = {
 
 /** The model the Usage screen shows cache refreshes as. */
 export const CACHE_WARMING_MODEL = "tau/cache-warming";
+
+/** The model the Usage screen shows compaction summaries as. */
+export const COMPACTION_MODEL = "tau/compaction";
 
 export type WarmRow = { conversationId: number; time: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 
@@ -40,6 +44,7 @@ export class UsageLedger {
 	readonly #db: DatabaseSync;
 	readonly #insert: StatementSync;
 	readonly #insertWarm: StatementSync;
+	readonly #insertCompaction: StatementSync;
 
 	constructor(db: DatabaseSync) {
 		this.#db = db;
@@ -50,10 +55,17 @@ export class UsageLedger {
 		db.exec(`CREATE TABLE IF NOT EXISTS warm (
 			conv INTEGER NOT NULL, time INTEGER NOT NULL,
 			input INTEGER NOT NULL, output INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL, cost REAL NOT NULL)`);
-		// Answers and refreshes as one; \`answer\` tells them apart.
-		db.exec(`CREATE VIEW IF NOT EXISTS spend AS
+		db.exec(`CREATE TABLE IF NOT EXISTS compaction (
+			conv INTEGER NOT NULL, time INTEGER NOT NULL,
+			input INTEGER NOT NULL, output INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL, cost REAL NOT NULL)`);
+		// Answers, refreshes and compactions as one; \`answer\` tells them apart. Made again at each start, so an older
+		// database gets the tables added since.
+		db.exec("DROP VIEW IF EXISTS spend");
+		db.exec(`CREATE VIEW spend AS
 			SELECT conv, time, model, input, output, cache_read, cache_write, cost, 1 AS answer FROM usage
-			UNION ALL SELECT conv, time, '${CACHE_WARMING_MODEL}', input, output, cache_read, cache_write, cost, 0 FROM warm`);
+			UNION ALL SELECT conv, time, '${CACHE_WARMING_MODEL}', input, output, cache_read, cache_write, cost, 0 FROM warm
+			UNION ALL SELECT conv, time, '${COMPACTION_MODEL}', input, output, cache_read, cache_write, cost, 0 FROM compaction`);
+		this.#insertCompaction = db.prepare("INSERT INTO compaction (conv, time, input, output, cache_read, cache_write, cost) VALUES (?, ?, ?, ?, ?, ?, ?)");
 		this.#insertWarm = db.prepare("INSERT INTO warm (conv, time, input, output, cache_read, cache_write, cost) VALUES (?, ?, ?, ?, ?, ?, ?)");
 		this.#insert = db.prepare("INSERT OR IGNORE INTO usage (entry, conv, time, model, input, output, cache_read, cache_write, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
 	}
@@ -73,6 +85,10 @@ export class UsageLedger {
 
 	addWarm(row: WarmRow): void {
 		this.#insertWarm.run(row.conversationId, row.time, row.input, row.output, row.cacheRead, row.cacheWrite, row.cost);
+	}
+
+	addCompaction(row: WarmRow): void {
+		this.#insertCompaction.run(row.conversationId, row.time, row.input, row.output, row.cacheRead, row.cacheWrite, row.cost);
 	}
 
 	/**

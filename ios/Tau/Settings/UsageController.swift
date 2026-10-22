@@ -10,11 +10,16 @@ private let seriesColors: [UIColor] = [0x3497ED, 0xF5BD25, 0x5FB641, 0xE65850, 0
 
 /// What the server's ledger calls the prompt cache refreshes (server/src/search/usage.ts).
 let cacheWarmingModel = "tau/cache-warming"
+/// And the summaries compaction asks for after the cached context (server/src/compaction.ts).
+let compactionModel = "tau/compaction"
 
 /// The part of `provider/modelId` people read: the model's name.
 func shortModelName(_ model: String) -> String {
     if model == cacheWarmingModel {
         return "Cache Warming"
+    }
+    if model == compactionModel {
+        return "Compaction"
     }
     return model.split(separator: "/", maxSplits: 1).last.map(String.init) ?? model
 }
@@ -118,7 +123,7 @@ final class UsageController: SettingsListController {
             for (index, entry) in report.models.enumerated() {
                 let share = self.effectiveMetric == .cost ? entry.totals.cost / total : Double(entry.totals.tokens) / totalTokens
                 let value = self.effectiveMetric == .cost ? formatCost(entry.totals.cost) : formatTokens(entry.totals.tokens)
-                items.append(SettingsRowItem(theme: theme, icon: seriesIcon(colors[entry.model] ?? seriesColors[0]), title: shortModelName(entry.model), subtitle: "\(formatTokens(entry.totals.tokens)) tokens · \(entry.model == cacheWarmingModel ? refreshesText(entry.totals.replies) : answersText(entry.totals.replies))", accessory: .value("\(value) · \(percentText(share))"), position: SettingsRowPosition(isFirst: index == 0, isLast: index == report.models.count - 1), action: nil))
+                items.append(SettingsRowItem(theme: theme, icon: seriesIcon(colors[entry.model] ?? seriesColors[0]), title: shortModelName(entry.model), subtitle: "\(formatTokens(entry.totals.tokens)) tokens · \(entry.model == cacheWarmingModel ? refreshesText(entry.totals.replies) : entry.model == compactionModel ? compactionsText(entry.totals.replies) : answersText(entry.totals.replies))", accessory: .value("\(value) · \(percentText(share))"), position: SettingsRowPosition(isFirst: index == 0, isLast: index == report.models.count - 1), action: nil))
             }
             items.append(SettingsTextItem(theme: theme, text: "Input \(formatTokens(report.total.input)), output \(formatTokens(report.total.output)), cache read \(formatTokens(report.total.cacheRead)), cache write \(formatTokens(report.total.cacheWrite)).", kind: .footer))
         }
@@ -143,6 +148,10 @@ final class UsageController: SettingsListController {
 
 private func answersText(_ count: Int) -> String {
     return count == 1 ? "1 answer" : "\(count) answers"
+}
+
+private func compactionsText(_ count: Int) -> String {
+    return count == 1 ? "1 summary" : "\(count) summaries"
 }
 
 private func refreshesText(_ count: Int) -> String {

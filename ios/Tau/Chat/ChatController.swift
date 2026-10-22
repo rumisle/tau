@@ -368,7 +368,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self?.openAttachments()
         }
         node.inputPanelNode.micPressed = {
-            // Dictation starts; a real engine will ask for the microphone here.
+            // Dictation starts: the engine asks for the microphone itself (Chat/AquaDictation.swift).
+        }
+        node.inputPanelNode.dictationFailed = { [weak self] message in
+            self?.presentToast(.info(title: nil, text: message, timeout: nil, customUndoText: nil))
         }
         node.inputPanelNode.stopPressed = { [weak self] in
             guard let self else {
@@ -802,6 +805,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         let icon: (String) -> (PresentationTheme) -> UIImage? = { name in
             return { theme in generateTintedImage(image: UIImage(bundleImageName: name), color: theme.contextMenu.primaryColor) }
         }
+        // For a second line of its own colors (`.secondLineWithAttributedValue`), Telegram centers only an icon given as a
+        // source on both lines (ContextControllerActionsStackNode); a plain one sits on the first, out of line with the
+        // other rows.
+        let presentationTheme = self.theme.presentationTheme
+        let centeredIcon: (String) -> ContextMenuActionItemIconSource? = { name in
+            return icon(name)(presentationTheme).map { ContextMenuActionItemIconSource(size: $0.size, contentMode: .center, signal: .single($0)) }
+        }
         let checkIcon: (Bool) -> (PresentationTheme) -> UIImage? = { checked in
             return { theme in checked ? generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: theme.contextMenu.primaryColor) : nil }
         }
@@ -844,7 +854,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 summary.insert(NSAttributedString(string: " · "), at: 0)
                 summary.insert(NSAttributedString(string: "\(working) working", attributes: [.foregroundColor: self.theme.presentationData.theme.list.itemAccentColor]), at: 0)
             }
-            items.append(.action(ContextMenuActionItem(text: "Subagents", textLayout: .secondLineWithAttributedValue(summary), icon: icon("Chat/Context Menu/Bots"), action: { [weak self] controller, _ in
+            items.append(.action(ContextMenuActionItem(text: "Subagents", textLayout: .secondLineWithAttributedValue(summary), icon: { _ in nil }, iconSource: centeredIcon("Chat/Context Menu/Bots"), action: { [weak self] controller, _ in
                 guard let self else {
                     return
                 }
@@ -860,8 +870,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             controller?.pushItems(items: .single(ContextController.Items(content: .list(self.usageItems(icon: icon)))))
         }
         // Read again each second while shown, so "warm" goes when the cache expires.
+        let usageIconSource = centeredIcon("Chat/Context Menu/Info")
         items.append(.custom(TickingContextItem({
-            return ContextMenuActionItem(text: "Usage", textLayout: .secondLineWithAttributedValue(usageSummary(store.usage(id), accent: accent)), icon: icon("Chat/Context Menu/Info"), action: openUsage)
+            return ContextMenuActionItem(text: "Usage", textLayout: .secondLineWithAttributedValue(usageSummary(store.usage(id), accent: accent)), icon: { _ in nil }, iconSource: usageIconSource, action: openUsage)
         }), false))
         // Arrows meeting in a box: the context pressed into a summary.
         if self.compactingSince != nil {
@@ -1148,7 +1159,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
         self.searchNavigationNode?.isSearching = true
         self.controllerNode.searchPanelState = (0, self.chatSearchResult.entryIds.count, true)
-        let signal: Signal<ChatSearchResult, NoError> = (Signal<ChatSearchResult, NoError>.complete() |> delay(0.2, queue: Queue.mainQueue())) |> then(self.context.store.searchConversation(self.conversationId, query: query, typing: !text.hasSuffix(" ")))
+        // Once typing pauses, as the chat list's search: each key cancels the wait for the one before.
+        let signal: Signal<ChatSearchResult, NoError> = (Signal<ChatSearchResult, NoError>.complete() |> delay(0.25, queue: Queue.mainQueue())) |> then(self.context.store.searchConversation(self.conversationId, query: query, typing: !text.hasSuffix(" ")))
         self.chatSearchDisposable.set((signal |> deliverOnMainQueue).start(next: { [weak self] result in
             guard let self else {
                 return

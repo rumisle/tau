@@ -70,6 +70,10 @@ final class ChatListSearchContainerNode: SearchDisplayControllerContentNode {
     private var layout: (ContainerViewLayout, CGFloat)?
 
     private var query = ""
+    /// The last query sent to the servers, with whether its last word was still being typed: the same again is not.
+    private var sentQuery: (String, Bool)?
+    /// Telegram waits as long before its message search (ChatListSearchListPaneNode); keys come faster than that.
+    private static let debounce = 0.25
     private var chats: [DialogModel] = []
     private var matches: [SearchMatch] = []
     private var hasMore = false
@@ -126,6 +130,7 @@ final class ChatListSearchContainerNode: SearchDisplayControllerContentNode {
         let generation = self.generation
         guard !query.isEmpty else {
             self.searchDisposable.set(nil)
+            self.sentQuery = nil
             self.chats = []
             self.matches = []
             self.hasMore = false
@@ -140,9 +145,19 @@ final class ChatListSearchContainerNode: SearchDisplayControllerContentNode {
         }
         // Messages already shown stay until the new page replaces them, so the list does not flash empty between keys.
         self.reload()
-        // Messages from the servers, after a pause in typing; the last word is a prefix while it is being typed.
+        // Messages from the servers once typing pauses: each key cancels the wait for the one before, so a word typed
+        // quickly is one request. The last word is a prefix while it is being typed.
         let typing = !text.hasSuffix(" ")
-        let signal: Signal<SearchPage, NoError> = (Signal<SearchPage, NoError>.complete() |> delay(0.12, queue: Queue.mainQueue())) |> then(self.context.store.search(query, typing: typing, offset: 0))
+        if let sent = self.sentQuery, sent.0 == query, sent.1 == typing {
+            return
+        }
+        self.sentQuery = nil
+        let store = self.context.store
+        let signal: Signal<SearchPage, NoError> = (Signal<Void, NoError>.single(Void()) |> delay(ChatListSearchContainerNode.debounce, queue: Queue.mainQueue()))
+        |> mapToSignal { [weak self] _ -> Signal<SearchPage, NoError> in
+            self?.sentQuery = (query, typing)
+            return store.search(query, typing: typing, offset: 0)
+        }
         self.searchDisposable.set((signal |> deliverOnMainQueue).start(next: { [weak self] page in
             guard let self, self.generation == generation else {
                 return

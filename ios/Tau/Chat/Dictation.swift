@@ -2,20 +2,26 @@ import Foundation
 import SwiftSignalKit
 
 /// What dictation hears, as it goes: the words so far of what is being said, which may still change, then what was
-/// said, fixed, after which a new stretch begins.
+/// said, fixed, after which a new stretch begins. And how loud the microphone is, for the listening button's blob, and
+/// why it could not listen.
 enum DictationEvent: Equatable {
     case partial(String)
     case final(String)
+    /// The microphone's level, 0 to 1.
+    case level(Float)
+    /// Dictation could not start or went wrong: what to tell the user. The session completes after it.
+    case failed(String)
 }
 
-/// Speech to text for the composer. The session runs while subscribed; `stop` ends it after a last `final`.
+/// Speech to text for the composer. A session runs while subscribed: `stop` asks it to end, after which the engine
+/// sends what is left of the speech, a last `final`, and completes; disposing of it drops whatever is still to come.
 protocol DictationEngine: AnyObject {
     func start() -> Signal<DictationEvent, NoError>
     func stop()
 }
 
-/// A stand-in until a real engine (SpeechAnalyzer on the phone, or a transcription model on the server): it "hears" a
-/// sentence a word at a time, as partial results, and fixes it every few words.
+/// A stand-in for tests and the mock store: it "hears" a sentence a word at a time, as partial results, and fixes it
+/// every few words.
 final class MockDictationEngine: DictationEngine {
     private static let sentences = [
         "Let's also check that the build still passes on the device",
@@ -45,6 +51,7 @@ final class MockDictationEngine: DictationEngine {
                 }
                 heard.append(words[index])
                 index += 1
+                subscriber.putNext(.level(Float.random(in: 0.2 ... 0.9)))
                 // A stretch is fixed at a pause: every six words here.
                 if heard.count >= 6 {
                     subscriber.putNext(.final(heard.joined(separator: " ")))
@@ -64,4 +71,15 @@ final class MockDictationEngine: DictationEngine {
         self.stopRequested?()
         self.stopRequested = nil
     }
+}
+
+/// The engine the composer uses: Aqua Voice when this build has its sign-in (ios/scripts/aqua_secrets.py), the
+/// stand-in under `-mockDictation YES`, or with the mock store unless `-mockDictation NO`.
+func makeDictationEngine() -> DictationEngine {
+    let defaults = UserDefaults.standard
+    let mock = defaults.object(forKey: "mockDictation") != nil ? defaults.bool(forKey: "mockDictation") : defaults.bool(forKey: "mock")
+    if mock {
+        return MockDictationEngine()
+    }
+    return AquaDictationEngine()
 }

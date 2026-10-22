@@ -33,6 +33,8 @@ struct TauActivityAttributes: ActivityAttributes {
         var chats: [Chat]
         /// Beyond those.
         var more: Int
+        /// The app's accent color as 0xRRGGBB (Settings > Appearance); absent from an older app, which means tau's.
+        var accent: UInt32?
     }
 }
 

@@ -16,7 +16,8 @@
 		"@earendil-works/pi-ai": "file:../vendor/pi/packages/ai",
 		"@earendil-works/pi-durable": "file:../vendor/pi/packages/durable",
 		"proper-lockfile": "4.1.2",
-		"ws": "8.21.0"
+		"ws": "8.21.0",
+		"yaml": "2.9.0"
 	},
 	"devDependencies": {
 		"@types/node": "22.19.19",
