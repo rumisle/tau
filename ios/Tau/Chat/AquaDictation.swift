@@ -18,17 +18,42 @@ final class AquaDictationEngine: DictationEngine {
         var dictionary: [String]
         var replacements: [[String: String]]
 
+        /// What the build carries, from the Mac's Aqua app; the language and model as Settings > Dictation sets them.
         static func load() -> Config? {
-            guard let url = Bundle.main.url(forResource: "Aqua", withExtension: "plist"), let data = try? Data(contentsOf: url), let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any], let token = plist["token"] as? String, !token.isEmpty else {
+            guard let plist = Config.bundled(), let token = plist["token"] as? String, !token.isEmpty else {
                 return nil
             }
             return Config(
                 token: token,
-                language: plist["language"] as? String ?? "auto",
-                model: plist["model"] as? String ?? "avalon-v1.1",
+                language: DictationSettings.language,
+                model: DictationSettings.model,
                 dictionary: plist["dictionary"] as? [String] ?? [],
                 replacements: plist["replacements"] as? [[String: String]] ?? []
             )
+        }
+
+        static func bundled() -> [String: Any]? {
+            guard let url = Bundle.main.url(forResource: "Aqua", withExtension: "plist"), let data = try? Data(contentsOf: url) else {
+                return nil
+            }
+            return try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        }
+
+        /// When the build's sign-in expires, read from the token (a JWT's `exp`).
+        static func signInExpiry() -> Date? {
+            guard let token = Config.bundled()?["token"] as? String else {
+                return nil
+            }
+            let parts = token.split(separator: ".")
+            guard parts.count == 3 else {
+                return nil
+            }
+            var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
+            guard let data = Data(base64Encoded: payload), let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let exp = claims["exp"] as? Double else {
+                return nil
+            }
+            return Date(timeIntervalSince1970: exp)
         }
     }
 
@@ -514,5 +539,64 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
         default:
             return false
         }
+    }
+}
+
+/// The language and model dictation asks Aqua for: Settings > Dictation's, else what the Mac's Aqua app was set to when
+/// the app was built, else Aqua's defaults.
+enum DictationSettings {
+    struct Option {
+        let id: String
+        let title: String
+        var subtitle: String?
+    }
+
+    /// Aqua's language codes (its app's list), the ones likely here; Auto lets the model tell.
+    static let languages: [Option] = [
+        Option(id: "auto", title: "Auto-Detect"),
+        Option(id: "en", title: "English"),
+        Option(id: "cmn", title: "Chinese, Simplified", subtitle: "中文（简体）"),
+        Option(id: "ja", title: "Japanese", subtitle: "日本語"),
+        Option(id: "ko", title: "Korean", subtitle: "한국어"),
+        Option(id: "de", title: "German", subtitle: "Deutsch"),
+        Option(id: "fr", title: "French", subtitle: "Français"),
+        Option(id: "es", title: "Spanish", subtitle: "Español"),
+        Option(id: "ru", title: "Russian", subtitle: "Русский"),
+    ]
+
+    /// Aqua's cloud models (TranscriptionModelEnum, APIModelSlug), with what docs/aqua-voice-model-analysis.md found.
+    static let models: [Option] = [
+        Option(id: "avalon-v1.1", title: "Avalon 1.1", subtitle: "Aqua's default; the fastest, English first"),
+        Option(id: "avalon-v1.5", title: "Avalon 1.5", subtitle: "Slower; better with Chinese"),
+        Option(id: "whisper", title: "Whisper", subtitle: "Many languages"),
+    ]
+
+    private static let languageKey = "dictation.language"
+    private static let modelKey = "dictation.model"
+
+    static var language: String {
+        get {
+            return UserDefaults.standard.string(forKey: languageKey) ?? (AquaDictationEngine.Config.bundled()?["language"] as? String) ?? "auto"
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: languageKey)
+        }
+    }
+
+    static var model: String {
+        get {
+            return UserDefaults.standard.string(forKey: modelKey) ?? (AquaDictationEngine.Config.bundled()?["model"] as? String) ?? "avalon-v1.1"
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: modelKey)
+        }
+    }
+
+    static func title(language: String) -> String {
+        return languages.first(where: { $0.id == language })?.title ?? language
+    }
+
+    static func title(model: String) -> String {
+        return models.first(where: { $0.id == model })?.title ?? model
     }
 }

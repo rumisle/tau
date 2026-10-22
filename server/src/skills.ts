@@ -82,7 +82,9 @@ function readSkill(file: string): Skill | undefined {
 	let skill: Skill | undefined;
 	try {
 		skill = parseSkill(readFileSync(file, "utf8"), file);
-	} catch {
+	} catch (error) {
+		// Once per version of the file: a description with ": " in it, unquoted, is the usual one.
+		console.warn(`[skills] ${file} left out: ${String(error).split("\n")[0]}`);
 		skill = undefined;
 	}
 	parsed.set(file, { size: stats.size, mtimeMs: stats.mtimeMs, skill });
@@ -95,32 +97,14 @@ export function parseSkill(content: string, filePath: string): Skill | undefined
 	if (!text.startsWith("---")) return undefined;
 	const end = text.indexOf("\n---", 3);
 	if (end === -1) return undefined;
-	const front = frontMatter(text.slice(4, end));
-	if (front === undefined) return undefined;
-	if (front["disable-model-invocation"] === true) return undefined;
-	const description = typeof front.description === "string" ? front.description.trim() : "";
+	const front = parse(text.slice(4, end)) as unknown;
+	if (front === null || typeof front !== "object" || Array.isArray(front)) return undefined;
+	const fields = front as Record<string, unknown>;
+	if (fields["disable-model-invocation"] === true) return undefined;
+	const description = typeof fields.description === "string" ? fields.description.trim() : "";
 	if (description === "" || description.length > MAX_DESCRIPTION_LENGTH) return undefined;
-	const name = typeof front.name === "string" && front.name.trim() !== "" ? front.name.trim() : basename(dirname(filePath));
+	const name = typeof fields.name === "string" && fields.name.trim() !== "" ? fields.name.trim() : basename(dirname(filePath));
 	return { name, description, filePath };
-}
-
-/**
- * The front matter as YAML; failing that, as `key: value` lines. Hand-written descriptions often have a colon and a
- * space in them, which plain YAML takes for a mapping and rejects (pi then leaves the skill out).
- */
-function frontMatter(yaml: string): Record<string, unknown> | undefined {
-	try {
-		const parsed = parse(yaml) as unknown;
-		if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-	} catch {}
-	const fields: Record<string, unknown> = {};
-	for (const line of yaml.split("\n")) {
-		const match = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(line);
-		if (match === null) continue;
-		const value = match[2]!.trim();
-		fields[match[1]!] = value === "true" ? true : value === "false" ? false : value.replace(/^(["'])(.*)\1$/, "$2");
-	}
-	return Object.keys(fields).length === 0 ? undefined : fields;
 }
 
 /** pi's `formatSkillsForPrompt`, for the read tool. Undefined without skills, which removes the section. */

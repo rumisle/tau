@@ -102,8 +102,6 @@ describe("skills", () => {
 		assert.equal(parseSkill("# no front matter", "/s/x/SKILL.md"), undefined);
 		assert.equal(parseSkill("---\nname: x\n---\n", "/s/x/SKILL.md"), undefined);
 		assert.deepEqual(parseSkill("---\ndescription: >\n  Folded\n  text.\n---\n", "/s/dir-name/SKILL.md"), { name: "dir-name", description: "Folded text.", filePath: "/s/dir-name/SKILL.md" });
-		// Not YAML (a colon and a space in a plain value), as people write it: read line by line.
-		assert.deepEqual(parseSkill("---\nname: paw\ndescription: Use the `paw` command, never raw adb input: it reads the screen.\n---\n", "/s/paw/SKILL.md"), { name: "paw", description: "Use the `paw` command, never raw adb input: it reads the screen.", filePath: "/s/paw/SKILL.md" });
 	});
 
 	test("reach the prompt as one system delta when they change, and none when they do not", async () => {

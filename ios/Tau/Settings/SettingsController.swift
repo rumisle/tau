@@ -194,6 +194,12 @@ final class SettingsController: SettingsListController {
                 }
                 self.push(NotificationsController(context: self.context))
             }),
+            SettingsRowItem(theme: theme, icon: SettingsIcon.dictation, title: "Dictation", accessory: .disclosure(label: DictationSettings.title(language: DictationSettings.language)), position: middle, action: { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.push(DictationController(context: self.context))
+            }),
             SettingsRowItem(theme: theme, icon: SettingsIcon.chatFolders, title: "Chat Folders", accessory: .disclosure(label: ChatFolderStore.shared.folders.isEmpty ? "" : "\(ChatFolderStore.shared.folders.count)"), position: middle, action: { [weak self] in
                 guard let self else {
                     return
@@ -287,6 +293,50 @@ final class AppearanceController: SettingsListController {
             themeContext.update { $0.wrapCode = value }
         }))
         items.append(SettingsTextItem(theme: theme, text: "When off, long lines stay whole and a code block scrolls sideways.", kind: .footer))
+        return items
+    }
+}
+
+/// Settings > Dictation: the language and the model the composer's microphone asks Aqua Voice for
+/// (Chat/AquaDictation.swift), and the sign-in it uses, which comes with the build from the Mac's Aqua app.
+final class DictationController: SettingsListController {
+    init(context: AppContext) {
+        super.init(context: context, title: "Dictation")
+    }
+
+    required init(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func items(theme: TauTheme) -> [ListViewItem] {
+        var items: [ListViewItem] = [SettingsTextItem(theme: theme, text: "Language", kind: .header)]
+        let language = DictationSettings.language
+        let languages = DictationSettings.languages
+        for (index, option) in languages.enumerated() {
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: option.title, subtitle: option.subtitle, accessory: .checkmark(option.id == language), position: SettingsRowPosition(isFirst: index == 0, isLast: index == languages.count - 1), action: { [weak self] in
+                DictationSettings.language = option.id
+                self?.reload()
+            }))
+        }
+        items.append(SettingsTextItem(theme: theme, text: "Auto-Detect can take a few words for another language. For one you mostly speak, choose it.", kind: .footer))
+        items.append(SettingsTextItem(theme: theme, text: "Model", kind: .header))
+        let model = DictationSettings.model
+        let models = DictationSettings.models
+        for (index, option) in models.enumerated() {
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: option.title, subtitle: option.subtitle, accessory: .checkmark(option.id == model), position: SettingsRowPosition(isFirst: index == 0, isLast: index == models.count - 1), action: { [weak self] in
+                DictationSettings.model = option.id
+                self?.reload()
+            }))
+        }
+        items.append(SettingsTextItem(theme: theme, text: "Aqua Voice", kind: .header))
+        let signIn: String
+        if let expiry = AquaDictationEngine.Config.signInExpiry() {
+            signIn = expiry > Date() ? "Until \(expiry.formatted(date: .abbreviated, time: .omitted))" : "Expired"
+        } else {
+            signIn = "None"
+        }
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Sign-In", accessory: .value(signIn), position: SettingsRowPosition(isFirst: true, isLast: true), action: nil))
+        items.append(SettingsTextItem(theme: theme, text: "The sign-in, and the words of your Aqua dictionary, come with the app from Aqua Voice on the Mac it was built on. Sign in to Aqua there, then build again.", kind: .footer))
         return items
     }
 }

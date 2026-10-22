@@ -11,7 +11,9 @@ agent does (`packages/coding-agent/src/core/skills.ts`, whose discovery and prom
 `agent-config/install.sh` makes) counts once. A directory with a `SKILL.md` is a skill and is not searched further;
 others are searched four levels down, without hidden directories and `node_modules`. A skill needs a `description`
 (at most 1024 characters); its name is the front matter's `name`, or its directory's. `disable-model-invocation: true`
-leaves it out.
+leaves it out. Front matter that is not valid YAML leaves the skill out, as pi does, with a warning in the server's log
+once per version of the file; the usual cause is a plain `description:` with `: ` in it, which YAML reads as a mapping
+(quote it).
 
 ## In the prompt
 

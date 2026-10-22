@@ -154,10 +154,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let builtin = context.themeContext.current.builtin
             context.themeContext.update { $0.accents[builtin] = accent }
         }
-        // -appearance YES: Settings > Appearance on top.
-        if defaults.bool(forKey: "appearance") {
+        // -appearance YES, -dictationSettings YES: that settings screen on top.
+        if defaults.bool(forKey: "appearance") || defaults.bool(forKey: "dictationSettings") {
             Queue.mainQueue().after(0.5) {
-                navigationController.pushViewController(AppearanceController(context: context), animated: false)
+                navigationController.pushViewController(defaults.bool(forKey: "appearance") ? AppearanceController(context: context) : DictationController(context: context), animated: false)
             }
         }
         // -wrapCode YES|NO

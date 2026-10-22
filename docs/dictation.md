@@ -47,6 +47,12 @@ change without notice.
   server, sent a recording at once, gives nothing.
 - Aqua writes Chinese with a space between words; the spaces between two Chinese characters are taken out.
 
+**Settings > Dictation** sets the language (Aqua's codes: Auto-Detect, `en`, `cmn`, `ja`, `ko`, `de`, `fr`, `es`,
+`ru`) and the model (`avalon-v1.1`, Aqua's default and fastest; `avalon-v1.5`, slower and better with Chinese;
+`whisper`), kept on the phone; until changed, they are what the Mac's Aqua app was set to when the app was built. The
+screen also shows until when the build's sign-in is valid. The token is not in the source and cannot be set in the
+app: it comes with the build.
+
 The sign-in is the user's own Aqua app's: `ios/scripts/aqua_secrets.py`, which `build.sh` runs, reads the JWT from its
 LevelDB local storage (`~/Library/Application Support/Aqua Voice/Local Storage/leveldb`, valid about 1000 days) and the
 model, language and dictionary from its `settings.json`, into `ios/Tau/Secrets/Aqua.plist` (gitignored), which the app
