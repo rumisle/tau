@@ -144,7 +144,14 @@ enum TranscriptBuilder {
         return result
     }
 
-    static func build(replica: ConversationReplica, outbox: Outbox, rowIdForUserEntry: [Int: Int], images: ImageDecoder) -> ConversationState {
+    static func build(replica: ConversationReplica, outbox: Outbox, rowIdForUserEntry: [Int: Int], images: ImageDecoder, media: MediaLoader? = nil) -> ConversationState {
+        /// An entry's image: a reference from a server that sends them so, else the data, decoded.
+        func attachment(entryId: Int, index: Int, block: JSONObject) -> MessageAttachment? {
+            if let remote = media?.image(conversationId: replica.id, entryId: entryId, index: index, block: block) {
+                return MessageAttachment(id: entryId * 64 + index, kind: .remote(remote))
+            }
+            return images.image(entryId: entryId, index: index, block: block).map { MessageAttachment(id: entryId * 64 + index, kind: .image($0)) }
+        }
         let items = outbox.items(for: replica.id)
         var rows: [ChatMessage] = []
         var toolRowIndex: [String: Int] = [:]
@@ -229,11 +236,8 @@ enum TranscriptBuilder {
                     turnStart = date
                 }
                 let (text, imageBlocks) = self.userContent(message["content"])
-                let attachments = imageBlocks.enumerated().compactMap { index, block -> MessageAttachment? in
-                    guard let image = images.image(entryId: id, index: index, block: block) else {
-                        return nil
-                    }
-                    return MessageAttachment(id: id * 64 + index, kind: .image(image))
+                let attachments = imageBlocks.enumerated().compactMap { index, block in
+                    attachment(entryId: id, index: index, block: block)
                 }
                 if let report = SubagentReport(text) {
                     // A background subagent's answer, posted as a message: its card, not the user's bubble.
@@ -282,6 +286,14 @@ enum TranscriptBuilder {
                 }
                 tool.status = (message.bool("isError") ?? false) ? .failed : .done
                 tool.output = self.text(of: message["content"])
+                let imageBlocks = (message["content"] as? [Any])?.compactMap { $0 as? JSONObject }.filter { $0.string("type") == "image" } ?? []
+                tool.images = imageBlocks.enumerated().compactMap { index, block in
+                    attachment(entryId: id, index: index, block: block)
+                }
+                if !tool.images.isEmpty {
+                    // The card shows the images themselves, not their "[image]".
+                    tool.output = ((message["content"] as? [Any])?.compactMap { ($0 as? JSONObject)?.string("text") } ?? []).joined(separator: "\n")
+                }
                 if let milliseconds = message.double("durationMs") {
                     tool.duration = milliseconds / 1000.0
                 }

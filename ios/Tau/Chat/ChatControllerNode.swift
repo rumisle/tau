@@ -485,10 +485,18 @@ final class ChatControllerNode: ASDisplayNode {
     /// Every photo in the transcript, oldest first, for the media viewer to page through.
     func imageEntries() -> [ImageGalleryEntry] {
         var result: [ImageGalleryEntry] = []
+        // A user's photos, and the images tools gave the model; those on the server once the chat shows them.
         for entry in self.entries.reversed() {
-            for attachment in entry.message.attachments {
-                if case let .image(image) = attachment.kind {
+            for attachment in entry.message.attachments + (entry.message.tool?.images ?? []) {
+                switch attachment.kind {
+                case let .image(image):
                     result.append(ImageGalleryEntry(attachmentId: attachment.id, image: image))
+                case let .remote(remote):
+                    if let image = remote.cachedDisplay {
+                        result.append(ImageGalleryEntry(attachmentId: attachment.id, image: image, remote: remote))
+                    }
+                case .file:
+                    break
                 }
             }
         }

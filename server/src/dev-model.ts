@@ -1,7 +1,7 @@
 // A free scripted model for development: streams an echo of each message, runs `$ <command>` through bash, and starts
 // a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`,
 // fails as an overloaded provider would `!overloaded <times> <text>` before answering, and fails for good `!fatal <text>`.
-// `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
+// `!read <path>` reads a file with the read tool (an image comes back as one). `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
 // streams. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
 // that long after it was last used, to try cache warming (src/cache.ts) without paying for it.
 import { type Api, calculateCost, createAssistantMessageEventStream, type AssistantMessage, type Message, type Model, type Provider } from "@earendil-works/pi-ai";
@@ -122,6 +122,9 @@ function reply(messages: readonly Message[]) {
 	const text = last?.role === "user" ? userText(last.content) : "";
 	if (text.startsWith("$ ")) {
 		return fauxAssistantMessage([fauxToolCall("bash", { command: text.slice(2) })], { stopReason: "toolUse" });
+	}
+	if (text.startsWith("!read ")) {
+		return fauxAssistantMessage([fauxToolCall("read", { path: text.slice(6).trim() })], { stopReason: "toolUse" });
 	}
 	// `& name fork model=dev/echo thinking=high: task`, each option optional.
 	const subagent = /^& ([\w-]+)((?: [\w=./-]+)*): ([\s\S]+)$/.exec(text);

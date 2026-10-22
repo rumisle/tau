@@ -5,10 +5,12 @@ import SwiftSignalKit
 import GalleryUI
 import TelegramPresentationData
 
-/// A photo in the media viewer: one image attachment of the conversation.
+/// A photo in the media viewer: one image attachment of the conversation, a user's or a tool's. One on the server
+/// shows as the chat has it and loads at full size when its page opens.
 struct ImageGalleryEntry: Equatable {
     let attachmentId: Int
     let image: UIImage
+    var remote: RemoteImage? = nil
 
     static func == (lhs: ImageGalleryEntry, rhs: ImageGalleryEntry) -> Bool {
         return lhs.attachmentId == rhs.attachmentId
@@ -110,8 +112,19 @@ final class ImageGalleryController: ViewController {
         guard let node = self.galleryNode.pager.centralItemNode(), node.index < self.entries.count else {
             return
         }
-        let controller = UIActivityViewController(activityItems: [self.entries[node.index].image], applicationActivities: nil)
-        self.view.window?.rootViewController?.present(controller, animated: true)
+        let entry = self.entries[node.index]
+        // The photo itself, when it is on the server.
+        let share: (Any) -> Void = { [weak self] item in
+            let controller = UIActivityViewController(activityItems: [item], applicationActivities: nil)
+            self?.view.window?.rootViewController?.present(controller, animated: true)
+        }
+        if let remote = entry.remote {
+            let _ = (remote.data() |> take(1) |> deliverOnMainQueue).start(next: { data in
+                share(data.flatMap { UIImage(data: $0) } ?? entry.image)
+            })
+        } else {
+            share(entry.image)
+        }
     }
 
     private func item(_ entry: ImageGalleryEntry, index: Int) -> GalleryItem {
@@ -250,6 +263,9 @@ private final class ImageGalleryItem: GalleryItem {
     func node(synchronous: Bool) -> GalleryItemNode {
         let node = ImageGalleryItemNode()
         node.setImage(self.entry.image)
+        if let remote = self.entry.remote {
+            node.loadFull(remote)
+        }
         node._title.set(.single(self.title))
         return node
     }
@@ -286,6 +302,22 @@ private final class ImageGalleryItemNode: ZoomableContentGalleryItemNode {
         self.imageNode.image = image
         self.zoomableContent = (image.size, self.imageNode)
         self._ready.set(.single(Void()))
+    }
+
+    private let fullDisposable = MetaDisposable()
+
+    deinit {
+        self.fullDisposable.dispose()
+    }
+
+    /// The photo at full size in place of the chat's, the same shape, once decoded.
+    func loadFull(_ remote: RemoteImage) {
+        self.fullDisposable.set((remote.full() |> deliverOnMainQueue).start(next: { [weak self] image in
+            guard let self, let image else {
+                return
+            }
+            self.imageNode.image = image
+        }))
     }
 
     override func title() -> Signal<String, NoError> {

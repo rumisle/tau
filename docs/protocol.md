@@ -42,7 +42,7 @@ socket, so a client must not send one (content limits below are far under it).
 ## Methods
 
 ### `hello`
-`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number }`
+`{ protocol: 1, media?: true }` -> `{ protocol: 1, media: boolean, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number }`
 
 `defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
 `hostname` is the computer's name, `piRevision` the pi commit the server links, `uptime` seconds since it started.
@@ -126,6 +126,10 @@ type Totals = { cost: number; input: number; output: number; cacheRead: number; 
   previous: Totals;                                                  // the span just before, for the change
 }
 ```
+
+### `media.get`
+`{ conversationId, entryId, index }` -> `{ mimeType, data }`: an image of an entry, for a client that asked for images by
+reference in `hello` (docs/media.md). `not_found` when the entry has no such image.
 
 ### `dialogs.subscribe`
 `{}` -> `{ dialogs: Dialog[] }`, then `dialog` events.

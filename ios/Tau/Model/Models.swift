@@ -141,6 +141,8 @@ struct ToolCallInfo: Equatable {
     var duration: TimeInterval?
     /// A background subagent's call or answer, which has a card of its own.
     var subagent: SubagentCall?
+    /// Images the result gave the model, as the read tool returns an image file: the card shows them.
+    var images: [MessageAttachment] = []
 }
 
 /// One step of a background subagent, as its card shows it: the subagent, as the quote Telegram puts over a reply, and
@@ -184,11 +186,23 @@ enum ToolDetail: Equatable {
 struct MessageAttachment: Equatable {
     enum Kind {
         case image(UIImage)
+        /// On the server, fetched when shown (Server/MediaLoader.swift).
+        case remote(RemoteImage)
         case file(name: String, size: Int64)
     }
 
     let id: Int
     let kind: Kind
+
+    /// A photo, here or on the server; not a file.
+    var isPhoto: Bool {
+        switch self.kind {
+        case .image, .remote:
+            return true
+        case .file:
+            return false
+        }
+    }
 
     static func == (lhs: MessageAttachment, rhs: MessageAttachment) -> Bool {
         return lhs.id == rhs.id

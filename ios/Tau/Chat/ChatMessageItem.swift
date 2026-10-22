@@ -173,6 +173,18 @@ private let bubbleMinimumSize = CGSize(width: 40.0, height: 35.0)
 private let textInsets = UIEdgeInsets(top: 6.0 + UIScreenPixel, left: 11.0, bottom: 6.0 - UIScreenPixel, right: 11.0)
 private let mediaInset: CGFloat = 2.0
 
+/// A photo's size for laying it out: its own, or as its header declares it; a square when unknown.
+private func photoPixelSize(_ attachment: MessageAttachment) -> CGSize {
+    switch attachment.kind {
+    case let .image(image) where image.size.width > 0.0 && image.size.height > 0.0:
+        return image.size
+    case let .remote(remote):
+        return remote.pixelSize ?? CGSize(width: 256.0, height: 256.0)
+    default:
+        return CGSize(width: 256.0, height: 256.0)
+    }
+}
+
 /// Telegram's photo sizes in a bubble (ChatMessageItemLayoutConstants.image on a phone): at most 300 by 380 pt, at least
 /// 170 wide; several as an album, 1 pt apart.
 private func photoMosaic(_ sizes: [CGSize], maxWidth: CGFloat) -> (frames: [(CGRect, MosaicItemPosition)], size: CGSize) {
@@ -194,11 +206,12 @@ private func photoMosaic(_ sizes: [CGSize], maxWidth: CGFloat) -> (frames: [(CGR
 /// A photo's corners as Telegram rounds them in a bubble (ChatMessageBubbleContentCalclulateImageCorners): those on the
 /// bubble's edge as the bubble, 15 pt, or 7 where the bubble meets a neighbour; those inside an album square; the bottom
 /// ones square above a caption. A mask, since each corner has its own radius.
-private func photoCorners(_ layer: CALayer, position: MosaicItemPosition, captioned: Bool, mergedTop: Bool, mergedBottom: Bool) {
-    let topLeft: CGFloat = position.contains(.top) && position.contains(.left) ? 15.0 : 0.0
-    let topRight: CGFloat = position.contains(.top) && position.contains(.right) ? (mergedTop ? 7.0 : 15.0) : 0.0
-    let bottomLeft: CGFloat = !captioned && position.contains(.bottom) && position.contains(.left) ? 15.0 : 0.0
-    let bottomRight: CGFloat = !captioned && position.contains(.bottom) && position.contains(.right) ? (mergedBottom ? 7.0 : 15.0) : 0.0
+private func photoCorners(_ layer: CALayer, position: MosaicItemPosition, captioned: Bool, mergedTop: Bool, mergedBottom: Bool, radius: CGFloat = 15.0) {
+    let merged: CGFloat = min(radius, 7.0)
+    let topLeft: CGFloat = position.contains(.top) && position.contains(.left) ? radius : 0.0
+    let topRight: CGFloat = position.contains(.top) && position.contains(.right) ? (mergedTop ? merged : radius) : 0.0
+    let bottomLeft: CGFloat = !captioned && position.contains(.bottom) && position.contains(.left) ? radius : 0.0
+    let bottomRight: CGFloat = !captioned && position.contains(.bottom) && position.contains(.right) ? (mergedBottom ? merged : radius) : 0.0
     let rect = CGRect(origin: CGPoint(), size: layer.bounds.size)
     let path = CGMutablePath()
     path.move(to: CGPoint(x: rect.minX + topLeft, y: rect.minY))
@@ -286,7 +299,7 @@ final class ChatMessageItemNode: ListViewItemNode {
     /// Telegram's LinkHighlightingNode behind each text node's matched words.
     private var searchHighlightNodes: [LinkHighlightingNode] = []
     private var tableNodes: [ChatTableNode] = []
-    private var imageNodes: [ASImageNode] = []
+    private var imageNodes: [ChatMediaImageNode] = []
     /// The attachment each visible image node shows.
     private var imageAttachmentIds: [Int] = []
     /// The photo open in the media viewer, hidden here meanwhile.
@@ -515,6 +528,15 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.contextSourceNode.requestDismiss?()
     }
 
+    /// At least `count` photo nodes; those past what a row shows it hides.
+    private func ensureImageNodes(_ count: Int) {
+        while self.imageNodes.count < count {
+            let imageNode = ChatMediaImageNode()
+            self.imageNodes.append(imageNode)
+            self.contentNode.addSubnode(imageNode)
+        }
+    }
+
     /// The node showing a photo, for the media viewer's transitions.
     func imageNode(attachmentId: Int) -> ASImageNode? {
         guard let index = self.imageAttachmentIds.firstIndex(of: attachmentId), index < self.imageNodes.count else {
@@ -638,6 +660,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                     switch attachment.kind {
                     case let .image(image):
                         photoSizes.append(image.size.width > 0.0 && image.size.height > 0.0 ? image.size : CGSize(width: 256.0, height: 256.0))
+                    case let .remote(remote):
+                        photoSizes.append(remote.pixelSize ?? CGSize(width: 256.0, height: 256.0))
                     case let .file(name, size):
                         files.append((name, size))
                     }
@@ -718,24 +742,14 @@ final class ChatMessageItemNode: ListViewItemNode {
                     animation.animator.updateFrame(layer: self.bubbleNode.layer, frame: backgroundFrame.insetBy(dx: -1.0, dy: -1.0), completion: nil)
 
                     // Photos at the top, inset 2 pt as Telegram's media bubbles.
-                    while self.imageNodes.count < imageSizes.count {
-                        let imageNode = ASImageNode()
-                        imageNode.contentMode = .scaleAspectFill
-                        imageNode.clipsToBounds = true
-                        imageNode.displaysAsynchronously = false
-                        imageNode.isAccessibilityElement = true
-                        imageNode.accessibilityIdentifier = "photo"
-                        imageNode.accessibilityTraits = .image
-                        self.imageNodes.append(imageNode)
-                        self.contentNode.addSubnode(imageNode)
-                    }
+                    self.ensureImageNodes(imageSizes.count)
                     var imageIndex = 0
                     self.imageAttachmentIds = []
                     for attachment in message.attachments {
-                        if case let .image(image) = attachment.kind {
+                        if attachment.isPhoto {
                             let imageNode = self.imageNodes[imageIndex]
                             let (frame, position) = photos.frames[imageIndex]
-                            imageNode.image = image
+                            imageNode.setAttachment(attachment.kind, placeholderColor: item.theme.presentationTheme.chat.message.outgoing.mediaPlaceholderColor)
                             imageNode.isHidden = false
                             imageNode.alpha = attachment.id == self.hiddenAttachmentId ? 0.0 : 1.0
                             self.imageAttachmentIds.append(attachment.id)
@@ -1462,9 +1476,13 @@ final class ChatMessageItemNode: ListViewItemNode {
 
                 let cardInsets = UIEdgeInsets(top: 9.0, left: 12.0, bottom: 10.0, right: 12.0)
                 let bodyHeight = body.length > 0 ? textLayout.size.height + 3.0 : 0.0
+                // What the result showed the model (the read tool's image): in the card under its text, as an album.
+                let toolPhotos = (tool?.images ?? []).filter(\.isPhoto)
+                let toolMosaic = photoMosaic(toolPhotos.map(photoPixelSize), maxWidth: min(maxWidth, 260.0))
+                let photosHeight: CGFloat = toolPhotos.isEmpty ? 0.0 : toolMosaic.size.height + 8.0
                 let cardSize = CGSize(
-                    width: max(titleLayout.size.width + (isActive ? 22.0 : 0.0) + timerReserve, body.length > 0 ? textLayout.size.width : 0.0) + cardInsets.left + cardInsets.right,
-                    height: titleLayout.size.height + bodyHeight + cardInsets.top + cardInsets.bottom
+                    width: max(max(titleLayout.size.width + (isActive ? 22.0 : 0.0) + timerReserve, body.length > 0 ? textLayout.size.width : 0.0), toolMosaic.size.width) + cardInsets.left + cardInsets.right,
+                    height: titleLayout.size.height + bodyHeight + photosHeight + cardInsets.top + cardInsets.bottom
                 )
                 let mergedTop = above == .tool
                 let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: cardSize.height), insets: UIEdgeInsets(top: mergedTop ? 3.0 : 6.0, left: 0.0, bottom: 3.0, right: 0.0))
@@ -1494,6 +1512,22 @@ final class ChatMessageItemNode: ListViewItemNode {
                     animation.animator.updateFrame(layer: self.toolTitleNode.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top), size: titleLayout.size), completion: nil)
                     let _ = textApply()
                     animation.animator.updateFrame(layer: self.toolTextNode.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top + titleLayout.size.height + 3.0), size: textLayout.size), completion: nil)
+                    self.ensureImageNodes(toolPhotos.count)
+                    self.imageAttachmentIds = []
+                    let photosOrigin = CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top + titleLayout.size.height + bodyHeight + 8.0)
+                    for (index, attachment) in toolPhotos.enumerated() {
+                        let imageNode = self.imageNodes[index]
+                        let (frame, position) = toolMosaic.frames[index]
+                        imageNode.setAttachment(attachment.kind, placeholderColor: theme.serviceFillColor)
+                        imageNode.isHidden = false
+                        imageNode.alpha = attachment.id == self.hiddenAttachmentId ? 0.0 : 1.0
+                        imageNode.frame = frame.offsetBy(dx: photosOrigin.x, dy: photosOrigin.y)
+                        photoCorners(imageNode.layer, position: position, captioned: false, mergedTop: false, mergedBottom: false, radius: 8.0)
+                        self.imageAttachmentIds.append(attachment.id)
+                    }
+                    for index in toolPhotos.count ..< self.imageNodes.count {
+                        self.imageNodes[index].isHidden = true
+                    }
                     self.updateToolActivity(isActive: isActive, color: theme.toolCardTextColor, frame: CGRect(x: cardFrame.maxX - cardInsets.right - 14.0, y: cardFrame.minY + cardInsets.top + 1.0, width: 14.0, height: 14.0))
                     let timerMaxX = cardFrame.maxX - cardInsets.right - (isActive ? 22.0 : 0.0)
                     let timerMidY = cardFrame.minY + cardInsets.top + 8.0
@@ -2178,6 +2212,13 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
         }
         return ("Bash", "", body)
     case let .read(path):
+        // An image read: the card shows it, and what pi said of it, as a note.
+        if tool?.images.isEmpty == false {
+            if !output.isEmpty {
+                body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 20 : 2, fromStart: true), font: Font.regular(13.0), textColor: textColor))
+            }
+            return ("Read", shortPath(tool?.summary ?? path, isExpanded: isExpanded), body)
+        }
         if !output.isEmpty {
             let lines = output.components(separatedBy: "\n").count
             body.append(MarkdownText.code(clippedLines(output, count: isExpanded ? 100 : 5, fromStart: true), language: MarkdownText.language(forPath: path), font: codeFont, textColor: textColor))

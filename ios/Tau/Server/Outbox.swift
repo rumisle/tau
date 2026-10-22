@@ -234,6 +234,14 @@ final class Outbox {
     }
 
     /// The photos of a message, decoded once.
+    /// The photos of a message as they were sent, in order.
+    func imageData(_ requestId: String) -> [Data] {
+        guard let item = self.item(requestId) else {
+            return []
+        }
+        return item.imageFiles.compactMap { try? Data(contentsOf: self.directory.appendingPathComponent($0)) }
+    }
+
     func attachments(_ item: OutgoingMessage) -> [MessageAttachment] {
         if let cached = self.attachmentsByRequest[item.requestId] {
             return cached
@@ -277,6 +285,9 @@ final class Outbox {
                 }
             case let .file(name, size):
                 files.append(OutgoingMessage.File(name: name, size: size))
+            case .remote:
+                // The store fetches these first (ServerStore.resolvingRemote): what is queued has its data on disk.
+                failure = "A photo was not loaded"
             }
         }
         // The server refuses these too; a message this big must not even be sent, as an oversized frame closes the

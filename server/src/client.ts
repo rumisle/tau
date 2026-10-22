@@ -55,14 +55,15 @@ export class TauClient {
 		);
 	}
 
-	static async connect(url: string, token?: string): Promise<TauClient> {
+	/** `media`: entries come with image references, fetched with `media.get` (src/media.ts). */
+	static async connect(url: string, token?: string, options: { media?: boolean } = {}): Promise<TauClient> {
 		const socket = new WebSocket(url, token === undefined ? {} : { headers: { authorization: `Bearer ${token}` } });
 		await new Promise<void>((resolve, reject) => {
 			socket.once("open", resolve);
 			socket.once("error", reject);
 		});
 		const client = new TauClient(socket);
-		await client.request("hello", { protocol: 1 });
+		await client.request("hello", { protocol: 1, ...(options.media === true ? { media: true } : {}) });
 		return client;
 	}
 

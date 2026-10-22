@@ -1093,6 +1093,30 @@ final class SendingUITests: XCTestCase {
         self.shot("album-f-4-returned")
     }
 
+    /// An image the model read, in its tool card, fetched by reference; a tap opens it in the media viewer. Photos the
+    /// user sent come back by reference too, from the phone's own copy. Needs /tmp/tau-read-test.png.
+    func testModelImages() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!read /tmp/tau-read-test.png")
+        self.send()
+        sleep(1)
+        self.shot("mi-0-loading")
+        sleep(4)
+        self.shot("mi-1-card")
+        self.app.descendants(matching: .any).matching(identifier: "photo").firstMatch.tap()
+        sleep(2)
+        self.shot("mi-2-viewer")
+        self.app.swipeDown()
+        sleep(2)
+        self.shot("mi-3-closed")
+        // Relaunched: the transcript from the cache, the image from the media cache.
+        self.launch([])
+        self.point(0.5, 0.24).tap()
+        sleep(2)
+        self.shot("mi-4-relaunched")
+    }
+
     /// Dictation, with the stand-in engine: the microphone listens and the words come in dimmed until fixed, with a red
     /// dot and the time in the field; with text written, the field's own microphone adds to it.
     func testDictation() {

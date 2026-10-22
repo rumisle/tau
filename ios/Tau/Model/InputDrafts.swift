@@ -51,6 +51,14 @@ final class InputDraftStorage {
         return Int64((try? self.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
     }
 
+    /// Another database behind the same address: its conversations reuse the IDs, so drafts kept by ID would land in
+    /// chats they were never written in. New Chat's and an unsent fork's stay.
+    func removeConversationDrafts() {
+        for key in self.drafts.keys where Int(key) != nil {
+            self.set(nil, for: key)
+        }
+    }
+
     static func key(_ conversationId: Int) -> String {
         return conversationId < 0 ? InputDraftStorage.newChatKey : String(conversationId)
     }

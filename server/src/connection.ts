@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { CACHE_WARMING_MODES, type CacheWarmingMode } from "./cache.ts";
 import type { Dialogs } from "./dialogs.ts";
+import { entryImages, withMediaRefs } from "./media.ts";
 import type { KindName } from "./search/index.ts";
 import type { Search } from "./search/service.ts";
 import { directory, listDirectory } from "./fs.ts";
@@ -103,6 +104,8 @@ export class Connection {
 	readonly #cleanups: (() => void)[] = [];
 	#stopDialogs: (() => void) | undefined;
 	#hello = false;
+	/** The client fetches images itself (src/media.ts): entries go to it with references in their place. */
+	#mediaRefs = false;
 	#closed = false;
 	readonly #notifier: Notifier | undefined;
 	readonly #search: Search | undefined;
@@ -239,6 +242,16 @@ export class Connection {
 				const typing = params.typing === true;
 				if (conversationId !== undefined) return this.#search.searchConversation(conversationId, query, { kinds, typing });
 				return this.#search.search(query, { limit: Math.min(int(params, "limit", true) ?? 20, 100), offset: int(params, "offset", true) ?? 0, kinds, typing }, context);
+			}
+			case "media.get": {
+				// An image of an entry of the conversation, as the model has it.
+				const conversation = await this.#conversation(params);
+				const entryId = int(params, "entryId") as EntryId;
+				const index = int(params, "index");
+				const entry = (await conversation.entries({ minEntryId: entryId, maxEntryId: entryId }, 1, undefined, context)).items[0];
+				const image = entry === undefined ? undefined : entryImages(entry)[index];
+				if (image === undefined) throw new ProtocolError("not_found", `Entry ${entryId} has no image ${index}`);
+				return { mimeType: image.mimeType, data: image.data };
 			}
 			case "usage.report": {
 				if (this.#search === undefined) throw new ProtocolError("bad_request", "Usage is not available");
@@ -408,8 +421,10 @@ export class Connection {
 			throw new ProtocolError("bad_request", `Unsupported protocol ${protocol}; server speaks ${PROTOCOL_VERSION}`);
 		}
 		this.#hello = true;
+		this.#mediaRefs = params.media === true;
 		return {
 			protocol: PROTOCOL_VERSION,
+			media: this.#mediaRefs,
 			serverId: this.#host.serverId,
 			defaultModel: this.#host.defaultModel,
 			defaultThinkingLevel: this.#host.defaultThinkingLevel,
@@ -516,7 +531,7 @@ export class Connection {
 			const result = {
 				conversation: record,
 				docs: view.docs,
-				entries,
+				entries: this.#outgoing(entries),
 				...(head === undefined ? {} : { head }),
 				hasOlder,
 				...(gap === undefined ? {} : { gap }),
@@ -545,7 +560,7 @@ export class Connection {
 					event: "conv.commit",
 					conversationId: id,
 					docs: value.docs,
-					...(entries.length === 0 ? {} : { entries }),
+					...(entries.length === 0 ? {} : { entries: this.#outgoing(entries) }),
 					...(head === undefined ? {} : { head }),
 				});
 				return;
@@ -571,7 +586,7 @@ export class Connection {
 				event: "conv.commit",
 				conversationId: id,
 				...(docOps.length === 0 ? {} : { ops: docOps }),
-				...(entries.length === 0 ? {} : { entries }),
+				...(entries.length === 0 ? {} : { entries: this.#outgoing(entries) }),
 				...(head === undefined ? {} : { head }),
 			});
 		});
@@ -611,7 +626,12 @@ export class Connection {
 			undefined,
 			this.#context,
 		);
-		return { entries: [...page.items].reverse(), hasOlder: page.next !== undefined };
+		return { entries: this.#outgoing([...page.items].reverse()), hasOlder: page.next !== undefined };
+	}
+
+	/** Entries as this client takes them: with image references when it fetches images itself. */
+	#outgoing(entries: readonly EntryRecord[]): EntryRecord[] {
+		return this.#mediaRefs ? entries.map(withMediaRefs) : [...entries];
 	}
 
 	async #submit(params: Record<string, unknown>): Promise<unknown> {

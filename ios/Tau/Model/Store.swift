@@ -270,13 +270,15 @@ struct StorageUsage: Equatable {
     /// Messages and photos not sent yet.
     var unsentBytes: Int64 = 0
     var draftBytes: Int64 = 0
+    /// Photos fetched to show them.
+    var mediaBytes: Int64 = 0
 
     var cacheBytes: Int64 {
-        return self.chats.reduce(0) { $0 + $1.bytes }
+        return self.chats.reduce(0) { $0 + $1.bytes } + self.mediaBytes
     }
 
     static func == (lhs: StorageUsage, rhs: StorageUsage) -> Bool {
-        return lhs.chats.map(\.id) == rhs.chats.map(\.id) && lhs.chats.map(\.bytes) == rhs.chats.map(\.bytes) && lhs.unsentBytes == rhs.unsentBytes && lhs.draftBytes == rhs.draftBytes
+        return lhs.chats.map(\.id) == rhs.chats.map(\.id) && lhs.chats.map(\.bytes) == rhs.chats.map(\.bytes) && lhs.unsentBytes == rhs.unsentBytes && lhs.draftBytes == rhs.draftBytes && lhs.mediaBytes == rhs.mediaBytes
     }
 }
 

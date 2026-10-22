@@ -149,7 +149,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         self.setStatus(.connecting)
         task.resume()
         self.receive(task: task, generation: generation)
-        self.send(method: "hello", params: ["protocol": 1], on: task) { [weak self] result in
+        // Images by reference, fetched when shown (server/src/media.ts).
+        self.send(method: "hello", params: ["protocol": 1, "media": true], on: task) { [weak self] result in
             guard let self, generation == self.generation else {
                 return
             }

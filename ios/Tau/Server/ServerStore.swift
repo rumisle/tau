@@ -9,6 +9,8 @@ final class ServerStore: ConversationStore, TauServer {
     private let cache: EntryCache
     private let scroll: ScrollStateStorage
     private let images = ImageDecoder()
+    /// Images of entries, fetched when shown.
+    let media: MediaLoader
 
     private var dialogs: [Int: DialogModel] = [:]
     private var dialogOrder: [Int: Int] = [:]
@@ -64,6 +66,14 @@ final class ServerStore: ConversationStore, TauServer {
         self.outbox = Outbox(connection: self.connection, namespace: url.absoluteString)
         self.inputDrafts = InputDraftStorage(namespace: url.absoluteString)
         self.cache = EntryCache(namespace: url.absoluteString)
+        let connection = self.connection
+        self.media = MediaLoader(namespace: url.absoluteString, request: { [weak connection] method, params, completion in
+            guard let connection else {
+                completion(.failure(.disconnected))
+                return
+            }
+            connection.request(method, params, completion: completion)
+        })
         self.scroll = ScrollStateStorage(namespace: url.absoluteString)
         self.hiddenDialogs = Set(UserDefaults.standard.array(forKey: "hidden.\(url.absoluteString)") as? [Int] ?? [])
         for dialog in self.cache.loadDialogs() {
@@ -179,6 +189,10 @@ final class ServerStore: ConversationStore, TauServer {
             }
             map[entryId] = item.rowId
             self.rowIdForUserEntry[id] = map
+            // Its photos are here already: the entry's references need no fetch.
+            for (index, data) in outbox.imageData(requestId).enumerated() {
+                self.media.seed(conversationId: id, entryId: entryId, index: index, data: data)
+            }
         }
         outbox.restored = { [weak self] id, text in
             self?.emit(id, .restoreInput(text))
@@ -359,7 +373,12 @@ final class ServerStore: ConversationStore, TauServer {
         self.infoChanged?()
         self.readSent.removeAll()
         if self.cache.serverId != hello.serverId {
-            // Another database: nothing cached is valid.
+            // Another database: nothing cached is valid. Its conversations and entries reuse the IDs, so images and
+            // drafts kept by them go too.
+            if self.cache.serverId != nil {
+                self.inputDrafts.removeConversationDrafts()
+            }
+            self.media.clear()
             self.cache.reset(serverId: hello.serverId)
             for replica in self.replicas.values {
                 replica.upsertReset()
@@ -629,7 +648,7 @@ final class ServerStore: ConversationStore, TauServer {
                     preview.upsert(parent.entries.filter { $0.key <= forkAt }.map(\.value))
                 }
                 preview.isSynced = true
-                var state = TranscriptBuilder.build(replica: preview, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[forkOf] ?? [:], images: self.images)
+                var state = TranscriptBuilder.build(replica: preview, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[forkOf] ?? [:], images: self.images, media: self.media)
                 let items = draft.createRequestId.map { self.outbox.items(forCreate: $0) } ?? draft.realId.map { self.outbox.items(for: $0) } ?? []
                 state.messages += items.map { TranscriptBuilder.row(for: $0, outbox: self.outbox) }
                 state.busy = false
@@ -648,7 +667,7 @@ final class ServerStore: ConversationStore, TauServer {
             return state
         }
         let replica = self.replica(realId)
-        var state = TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], images: self.images)
+        var state = TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], images: self.images, media: self.media)
         state.agent = self.agent(realId)
         state.title = self.dialog(id)?.title
         // A background subagent works on after its call returned: its card follows its conversation.
@@ -1034,8 +1053,41 @@ final class ServerStore: ConversationStore, TauServer {
 
     // MARK: - Forks
 
-    /// `attachments`: the edited message's, its own and any added while editing.
+    /// `attachments` with the server's images fetched, as photos to send again; at once when there are none.
+    private func resolvingRemote(_ attachments: [MessageAttachment], completion: @escaping ([MessageAttachment]) -> Void) {
+        let remote = attachments.compactMap { attachment -> (Int, RemoteImage)? in
+            if case let .remote(image) = attachment.kind {
+                return (attachment.id, image)
+            }
+            return nil
+        }
+        guard !remote.isEmpty else {
+            completion(attachments)
+            return
+        }
+        let _ = (combineLatest(remote.map { $0.1.data() }) |> take(1) |> deliverOnMainQueue).start(next: { datas in
+            var images: [Int: UIImage] = [:]
+            for ((id, _), data) in zip(remote, datas) {
+                images[id] = data.flatMap { UIImage(data: $0) }
+            }
+            completion(attachments.compactMap { attachment in
+                guard case .remote = attachment.kind else {
+                    return attachment
+                }
+                return images[attachment.id].map { MessageAttachment(id: attachment.id, kind: .image($0)) }
+            })
+        })
+    }
+
+    /// `attachments`: the edited message's, its own and any added while editing. Its own photos, on the server, are
+    /// fetched to go with the edit.
     func edit(messageId: Int, text: String, attachments: [MessageAttachment], in id: Int, completion: @escaping (Int) -> Void) {
+        self.resolvingRemote(attachments) { [weak self] resolved in
+            self?.editResolved(messageId: messageId, text: text, attachments: resolved, in: id, completion: completion)
+        }
+    }
+
+    private func editResolved(messageId: Int, text: String, attachments: [MessageAttachment], in id: Int, completion: @escaping (Int) -> Void) {
         guard let realId = self.resolve(id), let replica = self.replicas[realId] else {
             return
         }
@@ -1185,6 +1237,7 @@ final class ServerStore: ConversationStore, TauServer {
         usage.chats = self.cache.sizes().sorted { $0.bytes > $1.bytes }
         usage.unsentBytes = self.outbox.diskBytes
         usage.draftBytes = self.inputDrafts.diskBytes
+        usage.mediaBytes = self.media.diskBytes
         return usage
     }
 
@@ -1192,6 +1245,7 @@ final class ServerStore: ConversationStore, TauServer {
         // Open chats keep theirs: their transcripts are on screen and in memory.
         let open = Set(self.watchers.filter { $0.value > 0 }.map(\.key))
         self.cache.remove(except: open)
+        self.media.clear()
         for (id, replica) in self.replicas where !open.contains(id) {
             replica.removeAll()
             self.replicas[id] = nil
@@ -1566,7 +1620,7 @@ func attachmentsTitle(_ attachments: [MessageAttachment]) -> String {
     var file: String?
     for attachment in attachments {
         switch attachment.kind {
-        case .image:
+        case .image, .remote:
             photos += 1
         case let .file(name, _):
             file = file ?? name
