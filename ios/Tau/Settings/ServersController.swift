@@ -14,6 +14,8 @@ func serverStatusText(_ server: TauServer, theme: TauTheme) -> (text: String, co
         return ("Updating…", theme.list.itemSecondaryTextColor)
     case .connecting:
         return ("Connecting…", theme.list.itemSecondaryTextColor)
+    case .refused:
+        return ("Token refused", theme.list.itemDestructiveColor)
     case .waitingForNetwork:
         return ("Waiting for network", theme.list.itemSecondaryTextColor)
     }
@@ -108,7 +110,7 @@ final class ServersController: SettingsListController {
                     self.push(ServerController(context: self.context, slot: server.slot))
                 }))
             }
-            items.append(SettingsTextItem(theme: theme, text: "Chats from every server are in one list. Start a server with `npm start` in tau's server/ directory, then add the computer's address: its Tailscale name, or ws://192.168.1.10:7878 on the same network.", kind: .footer))
+            items.append(SettingsTextItem(theme: theme, text: "Chats from every server are in one list. Start a server with `npm start` in tau's server/ directory, then add the computer's address, its Tailscale name, and its token (~/.config/tau/token there).", kind: .footer))
         }
         items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
         items.append(SettingsRowItem(theme: theme, icon: nil, title: store.isDemo ? "Use Servers" : "Use Demo Data", titleColor: theme.accentColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: true), action: { [weak self] in
@@ -124,7 +126,7 @@ final class ServersController: SettingsListController {
 
     /// Telegram's alert with fields: the help on what to enter, then the address and the token.
     private func addServer() {
-        let alert = fieldsAlertController(context: self.context.telegram, presentationData: self.theme.presentationData, title: "Add Server", text: "The address of a computer running tau's server, and its TAU_TOKEN if it has one.", fields: [
+        let alert = fieldsAlertController(context: self.context.telegram, presentationData: self.theme.presentationData, title: "Add Server", text: "The address of a computer running tau's server, and its token: on that computer, ~/.config/tau/token.", fields: [
             AlertField(placeholder: "nest.example.ts.net:7878", value: nil, keyboardType: .URL, isVerbatim: true),
             AlertField(placeholder: "Token (optional)", value: nil, isSecure: true, isVerbatim: true),
         ], doneTitle: "Add", apply: { [weak self] values in
@@ -274,7 +276,7 @@ final class ServerController: SettingsListController {
         let store = self.context.store
         let slot = self.slot
         let name = (server as? ServerStore)?.configuredName
-        let alert = fieldsAlertController(context: self.context.telegram, presentationData: self.theme.presentationData, title: "Address", text: "Where tau's server runs, and its TAU_TOKEN if it has one. Changing them reconnects.", fields: [
+        let alert = fieldsAlertController(context: self.context.telegram, presentationData: self.theme.presentationData, title: "Address", text: "Where tau's server runs, and its token: on that computer, ~/.config/tau/token. Changing them reconnects.", fields: [
             AlertField(placeholder: "nest.example.ts.net:7878", value: server.address, keyboardType: .URL, isVerbatim: true),
             AlertField(placeholder: "Token (optional)", value: store.serverToken(slot), isSecure: true, isVerbatim: true),
         ], apply: { values in

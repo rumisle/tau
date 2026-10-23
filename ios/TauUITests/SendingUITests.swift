@@ -6,6 +6,10 @@ import XCTest
 /// screenshots go to /tmp/tau-ui.
 /// The dev server: TAU_DEV_SERVER, which ios/scripts/uitests.sh gives each simulator its own of.
 let devServer = ProcessInfo.processInfo.environment["TAU_DEV_SERVER"] ?? "ws://127.0.0.1:7979"
+/// The tokens of this Mac's tau server (port 7878) and remote's, which the test scripts read (`TAU_TOKEN`,
+/// `TAU_REMOTE_TOKEN`): as launch arguments, none when unset.
+let mainServerToken = ProcessInfo.processInfo.environment["TAU_TOKEN"].flatMap { $0.isEmpty ? nil : ["-server.token", $0] } ?? []
+let remoteServer = ["-server2.url", "ws://remote.example.ts.net:7878"] + (ProcessInfo.processInfo.environment["TAU_REMOTE_TOKEN"].flatMap { $0.isEmpty ? nil : ["-server2.token", $0] } ?? [])
 
 final class SendingUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -590,9 +594,20 @@ final class SendingUITests: XCTestCase {
         self.shot("rename-4-list")
     }
 
+    /// A server that turns the token away: its row says so, in red, while the other server works.
+    func testRefusedToken() {
+        self.launch(["-server2.url", "ws://127.0.0.1:7878", "-server2.token", "wrong-token-wrong-token"])
+        sleep(6)
+        self.point(0.75, 0.96).tap()
+        sleep(1)
+        self.app.descendants(matching: .any)["Servers"].firstMatch.tap()
+        XCTAssertTrue(self.app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Token refused", "Token refused")).firstMatch.waitForExistence(timeout: 10))
+        self.shot("refused")
+    }
+
     /// Two servers: one list, Telegram's proxy-style server list, a server's page, and a new chat's card.
     func testMultiServer() {
-        self.launch(["-server2.url", "ws://remote.example.ts.net:7878"])
+        self.launch(remoteServer)
         sleep(4)
         self.shot("multi-0-list")
         self.point(0.75, 0.96).tap()
@@ -762,7 +777,7 @@ final class SendingUITests: XCTestCase {
 
     /// A new chat moved to another server's folder stays the same screen, with what was written; back is the list.
     func testNewChatNavigation() {
-        self.launch(["-server2.url", "ws://remote.example.ts.net:7878"])
+        self.launch(remoteServer)
         sleep(4)
         self.point(0.9, 0.098).tap()
         sleep(2)

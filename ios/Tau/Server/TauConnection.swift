@@ -7,6 +7,9 @@ enum ConnectionStatus: Equatable {
     /// The device has no network path: Telegram's "Waiting for network".
     case waitingForNetwork
     case connecting
+    /// The server turned the socket away (HTTP 401): no token, or another than its own. Still retried, since the
+    /// server's token may change back; the chat list says "Connecting...", the server's row says why.
+    case refused
     case updating
     case online
 }
@@ -51,6 +54,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     private var generation = 0
     private var retryDelay: Double = 0.5
     private var isClosed = false
+    /// The last handshake got a 401, until one is greeted.
+    private var isRefused = false
     private(set) var hello: Hello?
     private var pingTimer: SwiftSignalKit.Timer?
     /// Requests with a big frame, not answered yet.
@@ -148,7 +153,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         // Long tool outputs and history pages exceed the 1 MB default.
         task.maximumMessageSize = 64 * 1024 * 1024
         self.task = task
-        self.setStatus(.connecting)
+        self.setStatus(self.isRefused ? .refused : .connecting)
         task.resume()
         self.receive(task: task, generation: generation)
         // Images by reference, fetched when shown (server/src/media.ts).
@@ -159,6 +164,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
             switch result {
             case let .success(value):
                 self.retryDelay = 0.5
+                self.isRefused = false
                 let model = value.object("defaultModel")
                 let hello = Hello(
                     serverId: value.string("serverId") ?? "",
@@ -233,6 +239,10 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         guard generation == self.generation, !self.isClosed else {
             return
         }
+        // The handshake's answer tells a refusal from a network failure.
+        if let response = self.task?.response as? HTTPURLResponse {
+            self.isRefused = response.statusCode == 401
+        }
         // Later callbacks of this socket are stale.
         self.generation += 1
         self.pingTimer?.invalidate()
@@ -241,7 +251,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         self.task = nil
         self.hello = nil
         self.failPending()
-        self.setStatus(.connecting)
+        self.setStatus(self.isRefused ? .refused : .connecting)
         let delay = delay ?? self.retryDelay
         self.retryDelay = min(8.0, self.retryDelay * 2.0)
         let next = self.generation

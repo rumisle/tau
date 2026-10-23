@@ -38,6 +38,16 @@ DEV_PORTS = [7979, 7991, 7992, 7993, 7994, 7995]
 CACHE_PORT = 7982
 
 
+def server_tokens() -> dict[str, str]:
+    """This Mac's tau server's token and remote's, for the tests against them (TauUITests/SendingUITests.swift)."""
+    local = Path.home() / ".config/tau/token"
+    remote = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "remote", "cat ~/.config/tau/token"], capture_output=True, text=True)
+    return {
+        "TEST_RUNNER_TAU_TOKEN": local.read_text().strip() if local.exists() else "",
+        "TEST_RUNNER_TAU_REMOTE_TOKEN": remote.stdout.strip() if remote.returncode == 0 else "",
+    }
+
+
 def run(*args: str, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(list(args), check=True, text=True, **kwargs)
 
@@ -179,6 +189,7 @@ def main() -> None:
     shutil.rmtree(SCREENSHOTS, ignore_errors=True)
     stop = threading.Event()
     processes = []
+    tokens = server_tokens()
     for index, shard in enumerate(balance(tests, count)):
         port = DEV_PORTS[index]
         # From an empty database: no test then finds what another left, such as a default model it changed.
@@ -191,7 +202,7 @@ def main() -> None:
         threading.Thread(target=serve_requests, args=(directory, port, stop), daemon=True).start()
         bundle = Path(f"/tmp/tau-uitest-{index}.xcresult")
         shutil.rmtree(bundle, ignore_errors=True)
-        env = {**os.environ, "TEST_RUNNER_TAU_DEV_SERVER": f"ws://127.0.0.1:{port}", "TEST_RUNNER_TAU_UI_DIR": str(directory)}
+        env = {**os.environ, **tokens, "TEST_RUNNER_TAU_DEV_SERVER": f"ws://127.0.0.1:{port}", "TEST_RUNNER_TAU_UI_DIR": str(directory)}
         command = ["xcodebuild", *common, "-destination", f"id={udids[index]}", "-resultBundlePath", str(bundle), *[f"-only-testing:TauUITests/{test}" for test in shard], "test-without-building"]
         processes.append((index, shard, subprocess.Popen(command, env=env, stdout=open(f"/tmp/tau-uitest-{index}.log", "w"), stderr=subprocess.STDOUT)))
         # Launches at once fight over the CPU; a few seconds apart they do not.

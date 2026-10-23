@@ -216,7 +216,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         switch self.connectionStatus {
         case .waitingForNetwork:
             status = .network(strings.ChatState_WaitingForNetwork)
-        case .connecting:
+        case .connecting, .refused:
             status = .network(strings.ChatState_Connecting)
         case .updating:
             status = .network(strings.ChatState_Updating)

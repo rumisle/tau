@@ -98,7 +98,7 @@ final class ChatListController: ViewController {
                 text = title
             case .waitingForNetwork:
                 text = strings.State_WaitingForNetwork
-            case .connecting:
+            case .connecting, .refused:
                 text = strings.State_Connecting
             case .updating:
                 text = strings.State_Updating

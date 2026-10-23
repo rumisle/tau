@@ -7,6 +7,9 @@ if command -v xcodegen >/dev/null; then xcodegen generate --quiet; else nix shel
 only=()
 for name in "$@"; do if [[ $name == */* ]]; then only+=("-only-testing:TauUITests/$name"); else only+=("-only-testing:TauUITests/TauUITests/$name"); fi; done
 rm -rf /tmp/tau-ui && mkdir -p /tmp/tau-ui
+# The servers' tokens, for the tests against this Mac's server and remote (TauUITests/SendingUITests.swift).
+export TEST_RUNNER_TAU_TOKEN=$(cat ~/.config/tau/token 2>/dev/null)
+export TEST_RUNNER_TAU_REMOTE_TOKEN=$(ssh -o BatchMode=yes -o ConnectTimeout=5 remote 'cat ~/.config/tau/token' 2>/dev/null)
 # A runner left from an earlier build can run old steps, or none: build it fresh each time.
 rm -rf "${TAU_DERIVED_DATA:-/tmp/tau-dd}"/Build/Products/Debug-iphonesimulator/TauUITests-Runner.app "${TAU_DERIVED_DATA:-/tmp/tau-dd}"/Build/Products/Debug-iphonesimulator/TauUITests.xctest
 xcodebuild -project Tau.xcodeproj -scheme Tau -destination "platform=iOS Simulator,name=${TAU_SIMULATOR:-iPhone 17 Pro}" \

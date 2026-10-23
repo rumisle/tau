@@ -64,6 +64,27 @@ describe("tau server", () => {
 		}
 	});
 
+	test("with a token, refuses a client without it or with another", async () => {
+		const locked = await serve(host, { token: "a-token-long-enough-to-pass" });
+		try {
+			await assert.rejects(TauClient.connect(locked.url), /401/);
+			await assert.rejects(TauClient.connect(locked.url, "a-token-long-enough-to-fail"), /401/);
+			const client = await TauClient.connect(locked.url, "a-token-long-enough-to-pass");
+			await client.close();
+		} finally {
+			await locked.close();
+		}
+	});
+
+	test("the command line refuses to listen beyond loopback without a token", async () => {
+		const child = spawn(process.execPath, ["--no-warnings", MAIN, "--memory", "--host", "0.0.0.0", "--port", "0"], { env: { ...process.env, TAU_TOKEN: "" } });
+		let output = "";
+		child.stderr.on("data", (chunk) => (output += chunk));
+		const code = await new Promise((resolve) => child.on("exit", resolve));
+		assert.equal(code, 1);
+		assert.match(output, /not loopback/);
+	});
+
 	test("requires hello with the right protocol", async () => {
 		const client = await TauClient.connect(server.url);
 		await assert.rejects(client.request("hello", { protocol: 99 }), (error: RequestError) => error.code === "bad_request");

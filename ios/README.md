@@ -20,8 +20,8 @@ ignored by git; edit `project.yml`.
 ## Server
 
 The app connects to `ws://nest.example.ts.net:7878`, the Mac's server by its tailnet name (`Tau/Info.plist` allows
-plain WebSockets to `*.ts.net`, which WireGuard encrypts, and to the local network). Settings > Server sets another address and the `TAU_TOKEN`. The UI tests pass `-server.url ws://127.0.0.1:7878` to reach
-the local server directly. "Use Demo Data" in the same dialog, or the `-mock YES` launch argument, switches to canned
+plain WebSockets to `*.ts.net`, which WireGuard encrypts, and to the local network). Settings > Server sets another address and the server's token. The UI tests pass `-server.url ws://127.0.0.1:7878`
+(and `-server.token`, which the test scripts read from `~/.config/tau/token`) to reach the local server directly. "Use Demo Data" in the same dialog, or the `-mock YES` launch argument, switches to canned
 conversations (`Model/MockStore.swift`).
 
 `Server/` is the client side of the protocol, after `server/src/client.ts`:

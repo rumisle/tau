@@ -158,7 +158,7 @@ final class SettingsController: SettingsListController {
             statusText = "online"
         case .updating:
             statusText = strings.ChatState_Updating
-        case .connecting:
+        case .connecting, .refused:
             statusText = strings.ChatState_Connecting
         case .waitingForNetwork:
             statusText = strings.ChatState_WaitingForNetwork

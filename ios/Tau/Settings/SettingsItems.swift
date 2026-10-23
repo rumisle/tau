@@ -314,6 +314,8 @@ final class SettingsRowItemNode: ListViewItemNode {
                 self.isAccessibilityElement = true
                 self.accessibilityLabel = item.title
                 self.accessibilityIdentifier = item.title
+                // VoiceOver reads the second line after the title.
+                self.accessibilityValue = item.subtitle
                 self.accessibilityTraits = item.action == nil ? [] : .button
                 let _ = titleApply()
                 let _ = subtitleApply()

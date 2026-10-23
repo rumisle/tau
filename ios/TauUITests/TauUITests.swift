@@ -17,7 +17,7 @@ final class TauUITests: XCTestCase {
     private func launch(_ arguments: [String] = []) {
         self.app = XCUIApplication()
         // Server tests talk to the local server directly, without the tailnet.
-        self.app.launchArguments = ["-server.url", "ws://127.0.0.1:7878"] + (arguments.contains("-wrapCode") ? [] : ["-wrapCode", "YES"]) + arguments
+        self.app.launchArguments = ["-server.url", "ws://127.0.0.1:7878"] + mainServerToken + (arguments.contains("-wrapCode") ? [] : ["-wrapCode", "YES"]) + arguments
         self.app.launch()
         sleep(2)
     }

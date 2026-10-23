@@ -45,10 +45,22 @@ cd server
 npm start                                   # dev/echo model, data in ../data/tau.sqlite, ws://127.0.0.1:7878
 npm start -- --model anthropic/claude-haiku-5-5 --cwd ~/work  # default cwd; clients pick their own
 npm start -- --memory --dev-tps 20          # throwaway storage, slow streaming
-TAU_TOKEN=secret npm start -- --host 0.0.0.0  # require a token when reachable from the phone
+npm start -- --host 0.0.0.0 --token-file ~/.config/tau/token  # reachable from the phone: clients need the token
 npm test
 npm run check
 ```
+
+A server reachable beyond loopback runs commands for anyone who reaches it, so it must have a token: `--token-file`
+(only its owner may read it; by convention `~/.config/tau/token`), or `TAU_TOKEN`. Without one it refuses any `--host`
+but loopback, unless `--no-auth`. Make one, then give it to the app (Settings > Servers > the server > Address):
+
+```bash
+umask 077 && mkdir -p ~/.config/tau && openssl rand -base64 32 | tr -d '\n=' | tr '+/' '-_' > ~/.config/tau/token
+pbcopy < ~/.config/tau/token                # on the Mac, or from a Linux server: ssh host 'cat ~/.config/tau/token' | pbcopy
+```
+
+`server/contrib/tau-server.service` runs it with one under systemd. The UI test scripts read this Mac's token and
+remote's and pass them to the tests.
 
 Model credentials come from pi's `~/.pi/agent/auth.json` (the same logins as the `pi` CLI, safe to share) and the
 usual provider environment variables. The `dev/echo` model is free: it echoes, runs `$ <command>` through bash, starts a subagent for
