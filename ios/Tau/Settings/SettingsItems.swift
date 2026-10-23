@@ -13,7 +13,6 @@ private let sectionCornerRadius: CGFloat = 26.0
 private let sectionSideInset: CGFloat = 16.0
 private let separatorHeight = 1.0 / UIScreen.main.scale
 private let titleFont = Font.regular(17.0)
-private let headerFont = Font.regular(13.0)
 
 private let colorRed = UIColor(rgb: 0xFF453A)
 private let colorGreen = UIColor(rgb: 0x34C759)
@@ -295,11 +294,11 @@ final class SettingsRowItemNode: ListViewItemNode {
                 })
             } ?? nil
             let accessoryWidth: CGFloat = toggleValue != nil ? 51.0 : (showsArrow || showsCheck ? 22.0 : (pillImage.map { $0.size.width + 8.0 } ?? 0.0))
-            let (labelLayout, labelApply) = makeLabelLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: labelText, font: titleFont, textColor: theme.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: sectionWidth * 0.5, height: 30.0)))
+            let (labelLayout, labelApply) = makeLabelLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: labelText, font: Font.regular(item.theme.scaled(17.0)), textColor: theme.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: sectionWidth * 0.5, height: .greatestFiniteMagnitude)))
             let maxTitleWidth = sectionLeft + sectionWidth - rightInset - accessoryWidth - labelLayout.size.width - 10.0 - contentLeft
-            let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.title, font: titleFont, textColor: item.titleColor ?? theme.itemPrimaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: 30.0)))
+            let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.title, font: Font.regular(item.theme.scaled(17.0)), textColor: item.titleColor ?? theme.itemPrimaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: .greatestFiniteMagnitude)))
 
-            let (subtitleLayout, subtitleApply) = makeSubtitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.subtitle ?? "", font: Font.regular(14.0), textColor: item.subtitleColor ?? theme.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: 30.0)))
+            let (subtitleLayout, subtitleApply) = makeSubtitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.subtitle ?? "", font: Font.regular(item.theme.scaled(14.0)), textColor: item.subtitleColor ?? theme.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(20.0, maxTitleWidth), height: .greatestFiniteMagnitude)))
             let hasSubtitle = !(item.subtitle ?? "").isEmpty
             // ItemListCheckboxItem's two-line metrics: 11 pt insets and 1 pt between the lines.
             let verticalInset: CGFloat = hasSubtitle ? 11.0 : 15.0
@@ -477,7 +476,7 @@ final class SettingsTextItemNode: ListViewItemNode {
             let width = params.width - left - params.rightInset - sectionSideInset - 20.0
             let text = item.kind == .header ? item.text.uppercased() : item.text
             let color = item.kind == .header ? theme.sectionHeaderTextColor : theme.freeTextColor
-            let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: text, font: headerFont, textColor: color), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: width, height: .greatestFiniteMagnitude)))
+            let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: text, font: Font.regular(item.theme.scaled(13.0)), textColor: color), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: width, height: .greatestFiniteMagnitude)))
             let insets = item.kind == .header ? UIEdgeInsets(top: 22.0, left: 0.0, bottom: 7.0, right: 0.0) : UIEdgeInsets(top: 7.0, left: 0.0, bottom: 0.0, right: 0.0)
             let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: textLayout.size.height), insets: insets)
             return (layout, {

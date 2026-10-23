@@ -126,9 +126,6 @@ final class ChatListItem: ListViewItem {
 
 private let separatorHeight = 1.0 / UIScreen.main.scale
 private let avatarDiameter: CGFloat = 60.0
-private let titleFont = Font.semibold(16.0)
-private let textFont = Font.regular(15.0)
-private let dateFont = Font.regular(14.0)
 // ChatListItem.swift: badgeFont and badgeDiameter at the default text size.
 private let badgeFont = Font.with(size: 12.0, design: .regular, weight: .semibold, traits: [.monospacedNumbers])
 private let badgeDiameter: CGFloat = 20.0
@@ -413,6 +410,10 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
         return { [weak self] item, params in
             let theme = item.theme.chatList
             let presentationTheme = item.theme.presentationTheme
+            // Telegram's ChatListItem fonts, at the text size iOS is set to (listsFontSize).
+            let titleFont = Font.semibold(item.theme.scaled(16.0))
+            let textFont = Font.regular(item.theme.scaled(15.0))
+            let dateFont = Font.regular(item.theme.scaled(14.0))
             let strings = item.theme.presentationStrings
 
             let avatarLeftInset: CGFloat = 24.0 + avatarDiameter

@@ -24,6 +24,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/skills.md` | Skills: `.agents/skills` in the system prompt, as a section durable updates with a delta |
 | `docs/dictation.md` | Dictation in the composer: Telegram's field with the microphone in it and Send that morphs in; off until a provider is chosen in Settings; Aqua Voice's realtime API with the user's session key |
 | `docs/appearance.md` | Themes and accent colors, as Telegram's Appearance: each built-in theme with its own accent, Telegram's pink by default, the Live Activity in it |
+| `docs/typography.md` | How answers are set: clreq's and Butterick's rules, what Core Text does and what tau adds (spacing, hanging lists, no lone characters, the Chinese ellipsis, curly quotes), and iOS's text size |
 | `docs/cache.md` | Prompt cache warming: refreshing a working run's cache before it expires, when that pays |
 | `docs/streaming.md` | Reading while an answer streams: what moved, overlapped and blanked, and why it no longer does |
 | `docs/search.md` | Search: the index each server keeps as entries are written (`server/src/search`), matching and ranking, and the benchmark |

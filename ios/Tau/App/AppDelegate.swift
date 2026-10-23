@@ -35,6 +35,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         let themeContext = ThemeContext()
         themeContext.observeSystemStyle(hostView.systemUserInterfaceStyle)
+        themeContext.observeTextSize()
         let context = AppContext(store: makeStore(), themeContext: themeContext)
         self.context = context
         LiveActivityController.shared.attach(store: context.store)

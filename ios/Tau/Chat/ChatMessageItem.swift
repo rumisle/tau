@@ -159,8 +159,10 @@ final class ChatMessageItem: ListViewItem {
     }
 }
 
-private let messageFontSize: CGFloat = 17.0
-private let dateFont = Font.regular(11.0)
+/// A message's date at the theme's text size (Telegram's `floor(fontSize * 11 / 17)`).
+private func dateFont(_ theme: TauTheme) -> UIFont {
+    return Font.regular(theme.scaled(11.0))
+}
 private let toolTitleFont = Font.semibold(13.0)
 private let toolFont = Font.monospace(13.0)
 private let fileTitleFont = Font.semibold(16.0)
@@ -236,24 +238,30 @@ private let mergedSpacing: CGFloat = 1.0
 private let freeTextInset: CGFloat = 16.0
 /// How far content moves right to make room for selection checks.
 private let selectionInset: CGFloat = 42.0
-private let blockSpacing: CGFloat = 12.0
-
-/// One laid-out block of assistant content, kept so streaming ticks can tell when the row's height changes.
+/// One laid-out block of assistant content, kept so streaming ticks can tell when the row's height changes; `spacing`
+/// is the space above it (MarkdownText.spacing), none for the first.
 private enum LaidOutBlock {
-    case text(start: Int, length: Int, layout: InteractiveTextNodeLayout)
-    case table(start: Int, length: Int, size: CGSize)
+    case text(start: Int, length: Int, layout: InteractiveTextNodeLayout, spacing: CGFloat)
+    case table(start: Int, length: Int, size: CGSize, spacing: CGFloat)
 
     var start: Int {
         switch self {
-        case let .text(start, _, _), let .table(start, _, _):
+        case let .text(start, _, _, _), let .table(start, _, _, _):
             return start
         }
     }
 
     var length: Int {
         switch self {
-        case let .text(_, length, _), let .table(_, length, _):
+        case let .text(_, length, _, _), let .table(_, length, _, _):
             return length
+        }
+    }
+
+    var spacing: CGFloat {
+        switch self {
+        case let .text(_, _, _, spacing), let .table(_, _, _, spacing):
+            return spacing
         }
     }
 }
@@ -267,17 +275,17 @@ private func contentHeight(_ blocks: [LaidOutBlock], revealed: Int?) -> CGFloat 
             break
         }
         if visibleCount > 0 {
-            height += blockSpacing
+            height += block.spacing
         }
         visibleCount += 1
         switch block {
-        case let .text(start, length, layout):
+        case let .text(start, length, layout, _):
             if let revealed, revealed < start + length {
                 height += layout.sizeForCharacterCount(characterCount: max(0, revealed - start)).height
             } else {
                 height += layout.size.height
             }
-        case let .table(_, _, size):
+        case let .table(_, _, size, _):
             height += size.height
         }
     }
@@ -505,14 +513,8 @@ final class ChatMessageItemNode: ListViewItemNode {
     }
 
     private func performTextSelectionAction(text: NSAttributedString, action: TextSelectionAction) {
-        // Formulas copy as their LaTeX, kept indentation as plain spaces.
-        let plain = NSMutableString(string: text.string)
-        text.enumerateAttribute(MathText.latexKey, in: NSRange(location: 0, length: text.length), options: [.reverse]) { value, range, _ in
-            if let latex = value as? String {
-                plain.replaceCharacters(in: range, with: "$\(latex)$")
-            }
-        }
-        let string = (plain as String).replacingOccurrences(of: "\u{00A0}", with: " ")
+        // Formulas copy as their LaTeX, typeset characters as written, kept indentation as plain spaces.
+        let string = MarkdownText.copiedText(text)
         switch action {
         case .copy:
             UIPasteboard.general.string = string
@@ -670,12 +672,12 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let imageSizes = photos.frames.map(\.0.size)
                 let maxTextWidth = photoSizes.isEmpty ? maxContentWidth - textInsets.left - textInsets.right : photos.size.width + mediaInset * 2.0 - textInsets.left - textInsets.right
 
-                var style = MarkdownStyle(fontSize: messageFontSize, textColor: theme.outgoing.primaryTextColor, linkColor: theme.outgoing.linkTextColor, accentColor: theme.outgoing.primaryTextColor)
+                var style = MarkdownStyle(fontSize: item.theme.fontSize, textColor: theme.outgoing.primaryTextColor, linkColor: theme.outgoing.linkTextColor, accentColor: theme.outgoing.primaryTextColor)
                 style.math = false
                 let textNode = existingTextNodes.first
                 let hasText = !message.text.isEmpty
                 let (textLayout, textApply) = InteractiveTextNode.asyncLayout(textNode)(InteractiveTextNodeLayoutArguments(attributedString: MarkdownText.render(message.text, style: style), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
-                let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: messageTimeString(message.date), font: dateFont, textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 100.0, height: 20.0)))
+                let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: messageTimeString(message.date), font: dateFont(item.theme), textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 200.0, height: 40.0)))
                 let fileLayouts = files.map { FileAttachmentNode.measure(name: $0.name, size: $0.size, maxWidth: maxTextWidth) }
 
                 // The time and status share the last line when they fit, as ChatMessageDateAndStatusNode's trailing
@@ -876,8 +878,9 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let maxTextWidth = contentWidth - freeTextInset * 2.0 - leftShift
                 let isThinking = message.role == .thinking
                 // Reasoning is dimmer and smaller.
-                var style = MarkdownStyle(fontSize: isThinking ? 15.0 : messageFontSize, textColor: isThinking ? theme.freeSecondaryTextColor : theme.freeTextColor, linkColor: theme.linkTextColor, accentColor: item.theme.accentColor)
+                var style = MarkdownStyle(fontSize: isThinking ? item.theme.scaled(15.0) : item.theme.fontSize, textColor: isThinking ? theme.freeSecondaryTextColor : theme.freeTextColor, linkColor: theme.linkTextColor, accentColor: item.theme.accentColor)
                 style.maxWidth = maxTextWidth
+                style.lineSpacing = MarkdownStyle.answerLineSpacing
                 // Reasoning shows whole, as the answer does.
                 let sourceText = message.text
                 let blocks = MarkdownText.blocks(sourceText, style: style, wrapCode: item.wrapCode)
@@ -905,12 +908,13 @@ final class ChatMessageItemNode: ListViewItemNode {
                     node.displaysAsynchronously = false
                     return node
                 }
-                for block in blocks {
+                for (blockIndex, block) in blocks.enumerated() {
+                    let spacing = blockIndex == 0 ? 0.0 : MarkdownText.spacing(between: blocks[blockIndex - 1], and: block, fontSize: style.fontSize)
                     switch block {
                     case let .text(string):
                         let existing = textNode(textIndex)
-                        let (layout, apply) = InteractiveTextNode.asyncLayout(existing)(InteractiveTextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
-                        laidOut.append(.text(start: start, length: string.length, layout: layout))
+                        let (layout, apply) = InteractiveTextNode.asyncLayout(existing)(InteractiveTextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude), lineSpacing: style.lineSpacing))
+                        laidOut.append(.text(start: start, length: string.length, layout: layout, spacing: spacing))
                         textApplies.append(apply)
                         textScrolls.append(false)
                         textIndex += 1
@@ -918,7 +922,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         // As wide as its longest line; the row shows it through a horizontal scroller.
                         let existing = textNode(textIndex)
                         let (layout, apply) = InteractiveTextNode.asyncLayout(existing)(InteractiveTextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: 100_000.0, height: .greatestFiniteMagnitude)))
-                        laidOut.append(.text(start: start, length: string.length, layout: layout))
+                        laidOut.append(.text(start: start, length: string.length, layout: layout, spacing: spacing))
                         textApplies.append(apply)
                         textScrolls.append(true)
                         textIndex += 1
@@ -926,7 +930,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         let node = tableIndex < existingTableNodes.count ? existingTableNodes[tableIndex] : ChatTableNode()
                         let makeTableLayout = tableIndex < existingTableLayouts.count ? existingTableLayouts[tableIndex] : ChatTableNode.asyncLayout(node)
                         let (size, apply) = makeTableLayout(table, tableStyle, maxTextWidth)
-                        laidOut.append(.table(start: start, length: table.characterCount, size: size))
+                        laidOut.append(.table(start: start, length: table.characterCount, size: size, spacing: spacing))
                         tableApplies.append((node, apply))
                         tableIndex += 1
                     }
@@ -952,7 +956,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     if let duration = turn.duration, duration >= 1.0 {
                         text = "Worked for \(formatDuration(duration)) · " + text
                     }
-                    let (layout, apply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: text, font: dateFont, textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 20.0)))
+                    let (layout, apply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: text, font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 40.0)))
                     footerLayout = layout
                     footerApply = apply
                 }
@@ -1011,10 +1015,10 @@ final class ChatMessageItemNode: ListViewItemNode {
                     let x = params.leftInset + freeTextInset + leftShift
                     for block in laidOut {
                         if y > 0.0 {
-                            y += blockSpacing
+                            y += block.spacing
                         }
                         switch block {
-                        case let .text(_, _, layout):
+                        case let .text(_, _, layout, _):
                             let node = textNodes[textCursor]
                             let scrolls = textScrolls[textCursor]
                             textCursor += 1
@@ -1031,7 +1035,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                                 contentAnimation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: x, y: y), size: layout.size), completion: nil)
                             }
                             y += layout.size.height
-                        case let .table(_, _, size):
+                        case let .table(_, _, size, _):
                             let node = tableApplies[tableCursor].0
                             tableCursor += 1
                             contentAnimation.animator.updateFrame(layer: node.layer, frame: CGRect(origin: CGPoint(x: x, y: y), size: size), completion: nil)
@@ -1937,7 +1941,7 @@ final class ChatMessageItemNode: ListViewItemNode {
         var tableCursor = 0
         for block in self.laidOutBlocks {
             switch block {
-            case let .text(start, length, _):
+            case let .text(start, length, _, _):
                 guard textCursor < self.textNodes.count else {
                     continue
                 }
@@ -1954,7 +1958,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 } else if node.revealCharacterCount != nil {
                     node.updateRevealCharacterCount(count: nil, animated: false)
                 }
-            case let .table(start, _, _):
+            case let .table(start, _, _, _):
                 guard tableCursor < self.tableNodes.count else {
                     continue
                 }

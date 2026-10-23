@@ -106,8 +106,19 @@ final class ChatTableNode: ASDisplayNode {
                     rowCells.append((x, width, layout, apply))
                     x += width
                 }
-                for (cellX, _, layout, apply) in rowCells {
-                    cells.append((CGRect(origin: CGPoint(x: cellX + insets.left, y: y + insets.top), size: layout.size), apply))
+                for (column, (cellX, width, layout, apply)) in rowCells.enumerated() {
+                    // As the column's delimiter says: a right-aligned column's cells end at its right inset.
+                    var x = cellX + insets.left
+                    let free = max(0.0, width - insets.left - insets.right - layout.size.width)
+                    switch column < table.alignments.count ? table.alignments[column] : .left {
+                    case .right:
+                        x += free
+                    case .center:
+                        x += floor(free / 2.0)
+                    default:
+                        break
+                    }
+                    cells.append((CGRect(origin: CGPoint(x: x, y: y + insets.top), size: layout.size), apply))
                 }
                 rowFrames.append(CGRect(x: 0.0, y: y, width: x, height: rowHeight))
                 y += rowHeight

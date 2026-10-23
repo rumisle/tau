@@ -276,15 +276,37 @@ final class TauTheme {
 
     private static var cache: [String: TauTheme] = [:]
 
-    static func builtin(_ builtin: Builtin, accent: Accent = .standard) -> TauTheme {
+    /// The text size iOS is set to, as Telegram takes it (resolveFontSize): the body style's size, to the nearest of
+    /// its sizes, 14 to 26 (17 by default).
+    static func systemFontSize() -> PresentationFontSize {
+        // The UI tests' `-textSize 23`.
+        let size = UserDefaults.standard.double(forKey: "textSize")
+        if size > 0.0 {
+            return PresentationFontSize(systemFontSize: CGFloat(size))
+        }
+        return PresentationFontSize(systemFontSize: UIFont.preferredFont(forTextStyle: .body).pointSize)
+    }
+
+    static func builtin(_ builtin: Builtin, accent: Accent = .standard, fontSize: PresentationFontSize = .regular) -> TauTheme {
         let accent = Accent.available(for: builtin).contains(accent) ? accent : .standard
-        let key = "\(builtin.rawValue)|\(accent.rawValue)"
+        let key = "\(builtin.rawValue)|\(accent.rawValue)|\(fontSize.rawValue)"
         if let theme = TauTheme.cache[key] {
             return theme
         }
-        let theme = TauTheme(builtin: builtin, accent: accent)
+        let theme = TauTheme(builtin: builtin, accent: accent, fontSize: fontSize)
         TauTheme.cache[key] = theme
         return theme
+    }
+
+    /// The text of chats and the chat list, as Telegram's `chatFontSize` and `listsFontSize`: 17 at iOS's default
+    /// size. What is laid out around text scales with it.
+    var fontSize: CGFloat {
+        return self.presentationData.chatFontSize.baseDisplaySize
+    }
+
+    /// `size` at 17, at the theme's text size: Telegram's `floor(fontSize * size / 17.0)`.
+    func scaled(_ size: CGFloat) -> CGFloat {
+        return floor(self.fontSize * size / 17.0)
     }
 
     /// The chat's plain background: the theme's own, except Tinted Night's, which Telegram derives from the accent, as
@@ -299,8 +321,8 @@ final class TauTheme {
         return accentColor.withMultiplied(hue: 1.024, saturation: 0.573, brightness: 0.18 * 0.72).rgb
     }
 
-    private init(builtin: Builtin, accent: Accent) {
-        let base = defaultPresentationData()
+    private init(builtin: Builtin, accent: Accent, fontSize: PresentationFontSize) {
+        let base = defaultPresentationData().withFontSizes(chatFontSize: fontSize, listsFontSize: fontSize)
         let plain = makeDefaultPresentationTheme(reference: builtin.reference, serviceBackgroundColor: nil)
         // As Telegram makes a built-in theme with an accent (makePresentationTheme(mediaBox:themeReference:accentColor:)):
         // editing, so the accent also colors the outgoing bubbles. Blue is the themes' own accent: unchanged.

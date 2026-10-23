@@ -12,6 +12,12 @@ struct MarkdownStyle {
     var maxWidth: CGFloat = 0.0
     /// Typeset `$...$` LaTeX: in answers, not in what the user writes.
     var math: Bool = true
+    /// The line spacing InteractiveTextNode lays the text out with, a fraction of each line's height: the space between
+    /// paragraphs is sized for it.
+    var lineSpacing: CGFloat = 0.12
+    /// Answers: a line and a half (InteractiveTextNode's 0.12 makes 1.32 em of the system font, close for Latin, tight for
+    /// Han, whose square characters fill their em box).
+    static let answerLineSpacing: CGFloat = 0.231
 
     /// Light text: a dark theme.
     var isDark: Bool {
@@ -25,6 +31,8 @@ struct MarkdownStyle {
 struct MarkdownTable: Equatable {
     var header: [NSAttributedString]
     var rows: [[NSAttributedString]]
+    /// Each column's, as the delimiter row has it (`---:` right): numbers line up at their ends.
+    var alignments: [NSTextAlignment] = []
 
     var columnCount: Int {
         return max(self.header.count, self.rows.map(\.count).max() ?? 0)
@@ -62,13 +70,22 @@ enum MarkdownText {
     static let urlKey = NSAttributedString.Key("Attribute__Url")
     /// Inline code's text, which a tap copies (Telegram's TelegramTextAttributes.Code).
     static let inlineCodeKey = NSAttributedString.Key("TelegramCode")
+    /// A list item's hanging indent, which InteractiveTextNode lays its lines out with (tau's patch): NSValue of a CGSize,
+    /// the first line's offset and the other lines'.
+    static let indentKey = NSAttributedString.Key("Attribute__Indent")
+    /// Paragraphs that do not end on a line with one Han character (InteractiveTextNode, tau's patch).
+    static let avoidsOrphansKey = NSAttributedString.Key("Attribute__AvoidsOrphans")
+    /// A heading's level, on its text: the space around it.
+    static let headingKey = NSAttributedString.Key("tau.heading")
+    /// What a character typeset in place of another was (a curly quote, a centered ellipsis): copying gives it back.
+    static let originalKey = NSAttributedString.Key("tau.original")
 
     /// The whole message as one attributed string, tables included as plain rows.
     static func render(_ text: String, style: MarkdownStyle) -> NSAttributedString {
         let result = NSMutableAttributedString()
         for block in self.blocks(text, style: style) {
             if result.length > 0 {
-                result.append(NSAttributedString(string: "\n\n", font: Font.regular(style.fontSize), textColor: style.textColor))
+                result.append(self.gap(style.fontSize * Spacing.paragraph, style: style))
             }
             switch block {
             case let .text(string), let .code(string):
@@ -201,7 +218,7 @@ enum MarkdownText {
     }
 
     private static func chunkBlocks(_ text: String, style: MarkdownStyle) -> [MarkdownBlock] {
-        let key = "\(style.fontSize)|\(style.textColor.argb)|\(style.linkColor.argb)|\(style.accentColor.argb)|\(style.maxWidth)|\(style.math)|\(text)"
+        let key = "\(style.fontSize)|\(style.textColor.argb)|\(style.linkColor.argb)|\(style.accentColor.argb)|\(style.maxWidth)|\(style.math)|\(style.lineSpacing)|\(text)"
         self.cacheLock.lock()
         if let cached = self.cache[key] {
             self.cacheLock.unlock()
@@ -245,7 +262,22 @@ enum MarkdownText {
 
         var blocks: [MarkdownBlock] = []
         var current = NSMutableAttributedString()
-        var table: (identity: Int, header: [NSMutableAttributedString], rows: [[NSMutableAttributedString]])?
+        var table: (identity: Int, header: [NSMutableAttributedString], rows: [[NSMutableAttributedString]], alignments: [NSTextAlignment])?
+        let listMarkers = self.listMarkerWidths(parsed, fonts: fonts)
+        /// The list item paragraph being built: where it starts, and its indent.
+        var currentIndent: (start: Int, value: CGSize)?
+        /// List items given their marker, so a later paragraph of the same item hangs without one.
+        var markedItems = Set<Int>()
+
+        func closeIndent() {
+            guard let indent = currentIndent else {
+                return
+            }
+            currentIndent = nil
+            if current.length > indent.start {
+                current.addAttribute(indentKey, value: NSValue(cgSize: indent.value), range: NSRange(location: indent.start, length: current.length - indent.start))
+            }
+        }
         var previousBlock: PresentationIntent?
         var currentBlockQuote: (kind: TextNodeBlockQuoteData.Kind, start: Int, identity: Int)?
 
@@ -292,8 +324,10 @@ enum MarkdownText {
         }
 
         func flushText() {
+            closeIndent()
             closeBlockQuote()
             if current.length > 0 {
+                self.typeset(current, style: style)
                 blocks.append(.text(current))
             }
             current = NSMutableAttributedString()
@@ -304,7 +338,16 @@ enum MarkdownText {
                 return
             }
             table = nil
-            blocks.append(.table(MarkdownTable(header: value.header, rows: value.rows)))
+            for cell in value.header + value.rows.flatMap({ $0 }) {
+                self.typeset(cell, style: style, orphans: false)
+                // Figures of one width, so a column's numbers line up.
+                cell.enumerateAttribute(.font, in: NSRange(location: 0, length: cell.length), options: []) { font, range, _ in
+                    if let font = font as? UIFont {
+                        cell.addAttribute(.font, value: self.tabularFigures(font), range: range)
+                    }
+                }
+            }
+            blocks.append(.table(MarkdownTable(header: value.header, rows: value.rows, alignments: value.alignments)))
         }
 
         /// A run's text, with formulas back in place of their placeholders.
@@ -348,7 +391,7 @@ enum MarkdownText {
                     flushTable()
                     flushText()
                     previousBlock = nil
-                    table = (cell.tableIdentity, [], [])
+                    table = (cell.tableIdentity, [], [], cell.alignments)
                 }
                 let string = styled(runText, attributes: attributes)
                 if cell.row == nil {
@@ -373,18 +416,34 @@ enum MarkdownText {
             }
 
             if intent != previousBlock {
+                closeIndent()
                 let blockQuote = blockQuoteKind(intent)
                 if let quote = currentBlockQuote, blockQuote?.identity != quote.identity {
                     closeBlockQuote()
                 }
                 if current.length > 0 {
-                    current.append(NSAttributedString(string: separatorBetween(previousBlock, intent), font: fonts.regular, textColor: style.textColor))
+                    current.append(self.separator(between: previousBlock, and: intent, style: style))
                 }
                 if let blockQuote, currentBlockQuote == nil {
                     currentBlockQuote = (blockQuote.kind, current.length, blockQuote.identity)
                 }
-                current.append(NSAttributedString(string: listPrefix(intent), font: fonts.regular, textColor: style.textColor))
                 previousBlock = intent
+                if isThematicBreak(intent) {
+                    // `---`: a hairline across the column, instead of the parser's "⸻".
+                    current.append(self.rule(style: style))
+                    continue
+                }
+                if let item = self.listItem(intent, markers: listMarkers, fonts: fonts) {
+                    if let marker = item.marker, !markedItems.contains(item.identity) {
+                        markedItems.insert(item.identity)
+                        current.append(NSAttributedString(string: marker, font: fonts.regular, textColor: style.textColor))
+                        currentIndent = (current.length - (marker as NSString).length, CGSize(width: item.first, height: item.rest))
+                    } else {
+                        currentIndent = (current.length, CGSize(width: item.rest, height: item.rest))
+                    }
+                }
+            } else if isThematicBreak(intent) {
+                continue
             }
             if isCodeBlock(intent), runText.hasSuffix("\n") {
                 runText.removeLast()
@@ -494,6 +553,7 @@ enum MarkdownText {
         let italic: UIFont
         let boldItalic: UIFont
         let monospace: UIFont
+        let inlineCode: UIFont
 
         init(size: CGFloat, monospace: UIFont? = nil) {
             self.regular = Font.regular(size)
@@ -501,6 +561,7 @@ enum MarkdownText {
             self.italic = Font.italic(size)
             self.boldItalic = Font.semiboldItalic(size)
             self.monospace = monospace ?? Font.monospace(size)
+            self.inlineCode = Font.monospace(round(size * 0.88))
         }
     }
 
@@ -511,10 +572,17 @@ enum MarkdownText {
         if isCodeBlock(intent) {
             font = fonts.monospace
         } else if let level = headerLevel(intent) {
-            font = Font.semibold(style.fontSize + max(0.0, 4.0 - CGFloat(level)))
+            // H1 24, H2 21, H3 19 at 17: apart from the text by size; H4 its size, H5 and H6 smaller, H6 dimmer.
+            let scales: [CGFloat] = [24.0, 21.0, 19.0, 17.0, 15.0, 15.0]
+            font = Font.semibold(round(style.fontSize * scales[min(max(level, 1), 6) - 1] / 17.0))
+            attributes[headingKey] = level
+            if level >= 6 {
+                color = style.textColor.withMultipliedAlpha(0.6)
+            }
         } else if let inline = run.inlinePresentationIntent {
             if inline.contains(.code) {
-                font = fonts.monospace
+                // Monospace looks larger than the text at its size; a little smaller sits with it.
+                font = fonts.inlineCode
                 attributes[inlineCodeKey] = "code"
             } else if inline.contains(.stronglyEmphasized) && inline.contains(.emphasized) {
                 font = fonts.boldItalic
@@ -537,7 +605,7 @@ enum MarkdownText {
     }
 
     /// The table cell a run belongs to: its table, its row (nil for the header) and its column.
-    private static func tableCell(_ intent: PresentationIntent?) -> (tableIdentity: Int, row: Int?, column: Int)? {
+    private static func tableCell(_ intent: PresentationIntent?) -> (tableIdentity: Int, row: Int?, column: Int, alignments: [NSTextAlignment])? {
         guard let components = intent?.components else {
             return nil
         }
@@ -545,6 +613,7 @@ enum MarkdownText {
         var row: Int?
         var isHeader = false
         var tableIdentity: Int?
+        var alignments: [NSTextAlignment] = []
         for component in components {
             switch component.kind {
             case let .tableCell(columnIndex):
@@ -553,8 +622,18 @@ enum MarkdownText {
                 row = rowIndex
             case .tableHeaderRow:
                 isHeader = true
-            case .table:
+            case let .table(columns):
                 tableIdentity = component.identity
+                alignments = columns.map { column -> NSTextAlignment in
+                    switch column.alignment {
+                    case .right:
+                        return .right
+                    case .center:
+                        return .center
+                    default:
+                        return .left
+                    }
+                }
             default:
                 break
             }
@@ -563,7 +642,7 @@ enum MarkdownText {
             return nil
         }
         // Body rows are numbered from 1; the header has its own kind.
-        return (tableIdentity, isHeader ? nil : max(0, (row ?? 1) - 1), column)
+        return (tableIdentity, isHeader ? nil : max(0, (row ?? 1) - 1), column, alignments)
     }
 
     private static func blockQuoteKind(_ intent: PresentationIntent?) -> (kind: TextNodeBlockQuoteData.Kind, identity: Int)? {
@@ -596,48 +675,391 @@ enum MarkdownText {
         return nil
     }
 
-    /// "• " or "3. " for the first run of a list item.
-    private static func listPrefix(_ intent: PresentationIntent?) -> String {
-        guard let components = intent?.components else {
-            return ""
+    /// Space between blocks, in ems of the text: a paragraph's is under a blank line (Butterick's 4–10 pt at 17), items of
+    /// a list sit closer, and a heading is nearer the text it heads than the text before it.
+    enum Spacing {
+        static let paragraph: CGFloat = 0.7
+        static let listItem: CGFloat = 0.25
+        static let aboveHeading: CGFloat = 1.5
+        static let belowHeading: CGFloat = 0.45
+    }
+
+    /// The line system font text of `size` takes, without line spacing, per point of size.
+    private static let lineHeightPerPoint: CGFloat = {
+        let font = Font.regular(100.0)
+        return (font.ascender - font.descender) / 100.0
+    }()
+
+    /// A line break and then a blank line `height` tall as InteractiveTextNode lays it out: its newline's font makes its
+    /// height, with the spacing before it.
+    static func gap(_ height: CGFloat, style: MarkdownStyle) -> NSAttributedString {
+        let size = max(1.0, height / (self.lineHeightPerPoint * (1.0 + style.lineSpacing)))
+        let result = NSMutableAttributedString(string: "\n", font: Font.regular(style.fontSize), textColor: style.textColor)
+        result.append(NSAttributedString(string: "\n", font: Font.regular(size), textColor: style.textColor))
+        return result
+    }
+
+    /// Between two blocks of one text: lines of one code block follow each other; list items are a little apart,
+    /// paragraphs more, and a heading is closer to what follows it than to what came before.
+    private static func separator(between previous: PresentationIntent?, and next: PresentationIntent?, style: MarkdownStyle) -> NSAttributedString {
+        if isCodeBlock(previous) && isCodeBlock(next), blockQuoteKind(previous)?.identity == blockQuoteKind(next)?.identity {
+            return NSAttributedString(string: "\n", font: Font.regular(style.fontSize), textColor: style.textColor)
         }
-        var ordinal: Int?
-        var ordered = false
-        var depth = 0
+        let previousList = previous?.components.contains(where: { if case .listItem = $0.kind { return true } else { return false } }) ?? false
+        let nextList = next?.components.contains(where: { if case .listItem = $0.kind { return true } else { return false } }) ?? false
+        let ems: CGFloat
+        if headerLevel(next) != nil {
+            ems = Spacing.aboveHeading
+        } else if headerLevel(previous) != nil {
+            ems = Spacing.belowHeading
+        } else if previousList && nextList {
+            ems = Spacing.listItem
+        } else {
+            ems = Spacing.paragraph
+        }
+        return self.gap(style.fontSize * ems, style: style)
+    }
+
+    /// The space between two blocks laid out apart (a table, a code block that scrolls, the next chunk of a long
+    /// answer), as within a text.
+    static func spacing(between previous: MarkdownBlock, and next: MarkdownBlock, fontSize: CGFloat) -> CGFloat {
+        if case let .text(string) = next, string.length > 0, string.attribute(headingKey, at: 0, effectiveRange: nil) != nil {
+            return round(fontSize * Spacing.aboveHeading)
+        }
+        if case let .text(string) = previous, string.length > 0, string.attribute(headingKey, at: string.length - 1, effectiveRange: nil) != nil {
+            return round(fontSize * Spacing.belowHeading)
+        }
+        return round(fontSize * Spacing.paragraph)
+    }
+
+    private static func isThematicBreak(_ intent: PresentationIntent?) -> Bool {
+        return intent?.components.contains(where: { if case .thematicBreak = $0.kind { return true } else { return false } }) ?? false
+    }
+
+    /// `---`: a hairline the width of the column, as an attachment on a line of its own, in the text's color dimmed.
+    private static func rule(style: MarkdownStyle) -> NSAttributedString {
+        let width = max(1.0, floor(style.maxWidth > 0.0 ? style.maxWidth - 2.0 : 200.0))
+        let thickness = UIScreenPixel
+        let image = generateImage(CGSize(width: width, height: 1.0), rotatedContext: { size, context in
+            context.clear(CGRect(origin: CGPoint(), size: size))
+            context.setFillColor(UIColor.black.cgColor)
+            context.fill(CGRect(x: 0.0, y: (size.height - thickness) / 2.0, width: size.width, height: thickness))
+        })
+        guard let image else {
+            return NSAttributedString()
+        }
+        final class Metrics {
+            let width: CGFloat
+            let half: CGFloat
+            init(width: CGFloat, half: CGFloat) {
+                self.width = width
+                self.half = half
+            }
+        }
+        // A line as tall as the text, the rule across its middle.
+        let metrics = Metrics(width: width, half: style.fontSize * 0.5)
+        var callbacks = CTRunDelegateCallbacks(version: kCTRunDelegateVersion1, dealloc: { pointer in
+            Unmanaged<Metrics>.fromOpaque(pointer).release()
+        }, getAscent: { pointer in
+            return Unmanaged<Metrics>.fromOpaque(pointer).takeUnretainedValue().half
+        }, getDescent: { pointer in
+            return Unmanaged<Metrics>.fromOpaque(pointer).takeUnretainedValue().half
+        }, getWidth: { pointer in
+            return Unmanaged<Metrics>.fromOpaque(pointer).takeUnretainedValue().width
+        })
+        guard let delegate = CTRunDelegateCreate(&callbacks, Unmanaged.passRetained(metrics).toOpaque()) else {
+            return NSAttributedString()
+        }
+        return NSAttributedString(string: "\u{FFFC}", attributes: [
+            .font: Font.regular(style.fontSize),
+            .foregroundColor: style.textColor.withMultipliedAlpha(0.22),
+            .attachment: image,
+            NSAttributedString.Key(kCTRunDelegateAttributeName as String): delegate,
+            self.originalKey: "---",
+        ])
+    }
+
+    /// Each ordered list's widest marker ("10. "), by the list's identity: its markers end where its text begins.
+    private static func listMarkerWidths(_ parsed: AttributedString, fonts: Fonts) -> [Int: CGFloat] {
+        var widths: [Int: CGFloat] = [:]
+        for run in parsed.runs {
+            guard let components = run.presentationIntent?.components else {
+                continue
+            }
+            var ordinal: Int?
+            for component in components {
+                if case let .listItem(value) = component.kind, ordinal == nil {
+                    ordinal = value
+                } else if case .orderedList = component.kind, let value = ordinal {
+                    widths[component.identity] = max(widths[component.identity] ?? 0.0, self.width("\(value). ", font: fonts.regular))
+                    break
+                } else if case .unorderedList = component.kind {
+                    break
+                }
+            }
+        }
+        return widths
+    }
+
+    private static func width(_ string: String, font: UIFont) -> CGFloat {
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: [.font: font]))
+        return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+    }
+
+    /// Bullets by depth, as HTML's and Notion's lists: a disc, a circle, a square.
+    private static let bullets = ["•", "◦", "▪\u{FE0E}"]
+
+    /// A list item paragraph's marker (nil for a later paragraph of the item, which hangs without one) and its indent:
+    /// the marker ends where the item's text begins, and a nested list begins where its parent's text does.
+    private static func listItem(_ intent: PresentationIntent?, markers: [Int: CGFloat], fonts: Fonts) -> (identity: Int, marker: String?, first: CGFloat, rest: CGFloat)? {
+        guard let components = intent?.components else {
+            return nil
+        }
+        // Innermost first: each list with the item of it this text is in.
+        var levels: [(list: Int, ordered: Bool, ordinal: Int, item: Int)] = []
+        var item: (ordinal: Int, identity: Int)?
         for component in components {
             switch component.kind {
             case let .listItem(value):
-                if ordinal == nil {
-                    ordinal = value
+                item = (value, component.identity)
+            case .orderedList, .unorderedList:
+                if let current = item {
+                    let ordered: Bool
+                    if case .orderedList = component.kind {
+                        ordered = true
+                    } else {
+                        ordered = false
+                    }
+                    levels.append((component.identity, ordered, current.ordinal, current.identity))
+                    item = nil
                 }
-            case .orderedList:
-                if depth == 0 {
-                    ordered = true
-                }
-                depth += 1
-            case .unorderedList:
-                depth += 1
             default:
                 break
             }
         }
-        guard let ordinal else {
-            return ""
+        guard let innermost = levels.first else {
+            return nil
         }
-        let indent = String(repeating: "    ", count: max(0, depth - 1))
-        return indent + (ordered ? "\(ordinal). " : "• ")
+        let bulletArea = self.width("• ", font: fonts.regular)
+        func area(_ level: (list: Int, ordered: Bool, ordinal: Int, item: Int), depth: Int) -> CGFloat {
+            if level.ordered {
+                return markers[level.list] ?? self.width("\(level.ordinal). ", font: fonts.regular)
+            }
+            let bullet = self.bullets[min(depth, self.bullets.count - 1)] + " "
+            return max(bulletArea, self.width(bullet, font: fonts.regular))
+        }
+        let depth = levels.count - 1
+        var base: CGFloat = 0.0
+        for (index, level) in levels.dropFirst().reversed().enumerated() {
+            base += area(level, depth: index)
+        }
+        let marker = innermost.ordered ? "\(innermost.ordinal). " : self.bullets[min(depth, self.bullets.count - 1)] + " "
+        let markerArea = area(innermost, depth: depth)
+        let markerWidth = self.width(marker, font: fonts.regular)
+        return (innermost.item, marker, base + max(0.0, markerArea - markerWidth), base + markerArea)
     }
 
-    /// Paragraph-level blocks are separated by a blank line, items of one list by a single newline.
-    private static func separatorBetween(_ previous: PresentationIntent?, _ next: PresentationIntent?) -> String {
-        let previousList = previous?.components.contains(where: { if case .listItem = $0.kind { return true } else { return false } }) ?? false
-        let nextList = next?.components.contains(where: { if case .listItem = $0.kind { return true } else { return false } }) ?? false
-        if previousList && nextList {
-            return "\n"
+    /// `font` with figures of one width (OpenType `tnum`), for table columns.
+    private static func tabularFigures(_ font: UIFont) -> UIFont {
+        let descriptor = font.fontDescriptor.addingAttributes([
+            .featureSettings: [[UIFontDescriptor.FeatureKey.type: kNumberSpacingType, UIFontDescriptor.FeatureKey.selector: kMonospacedNumbersSelector]],
+        ])
+        return UIFont(descriptor: descriptor, size: font.pointSize)
+    }
+
+    // MARK: Typesetting
+
+    /// What typesetting does to a text outside its code and formulas: curly quotes for straight ones, a centered ellipsis
+    /// in Chinese, and, unless `orphans` is false, no paragraph ending on a lone Han character. Each replaced
+    /// character keeps what it was under `originalKey`, which copying gives back.
+    static func typeset(_ string: NSMutableAttributedString, style: MarkdownStyle, orphans: Bool = true) {
+        let text = string.string as NSString
+        let length = text.length
+        guard length > 0 else {
+            return
         }
-        if isCodeBlock(previous) && isCodeBlock(next), blockQuoteKind(previous)?.identity == blockQuoteKind(next)?.identity {
-            return "\n"
+        var isCode = [Bool](repeating: false, count: length)
+        string.enumerateAttributes(in: NSRange(location: 0, length: length), options: []) { attributes, range, _ in
+            let code: Bool
+            if attributes[inlineCodeKey] != nil || attributes[MathText.latexKey] != nil || attributes[.attachment] != nil {
+                code = true
+            } else if let quote = attributes[blockQuoteKey] as? TextNodeBlockQuoteData, case .code = quote.kind {
+                code = true
+            } else {
+                code = false
+            }
+            if code {
+                for index in range.location ..< range.location + range.length {
+                    isCode[index] = true
+                }
+            }
         }
-        return "\n\n"
+        func character(_ index: Int) -> unichar? {
+            return index >= 0 && index < length && !isCode[index] ? text.character(at: index) : nil
+        }
+        var replacements: [(index: Int, with: String, original: String)] = []
+        var kerns: [Int] = []
+        // Quotes: by what is on either side, and where that cannot tell (between two Han characters), alternately.
+        var doubleOpen = false
+        var singleOpen = false
+        var index = 0
+        while index < length {
+            guard !isCode[index] else {
+                index += 1
+                continue
+            }
+            let c = text.character(at: index)
+            if c == 0x22 || c == 0x27 {
+                let previous = character(index - 1)
+                let next = character(index + 1)
+                let before = Context(previous)
+                let after = Context(next)
+                var replacement: String?
+                if c == 0x22 {
+                    if before == .digit && !doubleOpen {
+                        // 30": inches.
+                    } else if before.opens && !after.closes {
+                        replacement = "“"
+                    } else if !before.opens && after.closes {
+                        replacement = "”"
+                    } else {
+                        replacement = doubleOpen ? "”" : "“"
+                    }
+                    if let replacement {
+                        doubleOpen = replacement == "“"
+                    }
+                } else {
+                    if before == .digit && (after == .digit || after.closes) && !singleOpen {
+                        // 5'10": feet.
+                    } else if before.isWord && after.isWord {
+                        // it's, don't
+                        replacement = "’"
+                    } else if before.opens && after == .digit {
+                        // '90s
+                        replacement = "’"
+                    } else if before.opens && !after.closes {
+                        replacement = "‘"
+                        singleOpen = true
+                    } else if !before.opens {
+                        // A closing quote, or the possessive of a plural (the users').
+                        replacement = "’"
+                        singleOpen = false
+                    }
+                }
+                if let replacement {
+                    replacements.append((index, replacement, String(utf16CodeUnits: [c], count: 1)))
+                }
+            } else if c == 0x2026, character(index + 1) == 0x2026 {
+                // GB/T 15834: Chinese's ellipsis is six dots across two characters, centered, and PingFang's sits on the
+                // baseline. The midline ellipsis is centered; Core Text spaces it from Han as Western (1/8 em), which
+                // a negative kern on either side takes back.
+                var end = index
+                while end < length, character(end) == 0x2026 {
+                    replacements.append((end, "⋯", "…"))
+                    end += 1
+                }
+                if let previous = character(index - 1), isHan(previous) {
+                    kerns.append(index - 1)
+                }
+                if let next = character(end), isHan(next) {
+                    kerns.append(end - 1)
+                }
+                index = end
+                continue
+            }
+            index += 1
+        }
+        for replacement in replacements {
+            let range = NSRange(location: replacement.index, length: 1)
+            let attributes = string.attributes(at: replacement.index, effectiveRange: nil)
+            var updated = attributes
+            updated[originalKey] = replacement.original
+            string.replaceCharacters(in: range, with: NSAttributedString(string: replacement.with, attributes: updated))
+        }
+        for kern in kerns {
+            let size = (string.attribute(.font, at: kern, effectiveRange: nil) as? UIFont)?.pointSize ?? style.fontSize
+            string.addAttribute(.kern, value: -size / 8.0, range: NSRange(location: kern, length: 1))
+        }
+        if orphans {
+            var start = 0
+            for index in 0 ... length {
+                if index == length || isCode[index] {
+                    if index > start {
+                        string.addAttribute(avoidsOrphansKey, value: true, range: NSRange(location: start, length: index - start))
+                    }
+                    start = index + 1
+                }
+            }
+        }
+    }
+
+    private static func isHan(_ c: unichar) -> Bool {
+        return (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0xF900 && c <= 0xFAFF)
+    }
+
+    /// What is beside a quote: the start or end of the text, a space, a letter or digit, or punctuation that opens or
+    /// closes.
+    private enum Context: Equatable {
+        case edge
+        case space
+        case digit
+        case letter
+        case opening
+        case closing
+        case other
+
+        init(_ c: unichar?) {
+            guard let c else {
+                self = .edge
+                return
+            }
+            if let scalar = Unicode.Scalar(c) {
+                if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                    self = .space
+                } else if CharacterSet.decimalDigits.contains(scalar) {
+                    self = .digit
+                } else if "([{“‘—–-/<（「『《【〈".unicodeScalars.contains(scalar) {
+                    self = .opening
+                } else if ".,;:!?)]}…”’>，。、：；！？）」』》】〉".unicodeScalars.contains(scalar) {
+                    self = .closing
+                } else if CharacterSet.letters.contains(scalar) {
+                    self = .letter
+                } else {
+                    self = .other
+                }
+            } else {
+                // Half of a surrogate pair: an emoji or a rare character, taken as a letter.
+                self = .letter
+            }
+        }
+
+        /// What an opening quote follows.
+        var opens: Bool {
+            return self == .edge || self == .space || self == .opening
+        }
+
+        /// What a closing quote precedes.
+        var closes: Bool {
+            return self == .edge || self == .space || self == .closing
+        }
+
+        var isWord: Bool {
+            return self == .letter || self == .digit
+        }
+    }
+
+    /// What copying a selection of the text gives: formulas as their LaTeX, typeset characters as written, kept
+    /// indentation as plain spaces.
+    static func copiedText(_ string: NSAttributedString) -> String {
+        let plain = NSMutableString(string: string.string)
+        string.enumerateAttributes(in: NSRange(location: 0, length: string.length), options: [.reverse]) { attributes, range, _ in
+            if let latex = attributes[MathText.latexKey] as? String {
+                plain.replaceCharacters(in: range, with: "$\(latex)$")
+            } else if let original = attributes[originalKey] as? String {
+                // Each character was one; equal neighbours make one range.
+                plain.replaceCharacters(in: range, with: String(repeating: original, count: range.length))
+            }
+        }
+        return (plain as String).replacingOccurrences(of: "\u{00A0}", with: " ")
     }
 }

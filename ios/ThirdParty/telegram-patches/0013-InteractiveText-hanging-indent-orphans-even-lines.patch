@@ -1,0 +1,139 @@
+diff --git a/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift b/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
+index 629d480..645e27e 100644
+--- a/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
++++ b/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
+@@ -1182,6 +1182,52 @@ public final class InteractiveTextNodeLayout: NSObject {
+     }*/
+ }
+ 
++// tau: a paragraph's lines after the first start this far in (a list item's hanging indent): NSValue of a CGSize, the
++// first line's offset, then the other lines'.
++public let interactiveTextIndentKey = NSAttributedString.Key("Attribute__Indent")
++// tau: text whose paragraphs do not end on a line with a single Han character.
++public let interactiveTextAvoidsOrphansKey = NSAttributedString.Key("Attribute__AvoidsOrphans")
++
++private func isHanCharacter(_ c: unichar) -> Bool {
++    return (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0xF900 && c <= 0xFAFF)
++}
++
++/// A line with one Han character and, besides punctuation and spaces, nothing else.
++private func isOrphanLine(_ string: NSString, _ range: NSRange) -> Bool {
++    var han = 0
++    for index in range.location ..< range.location + range.length {
++        let c = string.character(at: index)
++        if isHanCharacter(c) {
++            han += 1
++        } else if c > 0x7F && !(c >= 0x3000 && c <= 0x303F) && !(c >= 0xFF00 && c <= 0xFF65) && !(c >= 0x2000 && c <= 0x206F) {
++            return false
++        } else if c <= 0x7F && ((c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A)) {
++            return false
++        }
++    }
++    return han == 1
++}
++
++/// How many characters the line before an orphan gives the last line: its last Han character, with the punctuation
++/// after it, which cannot start a line, and an opening bracket before it, which cannot end one. Nil when that would be
++/// all of the line, or a break inside other text.
++private func orphanPullCount(_ string: NSString, _ range: NSRange) -> Int? {
++    let noStart: Set<unichar> = Set("，。、：；！？）」』》〉】〕”’…—·".utf16)
++    let noEnd: Set<unichar> = Set("（「『《〈【〔“‘".utf16)
++    let end = range.location + range.length
++    var count = 1
++    while count < range.length, noStart.contains(string.character(at: end - count)) {
++        count += 1
++    }
++    guard count < range.length, isHanCharacter(string.character(at: end - count)) else {
++        return nil
++    }
++    while count + 1 < range.length, noEnd.contains(string.character(at: end - count - 1)) {
++        count += 1
++    }
++    return count < range.length ? count : nil
++}
++
+ private func addSpoiler(line: InteractiveTextNodeLine, ascent: CGFloat, descent: CGFloat, startIndex: Int, endIndex: Int) {
+     var secondaryLeftOffset: CGFloat = 0.0
+     let rawLeftOffset = CTLineGetOffsetForStringIndex(line.line, startIndex, &secondaryLeftOffset)
+@@ -1679,16 +1725,45 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
+                 }
+             }
+             
++            // tau: the line a paragraph's orphan made shorter, and the end of the paragraph it was for.
++            var forcedLineCharacterCount: Int?
++            var orphanAvoidedAt: Int?
+             while true {
+-                let constrainedLineWidth = constrainedSegmentWidth - additionalSegmentRightInset
+-                let lineCharacterCount = CTTypesetterSuggestLineBreak(typesetter, currentLineStartIndex, constrainedLineWidth)
++                // tau: a list item's lines hang from its text (Attribute__Indent: the first line's offset, then the
++                // other lines').
++                var lineIndent: CGFloat = 0.0
++                if currentLineStartIndex < wholeStringLength, let indent = attributedString.attribute(interactiveTextIndentKey, at: currentLineStartIndex, effectiveRange: nil) as? NSValue {
++                    let startsParagraph = currentLineStartIndex == 0 || rawWholeString.character(at: currentLineStartIndex - 1) == 0x0a
++                    lineIndent = min(constrainedSegmentWidth / 2.0, startsParagraph ? indent.cgSizeValue.width : indent.cgSizeValue.height)
++                }
++                let constrainedLineWidth = constrainedSegmentWidth - additionalSegmentRightInset - lineIndent
++                let lineCharacterCount = forcedLineCharacterCount ?? CTTypesetterSuggestLineBreak(typesetter, currentLineStartIndex, constrainedLineWidth)
++                forcedLineCharacterCount = nil
++                
++                // tau: a paragraph's last line that would hold a single Han character takes one more from the line before
++                // (clreq 7.1.2).
++                let lineEnd = currentLineStartIndex + lineCharacterCount
++                if lineCharacterCount != 0, lineEnd != orphanAvoidedAt, currentLineStartIndex > 0, rawWholeString.character(at: currentLineStartIndex - 1) != 0x0a, lineEnd >= segmentEndIndex || rawWholeString.character(at: lineEnd - 1) == 0x0a, attributedString.attribute(interactiveTextAvoidsOrphansKey, at: currentLineStartIndex, effectiveRange: nil) != nil, let previous = calculatedSegment.lines.last, let previousRange = previous.range, previousRange.location + previousRange.length == currentLineStartIndex, isOrphanLine(rawWholeString, NSRange(location: currentLineStartIndex, length: lineCharacterCount)), let pulled = orphanPullCount(rawWholeString, previousRange) {
++                    calculatedSegment.lines.removeLast()
++                    remainingLines += 1
++                    currentLineStartIndex = previousRange.location
++                    forcedLineCharacterCount = previousRange.length - pulled
++                    orphanAvoidedAt = lineEnd
++                    continue
++                }
+                 
+                 if lineCharacterCount != 0 {
+                     let line = CTTypesetterCreateLine(typesetter, CFRange(location: currentLineStartIndex, length: lineCharacterCount))
+                     var lineAscent: CGFloat = 0.0
+                     var lineDescent: CGFloat = 0.0
+                     var lineWidth = CTLineGetTypographicBounds(line, &lineAscent, &lineDescent, nil)
+-                    lineWidth = min(lineWidth, constrainedSegmentWidth - additionalSegmentRightInset)
++                    lineWidth = min(lineWidth, constrainedSegmentWidth - additionalSegmentRightInset - lineIndent)
++                    // tau: a line set in a fallback font (Chinese in PingFang) is as tall as one in the text's own: past
++                    // 17 pt the system font's lines are taller than PingFang's, and a paragraph's lines went unevenly.
++                    if let font = attributedString.attribute(.font, at: currentLineStartIndex, effectiveRange: nil) as? UIFont {
++                        lineAscent = max(lineAscent, font.ascender)
++                        lineDescent = max(lineDescent, -font.descender)
++                    }
+                     
+                     var isRTL = false
+                     let glyphRuns = CTLineGetGlyphRuns(line) as NSArray
+@@ -1702,7 +1777,7 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
+                     calculatedSegment.lines.append(InteractiveTextNodeLine(
+                         line: line,
+                         constrainedWidth: constrainedLineWidth,
+-                        frame: CGRect(origin: CGPoint(x: additionalOffsetX, y: 0.0), size: CGSize(width: lineWidth + additionalSegmentRightInset, height: lineAscent + lineDescent)),
++                        frame: CGRect(origin: CGPoint(x: additionalOffsetX + lineIndent, y: 0.0), size: CGSize(width: lineWidth + additionalSegmentRightInset, height: lineAscent + lineDescent)),
+                         intrinsicWidth: lineWidth,
+                         ascent: lineAscent,
+                         descent: lineDescent,
+@@ -1896,16 +1971,21 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
+             var visibleLineCount = 0
+             var segmentHeight: CGFloat = 0.0
+             var effectiveSegmentHeight: CGFloat = 0.0
++            // tau: code keeps Telegram's line spacing in text laid out looser.
++            var segmentLineSpacingFactor = lineSpacingFactor
++            if let blockQuote = segment.blockQuote, case .code = blockQuote.kind {
++                segmentLineSpacingFactor = min(lineSpacingFactor, 0.12)
++            }
+             for i in 0 ..< segment.lines.count {
+                 let line = segment.lines[i]
+                 lineCount += 1
+                 
+                 if i != 0 {
+-                    segmentHeight += line.frame.height * lineSpacingFactor
++                    segmentHeight += line.frame.height * segmentLineSpacingFactor
+                 }
+                 if isCollapsed && lineCount > 3 {
+                 } else {
+-                    effectiveSegmentHeight += line.frame.height * lineSpacingFactor
++                    effectiveSegmentHeight += line.frame.height * segmentLineSpacingFactor
+                 }
+                 
+                 line.frame = CGRect(origin: CGPoint(x: line.frame.origin.x, y: size.height + segmentHeight), size: line.frame.size)

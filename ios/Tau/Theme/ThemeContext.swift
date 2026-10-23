@@ -67,6 +67,19 @@ final class ThemeContext {
 
     deinit {
         self.systemStyleDisposable?.dispose()
+        if let textSizeObserver = self.textSizeObserver {
+            NotificationCenter.default.removeObserver(textSizeObserver)
+        }
+    }
+
+    private var textSizeObserver: NSObjectProtocol?
+
+    /// Follow iOS's text size (Settings > Display & Brightness > Text Size), as Telegram does by default
+    /// (`useSystemFont`): a theme of the new size, which every screen lays out again with.
+    func observeTextSize() {
+        self.textSizeObserver = NotificationCenter.default.addObserver(forName: UIContentSizeCategory.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.apply()
+        }
     }
 
     var theme: Signal<TauTheme, NoError> {
@@ -115,10 +128,11 @@ final class ThemeContext {
     }
 
     private static func resolve(_ settings: Settings, system: WindowUserInterfaceStyle) -> TauTheme {
+        let fontSize = TauTheme.systemFontSize()
         if settings.autoNight, system == .dark, !settings.theme.isDark {
-            return .builtin(settings.nightTheme, accent: settings.accent(for: settings.nightTheme))
+            return .builtin(settings.nightTheme, accent: settings.accent(for: settings.nightTheme), fontSize: fontSize)
         }
-        return .builtin(settings.theme, accent: settings.accent(for: settings.theme))
+        return .builtin(settings.theme, accent: settings.accent(for: settings.theme), fontSize: fontSize)
     }
 }
 

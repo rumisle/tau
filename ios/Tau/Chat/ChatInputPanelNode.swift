@@ -116,7 +116,10 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     /// The blob's box: its smallest blob is about half of it, the size of the disc.
     private static let blobSize: CGFloat = 64.0
     private static let fieldMaxLines: CGFloat = 6.0
-    private static let font = Font.regular(17.0)
+    /// The text's font, at the theme's text size (Telegram's input field follows `chatFontSize`).
+    private var font: UIFont {
+        return Font.regular(self.theme.fontSize)
+    }
     private static let textInsets = UIEdgeInsets(top: 10.0, left: 16.0, bottom: 10.0, right: 4.0)
     /// ChatInputMessageAccessoryPanel's height.
     private static let accessoryHeight: CGFloat = 52.0
@@ -132,14 +135,14 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
 
         self.textView = UITextView()
         self.textView.backgroundColor = .clear
-        self.textView.font = ChatInputPanelNode.font
+        self.textView.font = Font.regular(theme.fontSize)
         self.textView.textContainerInset = ChatInputPanelNode.textInsets
         self.textView.textContainer.lineFragmentPadding = 0.0
         self.textView.isScrollEnabled = false
         self.textView.scrollsToTop = false
 
         self.placeholderLabel = UILabel()
-        self.placeholderLabel.font = ChatInputPanelNode.font
+        self.placeholderLabel.font = Font.regular(theme.fontSize)
         self.placeholderLabel.text = "Message"
 
         super.init()
@@ -256,6 +259,11 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
 
     private func applyTheme() {
         let chat = self.theme.chat
+        if self.textView.font?.pointSize != self.font.pointSize {
+            self.textView.font = self.font
+            self.placeholderLabel.font = self.font
+            self.textView.typingAttributes[.font] = self.font
+        }
         self.attachIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconAttachment"), color: chat.panelControlColor)
         self.micIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconMicrophone"), color: chat.panelControlColor)
         // ChatTextInputActionButtonsNode: a capsule whatever its frame, from a stretchable disc of its shorter side.
@@ -560,7 +568,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             self.dictationLead = (before.isEmpty || before == " " || before == "\n") ? "" : " "
         }
         let value = text.isEmpty ? "" : self.dictationLead + text
-        let attributes: [NSAttributedString.Key: Any] = [.font: ChatInputPanelNode.font, .foregroundColor: self.theme.chat.inputTextColor]
+        let attributes: [NSAttributedString.Key: Any] = [.font: self.font, .foregroundColor: self.theme.chat.inputTextColor]
         let selection = self.textView.selectedRange
         storage.replaceCharacters(in: range, with: NSAttributedString(string: value, attributes: attributes))
         let newRange = NSRange(location: range.location, length: (value as NSString).length)
@@ -633,9 +641,9 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     private func measureTextHeight(width: CGFloat) -> CGFloat {
         let insets = ChatInputPanelNode.textInsets
         let textWidth = self.fieldWidth(width) - insets.left - insets.right - self.fieldTrailing(action: self.currentAction())
-        let maxHeight = ceil(ChatInputPanelNode.font.lineHeight * ChatInputPanelNode.fieldMaxLines)
+        let maxHeight = ceil(self.font.lineHeight * ChatInputPanelNode.fieldMaxLines)
         let text = self.text.isEmpty ? " " : self.text
-        let bounds = (text as NSString).boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], attributes: [.font: ChatInputPanelNode.font], context: nil)
+        let bounds = (text as NSString).boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], attributes: [.font: self.font], context: nil)
         return min(maxHeight, ceil(bounds.height))
     }
 
@@ -670,7 +678,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.currentTextHeight = textHeight
         let textAreaHeight = max(size, textHeight + insets.top + insets.bottom)
         let fieldHeight = accessoryHeight + textAreaHeight
-        self.textView.isScrollEnabled = textHeight >= ceil(ChatInputPanelNode.font.lineHeight * ChatInputPanelNode.fieldMaxLines)
+        self.textView.isScrollEnabled = textHeight >= ceil(self.font.lineHeight * ChatInputPanelNode.fieldMaxLines)
 
         let panelSize = CGSize(width: width, height: fieldHeight)
         componentTransition.setFrame(view: self.glassContainer, frame: CGRect(origin: CGPoint(), size: panelSize))
@@ -704,7 +712,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         componentTransition.setFrame(view: self.fieldBackgroundView, frame: fieldFrame)
         self.fieldBackgroundView.update(size: fieldFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .panel), isInteractive: true, transition: componentTransition)
         componentTransition.setFrame(view: self.textView, frame: CGRect(origin: CGPoint(x: 0.0, y: accessoryHeight), size: CGSize(width: fieldFrame.width - self.fieldTrailing(action: action), height: textAreaHeight)))
-        componentTransition.setFrame(view: self.placeholderLabel, frame: CGRect(origin: CGPoint(x: insets.left, y: accessoryHeight + insets.top), size: CGSize(width: fieldFrame.width - insets.left - self.fieldTrailing(action: action), height: ceil(ChatInputPanelNode.font.lineHeight))))
+        componentTransition.setFrame(view: self.placeholderLabel, frame: CGRect(origin: CGPoint(x: insets.left, y: accessoryHeight + insets.top), size: CGSize(width: fieldFrame.width - insets.left - self.fieldTrailing(action: action), height: ceil(self.font.lineHeight))))
 
         // The microphone at the field's end, moved aside by the action button as Telegram's accessory buttons are by
         // Send. By position and bounds: its icon may be scaled, and a frame set through a transform lands elsewhere.
