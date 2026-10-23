@@ -12,7 +12,7 @@ import {
 	LiveDoc,
 	type SubmissionRecord,
 } from "@earendil-works/pi-durable";
-import { CacheDoc } from "./cache.ts";
+import { CacheDoc, type CacheState, cacheModel } from "./cache.ts";
 import { type Host, MetaDoc } from "./host.ts";
 import type { Dialog, EntrySummary } from "./protocol.ts";
 
@@ -138,16 +138,7 @@ export class Dialogs {
 			...(meta?.markedUnread === true ? { markedUnread: true as const } : {}),
 			...(meta?.archived === true ? { archived: true as const } : {}),
 			...(typeof meta?.pinned === "number" ? { pinned: meta.pinned } : {}),
-			...(cache?.ttl === undefined || cache.at === undefined
-				? {}
-				: {
-						cache: {
-							ttl: cache.ttl,
-							at: cache.at,
-							...(this.#host.cache.isWarming(conversation.id) ? { warming: true as const } : {}),
-							...(cache.warms === undefined ? {} : { warms: cache.warms, cost: cache.cost ?? 0, saved: cache.saved ?? 0 }),
-						},
-					}),
+			...promptCache(cache, cacheModel(agent?.model ?? this.#host.defaultModel), this.#host.cache.isWarming(conversation.id)),
 		};
 	}
 
@@ -184,6 +175,24 @@ export class Dialogs {
 }
 
 /** An assistant message with text: what a reader counts as a message, unlike tool-call steps. */
+/**
+ * A Dialog's prompt cache: the entry while it is in the cache of the conversation's model, the next request's (the
+ * last one may have gone to another model, or the model changed since), and the refresh counters, which are the
+ * conversation's whatever its model.
+ */
+export function promptCache(cache: CacheState | undefined, model: string, warming: boolean): { cache?: Dialog["cache"] } {
+	if (cache === undefined) return {};
+	const current = cache.model === model && cache.ttl !== undefined && cache.at !== undefined;
+	const counters = cache.warms !== undefined && cache.warms > 0;
+	if (!current && !counters) return {};
+	return {
+		cache: {
+			...(current ? { ttl: cache.ttl!, at: cache.at!, ...(warming ? { warming: true as const } : {}) } : {}),
+			...(counters ? { warms: cache.warms!, cost: cache.cost ?? 0, saved: cache.saved ?? 0 } : {}),
+		},
+	};
+}
+
 function isAnswer(entry: EntryRecord): boolean {
 	const message = entry.model?.[0];
 	return message?.role === "assistant" && message.content.some((part) => part.type === "text" && part.text.trim() !== "");

@@ -48,8 +48,15 @@ const IDLE_CONTINUATION = 0.15;
 export type CacheWarmingMode = "off" | "streaming" | "idle";
 export const CACHE_WARMING_MODES: readonly CacheWarmingMode[] = ["off", "streaming", "idle"];
 
-/** What a conversation's prompt cache did; the counters are its whole life. */
+/**
+ * What a conversation's prompt cache did. The entry (`model`, `ttl`, `at`) is the one its last request to a model with a
+ * declared cache lifetime left; it is only the conversation's while that is still its model, since providers keep
+ * caches per model, and it goes when compaction or a reset gives the next request another prompt. The counters are
+ * the conversation's whole life.
+ */
 export type CacheState = {
+	/** The model whose cache the entry is in, as `provider/id`. */
+	model?: string;
 	/** How long the model keeps a cache entry, in milliseconds. */
 	ttl?: number;
 	/** When the entry was last written or read: the start of that request. It expires `ttl` after. */
@@ -68,6 +75,11 @@ export const CacheDoc = defineDoc<CacheState>({
 	fork: "initial",
 	initial: () => ({}),
 });
+
+/** A model as `tau.cache` names it. */
+export function cacheModel(model: { provider: string; id: string } | { provider: string; modelId: string }): string {
+	return `${model.provider}/${"id" in model ? model.id : model.modelId}`;
+}
 
 /** One refresh, for the usage ledger. */
 export type WarmRecord = { conversationId: ConversationId; time: number; model: string; usage: Usage };
@@ -129,6 +141,8 @@ type Entry = {
 	at: number;
 	/** The start of the last real request that read or wrote it. */
 	real: number;
+	/** The model whose cache it is in (`cacheModel`). */
+	model: string;
 	ttl: number;
 	promptTokens: number;
 	/** Refreshes since that request. */
@@ -199,8 +213,16 @@ export class CacheWarmer {
 					const live = change.value as { run?: unknown } | null;
 					if (live?.run === undefined) void this.#settled(change.conversationId);
 				} else if (change.type === "entry" && (change.value.kind === "pi.compaction" || change.value.kind === "pi.reset")) {
-					// The next request starts with another prompt.
-					this.#stop(change.value.conversationId);
+					// The next request starts with another prompt: the entry is not what it will read.
+					const id = change.value.conversationId;
+					this.#stop(id);
+					this.#entries.delete(id);
+					// After the commit: listeners must not commit.
+					setTimeout(() => this.#write(id, (state) => {
+						delete state.model;
+						delete state.ttl;
+						delete state.at;
+					}), 0);
 				}
 			}
 		});
@@ -354,9 +376,13 @@ export class CacheWarmer {
 					entry.at = now;
 					entry.warms += 1;
 				}
+				const model = cacheModel(run.model);
 				this.#write(id, (state) => {
-					state.ttl = run.ttl;
-					if (usage.cacheRead > 0) state.at = Math.max(state.at ?? 0, now);
+					if (usage.cacheRead > 0) {
+						state.at = state.model === model ? Math.max(state.at ?? 0, now) : now;
+						state.model = model;
+						state.ttl = run.ttl;
+					}
 					state.warms = (state.warms ?? 0) + 1;
 					state.cost = (state.cost ?? 0) + usage.cost.total;
 				});
@@ -374,14 +400,18 @@ export class CacheWarmer {
 		if (message.stopReason === "error" || message.stopReason === "aborted") return;
 		const usage = message.usage;
 		if (usage.cacheRead + usage.cacheWrite === 0) return;
+		const name = cacheModel(model);
 		const previous = this.#entries.get(id);
 		// What it read from an entry only refreshes kept alive would otherwise have been written again.
-		const bridged = previous !== undefined && previous.warms > 0 && startedAt - previous.real > previous.ttl && startedAt - previous.at <= previous.ttl;
+		const bridged =
+			previous !== undefined && previous.model === name && previous.warms > 0 && startedAt - previous.real > previous.ttl && startedAt - previous.at <= previous.ttl;
 		const saved = bridged && usage.cacheRead > 0 ? Math.max(0, price(model, { cacheWrite: usage.cacheRead }) - price(model, { cacheRead: usage.cacheRead })) : 0;
-		this.#entries.set(id, { at: startedAt, real: startedAt, ttl, promptTokens: usage.input + usage.cacheRead + usage.cacheWrite, warms: 0 });
+		this.#entries.set(id, { at: startedAt, real: startedAt, model: name, ttl, promptTokens: usage.input + usage.cacheRead + usage.cacheWrite, warms: 0 });
 		this.#write(id, (state) => {
+			// Another model's entry is another cache: this one starts its own.
+			state.at = state.model === name ? Math.max(state.at ?? 0, startedAt) : startedAt;
+			state.model = name;
 			state.ttl = ttl;
-			state.at = Math.max(state.at ?? 0, startedAt);
 			if (saved > 0) state.saved = (state.saved ?? 0) + saved;
 		});
 	}

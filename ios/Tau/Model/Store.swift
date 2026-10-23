@@ -205,7 +205,7 @@ struct ConversationUsage: Equatable {
     /// first response of a context.
     var contextTokens: Int?
     var contextWindow: Int?
-    /// Its prompt cache, once a request wrote one; nil for models that declare no cache lifetime.
+    /// Its prompt cache and the refreshes that kept it, once there is either.
     var cache: PromptCache? = nil
 
     var total: TokenUsage {
@@ -234,22 +234,26 @@ struct ConversationUsage: Equatable {
 /// last request a few minutes, and the next request that starts with it pays a tenth for it. While a run works the
 /// server refreshes it before it expires; `warming` while it does.
 struct PromptCache: Equatable {
-    /// When the last request or refresh wrote or read it.
-    var at: Date
-    /// How long the provider keeps it after that.
-    var ttl: TimeInterval
+    /// When the last request or refresh wrote or read it, and how long the provider keeps it after that: only while
+    /// it is in the cache of the conversation's model, which the next request reads. Nil for a model that declares no
+    /// cache lifetime, after the model changed, or after compaction or a reset.
+    var at: Date?
+    var ttl: TimeInterval?
     var warming: Bool
     /// Refreshes over the conversation's life, what they cost, and what the requests they kept it for saved.
     var warms: Int
     var cost: Double
     var saved: Double
 
-    var expiresAt: Date {
-        return self.at.addingTimeInterval(self.ttl)
+    var expiresAt: Date? {
+        guard let at = self.at, let ttl = self.ttl else {
+            return nil
+        }
+        return at.addingTimeInterval(ttl)
     }
 
     func isWarm(now: Date = Date()) -> Bool {
-        return now < self.expiresAt
+        return self.expiresAt.map { now < $0 } ?? false
     }
 }
 

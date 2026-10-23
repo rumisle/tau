@@ -490,8 +490,10 @@ final class ServerStore: ConversationStore, TauServer {
             return nil
         }
         let agent = raw.object("agent") ?? [:]
-        if let cache = raw.object("cache"), let at = cache.double("at"), let ttl = cache.double("ttl") {
-            self.promptCaches[id] = PromptCache(at: Date(timeIntervalSince1970: at / 1000.0), ttl: ttl / 1000.0, warming: cache.bool("warming") ?? false, warms: cache.int("warms") ?? 0, cost: cache.double("cost") ?? 0.0, saved: cache.double("saved") ?? 0.0)
+        if let cache = raw.object("cache") {
+            // The entry comes only while it is the conversation's model's; the refresh counters always.
+            let entry = cache.double("at").flatMap { at in cache.double("ttl").map { (at: at, ttl: $0) } }
+            self.promptCaches[id] = PromptCache(at: entry.map { Date(timeIntervalSince1970: $0.at / 1000.0) }, ttl: entry.map { $0.ttl / 1000.0 }, warming: cache.bool("warming") ?? false, warms: cache.int("warms") ?? 0, cost: cache.double("cost") ?? 0.0, saved: cache.double("saved") ?? 0.0)
         } else {
             self.promptCaches[id] = nil
         }

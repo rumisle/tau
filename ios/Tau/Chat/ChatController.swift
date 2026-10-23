@@ -953,12 +953,16 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
         row("Context", contextDescription(usage))
         row("Cost", formatCost(usage.cost))
-        if let cache = usage.cache {
+        if let cache = usage.cache, cache.expiresAt != nil || cache.warms > 0 {
             items.append(.separator)
-            items.append(.custom(TickingContextItem({
-                let current = store.usage(id).cache ?? cache
-                return ContextMenuActionItem(text: "Prompt Cache", textLayout: .secondLineWithAttributedValue(promptCacheStatus(current, accent: accent)), icon: { _ in nil }, action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)
-            }), false))
+            // Only while it is the cache of the chat's model: another model, or none declaring a lifetime, has nothing
+            // to tell here.
+            if let expiresAt = cache.expiresAt {
+                items.append(.custom(TickingContextItem({
+                    let current = store.usage(id).cache?.expiresAt ?? expiresAt
+                    return ContextMenuActionItem(text: "Prompt Cache", textLayout: .secondLineWithAttributedValue(promptCacheStatus(expiresAt: current, accent: accent)), icon: { _ in nil }, action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)
+                }), false))
+            }
             if cache.warms > 0 {
                 var kept = "\(cache.warms)× · \(formatCost(cache.cost))"
                 if cache.saved > 0.0 {
@@ -1605,8 +1609,8 @@ private func usageSummary(_ usage: ConversationUsage, accent: UIColor) -> NSAttr
 }
 
 /// "Warm · 4:12 left" in the accent color while it lasts, then how long ago it expired.
-private func promptCacheStatus(_ cache: PromptCache, accent: UIColor, now: Date = Date()) -> NSAttributedString {
-    let left = cache.expiresAt.timeIntervalSince(now)
+private func promptCacheStatus(expiresAt: Date, accent: UIColor, now: Date = Date()) -> NSAttributedString {
+    let left = expiresAt.timeIntervalSince(now)
     if left > 0.0 {
         let seconds = Int(left.rounded(.up))
         return NSAttributedString(string: String(format: "Warm · %d:%02d left", seconds / 60, seconds % 60), attributes: [.foregroundColor: accent])

@@ -17,6 +17,8 @@ import {
 import { FOLLOW_UP_OPENING } from "./compaction.ts";
 
 export const DEV_MODEL = { provider: "dev", modelId: "echo" } as const;
+/** With `--dev-cache-ttl`, the dev model's twin without a declared cache lifetime. */
+export const DEV_UNCACHED_MODEL_ID = "echo-uncached";
 
 /** Errors made so far for each `!overloaded` message. */
 const failures = new Map<string, number>();
@@ -27,7 +29,11 @@ const CACHED_COST = { input: 60, output: 300, cacheRead: 6, cacheWrite: 75 };
 export function devProvider(options: { tokensPerSecond?: number; cacheTtl?: number } = {}): { provider: Provider } & Omit<FauxProviderHandle, "provider"> {
 	const faux = fauxProvider({
 		provider: DEV_MODEL.provider,
-		models: [{ id: DEV_MODEL.modelId, name: "Dev echo", reasoning: true, contextWindow: 200_000, maxTokens: 8_192, ...(options.cacheTtl === undefined ? {} : { cost: CACHED_COST }) }],
+		models: [
+			{ id: DEV_MODEL.modelId, name: "Dev echo", reasoning: true, contextWindow: 200_000, maxTokens: 8_192, ...(options.cacheTtl === undefined ? {} : { cost: CACHED_COST }) },
+			// With a cache lifetime, a second model that declares none, as pi-ai's models other than Anthropic's.
+			...(options.cacheTtl === undefined ? [] : [{ id: DEV_UNCACHED_MODEL_ID, name: "Dev echo, no cache lifetime", reasoning: true, contextWindow: 200_000, maxTokens: 8_192, cost: CACHED_COST }]),
+		],
 		tokensPerSecond: options.tokensPerSecond ?? 80,
 	});
 	// Faux responses are consumed one per request; this one queues itself again so the model never runs dry.

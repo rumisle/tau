@@ -149,12 +149,13 @@ type Dialog = {
   markedUnread?: true;                // marked unread by hand
   archived?: true;                    // in Archived Chats, out of the main list
   pinned?: number;                    // pinned to the top of its list, higher first (when it was pinned, in ms)
-  cache?: PromptCache;                // its prompt cache, once a request wrote one (docs/cache.md)
+  cache?: PromptCache;                // its prompt cache and its refreshes, once there is either (docs/cache.md)
 };
 type PromptCache = {
-  ttl: number;                        // ms the provider keeps it
-  at: number;                         // epoch ms it was last written or read; it expires at `at + ttl`
-  warming?: true;                     // a run works and refreshes keep it
+  // Only while the entry is in the cache of the conversation's model, the one the next request reads:
+  ttl?: number;                       // ms the provider keeps it
+  at?: number;                        // epoch ms it was last written or read; it expires at `at + ttl`
+  warming?: true;                     // refreshes keep it
   warms?: number; cost?: number; saved?: number; // refreshes over the conversation's life, their cost, what they saved
 };
 type EntrySummary = { id: number; kind: string; role?: string; text: string; timestamp?: number };

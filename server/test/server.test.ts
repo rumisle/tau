@@ -290,6 +290,57 @@ describe("tau server", () => {
 		}
 	});
 
+	test("shows a prompt cache only while it is the one of the conversation's model, and not after a reset", async () => {
+		const warm = await openHost({ devTokensPerSecond: 2_000, devCacheTtl: 30, cwd: tmpdir() });
+		const warmServer = await serve(warm);
+		try {
+			const client = await TauClient.connect(warmServer.url);
+			type Cache = { ttl?: number; at?: number; warming?: true; warms?: number };
+			let latest: { cache?: Cache } | undefined;
+			const { dialog } = await client.request("conversation.create", {});
+			const id = dialog.conversation.id;
+			// Read through a function: the assertions would narrow the variable.
+			const current = (): Cache | undefined => latest?.cache;
+			client.on((push: Push) => {
+				if (push.event === "dialog" && (push.dialog as { conversation: { id: number } }).conversation.id === id) latest = push.dialog as typeof latest;
+			});
+			await client.request("dialogs.subscribe");
+			const replica = new ConversationReplica(id);
+			await replica.sync(client);
+			const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+			const configure = async (modelId: string) => {
+				await client.request("conversation.configure", { conversationId: id, agent: { model: { provider: "dev", modelId } } });
+				await settle();
+			};
+			await chat(client, replica, "hello", "c1");
+			await settle();
+			const first = current();
+			assert.equal(first?.ttl, 30_000);
+			assert.ok(first?.at !== undefined);
+			// Another model has another cache: the next request would not read this one.
+			await configure("echo-uncached");
+			assert.equal(current(), undefined, "not the new model's cache");
+			await chat(client, replica, "and now?", "c2");
+			await settle();
+			assert.equal(current(), undefined, "a model without a declared lifetime shows none, and leaves no stale one");
+			// Back to the first model within its lifetime: its cache is the conversation's again.
+			await configure("echo");
+			assert.deepEqual(current(), { ttl: 30_000, at: first!.at });
+			await chat(client, replica, "once more", "c3");
+			await settle();
+			assert.ok((current()?.at ?? 0) > first!.at!, "the new request read or wrote it");
+			// A reset gives the next request another prompt.
+			await client.request("conversation.reset", { conversationId: id });
+			await until(replica, () => replica.ordered().some((entry) => entry.kind === "pi.reset") && idle(replica));
+			await settle();
+			assert.equal(current(), undefined, "nothing the next request reads");
+			await client.close();
+		} finally {
+			await warmServer.close();
+			await warm.close();
+		}
+	});
+
 	test("images go by reference to a client that asks, and come with media.get", async () => {
 		// A 3 by 2 PNG.
 		const png = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAEklEQVR4nGP4z8DwHwYZYBwAeKgL9dO6vN0AAAAASUVORK5CYII=";

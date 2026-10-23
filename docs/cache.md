@@ -38,20 +38,24 @@ Settings > a server > Keep Warm sets pi's three modes for the whole server (`set
 
 ## What it records
 
-- **`tau.cache`**, a conversation document: the lifetime, when the entry was last written or read, and over the
-  conversation's life the refreshes, their cost, and what they saved. A refresh saved when the next request read an
-  entry that only refreshes kept: the write it avoided, less the read it paid.
-- **The Dialog's `cache`** (docs/protocol.md): that document, and `warming` while refreshes are scheduled.
+- **`tau.cache`**, a conversation document: the entry its last request to a model with a declared lifetime left (that
+  model, the lifetime, when the entry was last written or read), and over the conversation's life the refreshes, their
+  cost, and what they saved. A refresh saved when the next request read an entry that only refreshes kept: the write it
+  avoided, less the read it paid. Compaction and resets clear the entry: the next request sends another prompt.
+- **The Dialog's `cache`** (docs/protocol.md): the entry only while its model is the conversation's, since providers
+  keep a cache per model and the next request reads that model's; with `warming` while refreshes are scheduled. After
+  a switch to another model, or to one that declares no lifetime (all but direct Anthropic), there is none, and switching
+  back within the lifetime shows it again. The refresh counters come whatever the model.
 - **The usage ledger**: each refresh, as the model `tau/cache-warming`, not as an answer.
 
 ## In the app
 
 Nothing in the chat. The title menu's Usage row says "warm" in the accent color while the cache lasts; its submenu has
-the Prompt Cache's time left, ticking, then how long ago it expired, and Kept Warm: how many refreshes, what they cost
+the Prompt Cache's time left, ticking, then how long ago it expired (only while the chat's model is the cache's), and Kept Warm: how many refreshes, what they cost
 and what they saved. The Cost there includes the refreshes. Settings > Usage shows them as Cache Warming.
 
 ## Trying it
 
 `--dev-cache-ttl <seconds>` gives the dev model a prompt cache of that lifetime, priced at four times Claude Opus so
-that warming its small prompts pays. `SendingUITests.testPromptCache` runs against one on port 7982 with 15 seconds,
+that warming its small prompts pays, and adds `dev/echo-uncached`, the same model without a declared lifetime. `SendingUITests.testPromptCache` runs against one on port 7982 with 15 seconds,
 which `ios/scripts/sending-tests.sh` and `ios/scripts/uitests.py` start; the server test "keeps a working conversation's prompt cache warm" uses 11.
