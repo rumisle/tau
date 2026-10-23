@@ -21,6 +21,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/chat-open.md` | Opening a chat at once: ready without the network, Telegram's spinner, the top of the list preloaded |
 | `docs/media.md` | Images by reference: a photo or a tool's image laid out from its size, fetched when shown |
 | `docs/files.md` | Files: kept beside the database, named to the model by path, sent back with `send_file`, shown as Telegram's documents |
+| `docs/codemode.md` | Code mode: the agent's scripts call the tools, one card with a line per call; what a script sends or starts as display entries |
 | `docs/compaction.md` | Compaction: durable's, started at 90% of the window (at most 700k tokens), with the summary asked for after the conversation's cached context |
 | `docs/skills.md` | Skills: `.agents/skills` in the system prompt, as a section durable updates with a delta |
 | `docs/dictation.md` | Dictation in the composer: Telegram's field with the microphone in it and Send that morphs in; off until a provider is chosen in Settings; Aqua Voice's realtime API with the user's session key |
@@ -73,5 +74,5 @@ remote's and pass them to the tests.
 Model credentials come from pi's `~/.pi/agent/auth.json` (the same logins as the `pi` CLI, safe to share) and the
 usual provider environment variables. The `dev/echo` model is free: it echoes, runs `$ <command>` through bash, starts a subagent for
 `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`, fails as an overloaded provider
-`!overloaded <times> <text>` or for good `!fatal <text>`, streams a long Markdown answer for `!doc <sections>`, reads a file for `!read <path>`, and writes a
+`!overloaded <times> <text>` or for good `!fatal <text>`, streams a long Markdown answer for `!doc <sections>`, reads a file for `!read <path>`, runs a code mode script for `!code <script>` or `!code @<path>`, and writes a
 short summary when asked to compact. `--dev-cache-ttl <seconds>` gives it a prompt cache and prices, to try cache warming.

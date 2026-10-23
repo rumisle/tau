@@ -5,6 +5,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationId, ConversationRecord, Cursor, EntryId, EntryRecord } from "@earendil-works/pi-durable";
 import { attachedFiles, fileIdFromPath, ownText } from "../attachments.ts";
+import { FilesEntry } from "../shown.ts";
 import { type Host, MetaDoc } from "../host.ts";
 import { type IndexEntry, type IndexPart, Kind, type KindName, SearchIndex, type SearchResponse } from "./index.ts";
 import { type UsageReport, UsageLedger, type UsageRow } from "./usage.ts";
@@ -57,8 +58,9 @@ function indexEntry(entry: EntryRecord): IndexEntry {
 	return { conversationId: entry.conversationId, entryId: entry.id, time: timestamp ?? Date.now(), parts: searchParts(entry), ...(files.length === 0 ? {} : { files }) };
 }
 
-/** The kept files an entry names: a user message's attachments, what send_file sent. */
+/** The kept files an entry names: a user message's attachments, what send_file sent (from a script, its entry's). */
 function entryFiles(entry: EntryRecord): string[] {
+	if (FilesEntry.is(entry)) return entry.data.files.map((file) => file.id);
 	const message = entry.model?.[0] as Message | undefined;
 	if (message?.role === "user") return attachedFiles(message.content).flatMap((file) => fileIdFromPath(file.path) ?? []);
 	if (message?.role === "toolResult" && message.toolName === "send_file") {

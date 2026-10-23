@@ -23,6 +23,8 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createCodingTools, type ImageProcessor } from "@earendil-works/pi-durable/tools";
 import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
+import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { CacheWarmer, type CacheWarmingMode } from "./cache.ts";
 import { type CompactionThreshold, compactionOverrides, DEFAULT_COMPACTION_THRESHOLD, FollowUpCompaction } from "./compaction.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
@@ -183,6 +185,10 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	registry.install(createCodingTools({ images }));
 	registry.install(Subagent);
 	registry.install(sendFileExtension(files));
+	// Code mode (docs/codemode.md): the model's scripts call the tools, each script in a QuickJS worker of its own. No
+	// `models.*`: classifiers and image models need providers tau does not set up.
+	const sandbox = new CodemodeSandbox({ memoryLimitBytes: 256 * 1024 * 1024 });
+	registry.install(createCodemodeExtension({ sandbox, models: false }));
 	registry.install(
 		defineExtension({
 			name: "tau",
@@ -299,6 +305,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		close: async () => {
 			cache.close();
 			await harness.close(context);
+			await sandbox.close();
 			files.close();
 		},
 	};

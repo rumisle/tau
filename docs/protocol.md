@@ -359,3 +359,6 @@ Doc changes use Chord's operation format, applied in order. `path` is an array o
   entry, linked by `entry`.
 - `pi.inbox.items` are queued inputs not yet in the transcript.
 - `pi.system` entries change the system prompt and tools; most UIs hide them.
+- `pi.live.nestedTools[i]` is a call a running tool made (a code mode script's), by `parentCallId`; once the script
+  ends its result's `details.calls` lists them. `tau.files` and `tau.subagent` entries are what such a call sent or
+  started, display only (docs/codemode.md).

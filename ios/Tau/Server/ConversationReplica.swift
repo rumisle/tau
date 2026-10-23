@@ -150,6 +150,25 @@ enum TranscriptBuilder {
             // By reference, as the server sends every image (server/src/media.ts).
             return media?.image(conversationId: replica.id, entryId: entryId, index: index, block: block).map { MessageAttachment(id: entryId * 64 + index, kind: .remote($0)) }
         }
+        /// What send_file sent (server/src/send-file.ts), as the chat shows it: photos, and files to open.
+        func sentFiles(_ files: [JSONObject], entryId id: Int) -> [MessageAttachment] {
+            return files.enumerated().compactMap { index, file -> MessageAttachment? in
+                guard let fileId = file.string("id") else {
+                    return nil
+                }
+                var size: CGSize?
+                if let width = file.double("width"), let height = file.double("height"), width > 0.0, height > 0.0 {
+                    size = CGSize(width: width, height: height)
+                }
+                let mimeType = file.string("mimeType") ?? "application/octet-stream"
+                let bytes = file.double("bytes") ?? 0.0
+                // An image the chat can show (a known format, at most 20 MB) as a photo; anything else a file.
+                if let media, ["image/jpeg", "image/png", "image/gif", "image/webp"].contains(mimeType), bytes <= 20.0 * 1024.0 * 1024.0 {
+                    return MessageAttachment(id: id * 64 + index, kind: .remote(media.fileImage(id: fileId, mimeType: mimeType, bytes: Int(bytes), pixelSize: size)))
+                }
+                return MessageAttachment(id: id * 64 + index, kind: .file(FileAttachment(name: file.string("name") ?? "file", size: Int64(bytes), mimeType: mimeType, serverId: fileId, pixelSize: size)))
+            }
+        }
         let items = outbox.items(for: replica.id)
         var rows: [ChatMessage] = []
         var toolRowIndex: [String: Int] = [:]
@@ -319,28 +338,56 @@ enum TranscriptBuilder {
                 }
                 // What send_file sent: shown as photos and files, not as a card (server/src/send-file.ts).
                 if tool.name == "send_file", let files = message.object("details")?.objects("files") {
-                    tool.sentFiles = files.enumerated().compactMap { index, file -> MessageAttachment? in
-                        guard let fileId = file.string("id") else {
-                            return nil
-                        }
-                        var size: CGSize?
-                        if let width = file.double("width"), let height = file.double("height"), width > 0.0, height > 0.0 {
-                            size = CGSize(width: width, height: height)
-                        }
-                        let mimeType = file.string("mimeType") ?? "application/octet-stream"
-                        let bytes = file.double("bytes") ?? 0.0
-                        // An image the chat can show (a known format, at most 20 MB) as a photo; anything else a file.
-                        if let media, ["image/jpeg", "image/png", "image/gif", "image/webp"].contains(mimeType), bytes <= 20.0 * 1024.0 * 1024.0 {
-                            return MessageAttachment(id: id * 64 + index, kind: .remote(media.fileImage(id: fileId, mimeType: mimeType, bytes: Int(bytes), pixelSize: size)))
-                        }
-                        return MessageAttachment(id: id * 64 + index, kind: .file(FileAttachment(name: file.string("name") ?? "file", size: Int64(bytes), mimeType: mimeType, serverId: fileId, pixelSize: size)))
-                    }
+                    tool.sentFiles = sentFiles(files, entryId: id)
+                }
+                // A script: its calls, and its output without the header the model reads first.
+                if case let .code(script, _) = tool.detail {
+                    tool.nested = message.object("details")?.objects("calls").map(ToolSummary.nestedCall) ?? []
+                    let (output, error) = ToolSummary.scriptOutput(tool.output ?? "")
+                    tool.output = output
+                    tool.detail = .code(script: script, error: tool.status == .failed ? error : nil)
                 }
                 // The edit tool's result carries the diff with line numbers.
                 if case let .edit(path, _) = tool.detail, let diff = message.object("details")?.string("diff"), !diff.isEmpty {
                     tool.detail = .edit(path: path, diff: diff)
                 }
                 rows[index].tool = tool
+            case "tau.files":
+                // What send_file sent from a script (server/src/shown.ts): as the model's own call shows it.
+                let data = entry.object("data") ?? [:]
+                var tool = ToolCallInfo(callId: data.string("callId") ?? "files-\(id)", name: "send_file", summary: "", status: .done, output: nil, childConversationId: nil)
+                tool.sentFiles = sentFiles(data.objects("files"), entryId: id)
+                rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "send_file"), text: "", date: rows.last?.date ?? Date(), tool: tool, entryId: id))
+            case "tau.subagent":
+                // A subagent a script started, sent to, or stopped: the card the model's own call has.
+                let data = entry.object("data") ?? [:]
+                guard let name = data.string("name") else {
+                    continue
+                }
+                let kind: SubagentCall.Kind
+                switch data.string("action") {
+                case "spawn":
+                    kind = .spawn
+                case "send":
+                    kind = .send
+                default:
+                    kind = .stop
+                }
+                let at = data.double("at").map { Date(timeIntervalSince1970: $0 / 1000.0) } ?? rows.last?.date ?? Date()
+                var call = SubagentCall(kind: kind, name: name, text: data.string("message") ?? "", model: data.string("model"), thinking: data.string("thinking"), fork: data.bool("fork") ?? false)
+                call.startedAt = at
+                var arguments: JSONObject = ["action": data.string("action") ?? "stop", "name": name]
+                arguments["message"] = data.string("message")
+                var tool = ToolCallInfo(callId: data.string("callId") ?? "subagent-\(id)", name: "subagent", summary: ToolSummary.summary(name: "subagent", arguments: arguments), status: .done, output: nil, childConversationId: data.int("conversationId"))
+                tool.startedAt = at
+                tool.subagent = call
+                if kind == .spawn {
+                    subagentTasks[name] = call.text
+                }
+                if kind == .spawn || kind == .send {
+                    subagentCallRows[name] = rows.count
+                }
+                rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "subagent"), text: "", date: at, tool: tool, entryId: id))
             case "pi.compaction":
                 // The summary the model now reads instead of what came before (durable's SUMMARY_PREFIX/SUFFIX).
                 var summary = self.text(of: message["content"])
@@ -388,6 +435,24 @@ enum TranscriptBuilder {
             if let child = slot.object("details")?.int("conversationId") {
                 tool.childConversationId = child
             }
+            rows[index].tool = tool
+        }
+        // A running script's calls, until its result lists them.
+        for slot in live.objects("nestedTools") {
+            guard let parent = slot.string("parentCallId"), let index = toolRowIndex[parent], var tool = rows[index].tool, tool.status != .done, tool.status != .failed else {
+                continue
+            }
+            let summary = slot.object("summary")
+            var call = ToolSummary.nestedCall(name: slot.string("name") ?? "tool", arguments: slot.object("arguments") ?? [:])
+            if let summary {
+                call.status = (summary.bool("isError") ?? false) ? .failed : .done
+                call.duration = summary.double("durationMs").map { $0 / 1000.0 }
+                call.error = summary.string("error")
+            } else {
+                call.status = .running
+                call.output = slot.string("output")
+            }
+            tool.nested.append(call)
             rows[index].tool = tool
         }
 
@@ -509,9 +574,98 @@ enum ToolSummary {
                 }
             }
             return .edit(path: path, diff: lines.joined(separator: "\n"))
+        case "codemode":
+            return .code(script: arguments.string("code") ?? "", error: nil)
         default:
             return .none
         }
+    }
+
+    /// A script's call as its result lists it: `args` is its arguments' JSON, cut at 200 characters.
+    static func nestedCall(_ call: JSONObject) -> NestedToolCall {
+        var nested = self.nestedCall(name: call.string("name") ?? "tool", arguments: self.arguments(call.string("args") ?? ""))
+        switch call.string("status") {
+        case "ok":
+            nested.status = .done
+        case "error":
+            nested.status = .failed
+        case "cancelled":
+            nested.status = .cancelled
+        default:
+            nested.status = .running
+        }
+        nested.duration = call.double("durationMs").map { $0 / 1000.0 }
+        nested.error = call.string("error")
+        return nested
+    }
+
+    static func nestedCall(name: String, arguments: JSONObject) -> NestedToolCall {
+        var summary = self.summary(name: name, arguments: arguments)
+        if ["read", "write", "edit"].contains(name) {
+            // As a card's title shortens a path.
+            let components = summary.split(separator: "/", omittingEmptySubsequences: false)
+            summary = components.count <= 2 ? summary : components.suffix(2).joined(separator: "/")
+        }
+        return NestedToolCall(name: name, summary: summary, status: .running)
+    }
+
+    /// Arguments from their JSON, also when cut: then the first string, as far as it goes, which is the command or the
+    /// path of the tools that matter here.
+    static func arguments(_ json: String) -> JSONObject {
+        if let data = json.data(using: .utf8), let object = (try? JSONSerialization.jsonObject(with: data)) as? JSONObject {
+            return object
+        }
+        guard let match = json.range(of: #"^\{"([A-Za-z_]+)":""#, options: .regularExpression) else {
+            return [:]
+        }
+        let key = String(json[match].dropFirst(2).dropLast(3))
+        var value = ""
+        var escaped = false
+        for character in json[match.upperBound...] {
+            if escaped {
+                switch character {
+                case "n":
+                    value.append("\n")
+                case "t":
+                    value.append("\t")
+                default:
+                    value.append(character)
+                }
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "\"" {
+                break
+            } else {
+                value.append(character)
+            }
+        }
+        if value.hasSuffix("...") {
+            value = String(value.dropLast(3)) + "…"
+        }
+        return [key: value]
+    }
+
+    /// A script's result as the card shows it: the output, without the header the model reads ("Script completed",
+    /// its wall time, "Output:"), the markers between its texts (a blank line instead) or the console block's tags;
+    /// and on failure the error, without the list of calls made, which the card has (durable's codemode/output.ts).
+    static func scriptOutput(_ text: String) -> (output: String, error: String?) {
+        var output = text
+        if let header = output.range(of: #"^Script (completed|failed)\nWall time [0-9.]+ seconds\nOutput:\n\n?"#, options: .regularExpression) {
+            output.removeSubrange(header)
+        }
+        var error: String?
+        if let marker = output.range(of: "Script error:\n", options: .backwards) {
+            var rest = String(output[marker.upperBound...])
+            if let calls = rest.range(of: #"\n\n(Tool calls made before the failure|No tool calls were made)"#, options: [.regularExpression, .backwards]) {
+                rest = String(rest[..<calls.lowerBound])
+            }
+            error = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+            output = String(output[..<marker.lowerBound])
+        }
+        output = output.replacingOccurrences(of: #"(?m)^==> text [0-9]+/[0-9]+ <==\n"#, with: "\n", options: .regularExpression)
+        output = output.replacingOccurrences(of: "<console_output>\n", with: "\n").replacingOccurrences(of: "\n</console_output>", with: "")
+        return (output.trimmingCharacters(in: .whitespacesAndNewlines), error)
     }
 
     /// A background subagent's call, from its arguments; nil for status, which names none.
@@ -553,6 +707,10 @@ enum ToolSummary {
             return result
         case "write", "edit":
             return path()
+        case "codemode":
+            return ""
+        case "send_file":
+            return ((arguments["paths"] as? [Any]) ?? []).compactMap { ($0 as? String)?.split(separator: "/").last.map(String.init) }.joined(separator: ", ")
         case "subagent":
             // The background tool names its subagent; the earlier one took a task.
             if let name = arguments.string("name") {

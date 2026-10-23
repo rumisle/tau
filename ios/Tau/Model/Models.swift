@@ -147,6 +147,29 @@ struct ToolCallInfo: Equatable {
     var images: [MessageAttachment] = []
     /// What `send_file` sent the user (server/src/send-file.ts): shown in the chat as photos and files, with no card.
     var sentFiles: [MessageAttachment] = []
+    /// A code mode script's calls, in the order it made them (docs/codemode.md): lines of its card.
+    var nested: [NestedToolCall] = []
+}
+
+/// A call a code mode script made. Its result went to the script, not the transcript: the card keeps a line of it.
+struct NestedToolCall: Equatable {
+    enum Status: Equatable {
+        case running
+        case done
+        case failed
+        /// Still running when the script ended.
+        case cancelled
+    }
+
+    var name: String
+    /// What it works on, as a card's title says it: the command, the file.
+    var summary: String
+    var status: Status
+    var duration: TimeInterval?
+    /// A failed call's error, cut.
+    var error: String?
+    /// While it runs, the end of its output so far.
+    var output: String?
 }
 
 /// One step of a background subagent, as its card shows it: the subagent, as the quote Telegram puts over a reply, and
@@ -184,6 +207,8 @@ enum ToolDetail: Equatable {
     case write(path: String, content: String)
     /// The edit's diff: the result's numbered diff once it ran, the replacements before.
     case edit(path: String, diff: String)
+    /// A code mode script, and once it failed, its error (the output it wrote before is the call's output).
+    case code(script: String, error: String?)
 }
 
 /// A file of a message, the user's or what the agent sent (docs/files.md): on the server once it has its ID, fetched

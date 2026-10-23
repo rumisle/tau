@@ -7,6 +7,7 @@ import type { Context } from "@earendil-works/chord";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, type Extension } from "@earendil-works/pi-durable";
 import { callFileId, FileError, type FileStore, formatBytes, type StoredFile } from "./files.ts";
+import { appendShownOnce, FilesEntry, isNested } from "./shown.ts";
 
 const MAX_FILES = 10;
 
@@ -39,6 +40,13 @@ export function sendFileExtension(store: FileStore): Extension {
 				} catch (error) {
 					problems.push(`${given}: ${error instanceof FileError || error instanceof Error ? error.message : String(error)}`);
 				}
+			}
+			// From a script: the transcript gets no result of it, so the files go in an entry of their own (src/shown.ts).
+			if (sent.length > 0 && isNested(api.callId)) {
+				await api.commit(
+					(tx) => appendShownOnce(tx, api.taskId, () => tx.appendEntry(FilesEntry, api.conversationId, { data: { callId: api.callId, files: sent } })),
+					context,
+				);
 			}
 			const lines: string[] = [];
 			if (sent.length > 0) lines.push(`Sent to the user: ${sent.map((file) => `${file.name} (${formatBytes(file.bytes)})`).join(", ")}.`);

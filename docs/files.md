@@ -66,7 +66,8 @@ empty. The message's first text block names each file by path, as `pi @file` doe
 Each is copied into the store as it is now (a clone where the file system makes one), so later changes do not reach
 the user; a directory is refused. A copy's ID comes from the call, so a call run again after a restart finds its copy.
 The result names what was sent, and its `details.files` carry each one's `{ id, name, mimeType, bytes, width?,
-height? }`.
+height? }`. Called from a code mode script, whose calls' results stay out of the transcript, it also writes them in a
+`tau.files` entry (docs/codemode.md).
 
 ## In the app
 

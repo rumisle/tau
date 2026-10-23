@@ -1541,7 +1541,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let status = tool?.status ?? .done
                 let isActive = status == .preparing || status == .pending || status == .running
                 let isDark = item.theme.presentationTheme.overallDarkAppearance
-                let (titleText, summaryText, body) = toolCardContent(name: name, tool: tool, fallbackText: message.text, isExpanded: item.isExpanded, isActive: isActive, isDark: isDark, textColor: theme.toolCardTextColor, titleColor: theme.toolCardTitleColor, accentColor: item.theme.accentColor)
+                let (titleText, summaryText, body) = toolCardContent(name: name, tool: tool, fallbackText: message.text, isExpanded: item.isExpanded, isActive: isActive, isDark: isDark, textColor: theme.toolCardTextColor, titleColor: theme.toolCardTitleColor, accentColor: item.theme.accentColor, maxWidth: maxWidth)
                 // Title: the tool, then what it works on, as a terminal agent prints a call.
                 let title = NSMutableAttributedString(string: titleText, font: toolTitleFont, textColor: status == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTitleColor)
                 if !summaryText.isEmpty {
@@ -1566,7 +1566,12 @@ final class ChatMessageItemNode: ListViewItemNode {
                 if body.length > 0, body.string.hasSuffix("\n") {
                     body.deleteCharacters(in: NSRange(location: body.length - 1, length: 1))
                 }
-                let (textLayout, textApply) = makeToolTextLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? 120 : 10, truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), lineSpacing: 0.1))
+                // A script's card has its script, its calls and its output: more lines, each section already cut.
+                var isCode = false
+                if case .code = tool?.detail {
+                    isCode = true
+                }
+                let (textLayout, textApply) = makeToolTextLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? (isCode ? 400 : 120) : (isCode ? 16 : 10), truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), lineSpacing: 0.1))
 
                 let cardInsets = UIEdgeInsets(top: 9.0, left: 12.0, bottom: 10.0, right: 12.0)
                 let bodyHeight = body.length > 0 ? textLayout.size.height + 3.0 : 0.0
@@ -1599,6 +1604,10 @@ final class ChatMessageItemNode: ListViewItemNode {
                     for node in self.fileNodes {
                         node.isHidden = true
                     }
+                    // Read as one: the title, then what the card shows; with images, which are each their own.
+                    self.isAccessibilityElement = toolPhotos.isEmpty
+                    self.accessibilityIdentifier = "toolCard"
+                    self.accessibilityLabel = [title.string, body.string].filter { !$0.isEmpty }.joined(separator: "\n")
 
                     self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
                     let cardFrame = CGRect(origin: CGPoint(x: params.leftInset + freeTextInset - 4.0 + leftShift, y: 0.0), size: cardSize)
@@ -2374,13 +2383,16 @@ private func clippedLines(_ text: String, count: Int, fromStart: Bool) -> String
 
 /// What a tool card says: the tool, what it works on, and a body made for the tool: a command with the end of its
 /// output, a file's first lines highlighted by its language, a diff in red and green.
-private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, isExpanded: Bool, isActive: Bool, isDark: Bool, textColor: UIColor, titleColor: UIColor, accentColor: UIColor) -> (String, String, NSMutableAttributedString) {
+private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, isExpanded: Bool, isActive: Bool, isDark: Bool, textColor: UIColor, titleColor: UIColor, accentColor: UIColor, maxWidth: CGFloat) -> (String, String, NSMutableAttributedString) {
     let body = NSMutableAttributedString()
     var output = (tool?.output ?? fallbackText).trimmingCharacters(in: .whitespacesAndNewlines)
     let codeFont = Font.monospace(12.0)
     // pi wraps a tool's error in <harness> tags for the model; the card shows the message.
     if output.hasPrefix("<harness>") {
         output = output.replacingOccurrences(of: "<harness>", with: "").replacingOccurrences(of: "</harness>", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    if case let .code(script, error) = tool?.detail {
+        return ("Code", codeCallCount(tool?.nested.count ?? 0), codeCardBody(script: script, calls: tool?.nested ?? [], output: output, error: error, isExpanded: isExpanded, isActive: isActive, errorColor: isDark ? diffRemovedDark : diffRemovedLight, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
     }
     if tool?.status == .failed, !output.isEmpty {
         let errorColor = isDark ? diffRemovedDark : diffRemovedLight
@@ -2448,6 +2460,9 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
             body.append(NSAttributedString(string: "\n" + output, font: codeFont, textColor: removed))
         }
         return ("Edit", shortPath(path, isExpanded: isExpanded) + "  +\(addedCount) −\(removedCount)", body)
+    case .code:
+        // Made above.
+        return (name, "", body)
     case .none:
         if tool?.childConversationId != nil {
             // An earlier, foreground subagent: the spinner says it works; once done, a link to its transcript.
@@ -2462,6 +2477,151 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
         }
         return (name == "subagent" ? "Subagent" : name, tool?.summary ?? "", body)
     }
+}
+
+/// "3 calls", as the title of a script's card counts them; nothing before the first.
+private func codeCallCount(_ count: Int) -> String {
+    return count == 0 ? "" : (count == 1 ? "1 call" : "\(count) calls")
+}
+
+/// A tool's name as its own card's title says it.
+private func toolTitle(_ name: String) -> String {
+    switch name {
+    case "bash":
+        return "Bash"
+    case "read":
+        return "Read"
+    case "write":
+        return "Write"
+    case "edit":
+        return "Edit"
+    case "send_file":
+        return "Send"
+    case "subagent":
+        return "Subagent"
+    default:
+        return name
+    }
+}
+
+/// A code mode script's card (docs/codemode.md): the script, highlighted; a line for each call it made, as the call's
+/// own card would title it, the one running bright and those done quieter; then what it wrote, or its error. Folded,
+/// the script's first lines, its last three calls (the one at work among them), and the start of its output.
+private func codeCardBody(script: String, calls: [NestedToolCall], output: String, error: String?, isExpanded: Bool, isActive: Bool, errorColor: UIColor, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat) -> NSMutableAttributedString {
+    let body = NSMutableAttributedString()
+    let codeFont = Font.monospace(12.0)
+    let nameFont = Font.semibold(12.0)
+    let spacer = NSAttributedString(string: "\n", font: Font.regular(6.0), textColor: textColor)
+    func section() {
+        if body.length > 0 {
+            body.append(NSAttributedString(string: "\n"))
+            body.append(spacer)
+        }
+    }
+    // An options line says how long it may run and how much it may write: nothing to read here.
+    var lines = script.components(separatedBy: "\n")
+    if let first = lines.first, first.hasPrefix("// @options:") {
+        lines.removeFirst()
+    }
+    let source = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    if !source.isEmpty {
+        body.append(MarkdownText.code(clippedLines(source, count: isExpanded ? 80 : 3, fromStart: true), language: "javascript", font: codeFont, textColor: titleColor))
+    }
+
+    let shown = isExpanded ? calls.suffix(200) : calls.suffix(3)
+    if !shown.isEmpty {
+        section()
+        if shown.count < calls.count {
+            let earlier = calls.count - shown.count
+            body.append(NSAttributedString(string: earlier == 1 ? "1 earlier call\n" : "\(earlier) earlier calls\n", font: Font.regular(12.0), textColor: textColor))
+        }
+        for (index, call) in shown.enumerated() {
+            if index > 0 {
+                body.append(NSAttributedString(string: "\n"))
+            }
+            let nameColor: UIColor
+            switch call.status {
+            case .running:
+                nameColor = titleColor
+            case .failed:
+                nameColor = errorColor
+            case .done, .cancelled:
+                nameColor = textColor
+            }
+            var suffix = ""
+            if call.status == .cancelled {
+                suffix = "  cancelled"
+            } else if let duration = call.duration, duration >= 1.0 {
+                suffix = "  " + formatDuration(duration)
+            }
+            body.append(fittedLine(name: toolTitle(call.name), nameFont: nameFont, nameColor: nameColor, detail: call.summary.replacingOccurrences(of: "\n", with: " "), detailFont: codeFont, detailColor: call.status == .running ? titleColor : textColor, suffix: suffix, maxWidth: maxWidth))
+            // At work: the last line it wrote, as a command's card ends with its output.
+            if call.status == .running, let last = call.output?.components(separatedBy: "\n").last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+                body.append(NSAttributedString(string: "\n" + fittedText(last.trimmingCharacters(in: .whitespaces), font: codeFont, maxWidth: maxWidth), font: codeFont, textColor: textColor))
+            }
+            if call.status == .failed, let error = call.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+                let text = isExpanded ? clippedLines(error, count: 4, fromStart: true) : fittedText(error.replacingOccurrences(of: "\n", with: " "), font: codeFont, maxWidth: maxWidth)
+                body.append(NSAttributedString(string: "\n" + text, font: codeFont, textColor: errorColor))
+            }
+        }
+    }
+
+    if !output.isEmpty {
+        section()
+        body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 80 : 3, fromStart: true), font: codeFont, textColor: textColor))
+    }
+    if let error, !error.isEmpty {
+        section()
+        body.append(NSAttributedString(string: clippedLines(error, count: isExpanded ? 30 : 3, fromStart: true), font: codeFont, textColor: errorColor))
+    }
+    return body
+}
+
+/// One line however long what it says: the detail cut at the end to fit, the name and the suffix kept.
+private func fittedLine(name: String, nameFont: UIFont, nameColor: UIColor, detail: String, detailFont: UIFont, detailColor: UIColor, suffix: String, maxWidth: CGFloat) -> NSAttributedString {
+    func line(_ detail: String) -> NSAttributedString {
+        let line = NSMutableAttributedString(string: name, font: nameFont, textColor: nameColor)
+        if !detail.isEmpty {
+            line.append(NSAttributedString(string: "  " + detail, font: detailFont, textColor: detailColor))
+        }
+        if !suffix.isEmpty {
+            line.append(NSAttributedString(string: suffix, font: detailFont, textColor: detailColor.withAlphaComponent(0.7)))
+        }
+        return line
+    }
+    let whole = line(detail)
+    if whole.size().width <= maxWidth {
+        return whole
+    }
+    var low = 0
+    var high = detail.count
+    while low < high {
+        let middle = (low + high + 1) / 2
+        if line(String(detail.prefix(middle)) + "…").size().width <= maxWidth {
+            low = middle
+        } else {
+            high = middle - 1
+        }
+    }
+    return line(String(detail.prefix(low)) + "…")
+}
+
+/// Text cut at the end to one line.
+private func fittedText(_ text: String, font: UIFont, maxWidth: CGFloat) -> String {
+    if NSAttributedString(string: text, font: font, textColor: .black).size().width <= maxWidth {
+        return text
+    }
+    var low = 0
+    var high = text.count
+    while low < high {
+        let middle = (low + high + 1) / 2
+        if NSAttributedString(string: String(text.prefix(middle)) + "…", font: font, textColor: .black).size().width <= maxWidth {
+            low = middle
+        } else {
+            high = middle - 1
+        }
+    }
+    return String(text.prefix(low)) + "…"
 }
 
 /// The edges of a code block that scrolls sideways fade where there is more of it: the right one until it is scrolled

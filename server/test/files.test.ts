@@ -183,6 +183,7 @@ describe("files", () => {
 		const message = result.model[0]!;
 		assert.equal(message.isError, false);
 		assert.equal(message.details.files.length, 1);
+		assert.ok(!replica.ordered().some((entry) => entry.kind === "tau.files"), "the model's own call says it in its result");
 		const sent = message.details.files[0]!;
 		assert.equal(sent.name, "chart.png");
 		assert.equal(sent.mimeType, "image/png");

@@ -14,6 +14,7 @@
 	"dependencies": {
 		"@earendil-works/chord": "file:../vendor/pi/packages/chord",
 		"@earendil-works/pi-ai": "file:../vendor/pi/packages/ai",
+		"@earendil-works/pi-codemode": "file:../vendor/pi/packages/codemode",
 		"@earendil-works/pi-durable": "file:../vendor/pi/packages/durable",
 		"proper-lockfile": "4.1.2",
 		"ws": "8.21.0",

@@ -14,6 +14,8 @@ import {
 } from "@earendil-works/pi-durable";
 import { CacheDoc, type CacheState, cacheModel } from "./cache.ts";
 import { attachedFiles, ownText } from "./attachments.ts";
+import type { SentFile } from "./send-file.ts";
+import { FilesEntry, SubagentEntry } from "./shown.ts";
 import { type Host, MetaDoc } from "./host.ts";
 import type { Dialog, EntrySummary } from "./protocol.ts";
 
@@ -218,6 +220,15 @@ function previewText(entry: EntryRecord, message: Message | undefined): string {
 			return "New context";
 		case "pi.compaction":
 			return "Context compacted";
+		// What a script did (src/shown.ts), until its result comes.
+		case FilesEntry.kind: {
+			const files = (entry.data as { files: SentFile[] }).files;
+			const images = files.filter((file) => file.mimeType.startsWith("image/")).length;
+			if (images === files.length) return images > 1 ? `${images} Photos` : "Photo";
+			return files.length > 1 ? `${files.length} Files` : files[0]!.name;
+		}
+		case SubagentEntry.kind:
+			return "→ subagent";
 	}
 	if (message === undefined) return typeof entry.data === "string" ? entry.data : entry.kind;
 	switch (message.role) {

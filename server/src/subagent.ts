@@ -22,6 +22,7 @@ import {
 	type Tx,
 } from "@earendil-works/pi-durable";
 import { MetaDoc } from "./host.ts";
+import { isNested, modelCallId, SubagentEntry } from "./shown.ts";
 
 function taskTitle(task: string): string {
 	const line = task.replace(/\s+/g, " ").trim();
@@ -171,6 +172,24 @@ const subagentTool = defineTool({
 		const { action, name, message, followUp, fork } = args;
 		let model: ModelRef | undefined;
 		let thinkingLevel: ModelThinkingLevel | undefined;
+		const nested = isNested(api.callId);
+		/** From a script, what the call did goes in an entry of its own (src/shown.ts), in the commit that does it. */
+		const show = async (tx: Tx, conversationId: ConversationId) => {
+			if (!nested || action === "status" || name === undefined) return;
+			await tx.appendEntry(SubagentEntry, api.conversationId, {
+				data: {
+					callId: api.callId,
+					action,
+					name,
+					...(message === undefined || action === "stop" ? {} : { message }),
+					conversationId,
+					...(model === undefined ? {} : { model: `${model.provider}/${model.modelId}` }),
+					...(thinkingLevel === undefined ? {} : { thinking: thinkingLevel }),
+					...(fork === true ? { fork: true as const } : {}),
+					at: api.now(),
+				},
+			});
+		};
 		const reply = (text: string, conversationId?: ConversationId) => ({
 			output: [{ type: "text" as const, text }],
 			...(conversationId === undefined || name === undefined
@@ -196,6 +215,7 @@ const subagentTool = defineTool({
 
 		if (action === "stop") {
 			await (await api.conversation(agent!.conversationId, callContext))!.abort(callContext);
+			if (nested) await api.commit((tx) => show(tx, agent!.conversationId), callContext);
 			return reply(`Stopped ${name}.`, agent!.conversationId);
 		}
 		if (message === undefined || message.trim() === "") return reply(`${action} needs a message.`);
@@ -218,7 +238,8 @@ const subagentTool = defineTool({
 		const result = await api.commit(async (tx) => {
 			const state = await tx.doc(Subagents, api.conversationId);
 			// Tables are read before the first write.
-			const at = action === "spawn" && fork === true && !Object.hasOwn(state.agents, name) ? await forkPoint(tx, api.conversationId, api.callId) : undefined;
+			// From a script, the call the model made: the script's.
+			const at = action === "spawn" && fork === true && !Object.hasOwn(state.agents, name) ? await forkPoint(tx, api.conversationId, modelCallId(api.callId)) : undefined;
 			// Both tasks belong to this conversation and are background: its Stop and idle waits skip them.
 			const background = { ownership: { kind: "conversation" }, background: true } as const;
 			if (action === "spawn") {
@@ -241,6 +262,7 @@ const subagentTool = defineTool({
 			const conversationId = state.agents[name]!.conversationId;
 			const input = { name, conversationId, message, followUp: action === "send" && followUp === true };
 			state.reporters[api.taskId] = await tx.createTask(Reporter, input, background);
+			await show(tx, conversationId);
 			return action === "send" ? `Sent to ${name}.` : `Started ${name}. Its answer will arrive as a message.`;
 		}, callContext);
 		const current = (await api.snapshot(Subagents, api.conversationId, callContext))?.agents[name];

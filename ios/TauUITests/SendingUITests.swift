@@ -628,6 +628,50 @@ final class SendingUITests: XCTestCase {
         XCTAssertFalse(self.app.descendants(matching: .any)["sentFiles"].firstMatch.isHittable, "Quick Look is over the chat")
     }
 
+    /// A code mode script (docs/codemode.md): one card with the script and a line per call; what it sent, after it,
+    /// as send_file's own files; tapped, the whole script.
+    func testCodemode() {
+        let directory = "/tmp/tau-ui-code"
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        try? "name,score\nalice,3\nbob,5\n".write(toFile: "\(directory)/scores.csv", atomically: true, encoding: .utf8)
+        let script = """
+        // Count the rows, then send the file.
+        const count = await tools.bash({ command: "wc -l < \(directory)/scores.csv" });
+        await tools.read({ path: "\(directory)/missing.txt" }).catch(() => null);
+        await tools.send_file({ paths: ["\(directory)/scores.csv"] });
+        await tools.subagent({ action: "spawn", name: "checker", message: "check the scores" });
+        return `${count.output.trim()} lines`;
+        """
+        try? script.write(toFile: "\(directory)/script.js", atomically: true, encoding: .utf8)
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!code @\(directory)/script.js")
+        self.send()
+        let card = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label BEGINSWITH 'Code'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "the script's card")
+        let done = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label CONTAINS '3 lines'")).firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 30), "the script's output: \(card.label)")
+        self.app.swipeDown()
+        sleep(1)
+        self.shot("code-0-done")
+        let label = card.label
+        XCTAssertTrue(label.contains("4 calls"), label)
+        XCTAssertTrue(label.contains("1 earlier call"), "folded, the last three: \(label)")
+        XCTAssertTrue(label.contains("Subagent  checker"), label)
+        XCTAssertTrue(label.contains("Read  tau-ui-code/missing.txt"), label)
+        XCTAssertTrue(label.contains("Send  scores.csv"), label)
+        XCTAssertTrue(label.contains("3 lines"), "its output: \(label)")
+        XCTAssertFalse(label.contains("Script completed"), "not the header the model reads")
+        // What it sent, as send_file's own; the subagent's card.
+        XCTAssertTrue(self.app.otherElements.matching(identifier: "sentFiles").firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(self.app.descendants(matching: .any)["scores.csv"].firstMatch.exists)
+        card.tap()
+        sleep(2)
+        self.shot("code-1-expanded")
+        XCTAssertTrue(card.label.contains("return `${count.output.trim()} lines`"), "the whole script: \(card.label)")
+        XCTAssertTrue(card.label.contains("Bash  wc -l"), "every call: \(card.label)")
+    }
+
     /// The photo picker's Send as File (its ... menu, as Telegram's): the photo goes as it is, a file, its row in the
     /// bubble (docs/files.md).
     func testSendPhotoAsFile() {

@@ -2,10 +2,11 @@
 // a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`,
 // fails as an overloaded provider would `!overloaded <times> <text>` before answering, and fails for good `!fatal <text>`.
 // `!read <path>` reads a file with the read tool (an image comes back as one); `!send <path> [<path>…]` sends files to
-// the user (src/send-file.ts). `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
+// the user (src/send-file.ts). `!code <script>` runs a code mode script (docs/codemode.md), `!code @<path>` the one in a file. `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
 // streams. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
 // that long after it was last used, to try cache warming (src/cache.ts) without paying for it.
 import { type Api, calculateCost, createAssistantMessageEventStream, type AssistantMessage, type Message, type Model, type Provider } from "@earendil-works/pi-ai";
+import { readFileSync } from "node:fs";
 import { ownText, parseAttachments } from "./attachments.ts";
 import {
 	type FauxProviderHandle,
@@ -130,6 +131,7 @@ function expiringCache(base: Provider, ttl: number): Provider {
 function reply(messages: readonly Message[]) {
 	// System messages carry prompt changes; the request is about the message before them.
 	const last = messages.findLast((message) => (message.role as string) !== "system");
+	if (last?.role === "toolResult" && last.toolName === "codemode") return fauxAssistantMessage([fauxText(last.isError ? "The script failed." : "Ran the script.")]);
 	if (last?.role === "toolResult") {
 		const output = last.content.map((part) => (part.type === "text" ? part.text : `[${part.type}]`)).join("");
 		return fauxAssistantMessage([fauxText(`Ran it${last.isError ? " (it failed)" : ""}:\n\n\`\`\`\n${output.trimEnd()}\n\`\`\``)]);
@@ -139,6 +141,11 @@ function reply(messages: readonly Message[]) {
 	const command = last?.role === "user" ? ownText(last.content).trim() : "";
 	if (command.startsWith("!send ")) {
 		return fauxAssistantMessage([fauxToolCall("send_file", { paths: command.slice(6).trim().split(/\s+/) })], { stopReason: "toolUse" });
+	}
+	if (command.startsWith("!code ")) {
+		const script = command.slice(6);
+		const code = script.startsWith("@") ? readFileSync(script.slice(1).trim(), "utf8") : script;
+		return fauxAssistantMessage([fauxToolCall("codemode", { code })], { stopReason: "toolUse" });
 	}
 	if (text.startsWith("$ ")) {
 		return fauxAssistantMessage([fauxToolCall("bash", { command: text.slice(2) })], { stopReason: "toolUse" });
