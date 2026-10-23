@@ -26,3 +26,52 @@ compressed blocks of the unchanged prefix each turn (`CLAUDE_CODE_GZIP_REQUEST_B
 provider (its SDK takes a `fetch`), as a PR upstream: none is open (October 2026). The Codex provider already sends only
 what is new over its WebSocket (`previous_response_id`), and zstd over SSE.
 
+## Look at durable's codemode
+
+Durable has an optional `codemode` extension, which tau does not enable. To read: what it gives the agent, and whether
+tau should turn it on.
+
+## An offline edit's fork may be missing from the list
+
+Seen once: after editing a message while offline and restarting the app, the fork the edit made did not show in the
+chat list. Not looked into yet. Start with how `ServerStore.editResolved` and the outbox's pending create live through a
+restart.
+
+## Sharing files from the share extension, on the phone
+
+The share extension uploads files (`ShareSender.send(... files:)`; `Info.plist` takes files and movies). The UI tests
+cover the app's files; sharing a PDF or a video from another app has not been tried on the device.
+
+## Widgets and share extension profiles
+
+The provisioning profiles of `com.rumisle.tau.widgets` and `com.rumisle.tau.share` expire on October 29, 2026. To check
+they are the current ones, and make new ones before then.
+
+## Archived Chats goes blank
+
+Unarchiving the last archived chat leaves the Archived Chats page blank, instead of closing it or showing it empty as
+Telegram does.
+
+## Blurry thumbnails
+
+Photo thumbnails in chats look blurry: check the size they are fetched and decoded at against the pixels they show
+in.
+
+## Tests not run lately
+
+Shard 1's last run left 25 tests unrun; `testEditQueued` and `testMoveToSteer` are to run again too.
+
+## Maybe
+
+- A second server for someone else, from the template unit `tau-server@.service`.
+- Checking production pushes (TestFlight builds use the production APNs environment).
+
+## Later
+
+- Aqua dictation: more robust.
+- Opening a chat: part C (A and B are done).
+- Emoji showing as boxes on remote.
+- Keep Cache: turning itself off.
+- Folders.
+- Dynamic Type for tool cards.
+- Streaming text that may overlap: seen, not confirmed.
