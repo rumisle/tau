@@ -189,7 +189,7 @@ final class SettingsController: SettingsListController {
                 }
                 self.push(AppearanceController(context: self.context))
             }),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.notifications, title: "Notifications", accessory: .disclosure(label: store.servers.contains(where: { $0.ntfy != nil }) ? "On" : ""), position: middle, action: { [weak self] in
+            SettingsRowItem(theme: theme, icon: SettingsIcon.notifications, title: "Notifications", accessory: .disclosure(label: store.servers.contains(where: { $0.canPush && $0.pushAlerts }) && PushRegistration.shared.authorization != .denied ? "On" : ""), position: middle, action: { [weak self] in
                 guard let self else {
                     return
                 }

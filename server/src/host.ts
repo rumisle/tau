@@ -78,8 +78,6 @@ export const CreatesDoc = defineDoc<{ requests: Record<string, number>; order: s
 export const SettingsDoc = defineDoc<{
 	defaultModel?: ModelRef;
 	defaultThinkingLevel?: ModelThinkingLevel;
-	/** Where pushes go (src/notifier.ts); none until a client turns them on. */
-	ntfy?: { server: string; topic: string };
 	/** When prompt caches are kept warm (src/cache.ts); "idle" until a client changes it. */
 	cacheWarming?: CacheWarmingMode;
 	/** When compaction starts (src/compaction.ts); 90% of the window, at most 700k tokens, until a client changes it. */
@@ -216,6 +214,12 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	if (savedSettings?.compaction !== undefined) {
 		compactionThreshold = savedSettings.compaction;
 		updateSettings();
+	}
+	// An ntfy topic from before pushes went through Apple's service only: nothing reads it now.
+	if (savedSettings !== undefined && "ntfy" in savedSettings) {
+		await harness.commit(async (tx) => {
+			delete (await tx.doc(SettingsDoc) as { ntfy?: unknown }).ntfy;
+		}, context);
 	}
 	// Continue runs the last process left unfinished.
 	harness.resume();

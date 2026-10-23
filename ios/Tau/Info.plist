@@ -26,10 +26,6 @@
 	<array>
 		<string>remote-notification</string>
 	</array>
-	<key>LSApplicationQueriesSchemes</key>
-	<array>
-		<string>ntfy</string>
-	</array>
 	<!-- As Telegram's Info.plist: without the first key iOS holds the app to 60 Hz on ProMotion screens (and
 	UIScreen.maximumFramesPerSecond, which Display's animations ask for, says 60); group opacity off spares
 	semi-transparent views an offscreen pass. -->

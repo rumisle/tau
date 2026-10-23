@@ -16,7 +16,7 @@ export type ServerOptions = {
 	port?: number;
 	/** Required as `Authorization: Bearer <token>` or `?token=<token>` when set. */
 	token?: string;
-	/** Apple's push service, with the account's key (src/apns.ts); without it, pushes go through ntfy only. */
+	/** Apple's push service, with the account's key (src/apns.ts); without it, no pushes. */
 	apns?: PushSender;
 	/** For tests: how long an activity whose chats are all done stays (half an hour). */
 	activityDoneLifetimeMs?: number;

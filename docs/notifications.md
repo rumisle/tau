@@ -22,7 +22,7 @@ off.
 
 ## Pushes
 
-`server/src/notifier.ts` sees every run end in the commit stream. It pushes when a target is set and no client is in
+`server/src/notifier.ts` sees every run end in the commit stream. It pushes, with the account's APNs key, when no client is in
 the foreground: each client reports `client.presence { active }` on connect and whenever the app becomes active or
 resigns, and a closed connection counts as inactive. So a phone with tau open gets the banner and no push, and one
 with tau closed (its socket gone) gets the push.
@@ -56,9 +56,6 @@ renewed every 50 minutes), one HTTP/2 connection per environment, opened again w
 - **A chat in the Live Activity** (docs/live-activity.md) does not ring twice: when its finish is the activity's update,
   with its alert, the device gets no notification for it.
 
-### ntfy
-
-Without the APNs key, or for a topic set before, the target is ntfy: Settings > Notifications turns pushes on per server, which stores
-`{ server: "https://ntfy.sh", topic }` (a random topic) in `tau.settings`. The ntfy app subscribes to the topic and
-shows the push; its tap opens `tau://chat?server=<serverId>&id=<conversation>`, which the app routes to the chat on
-the server with that database ID.
+The push's tap opens `tau://chat?server=<serverId>&id=<conversation>` too, the URL the app routes to the chat on the
+server with that database ID. (Before Apple's push, pushes went through ntfy; a server drops a topic left in
+`tau.settings` from then.)

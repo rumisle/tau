@@ -239,8 +239,6 @@ final class MockStore: TauStore, TauServer {
         return .never()
     }
 
-    let ntfy: NtfyTarget? = nil
-
     func storageUsage() -> StorageUsage {
         return StorageUsage(chats: self.dialogs.keys.sorted().map { ($0, Int64(40_000 * $0)) }, unsentBytes: 0, draftBytes: 120)
     }
@@ -257,9 +255,6 @@ final class MockStore: TauStore, TauServer {
     }
 
     func setPushAlerts(_ value: Bool) {}
-
-    func setNtfy(_ target: NtfyTarget?) {
-    }
 
     func relocateDraft(_ id: Int, to location: ProjectLocation) -> Int {
         self.dialogs[id]?.cwd = location.path

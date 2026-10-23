@@ -200,22 +200,6 @@ final class ServerStore: ConversationStore, TauServer {
         return self.answersPipe.signal()
     }
 
-    private var ntfyOverride: NtfyTarget??
-
-    var ntfy: NtfyTarget? {
-        if let override = self.ntfyOverride {
-            return override
-        }
-        return self.connection.hello?.ntfy
-    }
-
-    func setNtfy(_ target: NtfyTarget?) {
-        self.ntfyOverride = .some(target)
-        let value: Any = target.map { ["server": $0.server, "topic": $0.topic] as JSONObject } ?? NSNull()
-        self.connection.request("settings.configure", ["ntfy": value]) { _ in }
-        self.infoChanged?()
-    }
-
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     /// Leaving with messages on their way: as Telegram does, keep running a little to send them.
@@ -459,7 +443,6 @@ final class ServerStore: ConversationStore, TauServer {
         self.defaultThinkingOverride = nil
         self.cacheWarmingOverride = nil
         self.compactionOverride = nil
-        self.ntfyOverride = nil
         self.sendPresence()
         self.registerDevice()
         self.sendLiveActivity()

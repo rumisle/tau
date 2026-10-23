@@ -25,7 +25,7 @@ import { entryImages, withMediaRefs } from "./media.ts";
 import type { KindName } from "./search/index.ts";
 import type { Search } from "./search/service.ts";
 import { directory, listDirectory } from "./fs.ts";
-import { CreatesDoc, type Host, MetaDoc, SettingsDoc } from "./host.ts";
+import { CreatesDoc, type Host, MetaDoc } from "./host.ts";
 import type { ActivityRow } from "./devices.ts";
 import type { Notifier } from "./notifier.ts";
 import {
@@ -243,15 +243,6 @@ export class Connection {
 				return {};
 			}
 			case "settings.configure": {
-				if (params.ntfy !== undefined) {
-					const ntfy = params.ntfy === null ? undefined : obj(params, "ntfy");
-					const target = ntfy === undefined ? undefined : { server: str(ntfy, "server"), topic: str(ntfy, "topic") };
-					await harness.commit(async (tx) => {
-						const settings = await tx.doc(SettingsDoc);
-						if (target === undefined) delete settings.ntfy;
-						else settings.ntfy = target;
-					}, context);
-				}
 				const model = obj(params, "defaultModel");
 				if (model !== undefined) {
 					await this.#host.setDefaultModel({ provider: str(model, "provider"), modelId: str(model, "modelId") });
@@ -475,7 +466,6 @@ export class Connection {
 			defaultThinkingLevel: this.#host.defaultThinkingLevel,
 			cacheWarming: this.#host.cacheWarming,
 			compaction: this.#host.compactionThreshold,
-			ntfy: (await this.#host.harness.snapshot(SettingsDoc, this.#context))?.ntfy ?? null,
 			// Whether it can send Apple's pushes: it has the account's APNs key.
 			apns: this.#notifier?.canPush === true,
 			defaultCwd: this.#host.cwd,

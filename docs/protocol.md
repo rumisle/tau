@@ -42,7 +42,7 @@ socket, so a client must not send one (content limits below are far under it).
 ## Methods
 
 ### `hello`
-`{ protocol: 1, media?: true }` -> `{ protocol: 1, media: boolean, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number, ntfy: NtfyTarget | null, apns: boolean }`
+`{ protocol: 1, media?: true }` -> `{ protocol: 1, media: boolean, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number, apns: boolean }`
 
 `defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
 `hostname` is the computer's name, `piRevision` the pi commit the server links, `uptime` seconds since it started.
@@ -87,11 +87,9 @@ From an app that cannot start an activity (in the background, for a notification
 device's activity, or starts one with its push-to-start token.
 
 ### `settings.configure`
-`{ defaultModel?: ModelRef, defaultThinkingLevel?: string, cacheWarming?: "off" | "streaming" | "idle", compaction?: { enabled?: boolean, ratio?: number, maxTokens?: number }, ntfy?: { server, topic } | null }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming, compaction }`
+`{ defaultModel?: ModelRef, defaultThinkingLevel?: string, cacheWarming?: "off" | "streaming" | "idle", compaction?: { enabled?: boolean, ratio?: number, maxTokens?: number } }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming, compaction }`
 
 `compaction` is when the server compacts a conversation's context (docs/compaction.md): at `ratio` of the model's window (0.3 to 0.95, default 0.9), but never past `maxTokens` (at least 32000, default 700000); `enabled: false` leaves only overflow and manual compaction. A change applies from the next request of every conversation.
-
-`ntfy` sets or clears where answers are pushed; `hello` reports it as `ntfy`.
 
 The model and thinking level new conversations get, for every client; they survive restarts, and the model overrides
 the server's `--model`. A create fixes both in the conversation, the level fitted to its model as pi's

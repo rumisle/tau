@@ -28,9 +28,6 @@ protocol TauServer: AnyObject {
     /// When the server compacts a chat's context (server/src/compaction.ts).
     var compaction: CompactionThreshold { get }
     func setCompaction(_ threshold: CompactionThreshold)
-    /// Where the server pushes answers while no app is in the foreground (server/src/notifier.ts); nil: nowhere.
-    var ntfy: NtfyTarget? { get }
-    func setNtfy(_ target: NtfyTarget?)
     /// It has the account's APNs key and sends Apple's pushes (server/src/apns.ts).
     var canPush: Bool { get }
     /// Its answers as notifications on this phone (Settings > Notifications).
@@ -301,7 +298,6 @@ struct ChatAnswer: Equatable {
     var text: String
 }
 
-/// An ntfy server and a topic only this user's phone subscribes to.
 /// Compaction starts at `ratio` of the model's window, but never past `maxTokens`; off: only when the context overflows
 /// or on request.
 struct CompactionThreshold: Equatable {
@@ -314,11 +310,6 @@ struct CompactionThreshold: Equatable {
     var json: [String: Any] {
         return ["enabled": self.enabled, "ratio": self.ratio, "maxTokens": self.maxTokens]
     }
-}
-
-struct NtfyTarget: Equatable {
-    var server: String
-    var topic: String
 }
 
 struct ServerInfo: Equatable {

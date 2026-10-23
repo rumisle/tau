@@ -1,6 +1,6 @@
 // Pushes (docs/notifications.md, docs/live-activity.md): while no app is in the foreground to see for itself, the
 // server tells the user's phones what happened. A run that ends with an answer is a notification, through Apple's push
-// service to each registered device and through ntfy where a topic is set; a chat the user waits on in a Live Activity
+// service to each registered device; a chat the user waits on in a Live Activity
 // changes that activity, through its own push token, and its finish is the activity's alert instead of a notification,
 // so the phone does not ring twice.
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -8,10 +8,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { type ConversationId, type EntryRecord, LiveDoc } from "@earendil-works/pi-durable";
 import { type Apns, type ApnsPush, type ApnsResult, activityDate, isGone } from "./apns.ts";
 import { type ActivityRecord, type ActivityRow, type DeviceRecord, DevicesDoc, VISIBLE_ROWS } from "./devices.ts";
-import { type Host, MetaDoc, SettingsDoc } from "./host.ts";
-
-/** Where pushes go: an ntfy server and a topic only the user's phone subscribes to. */
-export type NtfyTarget = { server: string; topic: string };
+import { type Host, MetaDoc } from "./host.ts";
 
 /** What sends to Apple: the APNs client, or a stand-in in tests. */
 export type PushSender = Pick<Apns, "send">;
@@ -73,13 +70,8 @@ export class Notifier {
 	readonly #activityAlerts = new Map<string, number>();
 	/** Activities whose chats are all done: each ends when its last row would have in the app. */
 	readonly #endTimers = new Map<string, ReturnType<typeof setTimeout>>();
-	/** For tests: what went to ntfy, and to Apple. */
-	readonly sent: { conversationId: ConversationId; title: string; message: string }[] = [];
+	/** For tests: what went to Apple. */
 	readonly pushed: { deviceId: string; push: ApnsPush; result?: ApnsResult }[] = [];
-	/** Replaces fetch in tests. */
-	post: (url: string, body: unknown) => Promise<void> = async (url, body) => {
-		await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-	};
 
 	readonly #doneLifetime: number;
 
@@ -235,14 +227,6 @@ export class Notifier {
 		const text = failed ? `Failed: ${message.errorMessage ?? "the model stopped"}` : textOf(message);
 		const body = text.replace(/\s+/g, " ").trim().slice(0, 400) || "Answered.";
 		const url = `tau://chat?server=${this.#host.serverId}&id=${id}`;
-		const target = (await harness.snapshot(SettingsDoc, context))?.ntfy;
-		if (target !== undefined) {
-			this.sent.push({ conversationId: id, title, message: body });
-			// The ntfy app opens the URL on a tap (ios/Tau/App/AppDelegate.swift).
-			await this.post(target.server.replace(/\/+$/, ""), { topic: target.topic, title, message: body, click: url, tags: failed ? ["warning"] : ["robot"] }).catch((error) =>
-				console.error("[tau] ntfy push failed:", error),
-			);
-		}
 		if (this.#apns === undefined) return;
 		const devices = (await harness.snapshot(DevicesDoc, context))?.devices ?? {};
 		// A chat in a device's activity with nothing more to wait for: the activity's update says it, with its alert,

@@ -16,7 +16,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 |---|---|
 | `ios/` | The iOS app: Telegram-iOS's own UI code (themes, context menus, attachment menu) around ported chat screens (see ios/README.md) |
 | `docs/protocol.md` | The wire protocol: sync model, methods, pushes, op format |
-| `docs/notifications.md` | When the user hears about an answer: Telegram's in-app banners, pushes through ntfy while the app is closed, and the way to Apple's push |
+| `docs/notifications.md` | When the user hears about an answer: Telegram's in-app banners, Apple's push while the app is closed: notifications as the chat's messages, with Reply |
 | `docs/sending.md` | How a message reaches the model: steer and follow-up, refusals, the client's outbox state machine, and what the user sees |
 | `docs/chat-open.md` | Opening a chat at once: ready without the network, Telegram's spinner, the top of the list preloaded |
 | `docs/media.md` | Images by reference: a photo or a tool's image laid out from its size, fetched when shown |
