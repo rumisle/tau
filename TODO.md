@@ -26,11 +26,6 @@ compressed blocks of the unchanged prefix each turn (`CLAUDE_CODE_GZIP_REQUEST_B
 provider (its SDK takes a `fetch`), as a PR upstream: none is open (October 2026). The Codex provider already sends only
 what is new over its WebSocket (`previous_response_id`), and zstd over SSE.
 
-## Look at durable's codemode
-
-Durable has an optional `codemode` extension, which tau does not enable. To read: what it gives the agent, and whether
-tau should turn it on.
-
 ## An offline edit's fork may be missing from the list
 
 Seen once: after editing a message while offline and restarting the app, the fork the edit made did not show in the
