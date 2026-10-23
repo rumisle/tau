@@ -43,6 +43,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         let ntfy: NtfyTarget?
         /// The pi commit the server links.
         let piRevision: String
+        /// It has the account's APNs key: it sends Apple's pushes, and Live Activity updates.
+        var apns: Bool = false
     }
 
     let url: URL
@@ -178,7 +180,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                     home: value.string("home") ?? "~",
                     hostname: value.string("hostname") ?? "",
                     ntfy: value.object("ntfy").flatMap { ntfy in ntfy.string("server").flatMap { server in ntfy.string("topic").map { NtfyTarget(server: server, topic: $0) } } },
-                    piRevision: value.string("piRevision") ?? ""
+                    piRevision: value.string("piRevision") ?? "",
+                    apns: value.bool("apns") ?? false
                 )
                 self.hello = hello
                 self.startPinging(generation: generation)

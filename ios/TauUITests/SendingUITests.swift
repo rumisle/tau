@@ -7,9 +7,10 @@ import XCTest
 /// The dev server: TAU_DEV_SERVER, which ios/scripts/uitests.sh gives each simulator its own of.
 let devServer = ProcessInfo.processInfo.environment["TAU_DEV_SERVER"] ?? "ws://127.0.0.1:7979"
 /// The tokens of this Mac's tau server (port 7878) and remote's, which the test scripts read (`TAU_TOKEN`,
-/// `TAU_REMOTE_TOKEN`): as launch arguments, none when unset.
-let mainServerToken = ProcessInfo.processInfo.environment["TAU_TOKEN"].flatMap { $0.isEmpty ? nil : ["-server.token", $0] } ?? []
-let remoteServer = ["-server2.url", "ws://remote.example.ts.net:7878"] + (ProcessInfo.processInfo.environment["TAU_REMOTE_TOKEN"].flatMap { $0.isEmpty ? nil : ["-server2.token", $0] } ?? [])
+/// `TAU_REMOTE_TOKEN`): as launch arguments, none when unset. Quoted: the argument domain reads a value as a property
+/// list, and one starting with "-" as the next argument's name.
+let mainServerToken = ProcessInfo.processInfo.environment["TAU_TOKEN"].flatMap { $0.isEmpty ? nil : ["-server.token", "\"\($0)\""] } ?? []
+let remoteServer = ["-server2.url", "ws://remote.example.ts.net:7878"] + (ProcessInfo.processInfo.environment["TAU_REMOTE_TOKEN"].flatMap { $0.isEmpty ? nil : ["-server2.token", "\"\($0)\""] } ?? [])
 
 final class SendingUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -21,7 +22,7 @@ final class SendingUITests: XCTestCase {
 
     private func launch(_ arguments: [String], server: String = devServer) {
         self.app = XCUIApplication()
-        self.app.launchArguments = ["-server.url", server, "-wrapCode", "YES", "-theme", "dark"] + arguments
+        self.app.launchArguments = ["-server.url", server, "-wrapCode", "YES", "-theme", "dark"] + (server.hasSuffix(":7878") ? mainServerToken : []) + arguments
         self.app.launch()
         sleep(2)
     }

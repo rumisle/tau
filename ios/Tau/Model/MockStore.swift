@@ -248,6 +248,16 @@ final class MockStore: TauStore, TauServer {
     func clearCache() {
     }
 
+    var canPush: Bool {
+        return false
+    }
+
+    var pushAlerts: Bool {
+        return false
+    }
+
+    func setPushAlerts(_ value: Bool) {}
+
     func setNtfy(_ target: NtfyTarget?) {
     }
 

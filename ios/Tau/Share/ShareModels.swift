@@ -75,6 +75,8 @@ struct ShareSnapshot: Codable {
         var name: String
         var address: String
         var token: String?
+        /// Its database's ID (`hello.serverId`), which its pushes name it by; nil until it said.
+        var serverId: String?
     }
 
     struct Chat: Codable {

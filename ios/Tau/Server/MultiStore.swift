@@ -357,6 +357,11 @@ final class MultiStore: TauStore {
         return store.subagents(of: local).map { self.mapped($0, store.slot) }
     }
 
+    /// The server in a slot, for what only a server connection does (the Live Activity's updates).
+    func serverStore(_ slot: Int) -> ServerStore? {
+        return self.stores[slot]
+    }
+
     func markSeen(_ id: Int) {
         self.route(id).map { $0.0.markSeen($0.1) }
     }

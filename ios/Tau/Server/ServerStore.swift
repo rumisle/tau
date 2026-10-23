@@ -97,6 +97,84 @@ final class ServerStore: ConversationStore, TauServer {
         NotificationCenter.default.addObserver(self, selector: #selector(self.didBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(self.didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(self.willResignActive), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.registerDevice), name: PushRegistration.changed, object: nil)
+    }
+
+    // MARK: - Apple's push
+
+    /// It has the account's APNs key (server/src/apns.ts).
+    var canPush: Bool {
+        return self.connection.hello?.apns ?? false
+    }
+
+    /// Settings > Notifications: its answers as notifications.
+    var pushAlerts: Bool {
+        return PushRegistration.alerts(serverId: self.connection.hello?.serverId ?? "")
+    }
+
+    func setPushAlerts(_ value: Bool) {
+        guard let serverId = self.connection.hello?.serverId else {
+            return
+        }
+        PushRegistration.setAlerts(value, serverId: serverId)
+    }
+
+    /// Tells the server this phone's tokens, again on each connection and when one changes.
+    @objc private func registerDevice() {
+        guard let hello = self.connection.hello, hello.apns else {
+            return
+        }
+        self.connection.request("devices.register", PushRegistration.shared.registration(serverId: hello.serverId)) { _ in }
+    }
+
+    /// What the Live Activity shows of this server's chats, for the server to update it while tau is away; nil:
+    /// none. Sent now, or once connected.
+    private var liveActivity: JSONObject??
+    private var liveActivitySent = true
+    private var pendingActivityStart: (rows: [JSONObject], accent: UInt32?, completion: (Bool) -> Void)?
+
+    func setLiveActivity(_ activity: JSONObject?) {
+        self.liveActivity = .some(activity)
+        self.liveActivitySent = false
+        self.sendLiveActivity()
+    }
+
+    /// Tau is away and cannot start an activity itself: the server starts one (or updates its own) with these rows.
+    func startLiveActivity(rows: [JSONObject], accent: UInt32?, completion: @escaping (Bool) -> Void) {
+        self.pendingActivityStart = (rows, accent, completion)
+        self.sendLiveActivity()
+    }
+
+    private func sendLiveActivity() {
+        guard let hello = self.connection.hello, hello.apns else {
+            return
+        }
+        let deviceId = PushRegistration.shared.deviceId
+        if !self.liveActivitySent, let activity = self.liveActivity {
+            self.liveActivitySent = true
+            let sent = activity
+            self.connection.request("liveActivity.update", ["deviceId": deviceId, "activity": sent ?? NSNull()]) { [weak self] result in
+                if case .failure = result, let self, self.liveActivity.map({ ($0 as NSDictionary?) == (sent as NSDictionary?) }) == true {
+                    self.liveActivitySent = false
+                }
+            }
+        }
+        if let start = self.pendingActivityStart {
+            self.pendingActivityStart = nil
+            var params: JSONObject = ["deviceId": deviceId, "rows": start.rows]
+            if let accent = start.accent {
+                params["accent"] = Int(accent)
+            }
+            self.connection.request("liveActivity.start", params) { [weak self] result in
+                switch result {
+                case let .success(value):
+                    start.completion(value.string("result") != "none")
+                case .failure:
+                    // Once connected again.
+                    self?.pendingActivityStart = start
+                }
+            }
+        }
     }
 
     /// Back in the foreground: a socket that died while suspended is found out at once, not at the next ping.
@@ -383,6 +461,8 @@ final class ServerStore: ConversationStore, TauServer {
         self.compactionOverride = nil
         self.ntfyOverride = nil
         self.sendPresence()
+        self.registerDevice()
+        self.sendLiveActivity()
         self.infoChanged?()
         self.readSent.removeAll()
         if self.cache.serverId != hello.serverId {

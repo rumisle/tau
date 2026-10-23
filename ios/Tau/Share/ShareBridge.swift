@@ -51,7 +51,7 @@ final class ShareBridge {
             return
         }
         let servers = store.servers.map { server in
-            ShareSnapshot.Server(slot: server.slot, name: server.name, address: server.address, token: store.serverToken(server.slot))
+            ShareSnapshot.Server(slot: server.slot, name: server.name, address: server.address, token: store.serverToken(server.slot), serverId: server.serverInfo?.serverId)
         }
         // As the chat list orders them, archived and subagents' left out.
         let visible = self.latest.filter { !$0.archived && $0.parentConversationId == nil }

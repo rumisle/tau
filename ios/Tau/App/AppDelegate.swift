@@ -3,6 +3,7 @@ import Display
 import NavigationBarImpl
 import UIKitRuntimeUtils
 import SwiftSignalKit
+import UserNotifications
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -38,6 +39,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         self.context = context
         LiveActivityController.shared.attach(store: context.store)
         ShareBridge.shared.attach(store: context.store)
+        // Apple's pushes: set before launch finishes, so a tap or a reply that launched tau is delivered.
+        UNUserNotificationCenter.current().delegate = self
+        if context.store is MultiStore {
+            PushRegistration.shared.start()
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            PushRegistration.shared.refreshAuthorization()
+        }
 
         let makeRoot: () -> (RootTabController, ChatListController) = {
             let chatList = ChatListController(context: context)
@@ -115,27 +124,95 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
     /// `tau://chat?server=<serverId>&id=<conversation>`: what a push opens (server/src/notifier.ts).
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        guard url.scheme == "tau", url.host == "chat", let context = self.context, let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+        guard url.scheme == "tau", url.host == "chat", let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             return false
         }
         let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
         guard let local = query["id"].flatMap(Int.init) else {
             return false
         }
-        let open = { [weak self] in
-            let server = context.store.servers.first { $0.serverInfo?.serverId == query["server"] } ?? context.store.servers.first
-            guard let server else {
-                return
-            }
-            self?.openChat(MultiStore.global(server.slot, local), context: context)
-        }
-        // At launch the servers may not have said who they are yet.
-        if context.store.servers.contains(where: { $0.serverInfo?.serverId == query["server"] }) {
-            open()
-        } else {
-            Queue.mainQueue().after(1.5, open)
+        self.withChat(serverId: query["server"], local: local) { [weak self] id, context in
+            self?.openChat(id, context: context)
         }
         return true
+    }
+
+    /// The app's ID for a server's chat, once the server has said who it is (at launch it may not have yet).
+    private func withChat(serverId: String?, local: Int, _ body: @escaping (Int, AppContext) -> Void) {
+        guard let context = self.context else {
+            return
+        }
+        let find = { () -> TauServer? in
+            return context.store.servers.first { $0.serverInfo?.serverId == serverId }
+        }
+        if let server = find() {
+            body(MultiStore.global(server.slot, local), context)
+            return
+        }
+        // The servers' IDs come with their hellos; until then, a server cached from before.
+        var attempts = 0
+        func retry() {
+            attempts += 1
+            Queue.mainQueue().after(0.5) {
+                if let server = find() {
+                    body(MultiStore.global(server.slot, local), context)
+                } else if attempts < 20 {
+                    retry()
+                } else if let server = context.store.servers.first {
+                    body(MultiStore.global(server.slot, local), context)
+                }
+            }
+        }
+        retry()
+    }
+
+    // MARK: - Apple's push
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        PushRegistration.shared.didRegister(deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NSLog("[tau] no APNs token: \(error.localizedDescription)")
+    }
+
+    /// A reply from a notification: sent as from the chat's field, while iOS lets tau run, until the server has it.
+    private func reply(_ text: String, serverId: String?, local: Int, completion: @escaping () -> Void) {
+        var task = UIBackgroundTaskIdentifier.invalid
+        var finished = false
+        let finish = {
+            guard !finished else {
+                return
+            }
+            finished = true
+            completion()
+            if task != .invalid {
+                UIApplication.shared.endBackgroundTask(task)
+            }
+        }
+        task = UIApplication.shared.beginBackgroundTask(withName: "tau.reply") {
+            finish()
+        }
+        self.withChat(serverId: serverId, local: local) { id, context in
+            context.store.send(text, to: id)
+            context.store.markSeen(id)
+            // The outbox keeps it on disk and sends it once connected; until then, tau stays.
+            let disposable = MetaDisposable()
+            disposable.set((context.store.dialogsSignal() |> deliverOnMainQueue).start(next: { dialogs in
+                guard let dialog = dialogs.first(where: { $0.id == id }) else {
+                    return
+                }
+                if dialog.outgoing == nil || dialog.hasFailedMessage {
+                    disposable.dispose()
+                    // A moment for the Live Activity's start to reach the server.
+                    Queue.mainQueue().after(1.0, finish)
+                }
+            }))
+            Queue.mainQueue().after(25.0) {
+                disposable.dispose()
+                finish()
+            }
+        }
     }
 
     /// For screenshots and UI checks from the command line, e.g.
@@ -218,6 +295,37 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 context.store.send(text, to: conversationId)
             }
         }
+    }
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    /// In the foreground tau shows its own banners (and the server sends none then): nothing from the system.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([])
+    }
+
+    /// A tap opens the chat; Reply sends to it.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let tau = response.notification.request.content.userInfo["tau"] as? [String: Any]
+        guard let local = tau?["id"] as? Int else {
+            completionHandler()
+            return
+        }
+        let serverId = tau?["server"] as? String
+        if response.actionIdentifier == PushRegistration.replyAction, let text = (response as? UNTextInputNotificationResponse)?.userText.trimmingCharacters(in: .whitespacesAndNewlines) {
+            guard !text.isEmpty else {
+                completionHandler()
+                return
+            }
+            self.reply(text, serverId: serverId, local: local, completion: completionHandler)
+            return
+        }
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            self.withChat(serverId: serverId, local: local) { [weak self] id, context in
+                self?.openChat(id, context: context)
+            }
+        }
+        completionHandler()
     }
 }
 

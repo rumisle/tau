@@ -5,24 +5,14 @@ import Display
 /// Letter avatar in Telegram's style: a vertical two-color gradient circle with rounded bold initials.
 /// Colors and drawing follow Telegram-iOS AvatarNode/Sources/AvatarNode.swift.
 enum Avatar {
-    static let gradientColors: [[UIColor]] = [
-        [UIColor(rgb: 0xff516a), UIColor(rgb: 0xff885e)],
-        [UIColor(rgb: 0xffa85c), UIColor(rgb: 0xffcd6a)],
-        [UIColor(rgb: 0x665fff), UIColor(rgb: 0x82b1ff)],
-        [UIColor(rgb: 0x54cb68), UIColor(rgb: 0xa0de7e)],
-        [UIColor(rgb: 0x4acccd), UIColor(rgb: 0x00fcfd)],
-        [UIColor(rgb: 0x2a9ef1), UIColor(rgb: 0x72d5fd)],
-        [UIColor(rgb: 0xd669ed), UIColor(rgb: 0xe0a2f3)],
-    ]
+    static let gradientColors: [[UIColor]] = LetterAvatar.palette.map { [UIColor(rgb: $0.0), UIColor(rgb: $0.1)] }
 
     static func font(size: CGFloat) -> UIFont {
         return Font.with(size: size, design: .round, weight: .bold)
     }
 
     static func letters(_ title: String) -> String {
-        let words = title.split(whereSeparator: { $0 == " " || $0 == "-" || $0 == "_" }).filter { !$0.isEmpty }
-        let initials = words.prefix(2).compactMap { $0.first }.map { String($0).uppercased() }
-        return initials.isEmpty ? "?" : initials.joined()
+        return LetterAvatar.letters(title)
     }
 
     /// Rows lay out on background queues, several lists at once while folders are swiped: the cache is shared.

@@ -7,7 +7,7 @@ import { WebSocketServer } from "ws";
 import { Connection } from "./connection.ts";
 import { Dialogs } from "./dialogs.ts";
 import type { Host } from "./host.ts";
-import { Notifier } from "./notifier.ts";
+import { Notifier, type PushSender } from "./notifier.ts";
 import { Search } from "./search/service.ts";
 import { Titler } from "./titles.ts";
 
@@ -16,6 +16,10 @@ export type ServerOptions = {
 	port?: number;
 	/** Required as `Authorization: Bearer <token>` or `?token=<token>` when set. */
 	token?: string;
+	/** Apple's push service, with the account's key (src/apns.ts); without it, pushes go through ntfy only. */
+	apns?: PushSender;
+	/** For tests: how long an activity whose chats are all done stays (half an hour). */
+	activityDoneLifetimeMs?: number;
 };
 
 export type Server = {
@@ -27,7 +31,10 @@ export type Server = {
 export async function serve(host: Host, options: ServerOptions = {}): Promise<Server> {
 	const dialogs = new Dialogs(host);
 	const titler = new Titler(host);
-	const notifier = new Notifier(host);
+	const notifier = new Notifier(host, {
+		...(options.apns === undefined ? {} : { apns: options.apns }),
+		...(options.activityDoneLifetimeMs === undefined ? {} : { doneLifetimeMs: options.activityDoneLifetimeMs }),
+	});
 	// Beside the database, or in memory with it.
 	const search = new Search(host, host.database === undefined ? ":memory:" : searchIndexPath(host.database));
 	const connections = new Set<Connection>();

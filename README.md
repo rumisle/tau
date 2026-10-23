@@ -55,7 +55,7 @@ A server reachable beyond loopback runs commands for anyone who reaches it, so i
 but loopback, unless `--no-auth`. Make one, then give it to the app (Settings > Servers > the server > Address):
 
 ```bash
-umask 077 && mkdir -p ~/.config/tau && openssl rand -base64 32 | tr -d '\n=' | tr '+/' '-_' > ~/.config/tau/token
+umask 077 && mkdir -p ~/.config/tau && openssl rand -hex 32 > ~/.config/tau/token
 pbcopy < ~/.config/tau/token                # on the Mac, or from a Linux server: ssh host 'cat ~/.config/tau/token' | pbcopy
 ```
 

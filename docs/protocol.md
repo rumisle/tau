@@ -42,10 +42,11 @@ socket, so a client must not send one (content limits below are far under it).
 ## Methods
 
 ### `hello`
-`{ protocol: 1, media?: true }` -> `{ protocol: 1, media: boolean, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number }`
+`{ protocol: 1, media?: true }` -> `{ protocol: 1, media: boolean, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number, ntfy: NtfyTarget | null, apns: boolean }`
 
 `defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
 `hostname` is the computer's name, `piRevision` the pi commit the server links, `uptime` seconds since it started.
+`apns`: the server has the account's APNs key and sends Apple's pushes (docs/notifications.md).
 
 Must be the first request. A different `protocol` is rejected.
 
@@ -60,6 +61,30 @@ Models the server has credentials for. `thinkingLevels` are the levels the model
 
 Whether this client's app is in the foreground, showing its own banners: while any client is, the server pushes
 nothing (docs/notifications.md). A closed connection counts as inactive.
+
+### `devices.register`
+`{ deviceId, environment: "development" | "production", topic, token?: string | null, alerts?: boolean, pushToStart?: string | null }` -> `{}`
+
+A phone's registration for Apple's pushes: its APNs device token (hex), its bundle ID, whether it wants answers as
+notifications, and its Live Activity push-to-start token. Given fields replace the stored ones; null clears a token.
+`devices.unregister { deviceId }` forgets it. `bad_request` on a server without the APNs key.
+
+### `liveActivity.update`
+`{ deviceId, activity: { id?, token?, rows: ActivityRow[], accent? } | null }` -> `{}`
+
+The device's Live Activity for this server's chats, as the app shows it, with the activity's push token; the server
+updates it while no app is in the foreground (docs/live-activity.md). Null: it ended.
+
+```ts
+type ActivityRow = { appId: number; conversationId: number; title: string; state: "working" | "done" | "failed";
+  since: number; finishedAt?: number; detail?: string; watchedAt: number }   // times in epoch ms
+```
+
+### `liveActivity.start`
+`{ deviceId, rows: ActivityRow[], accent? }` -> `{ result: "updated" | "started" | "none" }`
+
+From an app that cannot start an activity (in the background, for a notification's reply): the server updates the
+device's activity, or starts one with its push-to-start token.
 
 ### `settings.configure`
 `{ defaultModel?: ModelRef, defaultThinkingLevel?: string, cacheWarming?: "off" | "streaming" | "idle", compaction?: { enabled?: boolean, ratio?: number, maxTokens?: number }, ntfy?: { server, topic } | null }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming, compaction }`

@@ -1,9 +1,13 @@
 import Foundation
 import ActivityKit
 
-/// tau's one Live Activity (docs/live-activity.md): the chats the user is waiting on. Shared by the app, which starts
-/// and updates it, and the widget extension, which draws it.
+/// tau's Live Activity (docs/live-activity.md): the chats of one server the user is waiting on. Shared by the app,
+/// which starts and updates it, the server, which updates it while tau is away (and starts one for a notification's
+/// reply), and the widget extension, which draws it.
 struct TauActivityAttributes: ActivityAttributes {
+    /// The server whose chats it shows (`hello.serverId`): the one that pushes its updates.
+    var serverId: String = ""
+
     struct Chat: Codable, Hashable {
         enum State: String, Codable, Hashable {
             case working

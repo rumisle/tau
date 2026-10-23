@@ -26,6 +26,7 @@ import type { KindName } from "./search/index.ts";
 import type { Search } from "./search/service.ts";
 import { directory, listDirectory } from "./fs.ts";
 import { CreatesDoc, type Host, MetaDoc, SettingsDoc } from "./host.ts";
+import type { ActivityRow } from "./devices.ts";
 import type { Notifier } from "./notifier.ts";
 import {
 	type AgentPatch,
@@ -191,6 +192,47 @@ export class Connection {
 		switch (method) {
 			case "models.list":
 				return this.#models();
+			case "devices.register": {
+				// A phone's APNs registration (src/notifier.ts): its device token once the user allows notifications,
+				// whether it wants answers, and the token that starts a Live Activity.
+				const environment = str(params, "environment");
+				if (environment !== "development" && environment !== "production") throw new ProtocolError("bad_request", "environment must be development or production");
+				const nullable = (key: string): string | null | undefined => (params[key] === null ? null : str(params, key, true));
+				const alerts = params.alerts;
+				if (alerts !== undefined && typeof alerts !== "boolean") throw new ProtocolError("bad_request", "alerts must be a boolean");
+				await this.#requireNotifier().register(str(params, "deviceId"), {
+					environment,
+					topic: str(params, "topic"),
+					...(alerts === undefined ? {} : { alerts }),
+					...(params.token === undefined ? {} : { token: nullable("token") }),
+					...(params.pushToStart === undefined ? {} : { pushToStart: nullable("pushToStart") }),
+				});
+				return {};
+			}
+			case "devices.unregister": {
+				await this.#requireNotifier().unregister(str(params, "deviceId"));
+				return {};
+			}
+			case "liveActivity.update": {
+				const activity = params.activity === null ? null : obj(params, "activity");
+				if (activity === undefined) throw new ProtocolError("bad_request", "activity must be an object or null");
+				await this.#requireNotifier().updateActivity(
+					str(params, "deviceId"),
+					activity === null
+						? null
+						: {
+								...(str(activity, "id", true) === undefined ? {} : { id: str(activity, "id") }),
+								...(str(activity, "token", true) === undefined ? {} : { token: str(activity, "token") }),
+								rows: activityRows(activity.rows),
+								...(activity.accent === undefined ? {} : { accent: int(activity, "accent") }),
+							},
+				);
+				return {};
+			}
+			case "liveActivity.start": {
+				const result = await this.#requireNotifier().startActivity(str(params, "deviceId"), activityRows(params.rows), params.accent === undefined ? undefined : int(params, "accent"));
+				return { result };
+			}
 			case "client.presence": {
 				// The app in the foreground shows its own banners; while one is, nothing is pushed.
 				const active = params.active === true;
@@ -434,12 +476,19 @@ export class Connection {
 			cacheWarming: this.#host.cacheWarming,
 			compaction: this.#host.compactionThreshold,
 			ntfy: (await this.#host.harness.snapshot(SettingsDoc, this.#context))?.ntfy ?? null,
+			// Whether it can send Apple's pushes: it has the account's APNs key.
+			apns: this.#notifier?.canPush === true,
 			defaultCwd: this.#host.cwd,
 			home: homedir(),
 			hostname: hostname(),
 			piRevision: PI_REVISION,
 			uptime: Math.round(process.uptime()),
 		};
+	}
+
+	#requireNotifier(): Notifier {
+		if (this.#notifier === undefined) throw new ProtocolError("bad_request", "This server sends no pushes");
+		return this.#notifier;
 	}
 
 	async #models(): Promise<unknown> {
@@ -862,4 +911,27 @@ function compactionThreshold(params: Record<string, unknown>, current: Compactio
 		next.maxTokens = params.maxTokens;
 	}
 	return next;
+}
+
+/** A Live Activity's rows as the app sends them (src/devices.ts). */
+function activityRows(value: unknown): ActivityRow[] {
+	if (!Array.isArray(value) || value.length > 50) throw new ProtocolError("bad_request", "rows must be an array of at most 50");
+	return value.map((raw) => {
+		if (typeof raw !== "object" || raw === null) throw new ProtocolError("bad_request", "a row must be an object");
+		const row = raw as Record<string, unknown>;
+		const state = str(row, "state");
+		if (state !== "working" && state !== "done" && state !== "failed") throw new ProtocolError("bad_request", "a row's state must be working, done or failed");
+		const appId = row.appId;
+		if (typeof appId !== "number" || !Number.isSafeInteger(appId)) throw new ProtocolError("bad_request", "appId must be an integer");
+		return {
+			appId,
+			conversationId: int(row, "conversationId"),
+			title: str(row, "title").slice(0, 200),
+			state,
+			since: int(row, "since"),
+			...(row.finishedAt === undefined ? {} : { finishedAt: int(row, "finishedAt") }),
+			...(str(row, "detail", true) === undefined ? {} : { detail: str(row, "detail").slice(0, 200) }),
+			watchedAt: int(row, "watchedAt"),
+		};
+	});
 }

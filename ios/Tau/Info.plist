@@ -16,6 +16,16 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Communication notifications: each push shows as its chat's message, with the chat's avatar (TauNotifications). -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INSendMessageIntent</string>
+	</array>
+	<!-- A notification's reply is sent while tau runs in the background. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>ntfy</string>

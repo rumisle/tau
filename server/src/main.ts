@@ -1,10 +1,12 @@
 // tau server: `node src/main.ts [--db path] [--port n] [--host addr] [--model provider/id] [--cwd dir] [--memory]
 //   [--dev-tps n] [--dev-cache-ttl s]` (speed of the dev/echo model, tokens per second; a prompt cache lifetime that makes it
 //   charge as a costly model, to try cache warming)
-//   [--token-file path] [--no-auth]
+//   [--token-file path] [--no-auth] [--apns-key path --apns-team id [--apns-key-id id]]
 // Clients must give the server's token (`Authorization: Bearer <token>`) when it has one: TAU_TOKEN, or else the
 // --token-file's (by convention ~/.config/tau/token), which must be readable by its owner only. Without one the server
 // listens on loopback only, unless --no-auth: anyone who reaches it can run commands as this user.
+// With the account's APNs key (a .p8, owner-only; the key ID from its name AuthKey_<id>.p8), it sends Apple's pushes:
+// notifications, and Live Activity updates (docs/notifications.md).
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -13,6 +15,7 @@ import { FileCredentialStore } from "./credentials.ts";
 import { DEV_MODEL } from "./dev-model.ts";
 import { directory } from "./fs.ts";
 import { openHost } from "./host.ts";
+import { Apns } from "./apns.ts";
 import { serve } from "./server.ts";
 
 const { values } = parseArgs({
@@ -27,13 +30,16 @@ const { values } = parseArgs({
 		"dev-cache-ttl": { type: "string" },
 		"token-file": { type: "string" },
 		"no-auth": { type: "boolean", default: false },
+		"apns-key": { type: "string" },
+		"apns-key-id": { type: "string" },
+		"apns-team": { type: "string" },
 	},
 });
 
 const token = readToken();
 if (token === undefined && !isLoopback(values.host) && !values["no-auth"]) {
 	console.error(`No token, and ${values.host} is not loopback: anyone who reaches it could run commands here.`);
-	console.error("Make one:  umask 077 && mkdir -p ~/.config/tau && openssl rand -base64 32 | tr -d '\\n=' | tr '+/' '-_' > ~/.config/tau/token");
+	console.error("Make one:  umask 077 && mkdir -p ~/.config/tau && openssl rand -hex 32 > ~/.config/tau/token");
 	console.error("and pass --token-file ~/.config/tau/token; or listen on 127.0.0.1, or pass --no-auth.");
 	process.exit(1);
 }
@@ -52,7 +58,9 @@ if (host.models.getModel(model.provider, model.modelId) === undefined) {
 	console.error(`Unknown model ${model.provider}/${model.modelId}`);
 	process.exit(1);
 }
+const apns = openApns();
 const server = await serve(host, {
+	...(apns === undefined ? {} : { apns }),
 	host: values.host,
 	port: Number(values.port),
 	...(token === undefined ? {} : { token }),
@@ -62,6 +70,7 @@ console.log(`  storage  ${values.memory ? "memory" : values.db}`);
 console.log(`  model    ${model.provider}/${model.modelId}`);
 console.log(`  cwd      ${host.cwd}`);
 console.log(`  server   ${host.serverId}`);
+console.log(`  apns     ${apns === undefined ? "none" : `key ${apns.keyId}, team ${apns.teamId}`}`);
 console.log(`  auth     ${token === undefined ? "none" : process.env.TAU_TOKEN ? "token (TAU_TOKEN)" : `token (${values["token-file"]})`} (credentials: ${credentials.path})`);
 
 let stopping = false;
@@ -70,6 +79,7 @@ const stop = async (): Promise<void> => {
 	stopping = true;
 	console.log("\nstopping...");
 	await server.close();
+	apns?.close();
 	await host.close();
 	process.exit(0);
 };
@@ -107,4 +117,25 @@ function readToken(): string | undefined {
 
 function isLoopback(host: string): boolean {
 	return host === "localhost" || host === "::1" || /^127\./.test(host);
+}
+
+/** Apple's push service with the account's key, when --apns-key gives it. */
+function openApns(): Apns | undefined {
+	const given = values["apns-key"];
+	if (given === undefined) return undefined;
+	const team = values["apns-team"];
+	if (team === undefined) {
+		console.error("--apns-key needs --apns-team, the developer account's team ID");
+		process.exit(1);
+	}
+	try {
+		return new Apns({
+			keyPath: given.startsWith("~/") ? join(homedir(), given.slice(2)) : resolve(given),
+			teamId: team,
+			...(values["apns-key-id"] === undefined ? {} : { keyId: values["apns-key-id"] }),
+		});
+	} catch (error) {
+		console.error(`APNs key: ${(error as Error).message}`);
+		process.exit(1);
+	}
 }

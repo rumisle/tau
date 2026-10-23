@@ -467,7 +467,12 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         if !self.isPreview {
             self.isOnScreen = true
             self.context.store.markSeen(self.conversationId)
-            LiveActivityController.shared.seen((self.context.store as? MultiStore)?.realId(self.conversationId) ?? self.conversationId)
+            let id = (self.context.store as? MultiStore)?.realId(self.conversationId) ?? self.conversationId
+            LiveActivityController.shared.seen(id)
+            // Its notifications have been read now, as Telegram clears a chat's on opening it.
+            if id >= 0, let serverId = (self.context.store as? MultiStore)?.server(of: id)?.serverInfo?.serverId {
+                PushRegistration.shared.clearDelivered(serverId: serverId, localId: MultiStore.split(id).local)
+            }
         }
     }
 

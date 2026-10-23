@@ -31,6 +31,11 @@ protocol TauServer: AnyObject {
     /// Where the server pushes answers while no app is in the foreground (server/src/notifier.ts); nil: nowhere.
     var ntfy: NtfyTarget? { get }
     func setNtfy(_ target: NtfyTarget?)
+    /// It has the account's APNs key and sends Apple's pushes (server/src/apns.ts).
+    var canPush: Bool { get }
+    /// Its answers as notifications on this phone (Settings > Notifications).
+    var pushAlerts: Bool { get }
+    func setPushAlerts(_ value: Bool)
     /// What this phone keeps of the server's chats: their transcripts by conversation, and what waits to be sent.
     func storageUsage() -> StorageUsage
     /// Drops the cached transcripts of chats that are not open; they load again when opened.

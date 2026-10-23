@@ -29,6 +29,7 @@ targets:
     dependencies:
       - target: TauWidgets
       - target: TauShare
+      - target: TauNotifications
       - package: SwiftMath
       - package: TelegramFoundation
         products:
@@ -137,6 +138,27 @@ targets:
         INFOPLIST_FILE: TauShare/Info.plist
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: TauShare/TauShare.entitlements
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
+  # Shows each push as its chat's message, with the chat's avatar (docs/notifications.md).
+  TauNotifications:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: TauNotifications
+      - path: Tau/Share/ShareModels.swift
+      - path: Tau/Common/LetterAvatar.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau.notifications
+        PRODUCT_NAME: TauNotifications
+        INFOPLIST_FILE: TauNotifications/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: TauNotifications/TauNotifications.entitlements
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"

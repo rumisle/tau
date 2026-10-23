@@ -17,7 +17,7 @@ if [ "${1:-}" = "--device" ]; then
 	profiles="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 	if ! grep -rlqa "$team.$bundle.widgets" "$profiles" 2>/dev/null && ! defaults read com.apple.dt.Xcode DVTDeveloperAccountManagerAppleIDLists 2>/dev/null | grep -q identifier; then
 		echo "no Xcode account to sign the Live Activity extension: building without it" >&2
-		sed -e '/^  TauWidgets:/,/^  TauUITests:/{/^  TauUITests:/!d;}' -e '/      - target: TauWidgets/d' -e '/      - target: TauShare/d' -e '/CODE_SIGN_ENTITLEMENTS: Tau\/Tau.entitlements/d' project.yml > .project-device.yml
+		sed -e '/^  TauWidgets:/,/^  TauUITests:/{/^  TauUITests:/!d;}' -e '/      - target: TauWidgets/d' -e '/      - target: TauShare/d' -e '/      - target: TauNotifications/d' -e '/CODE_SIGN_ENTITLEMENTS: Tau\/Tau.entitlements/d' project.yml > .project-device.yml
 		if command -v xcodegen >/dev/null; then xcodegen generate --quiet --spec .project-device.yml; else nix shell nixpkgs#xcodegen -c xcodegen generate --quiet --spec .project-device.yml; fi
 		rm -f .project-device.yml
 	fi

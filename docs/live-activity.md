@@ -11,8 +11,10 @@ notification reply, the share sheet later), and keeps it while the run that mess
 subagent's report starts another), goes on. Opening a chat, or the activity, means it was seen: the row goes. Subagents
 have no rows of their own; their parent's row says "2 subagents working".
 
-One activity for tau, not one per chat: three cards stacked on the lock screen are noise, and the island shows two at
-most anyway. It lists up to three chats, the newest first, and "+2 more"; with one chat it looks like that chat's own.
+One activity per server, not one per chat: three cards stacked on the lock screen are noise, and the island shows two
+at most anyway. Per server because its server pushes its updates, and an update replaces the whole activity: two servers
+pushing one activity would undo each other's rows. It lists up to three chats, the newest first, and "+2 more"; with
+one chat it looks like that chat's own.
 
 ## Content
 
@@ -53,14 +55,30 @@ The update that marks a chat done carries an alert: the island opens for a few s
 the answer's first line, with the notification sound if notifications are on. It replaces that chat's push, so the phone
 does not ring twice. Done rows stay until seen, or 30 minutes; when none is left the activity ends.
 
-## Without APNs (now)
+## Updates while tau is away
 
-iOS lets only the app itself, or Apple's push service, update an activity. tau has no APNs yet (a free developer account
-cannot send them), so the activity is updated while the app runs, plus the half minute iOS gives it on leaving. After
-that the minutes keep counting (iOS 18), but a finish is not seen until the app opens again; the activity says so once
-it is stale ("Open tau for the latest"), two minutes after the last update. With APNs the server sends the updates
-(`liveactivity` pushes, the activity's push token registered with it), and completion arrives whatever the app is
-doing; the views stay as they are.
+iOS lets only the app itself, or Apple's push service, update an activity. While tau runs it updates its activities
+from the chat list. A server with the account's APNs key (docs/notifications.md) takes over while no app is in the
+foreground:
+
+- The app starts each activity with `pushType: .token` and gives its server the activity's push token and all its rows
+  (`liveActivity.update { deviceId, activity: { id, token, rows, accent } | null }`), each time they change.
+- The server (`server/src/notifier.ts`) watches those chats' runs and their subagents'. A chat that starts working again
+  gets an update at priority 5; one whose run ends with nothing left working is marked done (or failed) with the answer's
+  first line, in an update at priority 10 with the alert, "Done · worked 12 min · …", which replaces that chat's
+  notification on the device. When none is left working, the server ends the activity half an hour later, as the app
+  would, unless it changed by then. Each push's `timestamp` is later than the last.
+- An activity the server keeps up to date is not stale while it works, and the app gives no alert of its own for it.
+- A notification's reply sends from the background, where an activity cannot start: the app asks its server
+  (`liveActivity.start`), which updates the activity it has, or starts one with the device's push-to-start token
+  (iOS 17.2, `devices.register { pushToStart }`). The app adopts an activity it did not start, at launch or while it
+  runs: its rows, and its push token.
+- An activity that ended or was dismissed takes its finished rows with it; a chat still working gets a new one once tau
+  is open.
+
+Without the key nothing updates an activity after the half minute iOS gives the app on leaving. The minutes keep
+counting (iOS 18), but a finish is not seen until the app opens again; the activity says so once it is stale ("Open
+tau for the latest"), two minutes after the last update.
 
 ## Not done
 
