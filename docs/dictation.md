@@ -8,27 +8,25 @@ Speech to text in the composer (`ios/Tau/Chat/ChatInputPanelNode.swift`), throug
 Laid out as Telegram's iOS 26 ChatTextInputPanelNode, with the text in it: the attachment button, then the field to
 the screen's edge. At the field's end:
 
-- **The microphone**, where Telegram keeps the sticker button, always there: tapped, it listens until tapped again;
-  held, while the finger is down (Telegram's hold-to-record).
-- **The action button** after it, Telegram's `sendActionButtons`: a 34 pt disc in the accent color. **Send** once
-  there is text (long-pressed, the send menu), **Stop** while the agent works on an empty field, and while dictating,
-  the **listening** button, which stops it. With none, there is no button.
+- **The microphone**, where Telegram keeps the sticker button (an accessory button: 32 pt, 4 pt from the end), always
+  there: tapped, it listens until tapped again; held, while the finger is down (Telegram's hold-to-record). While it
+  listens it is a disc in the accent color, in its own place, with Telegram's recording blob (AudioBlob's VoiceBlobView,
+  set up as ChatTextInputMediaRecordingButton sets it up) moving around it with the microphone's level; the blob is over
+  the field, not in its glass, so it is not clipped. Nothing else changes: Send stays beside it.
+- **The action button** after it, Telegram's `sendActionButtons`: a 40 by 34 pt capsule in the accent color, in a 46 by
+  40 pt box. **Send** once there is text (long-pressed, the send menu), **Stop** while the agent works on an empty
+  field; with neither, no button.
 
 The button comes in with Telegram's `updateActionButtons`: scaled up from 0.001 at the field's edge, faded in over
 0.2 s and unblurred from 4 pt over 0.18 s, the send arrow coming from 22 pt left and 18 pt below. It leaves the same
-way back, showing what it was. Between kinds the icons trade places with a scale, as Telegram's stop and microphone
-icons do. The microphone moves aside for the button as Telegram's accessory buttons move for Send, and the text keeps
-clear of both.
+way back, showing what it was. Between Send and Stop the icons trade places with a scale. The microphone moves aside for
+the button as Telegram's accessory buttons move for Send, and the text keeps clear of both.
 
-While listening, Telegram's recording blob (AudioBlob's VoiceBlobView, set up as ChatTextInputMediaRecordingButton
-sets it up) moves around the disc with the microphone's level; it is over the field, not in its glass, so it is not
-clipped. The words go in at the cursor, or at the end when the field is not being edited, a space apart from what is
-before them, and replace themselves as they change. Tapping the listening button turns the microphone off at once;
-the last words come within a second or two, and the button turns into Send. Send while listening sends what has been
-heard. Dictation that cannot listen says why in a toast (no microphone access, no sign-in in the build, a connection
-that failed with nothing heard).
-
-There is no timer: the blob says it is listening, and the field stays as wide as it was.
+The words go in at the cursor, or at the end when the field is not being edited, a space apart from what is before
+them, and replace themselves as they change. **Stop is immediate**: the microphone turns off and the disc is the
+microphone again at once. The last words (about a second later) replace what was heard only if it is still there as
+it was; an edit meanwhile wins. Send while listening sends what has been heard. Dictation that cannot listen says why
+in a toast (no microphone access, no sign-in in the build, a connection that failed with nothing heard).
 
 ## Aqua Voice
 
@@ -39,12 +37,15 @@ change without notice.
   `pcm_s16le`, streaming, the model, language, dictionary and replacements), then `ready`.
 - Audio as binary frames of 100 ms (3200 bytes of 16 kHz mono 16-bit PCM), each behind an 8-byte header: type 1,
   0, the frame number and 0 as big-endian 16-bit, and the size in KB.
-- `document_update` carries the whole text so far (`wet_text`, else `dry_text`, else `raw_text`); the one marked
-  `final` after `stop_request { total_audio_chunks }` ends it.
+- `document_update`'s `display_text_annotated` is the whole text so far, in segments typed `out_of_window`, `normal`,
+  `active`, `unprocessed` and `deleted`; the text is their join without the `deleted` ones, as Aqua's app reads it
+  (`displayTextToString`). Not `wet_text`: that is only the current window, about half a minute, which starts over
+  with a new `snapshot_id`, so a long dictation read from it lost everything before its last stretch. The update
+  marked `final` after `stop_request { total_audio_chunks }` ends it.
 - The microphone (AVAudioEngine, converted to 16 kHz) is captured from the tap on: what comes before `ready` is kept
-  and sent then. Stopping sends a second of silence at the pace of speech, as Aqua's SDK does, then `stop_request`,
-  and waits 8 s for the final text, keeping the last one heard otherwise. Audio must go at the pace of speech: the
-  server, sent a recording at once, gives nothing.
+  and sent then. Stopping sends a second of silence (at once: paced, it only held the text back a second more), then
+  `stop_request`; the final text comes about 1.1 s later, and after 8 s the last one heard is kept. Speech itself must
+  go at its pace: the server, sent a recording at once, gives nothing.
 - Aqua writes Chinese with a space between words; the spaces between two Chinese characters are taken out.
 
 **Settings > Dictation** sets the language (Aqua's codes: Auto-Detect, `en`, `cmn`, `ja`, `ko`, `de`, `fr`, `es`,

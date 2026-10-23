@@ -7,8 +7,9 @@ import SwiftSignalKit
 ///
 /// One session is one WebSocket to wss://realtime.aquavoice.com: a `start` message, then, once the server says
 /// `ready`, the microphone as 16 kHz mono 16-bit PCM in 100 ms frames, each behind an 8-byte header. The server answers
-/// with `document_update`s, each the whole text so far. Stopping turns the microphone off at once, sends a second of
-/// silence (so the last word is finished, as Aqua's SDK does) and `stop_request`, and waits for the update marked final.
+/// with `document_update`s, whose `display_text_annotated` is the whole text so far. Stopping turns the microphone off
+/// at once, sends a second of silence (so the last word is finished, as Aqua's SDK does) and `stop_request`, and waits
+/// for the update marked final.
 /// The audio captured before `ready` is kept and sent then, so the first words are not lost to the connection.
 final class AquaDictationEngine: DictationEngine {
     struct Config {
@@ -387,7 +388,7 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
                 self.sendTail()
             }
         case "document_update":
-            let text = (message["wet_text"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (message["dry_text"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (message["raw_text"] as? String) ?? ""
+            let text = AquaSession.documentText(message)
             let isFinal = (message["final"] as? Bool ?? false) || (message["is_final"] as? Bool ?? false)
             let cleaned = AquaSession.clean(text)
             if isFinal {
@@ -434,7 +435,9 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    /// The rest of the audio, a second of silence at the pace of speech, then the stop request.
+    /// The rest of the audio, a second of silence, then the stop request. The silence goes at once: it only lets the model
+    /// finish the last word, and at the pace of speech it would hold the text back a second more (measured: the final
+    /// comes about 1.1 s after the stop request either way).
     private func sendTail() {
         self.sendWholeChunks()
         if !self.pending.isEmpty {
@@ -442,17 +445,10 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
             self.pending = Data()
             self.sendAudio(rest)
         }
-        var silence = 10
-        func next() {
-            guard self.phase == .stopping else {
-                return
-            }
-            if silence > 0 {
-                silence -= 1
-                self.sendAudio(Data(count: AquaSession.chunkBytes))
-                self.queue.asyncAfter(deadline: .now() + 0.1, execute: next)
-                return
-            }
+        for _ in 0 ..< 10 {
+            self.sendAudio(Data(count: AquaSession.chunkBytes))
+        }
+        do {
             self.send(json: ["type": "stop_request", "total_audio_chunks": self.chunks])
             self.stopRequestSent = true
             let timeout = DispatchWorkItem { [weak self] in
@@ -465,7 +461,6 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
             self.finalTimer = timeout
             self.queue.asyncAfter(deadline: .now() + AquaSession.finalTimeout, execute: timeout)
         }
-        next()
     }
 
     private func sendAudio(_ payload: Data) {
@@ -517,6 +512,21 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
         self.urlSession?.invalidateAndCancel()
         self.urlSession = nil
         self.completed()
+    }
+
+    /// The whole text so far: `display_text_annotated`, as Aqua's app reads it (`displayTextToString`), its segments
+    /// joined without the ones `deleted` (words the model took back). `wet_text` is not it: it is only the current
+    /// window of about half a minute, which starts over, so a long dictation would lose all but its last stretch.
+    static func documentText(_ message: [String: Any]) -> String {
+        if let segments = message["display_text_annotated"] as? [[String: Any]], !segments.isEmpty {
+            return segments.compactMap { segment -> String? in
+                guard (segment["type"] as? String) != "deleted" else {
+                    return nil
+                }
+                return segment["text"] as? String
+            }.joined()
+        }
+        return (message["wet_text"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (message["raw_text"] as? String) ?? ""
     }
 
     /// Aqua writes Chinese with a space between words; Chinese has none. Spaces between Latin text and Chinese stay.

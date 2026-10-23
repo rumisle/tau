@@ -10,10 +10,15 @@ import AudioBlob
 
 /// The composer, laid out like Telegram's iOS 26 ChatTextInputPanelNode with the text in it: an attachment button
 /// (Telegram's paperclip) and the growing text field, as glass in one GlassBackgroundContainerView so iOS merges and
-/// morphs them. The field has the microphone at its end, where Telegram keeps the sticker button, always in its place;
-/// and after it, the field's action button, as Telegram's `sendActionButtons`: Send once there is text, Stop while the
-/// agent works on an empty field, and while dictating, the listening button. The button comes in with Telegram's scale,
-/// fade and blur (`updateActionButtons`), and the microphone moves aside for it as Telegram's accessory buttons do.
+/// morphs them. At the field's end:
+///
+/// - the microphone, where Telegram keeps the sticker button (an accessory button: 32 pt, 4 pt from the end). Tapped,
+///   it listens until tapped again; held, while the finger is down. While it listens it is a disc in the accent color
+///   with Telegram's recording blob around it, in its own place: nothing else moves.
+/// - the action button after it, Telegram's `sendActionButtons`: a 40 by 34 pt capsule in a 46 by 40 pt box. Send once
+///   there is text, Stop while the agent works on an empty field. It comes in with Telegram's scale, fade and blur
+///   (`updateActionButtons`), and the microphone moves aside for it as Telegram's accessory buttons do.
+///
 /// Editing a message, or messages queued for the agent, add Telegram's accessory panel at the top of the field
 /// (InputAccessoryPanelView).
 final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
@@ -25,30 +30,34 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     private let textView: UITextView
     private let placeholderLabel: UILabel
     private let accessoryView: InputAccessoryPanelView
-    /// Dictation, at the field's end: tapped, it listens until tapped again (on the listening button); held, while the
-    /// finger is down, as Telegram's hold-to-record.
     private let micButton = UIView()
     private let micIconView = UIImageView()
 
-    /// The field's action button, over the field's end: outside the field's glass, so the listening blob is not clipped.
+    /// The microphone while it listens, over its place but outside the field's glass, so the blob is not clipped: the
+    /// accent disc, the microphone on it, and Telegram's recording blob (AudioBlob's VoiceBlobView, as
+    /// ChatTextInputMediaRecordingButton sets it up) behind, moving with the level.
+    private let listenView = UIView()
+    private let listenDiscView = UIImageView()
+    private let listenIconView = UIImageView()
+    private var blobView: VoiceBlobView?
+
+    /// The field's action button, over the field's end.
     private let actionView = UIView()
     private let actionFillView = UIImageView()
     private let sendIconView = UIImageView()
     private let stopIconView = UIImageView()
-    private let listenIconView = UIImageView()
-    /// Telegram's recording blob (AudioBlob's VoiceBlobView, as ChatTextInputMediaRecordingButton sets it up), behind
-    /// the listening button's disc, moving with the microphone's level.
-    private var blobView: VoiceBlobView?
 
     private var dictationEngine: DictationEngine?
     private let dictationDisposable = MetaDisposable()
-    /// Where the words being heard are in the text, replaced as they change.
+    /// Where the words being heard are in the text, replaced as they change, and what was put there last.
     private var dictationRange: NSRange?
+    private var dictationInserted = ""
     /// The space put before a stretch, kept as its words change.
     private var dictationLead = ""
+    /// Listening: the microphone is on.
     private(set) var isDictating = false
-    /// Asked to stop: the microphone is off and the last words are on their way.
-    private var isFinishingDictation = false
+    /// Stopped, with the last words still on their way: they replace what was heard if it is still as it was.
+    private var isAwaitingFinal = false
 
     var sendMessage: ((String) -> Void)?
     /// A long press on Send, with the button to point a menu at.
@@ -81,10 +90,9 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     private enum Action {
         case send
         case stop
-        case listening
     }
     private var action: Action?
-    /// The first layout puts the button in place without animating it in.
+    /// The first layout puts everything in place without animating it in.
     private var hasLaidOut = false
     private var validWidth: CGFloat?
     private(set) var editingText: String?
@@ -95,20 +103,23 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         return self.editingText != nil || !self.queue.isEmpty
     }
 
-    // Telegram ChatTextInputPanelNode: 40 pt controls, 6 pt between glass shapes; the send button is a 34 pt disc in
-    // a 40 pt box at the field's end (ChatTextInputActionButtonsNode insets it 3 pt).
+    // Telegram ChatTextInputPanelNode: 40 pt controls, 6 pt between glass shapes.
     private static let controlSize: CGFloat = 40.0
     private static let spacing: CGFloat = 6.0
-    private static let actionDiameter: CGFloat = 34.0
-    /// The microphone's width in the field, as Telegram's accessory buttons.
-    private static let micWidth: CGFloat = 34.0
+    /// ChatTextInputActionButtonsNode: a box 46 pt wide (40 + 3 * 2), the capsule inset 3 pt in it.
+    private static let actionBoxWidth: CGFloat = 46.0
+    private static let actionInset: CGFloat = 3.0
+    /// Telegram's accessory buttons: 32 pt wide, the last 4 pt from the field's end.
+    private static let micWidth: CGFloat = 32.0
+    private static let accessoryInset: CGFloat = 4.0
+    private static let listenDiameter: CGFloat = 32.0
+    /// The blob's box: its smallest blob is about half of it, the size of the disc.
+    private static let blobSize: CGFloat = 64.0
     private static let fieldMaxLines: CGFloat = 6.0
     private static let font = Font.regular(17.0)
     private static let textInsets = UIEdgeInsets(top: 10.0, left: 16.0, bottom: 10.0, right: 4.0)
     /// ChatInputMessageAccessoryPanel's height.
     private static let accessoryHeight: CGFloat = 52.0
-    /// The blob's box around the 34 pt button: its smallest blob, the button's own disc, is about half of it.
-    private static let blobSize: CGFloat = 68.0
 
     init(theme: TauTheme) {
         self.theme = theme
@@ -160,7 +171,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.micButton.addGestureRecognizer(hold)
         self.fieldBackgroundView.contentView.addSubview(self.micButton)
 
-        for view in [self.actionFillView, self.sendIconView, self.stopIconView, self.listenIconView] {
+        for view in [self.actionFillView, self.sendIconView, self.stopIconView] {
             view.contentMode = .center
             view.isUserInteractionEnabled = false
             self.actionView.addSubview(view)
@@ -171,6 +182,19 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         longPress.minimumPressDuration = 0.3
         self.actionView.addGestureRecognizer(longPress)
         self.view.addSubview(self.actionView)
+
+        for view in [self.listenDiscView, self.listenIconView] {
+            view.contentMode = .center
+            view.isUserInteractionEnabled = false
+            self.listenView.addSubview(view)
+        }
+        self.listenView.alpha = 0.0
+        self.listenView.isUserInteractionEnabled = false
+        self.listenView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.micTapped)))
+        let listenHold = UILongPressGestureRecognizer(target: self, action: #selector(self.micHeld(_:)))
+        listenHold.minimumPressDuration = 0.25
+        self.listenView.addGestureRecognizer(listenHold)
+        self.view.addSubview(self.listenView)
 
         self.textView.delegate = self
         self.attachBackgroundView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.attachTapped)))
@@ -191,12 +215,13 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             self.queueTapped?(self.accessoryView)
         }
         self.accessoryView.alpha = 0.0
-        for (view, identifier, label) in [(self.attachBackgroundView, "attach", "Attach"), (self.micButton, "microphone", "Dictate"), (self.actionView, "send", "Send")] as [(UIView, String, String)] {
+        for (view, identifier, label) in [(self.attachBackgroundView, "attach", "Attach"), (self.micButton, "microphone", "Dictate"), (self.actionView, "send", "Send"), (self.listenView, "stopDictation", "Stop Dictation")] as [(UIView, String, String)] {
             view.isAccessibilityElement = true
             view.accessibilityIdentifier = identifier
             view.accessibilityLabel = label
             view.accessibilityTraits = .button
         }
+        self.listenView.accessibilityElementsHidden = true
         self.applyTheme()
     }
 
@@ -211,8 +236,10 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         let chat = self.theme.chat
         self.attachIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconAttachment"), color: chat.panelControlColor)
         self.micIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/IconMicrophone"), color: chat.panelControlColor)
-        let diameter = ChatInputPanelNode.actionDiameter
-        self.actionFillView.image = generateFilledCircleImage(diameter: diameter, color: chat.actionControlFillColor)
+        // ChatTextInputActionButtonsNode: a capsule whatever its frame, from a stretchable disc of its shorter side.
+        let capsule = ChatInputPanelNode.controlSize - ChatInputPanelNode.actionInset * 2.0
+        self.actionFillView.image = generateStretchableFilledCircleImage(diameter: capsule, color: chat.actionControlFillColor)
+        self.actionFillView.contentMode = .scaleToFill
         self.sendIconView.image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Input/Text/SendIcon"), color: chat.actionControlForegroundColor)
         self.stopIconView.image = generateImage(CGSize(width: 12.0, height: 12.0), rotatedContext: { size, context in
             context.clear(CGRect(origin: CGPoint(), size: size))
@@ -220,7 +247,8 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             context.addPath(UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: size), cornerRadius: 2.5).cgPath)
             context.fillPath()
         })
-        // The microphone, smaller, on the disc: what listens.
+        self.listenDiscView.image = generateFilledCircleImage(diameter: ChatInputPanelNode.listenDiameter, color: chat.actionControlFillColor)
+        // The microphone, smaller, on the disc.
         if let mic = UIImage(bundleImageName: "Chat/Input/Text/IconMicrophone") {
             let size = CGSize(width: floor(mic.size.width * 0.8), height: floor(mic.size.height * 0.8))
             self.listenIconView.image = generateImage(size, contextGenerator: { size, context in
@@ -324,8 +352,6 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             self.sendPressed()
         case .stop:
             self.stopPressed?()
-        case .listening:
-            self.stopDictation()
         case .none:
             break
         }
@@ -370,101 +396,140 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         guard !self.isDictating else {
             return
         }
+        // The last words of a stretch stopped a moment ago are not waited for.
+        self.dropDictation()
         let engine = self.dictationEngine ?? makeDictationEngine()
         self.dictationEngine = engine
         self.isDictating = true
-        self.isFinishingDictation = false
-        self.dictationRange = nil
         self.micPressed?()
-        self.updateBlob()
+        self.updateListening(animated: true)
         self.dictationDisposable.set((engine.start() |> deliverOnMainQueue).start(next: { [weak self] event in
             self?.apply(event)
         }, completed: { [weak self] in
-            self?.finishDictation()
+            self?.dictationEnded()
         }))
-        self.requestLayout?(.animated(duration: 0.4, curve: .spring))
     }
 
-    /// Stops listening; the last words still come, then dictation ends.
+    /// Stops listening at once: the microphone is off and the button is the microphone again. The engine still sends
+    /// the last words, which a second or so later replace what was heard, if it is still as it was.
     func stopDictation() {
-        guard self.isDictating, !self.isFinishingDictation else {
-            return
-        }
-        self.isFinishingDictation = true
-        self.updateBlob()
-        self.dictationEngine?.stop()
-        self.requestLayout?(.animated(duration: 0.3, curve: .easeInOut))
-    }
-
-    /// Ends dictation now, keeping the text as it is: the field is being sent or replaced.
-    private func cancelDictation() {
-        guard self.isDictating else {
-            return
-        }
-        self.dictationDisposable.set(nil)
-        self.finishDictation()
-    }
-
-    private func finishDictation() {
         guard self.isDictating else {
             return
         }
         self.isDictating = false
-        self.isFinishingDictation = false
-        self.dictationDisposable.set(nil)
-        self.dictationRange = nil
-        self.updateBlob()
-        self.requestLayout?(.animated(duration: 0.4, curve: .spring))
+        self.isAwaitingFinal = true
+        self.dictationEngine?.stop()
+        self.updateListening(animated: true)
     }
 
-    private func updateBlob() {
-        let listening = self.isDictating && !self.isFinishingDictation
+    /// Ends dictation now, keeping the text as it is: the field is being sent or replaced.
+    private func cancelDictation() {
+        let wasDictating = self.isDictating
+        self.dropDictation()
+        if wasDictating {
+            self.updateListening(animated: true)
+        }
+    }
+
+    private func dropDictation() {
+        self.dictationDisposable.set(nil)
+        self.isDictating = false
+        self.isAwaitingFinal = false
+        self.dictationRange = nil
+    }
+
+    private func dictationEnded() {
+        let wasDictating = self.isDictating
+        self.dropDictation()
+        if wasDictating {
+            self.updateListening(animated: true)
+        }
+    }
+
+    /// The microphone, or in its place the disc and the blob.
+    private func updateListening(animated: Bool) {
+        let listening = self.isDictating
         if listening {
-            let blob: VoiceBlobView
-            if let current = self.blobView {
-                blob = current
-            } else {
+            if self.blobView == nil {
                 // ChatTextInputMediaRecordingButton's blob.
-                blob = VoiceBlobView(frame: CGRect(origin: CGPoint(), size: CGSize(width: ChatInputPanelNode.blobSize, height: ChatInputPanelNode.blobSize)), maxLevel: 4.0, smallBlobRange: (0.45, 0.55), mediumBlobRange: (0.52, 0.87), bigBlobRange: (0.57, 1.0))
+                let blob = VoiceBlobView(frame: CGRect(origin: CGPoint(), size: CGSize(width: ChatInputPanelNode.blobSize, height: ChatInputPanelNode.blobSize)), maxLevel: 4.0, smallBlobRange: (0.45, 0.55), mediumBlobRange: (0.52, 0.87), bigBlobRange: (0.57, 1.0))
                 blob.isUserInteractionEnabled = false
                 blob.setColor(self.theme.chat.actionControlFillColor)
-                self.actionView.insertSubview(blob, at: 0)
+                self.listenView.insertSubview(blob, at: 0)
                 self.blobView = blob
             }
-            self.layoutActionContents()
-            blob.startAnimating()
+            self.layoutListenContents()
+            self.blobView?.startAnimating()
         } else {
             self.blobView?.updateLevel(0.0)
             self.blobView?.stopAnimating()
+        }
+        let transition: ContainedViewLayoutTransition = animated && self.hasLaidOut ? .animated(duration: 0.25, curve: .spring) : .immediate
+        let fade: ContainedViewLayoutTransition = animated && self.hasLaidOut ? .animated(duration: 0.15, curve: .easeInOut) : .immediate
+        fade.updateAlpha(layer: self.listenView.layer, alpha: listening ? 1.0 : 0.0)
+        transition.updateTransformScale(layer: self.listenView.layer, scale: listening ? 1.0 : 0.5)
+        fade.updateAlpha(layer: self.micIconView.layer, alpha: listening ? 0.0 : 1.0)
+        transition.updateTransformScale(layer: self.micIconView.layer, scale: listening ? 0.5 : 1.0)
+        self.listenView.isUserInteractionEnabled = listening
+        self.listenView.accessibilityElementsHidden = !listening
+        self.micButton.isUserInteractionEnabled = !listening
+        self.micButton.accessibilityElementsHidden = listening
+    }
+
+    private func layoutListenContents() {
+        let box = ChatInputPanelNode.blobSize
+        let center = CGPoint(x: box / 2.0, y: box / 2.0)
+        let diameter = ChatInputPanelNode.listenDiameter
+        self.listenDiscView.bounds = CGRect(origin: CGPoint(), size: CGSize(width: diameter, height: diameter))
+        self.listenDiscView.center = center
+        self.listenIconView.bounds = CGRect(origin: CGPoint(), size: CGSize(width: diameter, height: diameter))
+        self.listenIconView.center = center
+        if let blob = self.blobView {
+            blob.bounds = CGRect(origin: CGPoint(), size: CGSize(width: box, height: box))
+            blob.center = center
         }
     }
 
     private func apply(_ event: DictationEvent) {
         let text: String
+        let isFinal: Bool
         switch event {
         case let .level(level):
-            self.blobView?.updateLevel(CGFloat(level) * 4.0)
+            if self.isDictating {
+                self.blobView?.updateLevel(CGFloat(level) * 4.0)
+            }
             return
         case let .failed(message):
             self.dictationFailed?(message)
             return
         case let .partial(value):
+            // After Stop only the final text counts.
+            guard self.isDictating else {
+                return
+            }
             text = value
+            isFinal = false
         case let .final(value):
             text = value
-        }
-        let isFinal: Bool
-        if case .final = event {
             isFinal = true
-        } else {
-            isFinal = false
         }
         let storage = self.textView.textStorage
-        // The first words of a stretch go where the cursor is, a space apart from what is before them.
         let range: NSRange
-        if let current = self.dictationRange, current.upperBound <= storage.length {
+        if let current = self.dictationRange {
+            // The text heard so far must still be where it was, as it was: an edit meanwhile keeps the edit.
+            guard current.upperBound <= storage.length, (storage.string as NSString).substring(with: current) == self.dictationInserted else {
+                if !self.isDictating {
+                    self.dropDictation()
+                }
+                self.dictationRange = nil
+                return
+            }
             range = current
         } else {
+            guard self.isDictating || !isFinal || self.isAwaitingFinal else {
+                return
+            }
+            // The first words of a stretch go where the cursor is, a space apart from what is before them.
             let cursor = self.textView.isFirstResponder ? self.textView.selectedRange.location : storage.length
             range = NSRange(location: min(cursor, storage.length), length: 0)
             let before = range.location > 0 ? (storage.string as NSString).substring(with: NSRange(location: range.location - 1, length: 1)) : ""
@@ -472,12 +537,25 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         }
         let value = text.isEmpty ? "" : self.dictationLead + text
         let attributes: [NSAttributedString.Key: Any] = [.font: ChatInputPanelNode.font, .foregroundColor: self.theme.chat.inputTextColor]
+        let selection = self.textView.selectedRange
         storage.replaceCharacters(in: range, with: NSAttributedString(string: value, attributes: attributes))
         let newRange = NSRange(location: range.location, length: (value as NSString).length)
         self.textView.typingAttributes = attributes
-        self.dictationRange = isFinal ? nil : newRange
+        if isFinal {
+            self.dictationRange = nil
+            self.dictationInserted = ""
+            if !self.isDictating {
+                self.isAwaitingFinal = false
+            }
+        } else {
+            self.dictationRange = newRange
+            self.dictationInserted = value
+        }
         if self.textView.isFirstResponder {
-            self.textView.selectedRange = NSRange(location: newRange.upperBound, length: 0)
+            // The cursor follows the words while listening; after, it stays where the user put it.
+            if self.isDictating || selection.location >= range.location {
+                self.textView.selectedRange = NSRange(location: newRange.upperBound, length: 0)
+            }
         }
         self.textViewDidChange(self.textView)
     }
@@ -508,9 +586,6 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     // MARK: - Layout
 
     private func currentAction() -> Action? {
-        if self.isDictating {
-            return .listening
-        }
         if !self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return .send
         }
@@ -521,9 +596,14 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         return width - ChatInputPanelNode.controlSize - ChatInputPanelNode.spacing
     }
 
-    /// The field's end that the text keeps clear of: the microphone, and the action button when there is one.
+    /// Where the microphone's right edge is from the field's end: after the action button, or 4 pt from the end.
+    private func micTrailing(action: Action?) -> CGFloat {
+        return action == nil ? ChatInputPanelNode.accessoryInset : ChatInputPanelNode.actionBoxWidth
+    }
+
+    /// The field's end that the text keeps clear of: the microphone and the action button.
     private func fieldTrailing(action: Action?) -> CGFloat {
-        return ChatInputPanelNode.micWidth + (action == nil ? 6.0 : ChatInputPanelNode.controlSize)
+        return self.micTrailing(action: action) + ChatInputPanelNode.micWidth
     }
 
     private func measureTextHeight(width: CGFloat) -> CGFloat {
@@ -535,26 +615,23 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         return min(maxHeight, ceil(bounds.height))
     }
 
-    /// The disc, its icons and the blob, centered in the action button.
+    /// The capsule and its icons in the action button's box.
     private func layoutActionContents() {
-        let size = ChatInputPanelNode.controlSize
-        let center = CGPoint(x: size / 2.0, y: size / 2.0)
-        let diameter = ChatInputPanelNode.actionDiameter
-        self.actionFillView.bounds = CGRect(origin: CGPoint(), size: CGSize(width: diameter, height: diameter))
+        let box = CGSize(width: ChatInputPanelNode.actionBoxWidth, height: ChatInputPanelNode.controlSize)
+        let center = CGPoint(x: box.width / 2.0, y: box.height / 2.0)
+        let fill = CGRect(origin: CGPoint(), size: box).insetBy(dx: ChatInputPanelNode.actionInset, dy: ChatInputPanelNode.actionInset)
+        self.actionFillView.bounds = CGRect(origin: CGPoint(), size: fill.size)
         self.actionFillView.center = center
-        for view in [self.sendIconView, self.stopIconView, self.listenIconView] {
-            view.bounds = CGRect(origin: CGPoint(), size: CGSize(width: size, height: size))
+        for view in [self.sendIconView, self.stopIconView] {
+            view.bounds = CGRect(origin: CGPoint(), size: box)
             view.center = center
-        }
-        if let blob = self.blobView {
-            blob.bounds = CGRect(origin: CGPoint(), size: CGSize(width: ChatInputPanelNode.blobSize, height: ChatInputPanelNode.blobSize))
-            blob.center = center
         }
     }
 
     /// Lays the panel out in `width` and returns its height.
     func updateLayout(width: CGFloat, transition: ContainedViewLayoutTransition) -> CGFloat {
         self.validWidth = width
+        let transition = self.hasLaidOut ? transition : .immediate
         let action = self.currentAction()
         let previousAction = self.action
         self.action = action
@@ -606,34 +683,41 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         componentTransition.setFrame(view: self.placeholderLabel, frame: CGRect(origin: CGPoint(x: insets.left, y: accessoryHeight + insets.top), size: CGSize(width: fieldFrame.width - insets.left - self.fieldTrailing(action: action), height: ceil(ChatInputPanelNode.font.lineHeight))))
 
         // The microphone at the field's end, moved aside by the action button as Telegram's accessory buttons are by
-        // Send; while dictating the listening button stands for it.
-        let micFrame = CGRect(x: fieldFrame.width - (action == nil ? 4.0 : size) - ChatInputPanelNode.micWidth, y: fieldHeight - size, width: ChatInputPanelNode.micWidth, height: size)
-        componentTransition.setFrame(view: self.micButton, frame: micFrame)
-        self.micIconView.frame = CGRect(origin: CGPoint(), size: micFrame.size)
-        let showsMic = action != .listening
-        componentTransition.setAlpha(view: self.micButton, alpha: showsMic ? 1.0 : 0.0)
-        componentTransition.setScale(view: self.micButton, scale: showsMic ? 1.0 : 0.6)
-        self.micButton.isUserInteractionEnabled = showsMic
-        self.micButton.accessibilityElementsHidden = !showsMic
+        // Send. By position and bounds: its icon may be scaled, and a frame set through a transform lands elsewhere.
+        let micFrame = CGRect(x: fieldFrame.width - self.micTrailing(action: action) - ChatInputPanelNode.micWidth, y: fieldHeight - size, width: ChatInputPanelNode.micWidth, height: size)
+        transition.updatePosition(layer: self.micButton.layer, position: micFrame.center)
+        transition.updateBounds(layer: self.micButton.layer, bounds: CGRect(origin: CGPoint(), size: micFrame.size))
+        self.micIconView.bounds = CGRect(origin: CGPoint(), size: micFrame.size)
+        self.micIconView.center = CGPoint(x: micFrame.width / 2.0, y: micFrame.height / 2.0)
+
+        // Listening, the disc stands where the microphone is, and moves with it.
+        let listenCenter = CGPoint(x: fieldFrame.minX + micFrame.midX, y: fieldFrame.minY + micFrame.midY)
+        transition.updatePosition(layer: self.listenView.layer, position: listenCenter)
+        self.listenView.bounds = CGRect(origin: CGPoint(), size: CGSize(width: ChatInputPanelNode.blobSize, height: ChatInputPanelNode.blobSize))
+        self.layoutListenContents()
 
         // The action button at the field's end. Hidden, it shrinks to the field's edge (Telegram's `sendActionsScale`
         // of 0.001, its frame moved right by about half its width).
-        var actionFrame = CGRect(x: fieldFrame.maxX - size, y: controlsY, width: size, height: size)
+        let boxWidth = ChatInputPanelNode.actionBoxWidth
+        var actionFrame = CGRect(x: fieldFrame.maxX - boxWidth, y: controlsY, width: boxWidth, height: size)
         if action == nil {
-            actionFrame.origin.x += (size - 6.0) * 0.5 - 3.0
+            actionFrame.origin.x += (boxWidth - ChatInputPanelNode.actionInset * 2.0) * 0.5 - ChatInputPanelNode.actionInset
         }
         transition.updatePosition(layer: self.actionView.layer, position: actionFrame.center)
         self.actionView.bounds = CGRect(origin: CGPoint(), size: actionFrame.size)
         transition.updateTransformScale(layer: self.actionView.layer, scale: action == nil ? 0.001 : 1.0)
         self.layoutActionContents()
-        self.updateActionButton(action: action, previous: previousAction, transition: self.hasLaidOut ? transition : .immediate)
-        self.hasLaidOut = true
+        self.updateActionButton(action: action, previous: previousAction, transition: transition)
+        if !self.hasLaidOut {
+            self.hasLaidOut = true
+            self.updateListening(animated: false)
+        }
 
         return panelSize.height
     }
 
     /// Telegram's `updateActionButtons`: the button fades and unblurs in, its send arrow coming from below-left, and
-    /// blurs out; between kinds, the icons trade places with a scale, as its stop and microphone icons do.
+    /// blurs out; between Send and Stop, the icons trade places with a scale, as its stop and microphone icons do.
     private func updateActionButton(action: Action?, previous: Action?, transition: ContainedViewLayoutTransition) {
         let animated = transition.isAnimated
         let alphaTransition: ContainedViewLayoutTransition = animated ? .animated(duration: 0.2, curve: .easeInOut) : .immediate
@@ -653,16 +737,13 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         }
         // Hidden, the button keeps showing what it last was, so it leaves as it was.
         let shown = action ?? previous
-        let icons: [(Action, UIView)] = [(.send, self.sendIconView), (.stop, self.stopIconView), (.listening, self.listenIconView)]
         let iconTransition: ContainedViewLayoutTransition = wasShown && animated ? .animated(duration: 0.3, curve: .spring) : .immediate
-        for (kind, view) in icons {
+        for (kind, view) in [(Action.send, self.sendIconView), (Action.stop, self.stopIconView)] {
             let visible = kind == shown
-            iconTransition.updateAlpha(layer: view.layer, alpha: visible ? (kind == .listening && self.isFinishingDictation ? 0.5 : 1.0) : 0.0)
+            iconTransition.updateAlpha(layer: view.layer, alpha: visible ? 1.0 : 0.0)
             iconTransition.updateTransformScale(layer: view.layer, scale: visible ? 1.0 : 0.001)
         }
-        // The blob moves around the disc, as around Telegram's recording button.
-        self.blobView?.isHidden = shown != .listening
-        self.actionView.isUserInteractionEnabled = action != nil && !(action == .listening && self.isFinishingDictation)
+        self.actionView.isUserInteractionEnabled = action != nil
         self.actionView.accessibilityElementsHidden = action == nil
         switch action {
         case .send:
@@ -671,9 +752,6 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         case .stop:
             self.actionView.accessibilityIdentifier = "stop"
             self.actionView.accessibilityLabel = "Stop"
-        case .listening:
-            self.actionView.accessibilityIdentifier = "stopDictation"
-            self.actionView.accessibilityLabel = "Stop Dictation"
         case .none:
             break
         }

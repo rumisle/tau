@@ -1167,8 +1167,8 @@ final class SendingUITests: XCTestCase {
         self.shot("mi-4-relaunched")
     }
 
-    /// Dictation, with the stand-in engine: the field's microphone listens, as the listening button at the field's end
-    /// shows, and the words come in; with text written, the microphone adds to it, and Send comes back after.
+    /// Dictation, with the stand-in engine: the field's microphone listens, a disc with the blob in its place, and the
+    /// words come in; with text written, Send stays beside it while it adds to the text.
     func testDictation() {
         self.launch(["-newChat", "YES", "-mockDictation", "YES"])
         self.app.descendants(matching: .any)["microphone"].firstMatch.tap()
