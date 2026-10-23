@@ -223,6 +223,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
     private var item: ChatListItem?
     private var isHighlightedValue = false
     private var currentAvatarKey: String?
+    /// ChatListItemNode's: an archived row leaves sliding away, without the fade a removed row has.
+    private var skipFadeout = false
 
     var dialog: DialogModel? {
         return self.item?.dialog
@@ -259,6 +261,7 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
         self.addSubnode(self.separatorNode)
         self.addSubnode(self.contextContainer)
         self.contextContainer.addSubnode(self.mainContentContainerNode)
+        self.mainContentContainerNode.clipsToBounds = true
         self.mainContentContainerNode.addSubnode(self.avatarNode)
         self.mainContentContainerNode.addSubnode(self.titleNode)
         self.mainContentContainerNode.addSubnode(self.authorNode)
@@ -356,10 +359,13 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
         case RevealOptionKey.delete.rawValue:
             item.interaction.delete(dialog)
         case RevealOptionKey.archive.rawValue, RevealOptionKey.unarchive.rawValue:
-            // As Telegram: the action fills the row, then the row leaves the list.
+            // As Telegram: the chat moves at once, and while the list closes the row up over it, the action fills the
+            // row, sliding its content away.
             close = false
+            self.skipFadeout = true
+            item.interaction.setArchived(dialog, option.key == RevealOptionKey.archive.rawValue)
             self.animateRevealOptionsFill {
-                item.interaction.setArchived(dialog, option.key == RevealOptionKey.archive.rawValue)
+                self.revealOptionsInteractivelyClosed()
             }
         case RevealOptionKey.toggleMarkedUnread.rawValue:
             item.interaction.toggleRead(dialog)
@@ -371,6 +377,29 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
         if close {
             self.setRevealOptionsOpened(false, animated: true)
         }
+    }
+
+    // ChatListItemNode: a new row fades in as the list opens room for it; a removed one is clipped as the list closes
+    // it up, and fades unless it was archived.
+    override func animateInsertion(_ currentTimestamp: Double, duration: Double, options: ListViewItemAnimationOptions) {
+        self.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.25)
+    }
+
+    override func animateRemoved(_ currentTimestamp: Double, duration: Double) {
+        self.clipsToBounds = true
+        if self.skipFadeout {
+            self.skipFadeout = false
+        } else {
+            self.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false)
+        }
+    }
+
+    /// ChatListItemNode: the separator stays at the bottom of a row the list is growing or closing up.
+    override func animateFrameTransition(_ progress: CGFloat, _ currentValue: CGFloat) {
+        super.animateFrameTransition(progress, currentValue)
+        var separatorFrame = self.separatorNode.frame
+        separatorFrame.origin.y = currentValue - separatorFrame.height
+        self.separatorNode.frame = separatorFrame
     }
 
     func asyncLayout() -> (_ item: ChatListItem, _ params: ListViewItemLayoutParams) -> (ListViewItemNodeLayout, (ListViewItemUpdateAnimation) -> Void) {
@@ -573,14 +602,16 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                 transition.updateFrame(node: strongSelf.avatarNode, frame: avatarFrame)
 
                 let titleFrame = CGRect(origin: CGPoint(x: contentRect.origin.x, y: contentRect.origin.y + UIScreenPixel), size: titleLayout.size)
-                transition.updateFrame(node: strongSelf.titleNode, frame: titleFrame)
+                // As ChatListItemNode: texts are placed, not animated, since a text node's frame animating its size
+                // stretches what it drew.
+                strongSelf.titleNode.frame = titleFrame
 
                 let authorFrame = CGRect(origin: CGPoint(x: contentRect.origin.x - 1.0, y: contentRect.minY + titleLayout.size.height - 2.0), size: authorLayout.size)
-                transition.updateFrame(node: strongSelf.authorNode, frame: authorFrame)
+                strongSelf.authorNode.frame = authorFrame
 
                 let textY = author.isEmpty ? authorFrame.minY : authorFrame.minY + authorLayout.size.height - 3.0
                 let textFrame = CGRect(origin: CGPoint(x: contentRect.origin.x - 1.0 + busyIndicatorWidth, y: textY), size: textLayout.size)
-                transition.updateFrame(node: strongSelf.textNode, frame: textFrame)
+                strongSelf.textNode.frame = textFrame
 
                 strongSelf.busyIndicatorNode.isHidden = !busy
                 strongSelf.busyIndicatorNode.color = theme.activityTextColor
