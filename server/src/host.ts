@@ -41,6 +41,11 @@ export type MetaState = {
 	markedUnread?: boolean;
 	/** Out of the main chat list, in Archived Chats. */
 	archived?: boolean;
+	/**
+	 * Out of every chat list and search, on every device, by Hide. Kept, as every conversation is: durable deletes
+	 * none.
+	 */
+	hidden?: boolean;
 	/** Pinned to the top of its list, as Telegram pins chats: when, so later pins sit higher. */
 	pinned?: number;
 	/**

@@ -1,4 +1,4 @@
-// tau server: `node src/main.ts [--db path] [--port n] [--host addr] [--model provider/id] [--cwd dir] [--memory]
+// tau server: `node src/main.ts [--data dir | --db path | --memory] [--port n] [--host addr] [--model provider/id] [--cwd dir]
 //   [--dev-tps n] [--dev-cache-ttl s]` (speed of the dev/echo model, tokens per second; a prompt cache lifetime that makes it
 //   charge as a costly model, to try cache warming)
 //   [--token-file path] [--no-auth] [--apns-key path --apns-team id [--apns-key-id id]]
@@ -7,7 +7,9 @@
 // listens on loopback only, unless --no-auth: anyone who reaches it can run commands as this user.
 // With the account's APNs key (a .p8, owner-only; the key ID from its name AuthKey_<id>.p8), it sends Apple's pushes:
 // notifications, and Live Activity updates (docs/notifications.md).
-import { existsSync, readFileSync, statSync } from "node:fs";
+// Its data (the database, the search index beside it) is in --data, by default $XDG_DATA_HOME/tau or
+// ~/.local/share/tau, which only its owner may enter; --db names a database file instead, as the tests do.
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -20,7 +22,8 @@ import { serve } from "./server.ts";
 
 const { values } = parseArgs({
 	options: {
-		db: { type: "string", default: join(import.meta.dirname, "..", "..", "data", "tau.sqlite") },
+		data: { type: "string" },
+		db: { type: "string" },
 		memory: { type: "boolean", default: false },
 		port: { type: "string", default: "7878" },
 		host: { type: "string", default: "127.0.0.1" },
@@ -44,10 +47,11 @@ if (token === undefined && !isLoopback(values.host) && !values["no-auth"]) {
 	process.exit(1);
 }
 
+const database = values.memory ? undefined : databasePath();
 const model = parseModel(values.model ?? `${DEV_MODEL.provider}/${DEV_MODEL.modelId}`);
 const credentials = new FileCredentialStore();
 const host = await openHost({
-	...(values.memory ? {} : { database: values.db }),
+	...(database === undefined ? {} : { database }),
 	model,
 	...(values.cwd === undefined ? {} : { cwd: await directory(values.cwd.startsWith("~") ? values.cwd : resolve(values.cwd)) }),
 	...(values["dev-tps"] === undefined ? {} : { devTokensPerSecond: Number(values["dev-tps"]) }),
@@ -66,7 +70,7 @@ const server = await serve(host, {
 	...(token === undefined ? {} : { token }),
 });
 console.log(`tau listening on ${server.url}`);
-console.log(`  storage  ${values.memory ? "memory" : values.db}`);
+console.log(`  storage  ${database ?? "memory"}`);
 console.log(`  model    ${model.provider}/${model.modelId}`);
 console.log(`  cwd      ${host.cwd}`);
 console.log(`  server   ${host.serverId}`);
@@ -85,6 +89,25 @@ const stop = async (): Promise<void> => {
 };
 process.on("SIGINT", () => void stop());
 process.on("SIGTERM", () => void stop());
+
+/** --db's file, or tau.db in the data directory, made (only its owner may enter it, whatever the umask) if need be. */
+function databasePath(): string {
+	if (values.db !== undefined && values.data !== undefined) {
+		console.error("--db and --data both name the database: give one");
+		process.exit(1);
+	}
+	if (values.db !== undefined) return resolve(expandHome(values.db));
+	const given = values.data ?? join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "tau");
+	const dir = resolve(expandHome(given));
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	// Not the umask: the agents' commands inherit it, and the files they make in the user's projects must not change.
+	if ((statSync(dir).mode & 0o077) !== 0) chmodSync(dir, 0o700);
+	return join(dir, "tau.db");
+}
+
+function expandHome(path: string): string {
+	return path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
+}
 
 function parseModel(value: string): { provider: string; modelId: string } {
 	const slash = value.indexOf("/");

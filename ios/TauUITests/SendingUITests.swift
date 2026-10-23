@@ -595,6 +595,33 @@ final class SendingUITests: XCTestCase {
         self.shot("rename-4-list")
     }
 
+    /// Hide, from the swipe actions: the chat leaves the list with Telegram's toast, and Undo brings it back; hidden
+    /// again, it stays hidden after a relaunch, as the server's (on every device).
+    func testHideChat() {
+        self.launch([])
+        sleep(2)
+        self.shot("hide-0-list")
+        self.point(0.8, 0.24).press(forDuration: 0.05, thenDragTo: self.point(0.4, 0.24))
+        sleep(1)
+        self.shot("hide-1-swipe")
+        // Hide, left of Archive.
+        self.point(0.76, 0.23).tap()
+        sleep(1)
+        self.shot("hide-2-toast")
+        // The toast's Undo.
+        self.point(0.88, 0.806).tap()
+        sleep(1)
+        self.shot("hide-3-undone")
+        self.point(0.8, 0.24).press(forDuration: 0.05, thenDragTo: self.point(0.4, 0.24))
+        sleep(1)
+        self.point(0.76, 0.23).tap()
+        sleep(2)
+        self.app.terminate()
+        self.launch([])
+        sleep(2)
+        self.shot("hide-4-relaunched")
+    }
+
     /// A server that turns the token away: its row says so, in red, while the other server works.
     func testRefusedToken() {
         self.launch(["-server2.url", "ws://127.0.0.1:7878", "-server2.token", "wrong-token-wrong-token"])

@@ -137,6 +137,7 @@ export class Dialogs {
 			unreadCount,
 			...(meta?.markedUnread === true ? { markedUnread: true as const } : {}),
 			...(meta?.archived === true ? { archived: true as const } : {}),
+			...(meta?.hidden === true ? { hidden: true as const } : {}),
 			...(typeof meta?.pinned === "number" ? { pinned: meta.pinned } : {}),
 			...promptCache(cache, cacheModel(agent?.model ?? this.#host.defaultModel), this.#host.cache.isWarming(conversation.id)),
 		};

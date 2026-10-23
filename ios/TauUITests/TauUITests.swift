@@ -299,7 +299,7 @@ final class TauUITests: XCTestCase {
         self.shot("archive-swipe-right")
         self.point(0.12, 0.06).tap()
         sleep(1)
-        // Swipe left: Delete, Archive.
+        // Swipe left: Hide, Archive.
         self.point(0.8, 0.33).press(forDuration: 0.05, thenDragTo: self.point(0.45, 0.33))
         sleep(1)
         self.shot("archive-swipe-left")

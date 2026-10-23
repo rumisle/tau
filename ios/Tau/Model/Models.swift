@@ -26,6 +26,8 @@ struct DialogModel: Equatable {
     var markedUnread: Bool = false
     /// In Archived Chats.
     var archived: Bool = false
+    /// Hidden by Hide, on every device: out of every list and search. The server keeps it, as it keeps every chat.
+    var hidden: Bool = false
     /// Pinned to the top of its list: the sort key, higher first (when it was pinned).
     var pinned: Double?
     /// A message to it was refused; Telegram marks the chat with a red badge.

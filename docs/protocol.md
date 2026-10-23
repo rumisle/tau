@@ -171,6 +171,7 @@ type Dialog = {
   unreadCount: number;                // assistant messages with text after `read`, at most 99
   markedUnread?: true;                // marked unread by hand
   archived?: true;                    // in Archived Chats, out of the main list
+  hidden?: true;                      // hidden by the user: out of every list and search
   pinned?: number;                    // pinned to the top of its list, higher first (when it was pinned, in ms)
   cache?: PromptCache;                // its prompt cache and its refreshes, once there is either (docs/cache.md)
 };
@@ -236,11 +237,13 @@ The user has seen the conversation up to `at`: moves `read` forward (never back)
 sends it while the chat is on screen, as entries arrive.
 
 ### `conversation.mark`
-`{ conversationId, unread?: boolean, archived?: boolean, pinned?: number | false }` -> `{}`
+`{ conversationId, unread?: boolean, archived?: boolean, hidden?: boolean, pinned?: number | false }` -> `{}`
 
 The chat list's actions: `unread: true` is Mark as Unread; `unread: false` is Mark as Read (`read` moves to the newest
 entry). `archived` moves the conversation into or out of Archived Chats. `pinned` pins it with that sort key (clients
-send the time, so the newest pin is on top across servers), `false` unpins it.
+send the time, so the newest pin is on top across servers), `false` unpins it. `hidden: true` is Hide: the
+conversation leaves every chat list and search, on every device; it is kept, as durable keeps every conversation (it
+deletes none), and `hidden: false` shows it again.
 
 ### `conversation.subscribe`
 `{ conversationId, after?: EntryId, limit?: number }` ->

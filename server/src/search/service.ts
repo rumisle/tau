@@ -108,7 +108,7 @@ export class Search {
 				} else if (change.type === "conversation") {
 					this.#conversation(change.value);
 				} else if (change.type === "document" && change.conversationId !== undefined && change.record.kind === MetaDoc.definition.kind) {
-					const meta = change.value as { title?: string; archived?: boolean } | null;
+					const meta = change.value as { title?: string; archived?: boolean; hidden?: boolean } | null;
 					this.#meta(change.conversationId, meta ?? {});
 				}
 			}
@@ -130,8 +130,12 @@ export class Search {
 
 	#titles = new Map<number, string>();
 	#archived = new Map<number, boolean>();
+	/** Hidden conversations (MetaDoc.hidden): search leaves them out. */
+	#hidden = new Set<number>();
 
-	#meta(conversationId: number, meta: { title?: string; archived?: boolean }): void {
+	#meta(conversationId: number, meta: { title?: string; archived?: boolean; hidden?: boolean }): void {
+		if (meta.hidden === true) this.#hidden.add(conversationId);
+		else this.#hidden.delete(conversationId);
 		const title = meta.title ?? "";
 		if (this.#titles.get(conversationId) !== title) {
 			this.#titles.set(conversationId, title);
@@ -206,7 +210,7 @@ export class Search {
 			const found = await storage.entry(conversationId as ConversationId, entryId as EntryId, context).catch(() => undefined);
 			return found === undefined ? undefined : partText(found.entry, idx);
 		};
-		return this.index.search(query, load, { ...options, hits: 1 });
+		return this.index.search(query, load, { ...options, hits: 1, exclude: this.#hidden });
 	}
 
 	/** What the models cost over the last `days` days (0: all), in the client's days. */

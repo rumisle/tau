@@ -409,6 +409,8 @@ export class Connection {
 					}
 					if (params.archived === true) meta.archived = true;
 					else if (params.archived === false) delete meta.archived;
+					if (params.hidden === true) meta.hidden = true;
+					else if (params.hidden === false) delete meta.hidden;
 					if (typeof params.pinned === "number" && Number.isFinite(params.pinned)) meta.pinned = params.pinned;
 					else if (params.pinned === false) delete meta.pinned;
 				}, context);

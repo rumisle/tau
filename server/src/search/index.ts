@@ -70,6 +70,8 @@ export type SearchOptions = {
 	/** The last word is still being typed: it matches as a prefix from two letters. */
 	typing?: boolean;
 	now?: number;
+	/** Conversations left out (hidden ones): a fork's shared match goes to the newest one not left out. */
+	exclude?: ReadonlySet<number>;
 };
 
 export type SearchResponse = {
@@ -337,10 +339,10 @@ export class SearchIndex {
 		const ranked: { candidate: Candidate; conv: ConvRow; score: number }[] = [];
 		const merged = new Map<number, { candidate: Candidate; conv: ConvRow; score: number }>();
 		for (const candidate of candidates.values()) {
-			if (skip.has(candidate.conversation)) continue;
+			if (skip.has(candidate.conversation) || options.exclude?.has(candidate.conversation) === true) continue;
 			let conv = this.#conversations.get(candidate.conversation);
 			if (conv === undefined) continue;
-			const newest = this.#newestFork(conv, candidate.picks[0]);
+			const newest = this.#newestFork(conv, candidate.picks[0], options.exclude);
 			if (newest !== conv) {
 				conv = newest;
 			}
@@ -447,7 +449,7 @@ export class SearchIndex {
 	}
 
 	/** The most recently active fork of `conv` that still shares the entry of `rowid`, or `conv`. */
-	#newestFork(conv: ConvRow, rowid: number | undefined): ConvRow {
+	#newestFork(conv: ConvRow, rowid: number | undefined, exclude?: ReadonlySet<number>): ConvRow {
 		if (rowid === undefined || kindOf(rowid) === Kind.title || !this.#forked.has(conv.id)) return conv;
 		const entry = (this.#statement("SELECT entry FROM part WHERE rowid = ?").get(rowid) as { entry: number } | undefined)?.entry;
 		if (entry === undefined) return conv;
@@ -458,7 +460,7 @@ export class SearchIndex {
 			for (const { id: child } of children.all(id, entry) as { id: number }[]) {
 				const row = this.#conversations.get(child);
 				if (row === undefined) continue;
-				if (row.updated > best.updated) best = row;
+				if (row.updated > best.updated && exclude?.has(child) !== true) best = row;
 				visit(child, depth + 1);
 			}
 		};

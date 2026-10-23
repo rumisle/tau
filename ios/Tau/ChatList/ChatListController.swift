@@ -163,8 +163,8 @@ final class ChatListController: ViewController {
             store.setUnread(dialog.id, !dialog.isUnread)
         }, setArchived: { dialog, archived in
             store.setArchived(dialog.id, archived)
-        }, delete: { dialog in
-            store.deleteConversation(dialog.id)
+        }, hide: { [weak self] dialog in
+            self?.hide(dialog)
         })
         interaction.setPinned = { dialog, pinned in
             store.setPinned(dialog.id, pinned)
@@ -276,6 +276,18 @@ final class ChatListController: ViewController {
             return
         }
         self.pushController(ChatFolderEditController(context: self.context, folder: folder))
+    }
+
+    /// Hide, on every device, with Undo: Telegram's toast after a chat leaves the list.
+    private func hide(_ dialog: DialogModel) {
+        let store = self.context.store
+        store.setHidden(dialog.id, true)
+        self.presentToast(.info(title: nil, text: "Chat **\(dialog.title)** hidden", timeout: nil, customUndoText: self.theme.presentationStrings.Undo_Undo), action: { action in
+            if case .undo = action {
+                store.setHidden(dialog.id, false)
+            }
+            return false
+        })
     }
 
     /// A folder goes, with Undo, as Telegram's toast after a folder is deleted.
@@ -696,11 +708,11 @@ final class ChatListController: ViewController {
                 self?.open(conversationId: newId)
             })
         })))
-        items.append(.action(ContextMenuActionItem(text: strings.Common_Delete, textColor: .destructive, icon: { theme in
-            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Delete"), color: theme.contextMenu.destructiveColor)
-        }, action: { _, f in
+        items.append(.action(ContextMenuActionItem(text: strings.ChatList_HideAction, icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/HideArchive"), color: theme.contextMenu.primaryColor)
+        }, action: { [weak self] _, f in
             f(.default)
-            store.deleteConversation(dialog.id)
+            self?.hide(dialog)
         })))
         let navigationController = self.navigationController as? NavigationController
         let source = ChatListContextControllerContentSource(controller: chat, sourceNode: sourceNode, navigationController: navigationController)
@@ -1156,7 +1168,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
             open(dialog, nil)
         }, openArchive: {}, contextAction: { _, _, gesture in
             gesture?.cancel()
-        }, toggleRead: { _ in }, setArchived: { _, _ in }, delete: { _ in })
+        }, toggleRead: { _ in }, setArchived: { _, _ in }, hide: { _ in })
         interaction.openSearchResult = { dialog, match in
             open(dialog, match)
         }

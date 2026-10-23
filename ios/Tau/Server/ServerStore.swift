@@ -15,7 +15,9 @@ final class ServerStore: ConversationStore, TauServer {
     private var dialogs: [Int: DialogModel] = [:]
     private var dialogOrder: [Int: Int] = [:]
     private let dialogsPromise = ValuePromise<[DialogModel]>([], ignoreRepeated: true)
-    private var hiddenDialogs: Set<Int>
+    /// Hides and shows this device asked for that the server has not taken yet, by conversation: kept on disk and
+    /// sent again on each connection, so one made offline is not lost. They win over the server's `hidden` meanwhile.
+    private var pendingHides: [Int: Bool]
 
     private var replicas: [Int: ConversationReplica] = [:]
     private var watchers: [Int: Int] = [:]
@@ -75,8 +77,23 @@ final class ServerStore: ConversationStore, TauServer {
             connection.request(method, params, completion: completion)
         })
         self.scroll = ScrollStateStorage(namespace: url.absoluteString)
-        self.hiddenDialogs = Set(UserDefaults.standard.array(forKey: "hidden.\(url.absoluteString)") as? [Int] ?? [])
-        for dialog in self.cache.loadDialogs() {
+        var pendingHides: [Int: Bool] = [:]
+        for (key, value) in UserDefaults.standard.dictionary(forKey: "hides.\(url.absoluteString)") as? [String: Bool] ?? [:] {
+            if let id = Int(key) {
+                pendingHides[id] = value
+            }
+        }
+        // Before Hide was the server's, Delete hid a chat on this device only: those go to the server now.
+        if let legacy = UserDefaults.standard.array(forKey: "hidden.\(url.absoluteString)") as? [Int] {
+            for id in legacy where pendingHides[id] == nil {
+                pendingHides[id] = true
+            }
+            UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: pendingHides.map { (String($0.key), $0.value) }), forKey: "hides.\(url.absoluteString)")
+            UserDefaults.standard.removeObject(forKey: "hidden.\(url.absoluteString)")
+        }
+        self.pendingHides = pendingHides
+        for var dialog in self.cache.loadDialogs() {
+            dialog.hidden = self.pendingHides[dialog.id] ?? dialog.hidden
             self.dialogs[dialog.id] = dialog
         }
         self.publishDialogs()
@@ -457,6 +474,10 @@ final class ServerStore: ConversationStore, TauServer {
             self.media.clear()
             self.preloadedThrough = [:]
             self.cache.reset(serverId: hello.serverId)
+            if !self.pendingHides.isEmpty {
+                self.pendingHides = [:]
+                self.savePendingHides()
+            }
             for replica in self.replicas.values {
                 replica.upsertReset()
             }
@@ -465,6 +486,9 @@ final class ServerStore: ConversationStore, TauServer {
         // The usage row reads each model's context window from the list.
         if self.modelsCache == nil {
             let _ = self.models().start()
+        }
+        for (id, hidden) in self.pendingHides {
+            self.sendHidden(id, hidden)
         }
         self.connection.request("dialogs.subscribe") { [weak self] result in
             guard let self, case let .success(value) = result else {
@@ -591,6 +615,7 @@ final class ServerStore: ConversationStore, TauServer {
             markedUnread: raw.bool("markedUnread") ?? false,
             archived: raw.bool("archived") ?? false
         )
+        dialog.hidden = self.pendingHides[id] ?? raw.bool("hidden") ?? false
         dialog.pinned = raw.double("pinned")
         dialog.hasFailedMessage = self.hasFailedMessage(id)
         dialog.outgoing = self.outgoingSummary(id)
@@ -647,7 +672,7 @@ final class ServerStore: ConversationStore, TauServer {
         for id in Array(self.dialogs.keys) {
             self.dialogs[id]?.workingSubagents = (working[id] ?? []).sorted()
         }
-        let visible = self.dialogs.values.filter { $0.parentConversationId == nil && !self.hiddenDialogs.contains($0.id) }
+        let visible = self.dialogs.values.filter { $0.parentConversationId == nil && !$0.hidden }
         let sorted = visible.sorted { lhs, rhs in
             let l = lhs.last?.id ?? self.dialogOrder[lhs.id] ?? lhs.id
             let r = rhs.last?.id ?? self.dialogOrder[rhs.id] ?? rhs.id
@@ -689,7 +714,7 @@ final class ServerStore: ConversationStore, TauServer {
     private func startPreload() {
         // The list's order, pinned first; not the archive, nor a subagent's chat. A working chat waits for its answer:
         // its entries are still coming, and it is fetched once it ends.
-        let listed = self.dialogs.values.filter { $0.parentConversationId == nil && !$0.archived && !self.hiddenDialogs.contains($0.id) }
+        let listed = self.dialogs.values.filter { $0.parentConversationId == nil && !$0.archived && !$0.hidden }
         let ordered = listed.sorted { lhs, rhs in
             if (lhs.pinned != nil) != (rhs.pinned != nil) {
                 return lhs.pinned != nil
@@ -1412,14 +1437,44 @@ final class ServerStore: ConversationStore, TauServer {
         self.connection.request("conversation.mark", ["conversationId": realId, "archived": archived]) { _ in }
     }
 
-    /// The server keeps every conversation; deleting hides it from this device's list.
-    func deleteConversation(_ id: Int) {
+    /// Hide, on every device: the server keeps the conversation (durable deletes none) and leaves it out of every list
+    /// and search. Shown at once here, and pending until the server has it.
+    func setHidden(_ id: Int, _ hidden: Bool) {
         guard let realId = self.resolve(id) else {
             return
         }
-        self.hiddenDialogs.insert(realId)
-        UserDefaults.standard.set(Array(self.hiddenDialogs), forKey: "hidden.\(self.connection.url.absoluteString)")
+        self.pendingHides[realId] = hidden
+        self.savePendingHides()
+        self.dialogs[realId]?.hidden = hidden
         self.publishDialogs()
+        self.sendHidden(realId, hidden)
+    }
+
+    private func sendHidden(_ id: Int, _ hidden: Bool) {
+        self.connection.request("conversation.mark", ["conversationId": id, "hidden": hidden]) { [weak self] result in
+            guard let self else {
+                return
+            }
+            switch result {
+            case .success:
+                break
+            case let .failure(error) where error.code == "disconnected" || error.code == "timeout":
+                // Sent again on the next connection.
+                return
+            case .failure:
+                // The server will not take it (no such conversation): nothing to wait for.
+                break
+            }
+            // Only the latest wish: an Undo sent meanwhile waits for its own answer.
+            if self.pendingHides[id] == hidden {
+                self.pendingHides[id] = nil
+                self.savePendingHides()
+            }
+        }
+    }
+
+    private func savePendingHides() {
+        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: self.pendingHides.map { (String($0.key), $0.value) }), forKey: "hides.\(self.connection.url.absoluteString)")
     }
 
     // MARK: - Agent
@@ -1684,22 +1739,6 @@ extension ConversationReplica {
     }
 }
 
-enum ImageEncoding {
-    /// A photo as the model should get it: at most 1568 pt on its long side (Anthropic's recommended size), JPEG.
-    static func jpeg(_ image: UIImage) -> Data? {
-        let maxSide: CGFloat = 1568.0
-        let size = image.size
-        let scale = min(1.0, maxSide / max(size.width, size.height))
-        let target = CGSize(width: floor(size.width * scale), height: floor(size.height * scale))
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1.0
-        let resized = UIGraphicsImageRenderer(size: target, format: format).image { _ in
-            image.draw(in: CGRect(origin: CGPoint(), size: target))
-        }
-        return resized.jpegData(compressionQuality: 0.8)
-    }
-}
-
 /// Entries per conversation in Caches, as JSON. Entries never change, so a cached one is always right; a different
 /// `serverId` drops everything.
 final class EntryCache {
@@ -1824,7 +1863,7 @@ final class EntryCache {
 
     func saveDialogs(_ dialogs: [DialogModel]) {
         let rows: [JSONObject] = dialogs.map { dialog in
-            var row: JSONObject = ["id": dialog.id, "title": dialog.title, "cwd": dialog.cwd, "model": dialog.model, "busy": false, "unread": dialog.unreadCount, "markedUnread": dialog.markedUnread, "archived": dialog.archived]
+            var row: JSONObject = ["id": dialog.id, "title": dialog.title, "cwd": dialog.cwd, "model": dialog.model, "busy": false, "unread": dialog.unreadCount, "markedUnread": dialog.markedUnread, "archived": dialog.archived, "hidden": dialog.hidden]
             if let parent = dialog.parentConversationId {
                 row["parent"] = parent
             }
@@ -1858,6 +1897,7 @@ final class EntryCache {
             }
             var dialog = DialogModel(id: id, title: row.string("title") ?? "", parentConversationId: row.int("parent"), cwd: row.string("cwd") ?? "~", model: row.string("model") ?? "", last: last, busy: false, unreadCount: row.int("unread") ?? 0, markedUnread: row.bool("markedUnread") ?? false, archived: row.bool("archived") ?? false)
             dialog.pinned = row.double("pinned")
+            dialog.hidden = row.bool("hidden") ?? false
             return dialog
         }
     }

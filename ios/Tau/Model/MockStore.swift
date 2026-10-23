@@ -495,11 +495,8 @@ final class MockStore: TauStore, TauServer {
         self.scrollStates[id] = state
     }
 
-    func deleteConversation(_ id: Int) {
-        self.streams[id]?.invalidate()
-        self.streams[id] = nil
-        self.dialogs[id] = nil
-        self.conversations[id] = nil
+    func setHidden(_ id: Int, _ hidden: Bool) {
+        self.dialogs[id]?.hidden = hidden
         self.publishDialogs()
     }
 

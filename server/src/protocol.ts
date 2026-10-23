@@ -45,6 +45,8 @@ export type Dialog = {
 	unreadCount: number;
 	markedUnread?: true;
 	archived?: true;
+	/** Hidden by the user, on every device: out of the chat lists and search. */
+	hidden?: true;
 	/** Pinned to the top of its list; higher first. */
 	pinned?: number;
 	/**

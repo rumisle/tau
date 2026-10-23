@@ -90,7 +90,8 @@ protocol ConversationStore: AnyObject {
     /// message.
     func createConversation(cwd: String?) -> Int
     func discardIfDraft(_ id: Int)
-    func deleteConversation(_ id: Int)
+    /// Hide, on every device; `false` shows it again (the toast's Undo).
+    func setHidden(_ id: Int, _ hidden: Bool)
     /// Forks the conversation at its last entry; `completion` gets the copy's id.
     func duplicateConversation(_ id: Int, completion: @escaping (Int) -> Void)
     /// A copy of the conversation up to just before `entryId`, as a draft until its first message (as an edit's fork,

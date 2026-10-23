@@ -150,12 +150,7 @@ enum ShareSender {
     /// What could not be sent, for the app to send through its outbox when it opens; photos smaller, to fit the keychain.
     static func leaveForApp(text: String, images: [Data], chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?) {
         let small = images.prefix(4).compactMap { data -> Data? in
-            guard let image = UIImage(data: data) else {
-                return nil
-            }
-            let scale = min(1.0, 1280.0 / max(image.size.width, image.size.height))
-            let size = CGSize(width: floor(image.size.width * scale), height: floor(image.size.height * scale))
-            return UIGraphicsImageRenderer(size: size).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }.jpegData(compressionQuality: 0.7)
+            return UIImage(data: data).flatMap { ImageEncoding.jpeg($0, maxPixels: 1280.0, quality: 0.7) }
         }
         let share = PendingShare(id: UUID().uuidString, text: text, images: Array(small), chatIds: chats.map(\.id), newChat: newChat, date: Date())
         if let data = try? JSONEncoder().encode(share) {

@@ -98,7 +98,7 @@ private func resolveLegacyMediaSignals(_ signals: [Any], completion: @escaping (
                 options.deliveryMode = .highQualityFormat
                 options.isNetworkAccessAllowed = true
                 options.isSynchronous = false
-                PHImageManager.default().requestImage(for: phAsset, targetSize: CGSize(width: 1568.0, height: 1568.0), contentMode: .aspectFit, options: options) { image, _ in
+                PHImageManager.default().requestImage(for: phAsset, targetSize: CGSize(width: ImageEncoding.maxPixels, height: ImageEncoding.maxPixels), contentMode: .aspectFit, options: options) { image, _ in
                     lock.lock()
                     images[index] = image ?? (dict["previewImage"] as? UIImage)
                     lock.unlock()

@@ -43,7 +43,8 @@ Requires Node 22.18+ (runs TypeScript directly). tau tracks durable on pi's main
 ```bash
 scripts/setup-pi.sh                         # once, and after changing PI_REVISION
 cd server
-npm start                                   # dev/echo model, data in ../data/tau.sqlite, ws://127.0.0.1:7878
+npm start                                   # dev/echo model, data in ~/.local/share/tau, ws://127.0.0.1:7878
+npm start -- --data ../data                 # data beside the code, as on a dev machine
 npm start -- --model anthropic/claude-haiku-5-5 --cwd ~/work  # default cwd; clients pick their own
 npm start -- --memory --dev-tps 20          # throwaway storage, slow streaming
 npm start -- --host 0.0.0.0 --token-file ~/.config/tau/token  # reachable from the phone: clients need the token
@@ -60,7 +61,12 @@ umask 077 && mkdir -p ~/.config/tau && openssl rand -hex 32 > ~/.config/tau/toke
 pbcopy < ~/.config/tau/token                # on the Mac, or from a Linux server: ssh host 'cat ~/.config/tau/token' | pbcopy
 ```
 
-`server/contrib/tau-server.service` runs it with one under systemd. The UI test scripts read this Mac's token and
+The data (the database and its search index) is in `--data`, by default `$XDG_DATA_HOME/tau` or `~/.local/share/tau`,
+which the server makes only its owner may enter; `--db <file>` names a database instead, as the tests do. The code
+stays apart, so a deploy replaces it freely.
+
+`server/contrib/tau-server.service` runs it with a token under systemd, as a user unit: as its user, since the agents
+work on that user's files. The UI test scripts read this Mac's token and
 remote's and pass them to the tests.
 
 Model credentials come from pi's `~/.pi/agent/auth.json` (the same logins as the `pi` CLI, safe to share) and the

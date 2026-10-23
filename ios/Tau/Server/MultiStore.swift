@@ -331,8 +331,8 @@ final class MultiStore: TauStore {
         self.route(id).map { $0.0.discardIfDraft($0.1) }
     }
 
-    func deleteConversation(_ id: Int) {
-        self.route(id).map { $0.0.deleteConversation($0.1) }
+    func setHidden(_ id: Int, _ hidden: Bool) {
+        self.route(id).map { $0.0.setHidden($0.1, hidden) }
     }
 
     func duplicateConversation(_ id: Int, completion: @escaping (Int) -> Void) {

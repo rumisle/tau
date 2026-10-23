@@ -19,6 +19,11 @@ extension, older apps) gets the data inline, as before.
 
 ## In the app
 
+- **Sent at most 2000 pixels on the long side**, as JPEG at 0.8 (`Tau/Share/ImageEncoding.swift`), by the app and the
+  share extension alike: pi's own limit for images, within what the high-resolution Claude takes (2576) and the 2000 a
+  request of more than 20 images allows each. Larger only costs: GPT-5.5 and later take an image as it is by default
+  (`detail: "auto"` is `original`) and bill its 32-pixel patches, a 48-megapixel photo is refused outright, the
+  others shrink it themselves, and every turn sends it again while the database keeps it.
 - **Laid out before it arrives**: from the reference's size, as Telegram lays out media it is still downloading. The
   placeholder is the bubble's media color; past a quarter second a spinner shows in a dimmed circle; the photo fades in.
 - **Where**: a user's photos in their bubble, as Telegram's album mosaic (`chatMessageBubbleMosaicLayout`); a tool's

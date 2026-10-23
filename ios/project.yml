@@ -136,6 +136,7 @@ targets:
     sources:
       - path: TauShare
       - path: Tau/Share/ShareModels.swift
+      - path: Tau/Share/ImageEncoding.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau.share

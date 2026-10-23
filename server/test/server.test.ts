@@ -679,6 +679,18 @@ describe("tau server", () => {
 		// In the chat: its matching entries, newest first.
 		const inChat = await client.request("search", { query: "quokka", conversationId: replica.id });
 		assert.ok(inChat.hits.length >= 1);
+
+		// Hidden, on every device: flagged in the dialogs, out of search; shown again, back in it.
+		const has = async () => (await client.request("search", { query: "quokka" })).results.some((each: { conversationId: number }) => each.conversationId === replica.id);
+		const dialogOf = async () => (await client.request("dialogs.subscribe")).dialogs.find((each: { conversation: { id: number } }) => each.conversation.id === replica.id);
+		await client.request("conversation.mark", { conversationId: replica.id, hidden: true });
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		assert.equal((await dialogOf()).hidden, true);
+		assert.equal(await has(), false, "a hidden conversation is not found");
+		await client.request("conversation.mark", { conversationId: replica.id, hidden: false });
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		assert.equal((await dialogOf()).hidden, undefined);
+		assert.equal(await has(), true, "shown again, it is found");
 		await client.close();
 	});
 

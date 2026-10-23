@@ -403,13 +403,8 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
     @objc private func send() {
         let comment = self.commentView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = [comment, self.sharedText].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        let images = self.sharedImages.compactMap { image -> Data? in
-            // At most 2048 pt a side, as the app sends photos.
-            let scale = min(1.0, 2048.0 / max(image.size.width, image.size.height))
-            let size = CGSize(width: floor(image.size.width * scale), height: floor(image.size.height * scale))
-            let resized = UIGraphicsImageRenderer(size: size).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-            return resized.jpegData(compressionQuality: 0.85)
-        }
+        // As the app sends photos.
+        let images = self.sharedImages.compactMap { ImageEncoding.jpeg($0) }
         let chats = self.snapshot.chats.filter { self.selected.contains($0.id) }
         let newChat = self.newChatSelected ? self.project : nil
         self.sendButton.isEnabled = false

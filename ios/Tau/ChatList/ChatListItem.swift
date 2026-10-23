@@ -28,19 +28,20 @@ final class ChatListInteraction {
     let contextAction: (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void
     let toggleRead: (DialogModel) -> Void
     let setArchived: (DialogModel, Bool) -> Void
-    let delete: (DialogModel) -> Void
+    /// Hide, on every device (the server keeps it, as it keeps every chat).
+    let hide: (DialogModel) -> Void
     /// A row opened its swipe actions; the others close, as with Telegram's setPeerIdWithRevealedOptions.
     var revealedOptionsChanged: (Int?) -> Void = { _ in }
     var openSearchResult: (DialogModel, SearchMatch) -> Void = { _, _ in }
     var setPinned: (DialogModel, Bool) -> Void = { _, _ in }
 
-    init(open: @escaping (DialogModel) -> Void, openArchive: @escaping () -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void, toggleRead: @escaping (DialogModel) -> Void, setArchived: @escaping (DialogModel, Bool) -> Void, delete: @escaping (DialogModel) -> Void) {
+    init(open: @escaping (DialogModel) -> Void, openArchive: @escaping () -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void, toggleRead: @escaping (DialogModel) -> Void, setArchived: @escaping (DialogModel, Bool) -> Void, hide: @escaping (DialogModel) -> Void) {
         self.open = open
         self.openArchive = openArchive
         self.contextAction = contextAction
         self.toggleRead = toggleRead
         self.setArchived = setArchived
-        self.delete = delete
+        self.hide = hide
     }
 }
 
@@ -131,7 +132,8 @@ private let badgeFont = Font.with(size: 12.0, design: .regular, weight: .semibol
 private let badgeDiameter: CGFloat = 20.0
 
 // ChatListItem.swift's reveal option icons and keys.
-private let deleteIcon = ItemListRevealOptionIcon.animation(animation: "anim_delete", scale: 1.0, offset: 0.0, replaceColors: nil, flip: false, startFrame: 3)
+// ChatListItem.swift's hideIcon, Telegram's Hide for a topic or the archive.
+private let hideIcon = ItemListRevealOptionIcon.animation(animation: "anim_hide", scale: 1.1, offset: 2.0, replaceColors: [0xbdbdc2], flip: false, startFrame: 5)
 private let readIcon = ItemListRevealOptionIcon.animation(animation: "anim_read", scale: 1.0, offset: 0.0, replaceColors: nil, flip: false, startFrame: 5)
 private let unreadIcon = ItemListRevealOptionIcon.animation(animation: "anim_unread", scale: 1.0, offset: 0.0, replaceColors: [0x2194fa], flip: false, startFrame: 5)
 private let pinIcon = ItemListRevealOptionIcon.animation(animation: "anim_pin", scale: 1.0, offset: 0.0, replaceColors: nil, flip: false, startFrame: 3)
@@ -140,7 +142,7 @@ private let archiveIcon = ItemListRevealOptionIcon.animation(animation: "anim_ar
 private let unarchiveIcon = ItemListRevealOptionIcon.animation(animation: "anim_unarchive", scale: 0.52, offset: -6.0, replaceColors: [0xa9a9ad], flip: false, startFrame: 5)
 
 private enum RevealOptionKey: Int32 {
-    case delete
+    case hide
     case archive
     case unarchive
     case toggleMarkedUnread
@@ -151,7 +153,8 @@ private enum RevealOptionKey: Int32 {
 private func rightRevealOptions(strings: PresentationStrings, theme: PresentationTheme, archived: Bool) -> [ItemListRevealOption] {
     let actions = theme.list.itemDisclosureActions
     var options: [ItemListRevealOption] = []
-    options.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: strings.Common_Delete, icon: deleteIcon, color: actions.destructive.fillColor, iconColor: actions.destructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+    // As Telegram's Hide: the inactive fill, neutral1's icon.
+    options.append(ItemListRevealOption(key: RevealOptionKey.hide.rawValue, title: strings.ChatList_HideAction, icon: hideIcon, color: actions.inactive.fillColor, iconColor: actions.neutral1.foregroundColor, textColor: theme.chatList.dateTextColor))
     if archived {
         options.append(ItemListRevealOption(key: RevealOptionKey.unarchive.rawValue, title: strings.ChatList_UnarchiveAction, icon: unarchiveIcon, color: actions.inactive.fillColor, iconColor: actions.inactive.foregroundColor, textColor: theme.chatList.dateTextColor))
     } else {
@@ -353,8 +356,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
         }
         var close = true
         switch option.key {
-        case RevealOptionKey.delete.rawValue:
-            item.interaction.delete(dialog)
+        case RevealOptionKey.hide.rawValue:
+            item.interaction.hide(dialog)
         case RevealOptionKey.archive.rawValue, RevealOptionKey.unarchive.rawValue:
             // As Telegram: the chat moves at once, and while the list closes the row up over it, the action fills the
             // row, sliding its content away.
