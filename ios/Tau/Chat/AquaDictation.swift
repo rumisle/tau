@@ -184,6 +184,17 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    /// The server ends the session: what was heard is the text, and dictation ends as if stopped.
+    private func finishFromServer() {
+        guard self.phase == .streaming || self.phase == .connecting else {
+            return
+        }
+        self.phase = .stopping
+        self.stopAudio()
+        self.emit(.final(self.lastText))
+        self.close()
+    }
+
     /// Dropped: nothing more is wanted.
     func cancel() {
         self.queue.async {
@@ -404,6 +415,14 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
                 self.lastText = cleaned
                 self.emit(.partial(cleaned))
             }
+        case "session_duration":
+            // A session lasts ten minutes at most: at the end the server says so, and the app stops, as Aqua's does.
+            let status = message["status"] as? String
+            if status == "expired" || status == "shutdown" {
+                self.queue.async {
+                    self.finishFromServer()
+                }
+            }
         case "error":
             if message["is_fatal"] as? Bool ?? false {
                 let details = [message["message"] as? String, message["details"] as? String].compactMap { $0 }.joined(separator: ": ")
@@ -514,9 +533,12 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
         self.completed()
     }
 
-    /// The whole text so far: `display_text_annotated`, as Aqua's app reads it (`displayTextToString`), its segments
-    /// joined without the ones `deleted` (words the model took back). `wet_text` is not it: it is only the current
-    /// window of about half a minute, which starts over, so a long dictation would lose all but its last stretch.
+    /// The whole text so far: `display_text_annotated`, as Aqua's app reads it. Its `displayTextToString(segments,
+    /// includeUnprocessed = true)` joins the segments' texts but those typed `deleted` (words the model took back), and
+    /// with `false`, but `unprocessed` too (heard, not yet cleaned up); the app pastes the first. The other types
+    /// (`normal`, `active`, `locked`, `consumed`, `out_of_window`) only style the app's live transcript. `wet_text` is
+    /// not the text: it is only the current window of about half a minute, which starts over, so a long dictation read
+    /// from it would lose all but its last stretch.
     static func documentText(_ message: [String: Any]) -> String {
         if let segments = message["display_text_annotated"] as? [[String: Any]], !segments.isEmpty {
             return segments.compactMap { segment -> String? in

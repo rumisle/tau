@@ -37,14 +37,19 @@ change without notice.
   `pcm_s16le`, streaming, the model, language, dictionary and replacements), then `ready`.
 - Audio as binary frames of 100 ms (3200 bytes of 16 kHz mono 16-bit PCM), each behind an 8-byte header: type 1,
   0, the frame number and 0 as big-endian 16-bit, and the size in KB.
-- `document_update`'s `display_text_annotated` is the whole text so far, in segments typed `out_of_window`, `normal`,
-  `active`, `unprocessed` and `deleted`; the text is their join without the `deleted` ones, as Aqua's app reads it
-  (`displayTextToString`). Not `wet_text`: that is only the current window, about half a minute, which starts over
+- `document_update`'s `display_text_annotated` is the whole text so far, in segments `{ text, type }`. Aqua's app
+  reads it with `displayTextToString(segments, includeUnprocessed = true)`: the texts joined, but `deleted` (words the
+  model took back) and, with `false`, `unprocessed` (heard, not yet cleaned up); it pastes the first, as tau puts in the
+  field. The other types (`normal`, `active`, `locked`, `consumed`, `out_of_window`) only style its live transcript. Not `wet_text`: that is only the current window, about half a minute, which starts over
   with a new `snapshot_id`, so a long dictation read from it lost everything before its last stretch. The update
   marked `final` after `stop_request { total_audio_chunks }` ends it.
 - The microphone (AVAudioEngine, converted to 16 kHz) is captured from the tap on: what comes before `ready` is kept
   and sent then. Stopping sends a second of silence (at once: paced, it only held the text back a second more), then
-  `stop_request`; the final text comes about 1.1 s later, and after 8 s the last one heard is kept. Speech itself must
+  `stop_request`; the final text comes about 1.1 s later, and after 8 s the last one heard is kept. Aqua's app sends
+  no silence (it waits up to 2 s for its audio to go out, then `stop_request`); tau's second matters only when the
+  last word ends right at Stop.
+- `session_duration` comes every 5 s with `status: "info"` (and `max_minutes: 10`); `"warning"` near the end, then
+  `"expired"` or `"shutdown"`, on which the app stops as if Stop were tapped, keeping the text, as Aqua's does. Speech itself must
   go at its pace: the server, sent a recording at once, gives nothing.
 - Aqua writes Chinese with a space between words; the spaces between two Chinese characters are taken out.
 
