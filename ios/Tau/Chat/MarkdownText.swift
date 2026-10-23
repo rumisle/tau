@@ -675,10 +675,10 @@ enum MarkdownText {
             self.bold = Font.semibold(size)
             self.italic = Font.italic(size)
             self.boldItalic = Font.semiboldItalic(size)
-            // Code a little smaller than the text, inline and in blocks: monospace looks larger at the same size, and a
-            // block's lines fit more of it.
+            // Code a little smaller than the text: monospace looks larger at the same size. Inline, 16 at 17, to sit with
+            // the text; in blocks 15, so a line fits more of it.
             self.monospace = monospace ?? Font.monospace(round(size * 0.88))
-            self.inlineCode = Font.monospace(round(size * 0.88))
+            self.inlineCode = Font.monospace(round(size * 16.0 / 17.0))
         }
     }
 

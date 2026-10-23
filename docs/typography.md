@@ -40,14 +40,14 @@ Measured, iOS 17 and later; nothing in tau does these:
 - **Curly quotes** for straight ones, outside code and formulas: by what is on either side, and alternately where that
   cannot tell (between Han characters). After a digit they stay straight (5'10", 30"); between letters `'` is an
   apostrophe.
-- **Inline code** at 0.88 of the text: monospace looks larger at the same size.
+- **Inline code** at 16 pt at 17: monospace looks larger at the same size.
 - **Tables** take the delimiter row's alignment (`---:`) and tabular figures. `---` is a hairline across the column.
 
 ## Code blocks
 
 Telegram's code block (a `pre` entity's), with:
 
-- **15 pt at 17**, as inline code: a block's line holds about 34 characters, not 29.
+- **15 pt at 17**: a block's line holds about 34 characters, not 29.
 - **Every block titled**: its language as it is written (JSON, TypeScript, C++), or Plain.
 - **Wrapped lines go on two characters further in** than their line starts, as editors wrap code; a tab is four
   spaces (copied as the tab); a diff's lines keep their indentation after their mark, which does not break from it (a
