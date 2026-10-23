@@ -299,9 +299,9 @@ enum MarkdownText {
             var title: NSAttributedString?
             var backgroundColor = style.accentColor.withMultipliedAlpha(0.1)
             if case let .code(language) = quote.kind {
-                if let language, !language.isEmpty {
-                    title = NSAttributedString(string: language.capitalized, font: fonts.bold.withSize(round(fonts.bold.pointSize * 0.8235294117647058)), textColor: style.accentColor)
-                }
+                // Every block says what it is; one without a language is plain text.
+                let name = language.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+                title = NSAttributedString(string: name.map(self.languageName) ?? "Plain", font: fonts.bold.withSize(round(fonts.bold.pointSize * 0.8235294117647058)), textColor: style.accentColor)
                 backgroundColor = style.isDark ? UIColor(white: 0.0, alpha: 0.65) : UIColor(white: 0.0, alpha: 0.05)
             }
             let data = TextNodeBlockQuoteData(
@@ -319,7 +319,15 @@ enum MarkdownText {
                 if let language {
                     highlight(current, range: range, language: language, style: style, fonts: fonts)
                 }
-                keepIndentation(current, range: range)
+                let isDiff = language.map { ["diff", "patch"].contains($0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) } ?? false
+                let grown = keepIndentation(current, range: range, diff: isDiff)
+                if grown > 0 {
+                    // The block's attribute over its tabs' spaces too.
+                    current.addAttribute(blockQuoteKey, value: data, range: NSRange(location: range.location, length: range.length + grown))
+                }
+                if isDiff {
+                    self.markDiffLines(current, range: NSRange(location: range.location, length: range.length + grown), dark: style.isDark)
+                }
             }
         }
 
@@ -480,6 +488,51 @@ enum MarkdownText {
         })
     }
 
+    static let lineBackgroundKey = NSAttributedString.Key("Attribute__LineBackground")
+
+    /// A diff's added lines on green and removed ones on red, as GitHub shows them; its headers (`+++`, `---`) plain.
+    private static func markDiffLines(_ string: NSMutableAttributedString, range: NSRange, dark: Bool) {
+        let added = UIColor(rgb: 0x34C759).withAlphaComponent(dark ? 0.18 : 0.16)
+        let removed = UIColor(rgb: 0xFF3B30).withAlphaComponent(dark ? 0.18 : 0.13)
+        let text = string.string as NSString
+        var start = range.location
+        let end = range.location + range.length
+        while start < end {
+            var lineEnd = start
+            while lineEnd < end, text.character(at: lineEnd) != 0x0a {
+                lineEnd += 1
+            }
+            // Without the word joiner after a line's mark (keepIndentation).
+            let line = text.substring(with: NSRange(location: start, length: lineEnd - start)).replacingOccurrences(of: "\u{2060}", with: "")
+            var color: UIColor?
+            if line.hasPrefix("+"), !line.hasPrefix("+++") {
+                color = added
+            } else if line.hasPrefix("-"), !line.hasPrefix("---") {
+                color = removed
+            }
+            if let color, lineEnd > start {
+                string.addAttribute(lineBackgroundKey, value: color, range: NSRange(location: start, length: lineEnd - start))
+            }
+            start = lineEnd + 1
+        }
+    }
+
+    /// A code block's title: its language as written in its name.
+    private static func languageName(_ language: String) -> String {
+        let names: [String: String] = [
+            "json": "JSON", "yaml": "YAML", "yml": "YAML", "toml": "TOML", "xml": "XML", "html": "HTML", "css": "CSS",
+            "sql": "SQL", "js": "JavaScript", "javascript": "JavaScript", "jsx": "JSX", "ts": "TypeScript",
+            "typescript": "TypeScript", "tsx": "TSX", "sh": "Shell", "shell": "Shell", "zsh": "Zsh", "bash": "Bash",
+            "cpp": "C++", "c++": "C++", "cs": "C#", "csharp": "C#", "objc": "Objective-C", "objectivec": "Objective-C",
+            "objective-c": "Objective-C", "py": "Python", "python": "Python", "rb": "Ruby", "md": "Markdown",
+            "graphql": "GraphQL", "php": "PHP", "ini": "INI", "csv": "CSV", "latex": "LaTeX", "tex": "TeX",
+            "nix": "Nix", "lua": "Lua", "go": "Go", "rust": "Rust", "swift": "Swift", "kotlin": "Kotlin", "java": "Java",
+            "diff": "Diff", "dockerfile": "Dockerfile", "makefile": "Makefile", "c": "C", "text": "Text", "txt": "Text",
+        ]
+        let key = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return names[key] ?? (key.count <= 3 ? key.uppercased() : key.prefix(1).uppercased() + key.dropFirst())
+    }
+
     /// Prism's language for a file, by its extension.
     static func language(forPath path: String) -> String? {
         let name = (path as NSString).lastPathComponent.lowercased()
@@ -531,20 +584,82 @@ enum MarkdownText {
     }
 
     /// InteractiveTextNode drops the spaces a line starts with, which in code is indentation. No-break spaces in their
-    /// place keep it; spaces inside a line stay, so long lines still wrap between words.
-    private static func keepIndentation(_ string: NSMutableAttributedString, range: NSRange) {
+    /// place keep it, a tab four of them (copied as the tab); spaces inside a line stay, so long lines still wrap
+    /// between words. A line that wraps goes on two characters further in than it starts, as editors wrap code.
+    /// Returns the change in length.
+    /// In a diff, a line's first character is its mark (`+`, `-`, a space), and its indentation comes after it.
+    @discardableResult
+    private static func keepIndentation(_ string: NSMutableAttributedString, range: NSRange, diff: Bool = false) -> Int {
         let text = string.string as NSString
+        var lines: [(start: Int, indent: Int)] = []
+        /// Characters that become more: a tab four spaces (copied as the tab), a diff's `+` or `-` itself and a word
+        /// joiner (copied as nothing), which keeps the line from breaking after its mark.
+        var expansions: [(index: Int, grows: Int)] = []
         var atLineStart = true
+        var lineStart = range.location
+        var indent = 0
         for index in range.location ..< range.location + range.length {
             let character = text.character(at: index)
             if character == 0x0a {
+                lines.append((lineStart, indent))
                 atLineStart = true
+                lineStart = index + 1
+                indent = 0
+            } else if diff && index == lineStart && (character == 0x2b || character == 0x2d || character == 0x20) {
+                if character == 0x20 {
+                    string.replaceCharacters(in: NSRange(location: index, length: 1), with: "\u{00A0}")
+                } else {
+                    expansions.append((index, 1))
+                }
+                indent += 1
             } else if atLineStart && character == 0x20 {
                 string.replaceCharacters(in: NSRange(location: index, length: 1), with: "\u{00A0}")
+                indent += 1
+            } else if atLineStart && character == 0x09 {
+                expansions.append((index, 3))
+                indent += 4
             } else {
                 atLineStart = false
             }
         }
+        lines.append((lineStart, indent))
+        // From the end, so the indices before stay.
+        for expansion in expansions.reversed() {
+            var attributes = string.attributes(at: expansion.index, effectiveRange: nil)
+            let character = (string.string as NSString).substring(with: NSRange(location: expansion.index, length: 1))
+            let replacement: NSMutableAttributedString
+            if character == "\t" {
+                attributes[originalKey] = "\t"
+                replacement = NSMutableAttributedString(string: "\u{00A0}", attributes: attributes)
+                attributes[originalKey] = ""
+                replacement.append(NSAttributedString(string: "\u{00A0}\u{00A0}\u{00A0}", attributes: attributes))
+            } else {
+                replacement = NSMutableAttributedString(string: character, attributes: attributes)
+                attributes[originalKey] = ""
+                replacement.append(NSAttributedString(string: "\u{2060}", attributes: attributes))
+            }
+            string.replaceCharacters(in: NSRange(location: expansion.index, length: 1), with: replacement)
+        }
+        var shift = 0
+        var cursor = 0
+        for line in lines {
+            while cursor < expansions.count, expansions[cursor].index < line.start {
+                shift += expansions[cursor].grows
+                cursor += 1
+            }
+            let start = line.start + shift
+            let font = (start < string.length ? string.attribute(.font, at: start, effectiveRange: nil) as? UIFont : nil) ?? Font.monospace(15.0)
+            let column = self.width("0", font: font)
+            var end = start
+            let current = string.string as NSString
+            while end < current.length, current.character(at: end) != 0x0a {
+                end += 1
+            }
+            if end > start {
+                string.addAttribute(indentKey, value: NSValue(cgSize: CGSize(width: 0.0, height: CGFloat(line.indent + 2) * column)), range: NSRange(location: start, length: end - start))
+            }
+        }
+        return expansions.reduce(0) { $0 + $1.grows }
     }
 
     private struct Fonts {
@@ -560,7 +675,9 @@ enum MarkdownText {
             self.bold = Font.semibold(size)
             self.italic = Font.italic(size)
             self.boldItalic = Font.semiboldItalic(size)
-            self.monospace = monospace ?? Font.monospace(size)
+            // Code a little smaller than the text, inline and in blocks: monospace looks larger at the same size, and a
+            // block's lines fit more of it.
+            self.monospace = monospace ?? Font.monospace(round(size * 0.88))
             self.inlineCode = Font.monospace(round(size * 0.88))
         }
     }

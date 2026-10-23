@@ -448,14 +448,20 @@ final class ChatMessageItemNode: ListViewItemNode {
             guard textNode.bounds.contains(local), let (index, attributes) = textNode.attributesAtPoint(local, orNearest: false) else {
                 continue
             }
-            var code: String?
+            // All of the code (the longest range of its attribute: highlighting splits it into runs), as written: its
+            // tabs and a diff's marks as they were.
+            var key: NSAttributedString.Key?
             if attributes[MarkdownText.inlineCodeKey] != nil {
-                code = textNode.attributeSubstring(name: MarkdownText.inlineCodeKey.rawValue, index: index)?.1
+                key = MarkdownText.inlineCodeKey
             } else if let quote = attributes[MarkdownText.blockQuoteKey] as? TextNodeBlockQuoteData, case .code = quote.kind {
-                code = textNode.attributeSubstring(name: MarkdownText.blockQuoteKey.rawValue, index: index)?.1
+                key = MarkdownText.blockQuoteKey
             }
-            if let code {
-                let text = code.replacingOccurrences(of: "\u{00A0}", with: " ")
+            if let key, let string = textNode.cachedLayout?.attributedString, index < string.length {
+                var range = NSRange()
+                guard string.attribute(key, at: index, longestEffectiveRange: &range, in: NSRange(location: 0, length: string.length)) != nil, range.length > 0 else {
+                    continue
+                }
+                let text = MarkdownText.copiedText(string.attributedSubstring(from: range))
                 UIPasteboard.general.string = text
                 item.interaction.copied(text)
                 return
@@ -921,7 +927,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     case let .code(string):
                         // As wide as its longest line; the row shows it through a horizontal scroller.
                         let existing = textNode(textIndex)
-                        let (layout, apply) = InteractiveTextNode.asyncLayout(existing)(InteractiveTextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: 100_000.0, height: .greatestFiniteMagnitude)))
+                        let (layout, apply) = InteractiveTextNode.asyncLayout(existing)(InteractiveTextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: 100_000.0, height: .greatestFiniteMagnitude), minWidth: maxTextWidth))
                         laidOut.append(.text(start: start, length: string.length, layout: layout, spacing: spacing))
                         textApplies.append(apply)
                         textScrolls.append(true)
@@ -1028,6 +1034,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                                 contentAnimation.animator.updateFrame(layer: scroller.layer, frame: CGRect(x: 0.0, y: y, width: params.width, height: layout.size.height), completion: nil)
                                 node.frame = CGRect(origin: CGPoint(x: x, y: 0.0), size: layout.size)
                                 scroller.view.contentSize = CGSize(width: max(params.width, x + layout.size.width + freeTextInset), height: layout.size.height)
+                                CodeScrollFade.update(scroller.view)
                             } else {
                                 if node.supernode !== self.contentNode {
                                     self.contentNode.insertSubnode(node, belowSubnode: self.dateNode)
@@ -1699,6 +1706,7 @@ final class ChatMessageItemNode: ListViewItemNode {
 
     /// Horizontal scrollers of code blocks that do not wrap, by the text node each holds.
     private var codeScrollers: [ObjectIdentifier: ASScrollNode] = [:]
+    private var codeScrollFades: [ObjectIdentifier: CodeScrollFade] = [:]
 
     private func codeScroller(for node: InteractiveTextNode) -> ASScrollNode {
         let key = ObjectIdentifier(node)
@@ -1723,6 +1731,9 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.contentNode.insertSubnode(scroller, belowSubnode: self.dateNode)
         scroller.addSubnode(node)
         self.codeScrollers[key] = scroller
+        let fade = CodeScrollFade()
+        scroller.view.delegate = fade
+        self.codeScrollFades[key] = fade
         return scroller
     }
 
@@ -1731,6 +1742,7 @@ final class ChatMessageItemNode: ListViewItemNode {
         for (key, scroller) in self.codeScrollers where !kept.contains(key) {
             scroller.removeFromSupernode()
             self.codeScrollers[key] = nil
+            self.codeScrollFades[key] = nil
         }
     }
 
@@ -2270,5 +2282,39 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
             body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 80 : (isActive ? 4 : 6), fromStart: fromStart), font: toolFont, textColor: textColor))
         }
         return (name == "subagent" ? "Subagent" : name, tool?.summary ?? "", body)
+    }
+}
+
+/// The edges of a code block that scrolls sideways fade where there is more of it: the right one until it is scrolled
+/// to its end, the left one once it is scrolled from its start. A mask over the scroller, kept on screen as it scrolls.
+private final class CodeScrollFade: NSObject, UIScrollViewDelegate {
+    private static let width: CGFloat = 28.0
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        CodeScrollFade.update(scrollView)
+    }
+
+    static func update(_ scrollView: UIScrollView) {
+        let bounds = scrollView.bounds
+        let more = scrollView.contentSize.width - bounds.width
+        guard more > 1.0, bounds.width > CodeScrollFade.width * 2.0 else {
+            scrollView.layer.mask = nil
+            return
+        }
+        let mask = (scrollView.layer.mask as? CAGradientLayer) ?? CAGradientLayer()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        mask.startPoint = CGPoint(x: 0.0, y: 0.5)
+        mask.endPoint = CGPoint(x: 1.0, y: 0.5)
+        let fade = CodeScrollFade.width / bounds.width
+        let left: CGFloat = scrollView.contentOffset.x > 1.0 ? 0.0 : 1.0
+        let right: CGFloat = scrollView.contentOffset.x < more - 1.0 ? 0.0 : 1.0
+        mask.colors = [UIColor(white: 0.0, alpha: left).cgColor, UIColor.black.cgColor, UIColor.black.cgColor, UIColor(white: 0.0, alpha: right).cgColor]
+        mask.locations = [0.0, NSNumber(value: Double(fade)), NSNumber(value: Double(1.0 - fade)), 1.0]
+        mask.frame = bounds
+        CATransaction.commit()
+        if scrollView.layer.mask !== mask {
+            scrollView.layer.mask = mask
+        }
     }
 }

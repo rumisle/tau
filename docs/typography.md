@@ -43,6 +43,22 @@ Measured, iOS 17 and later; nothing in tau does these:
 - **Inline code** at 0.88 of the text: monospace looks larger at the same size.
 - **Tables** take the delimiter row's alignment (`---:`) and tabular figures. `---` is a hairline across the column.
 
+## Code blocks
+
+Telegram's code block (a `pre` entity's), with:
+
+- **15 pt at 17**, as inline code: a block's line holds about 34 characters, not 29.
+- **Every block titled**: its language as it is written (JSON, TypeScript, C++), or Plain.
+- **Wrapped lines go on two characters further in** than their line starts, as editors wrap code; a tab is four
+  spaces (copied as the tab); a diff's lines keep their indentation after their mark, which does not break from it (a
+  word joiner, copied as nothing).
+- **The width of the text**, whatever its lines' (the patch, `0014`), and no icon: a tap on a block copies it, as
+  written.
+- **A diff's added and removed lines** on green and red, across the block (`Attribute__LineBackground`, drawn by the
+  patch); `+++` and `---` stay plain.
+- **With wrapping off** a block scrolls sideways, and its edges fade where there is more of it.
+- Telegram's line spacing (0.12), in text set at 1.45.
+
 Replaced characters keep what they were under `MarkdownText.originalKey`: copying a selection gives the text as
 written. Copy on a message copies its text.
 

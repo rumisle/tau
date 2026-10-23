@@ -1187,6 +1187,8 @@ public final class InteractiveTextNodeLayout: NSObject {
 public let interactiveTextIndentKey = NSAttributedString.Key("Attribute__Indent")
 // tau: text whose paragraphs do not end on a line with a single Han character.
 public let interactiveTextAvoidsOrphansKey = NSAttributedString.Key("Attribute__AvoidsOrphans")
+// tau: a code line's background color (UIColor), across its block.
+public let interactiveTextLineBackgroundKey = NSAttributedString.Key("Attribute__LineBackground")
 
 private func isHanCharacter(_ c: unichar) -> Bool {
     return (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0xF900 && c <= 0xFAFF)
@@ -1689,9 +1691,8 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
                 case .quote:
                     additionalSegmentRightInset = blockQuoteIconInset
                 case .code:
-                    if segment.title != nil {
-                        additionalSegmentRightInset = blockQuoteIconInset
-                    }
+                    // tau: no icon over code, which a tap copies.
+                    break
                 }
             }
             
@@ -2118,6 +2119,12 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
                 }
             }
             
+            // tau: a code block spans the text's width (or minWidth, for text laid out unbounded), whatever its lines'.
+            if let blockQuote = segment.blockQuote, case .code = blockQuote.kind {
+                blockWidth = max(blockWidth, minWidth ?? constrainedSize.width)
+                size.width = max(size.width, blockWidth)
+            }
+            
             var segmentBlockQuote: InteractiveTextNodeBlockQuote?
             if let blockQuote = segment.blockQuote, let tintColor = segment.tintColor, let blockIndex, let firstLine = segment.lines.first, let lastLine = segment.lines.last {
                 segmentBlockQuote = InteractiveTextNodeBlockQuote(
@@ -2228,6 +2235,11 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
                 } else {
                     segmentRect = segmentRect.union(lineRect)
                 }
+            }
+            
+            // tau: a code block's drawing covers the block, so its lines' backgrounds span it.
+            if let blockQuote = segment.blockQuote, case .code = blockQuote.data.kind, !segmentRect.isEmpty {
+                segmentRect = segmentRect.union(blockQuote.frame.offsetBy(dx: topLeftOffset.x, dy: topLeftOffset.y))
             }
             
             segmentRect.size.width += cachedLayout.insets.left + cachedLayout.insets.right
@@ -2654,6 +2666,17 @@ final class TextContentItemLayer: SimpleLayer {
                     
                     var lineFrame = line.frame
                     lineFrame.origin.y += offset.y
+                    
+                    // tau: a code line's own background across its block (a diff's added and removed lines),
+                    // halfway into the spacing on either side.
+                    if let blockQuote = params.item.segment.blockQuote, let range = line.range, range.length > 0, let attributedString = params.item.attributedString, range.location < attributedString.length, let color = attributedString.attribute(interactiveTextLineBackgroundKey, at: range.location, effectiveRange: nil) as? UIColor {
+                        let spacing = ceil(line.frame.height * 0.12 / 2.0)
+                        let blockFrame = blockQuote.frame.offsetBy(dx: offset.x, dy: 0.0)
+                        context.saveGState()
+                        context.setFillColor(color.cgColor)
+                        context.fill(CGRect(x: blockFrame.minX + 3.0, y: lineFrame.minY - spacing, width: blockFrame.width - 3.0, height: lineFrame.height + spacing * 2.0))
+                        context.restoreGState()
+                    }
                     
                     if alignment == .center {
                         lineFrame.origin.x = offset.x + floor((params.size.width - lineFrame.width) / 2.0)
@@ -3334,7 +3357,8 @@ final class TextContentItemLayer: SimpleLayer {
             var quoteTypeIcon: UIImage?
             switch blockQuote.data.kind {
             case .code:
-                quoteTypeIcon = codeIcon
+                // tau: none; a tap on the block copies it.
+                quoteTypeIcon = nil
             case .quote:
                 quoteTypeIcon = quoteIcon
             }
