@@ -116,7 +116,8 @@ describe("files", () => {
 		assert.deepEqual(lines.map((line) => line.kind), ["file", "image"]);
 		assert.equal(lines[0]!.path, join(host.files.root, report.id, "report.csv"));
 		assert.equal(content[1]!.type, "image", "the photo is shown too");
-		assert.equal(content[1]!.data, PNG.toString("base64"));
+		const fetched = await client.request("media.get", { conversationId: replica.id, entryId: (user as unknown as { id: number }).id, index: 0 });
+		assert.equal(fetched.data, PNG.toString("base64"), "by reference, as every image");
 		assert.equal(content[2]!.text, "what is in these?");
 		// Read-only, in a read-only directory, kept for good.
 		assert.equal(statSync(lines[0]!.path).mode & 0o777, 0o400);

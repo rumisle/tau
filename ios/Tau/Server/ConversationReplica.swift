@@ -144,13 +144,11 @@ enum TranscriptBuilder {
         return result
     }
 
-    static func build(replica: ConversationReplica, outbox: Outbox, rowIdForUserEntry: [Int: Int], images: ImageDecoder, media: MediaLoader? = nil) -> ConversationState {
+    static func build(replica: ConversationReplica, outbox: Outbox, rowIdForUserEntry: [Int: Int], media: MediaLoader? = nil) -> ConversationState {
         /// An entry's image: a reference from a server that sends them so, else the data, decoded.
         func attachment(entryId: Int, index: Int, block: JSONObject) -> MessageAttachment? {
-            if let remote = media?.image(conversationId: replica.id, entryId: entryId, index: index, block: block) {
-                return MessageAttachment(id: entryId * 64 + index, kind: .remote(remote))
-            }
-            return images.image(entryId: entryId, index: index, block: block).map { MessageAttachment(id: entryId * 64 + index, kind: .image($0)) }
+            // By reference, as the server sends every image (server/src/media.ts).
+            return media?.image(conversationId: replica.id, entryId: entryId, index: index, block: block).map { MessageAttachment(id: entryId * 64 + index, kind: .remote($0)) }
         }
         let items = outbox.items(for: replica.id)
         var rows: [ChatMessage] = []
@@ -575,23 +573,6 @@ enum ToolSummary {
             }
             return String(text.prefix(200))
         }
-    }
-}
-
-/// Decodes base64 image blocks once per entry.
-final class ImageDecoder {
-    private var cache: [Int: UIImage] = [:]
-
-    func image(entryId: Int, index: Int, block: JSONObject) -> UIImage? {
-        let key = entryId * 64 + index
-        if let image = self.cache[key] {
-            return image
-        }
-        guard let base64 = block.string("data"), let data = Data(base64Encoded: base64), let image = UIImage(data: data) else {
-            return nil
-        }
-        self.cache[key] = image
-        return image
     }
 }
 

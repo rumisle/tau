@@ -112,8 +112,6 @@ export class Connection {
 	readonly #cleanups: (() => void)[] = [];
 	#stopDialogs: (() => void) | undefined;
 	#hello = false;
-	/** The client fetches images itself (src/media.ts): entries go to it with references in their place. */
-	#mediaRefs = false;
 	#closed = false;
 	readonly #notifier: Notifier | undefined;
 	readonly #search: Search | undefined;
@@ -465,10 +463,8 @@ export class Connection {
 			throw new ProtocolError("bad_request", `Unsupported protocol ${protocol}; server speaks ${PROTOCOL_VERSION}`);
 		}
 		this.#hello = true;
-		this.#mediaRefs = params.media === true;
 		return {
 			protocol: PROTOCOL_VERSION,
-			media: this.#mediaRefs,
 			serverId: this.#host.serverId,
 			defaultModel: this.#host.defaultModel,
 			defaultThinkingLevel: this.#host.defaultThinkingLevel,
@@ -476,8 +472,7 @@ export class Connection {
 			compaction: this.#host.compactionThreshold,
 			// Whether it can send Apple's pushes: it has the account's APNs key.
 			apns: this.#notifier?.canPush === true,
-			// It keeps files: uploads over HTTP, `attachments` in conversation.submit, send_file (docs/files.md).
-			files: true,
+			// The largest file it keeps (docs/files.md).
 			maxFileBytes: this.#host.files.maxBytes,
 			defaultCwd: this.#host.cwd,
 			home: homedir(),
@@ -684,9 +679,9 @@ export class Connection {
 		return { entries: this.#outgoing([...page.items].reverse()), hasOlder: page.next !== undefined };
 	}
 
-	/** Entries as this client takes them: with image references when it fetches images itself. */
+	/** Entries as clients take them: images by reference, fetched with media.get (src/media.ts). */
 	#outgoing(entries: readonly EntryRecord[]): EntryRecord[] {
-		return this.#mediaRefs ? entries.map(withMediaRefs) : [...entries];
+		return entries.map(withMediaRefs);
 	}
 
 	async #submit(params: Record<string, unknown>): Promise<unknown> {
@@ -704,7 +699,7 @@ export class Connection {
 		if (meta?.withdrawn?.includes(requestId)) {
 			throw new ProtocolError("withdrawn", `Request ${requestId} was withdrawn`);
 		}
-		await this.#checkContent(conversation, own);
+		this.#checkContent(own);
 		const attached = await this.#attachments(conversation, attachmentIds);
 		const content = await withAttachments(own, attached);
 		if (meta?.title === undefined) {
@@ -786,33 +781,10 @@ export class Connection {
 	}
 
 	/** Refuse content the conversation's model cannot take, before it is admitted. */
-	async #checkContent(conversation: Conversation, content: string | (TextContent | ImageContent)[]): Promise<void> {
-		const parts = typeof content === "string" ? [{ type: "text" as const, text: content }] : content;
-		let text = 0;
-		let images = 0;
-		for (const part of parts) {
-			if (part.type === "text") text += part.text.length;
-			else {
-				images += 1;
-				if (!IMAGE_TYPES.has(part.mimeType)) {
-					throw new ProtocolError("unsupported", `Images must be JPEG, PNG, GIF or WebP, not ${part.mimeType}`);
-				}
-				if (Math.floor((part.data.length * 3) / 4) > MAX_IMAGE_BYTES) {
-					throw new ProtocolError("too_large", "An image is larger than 5 MB");
-				}
-			}
-		}
+	/** Refuse text too long to send, before it is admitted. Photos and files come as attachments. */
+	#checkContent(content: string | TextContent[]): void {
+		const text = typeof content === "string" ? content.length : content.reduce((total, part) => total + part.text.length, 0);
 		if (text > MAX_TEXT_CHARS) throw new ProtocolError("too_large", "The message is longer than 1,000,000 characters");
-		if (images > MAX_IMAGES) throw new ProtocolError("too_large", `A message can carry at most ${MAX_IMAGES} images`);
-		if (images === 0) return;
-		const ref = (await conversation.agent(this.#context)).model;
-		if (ref === undefined) return;
-		const model = (await this.#host.models.getAvailable()).find(
-			(candidate) => candidate.provider === ref.provider && candidate.id === ref.modelId,
-		);
-		if (model !== undefined && !model.input.includes("image")) {
-			throw new ProtocolError("unsupported", `${model.name} does not take images`);
-		}
 	}
 
 	#push(message: unknown): void {
@@ -888,7 +860,8 @@ async function agentChange(patch: Record<string, unknown> & AgentPatch): Promise
 	return change;
 }
 
-function userContent(value: unknown): string | (TextContent | ImageContent)[] {
+/** What the user wrote: a string, or text blocks. Photos and files are attachments (docs/files.md). */
+function userContent(value: unknown): string | TextContent[] {
 	if (typeof value === "string") {
 		if (value.trim() === "") throw new ProtocolError("bad_request", "content must not be empty");
 		return value;
@@ -898,11 +871,8 @@ function userContent(value: unknown): string | (TextContent | ImageContent)[] {
 	}
 	return value.map((part: unknown) => {
 		const block = part as Record<string, JsonValue>;
-		if (block?.type === "text" && typeof block.text === "string") return { type: "text", text: block.text };
-		if (block?.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") {
-			return { type: "image", data: block.data, mimeType: block.mimeType };
-		}
-		throw new ProtocolError("bad_request", "content blocks must be { type: text, text } or { type: image, data, mimeType }");
+		if (block?.type === "text" && typeof block.text === "string") return { type: "text" as const, text: block.text };
+		throw new ProtocolError("bad_request", "content blocks must be { type: text, text }; photos and files go as attachments");
 	});
 }
 

@@ -44,8 +44,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         let piRevision: String
         /// It has the account's APNs key: it sends Apple's pushes, and Live Activity updates.
         var apns: Bool = false
-        /// It keeps files (docs/files.md): uploads over HTTP, and messages that name them; and the largest it takes.
-        var files: Bool = false
+        /// The largest file it takes (docs/files.md).
         var maxFileBytes: Int64 = 0
     }
 
@@ -176,8 +175,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         self.setStatus(self.isRefused ? .refused : .connecting)
         task.resume()
         self.receive(task: task, generation: generation)
-        // Images by reference, fetched when shown (server/src/media.ts).
-        self.send(method: "hello", params: ["protocol": 1, "media": true], on: task) { [weak self] result in
+        self.send(method: "hello", params: ["protocol": 1], on: task) { [weak self] result in
             guard let self, generation == self.generation else {
                 return
             }
@@ -199,7 +197,6 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                     hostname: value.string("hostname") ?? "",
                     piRevision: value.string("piRevision") ?? "",
                     apns: value.bool("apns") ?? false,
-                    files: value.bool("files") ?? false,
                     maxFileBytes: Int64(value.double("maxFileBytes") ?? 0.0)
                 )
                 self.hello = hello

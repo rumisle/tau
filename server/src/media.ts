@@ -1,6 +1,6 @@
 // Images in entries, sent by reference. A photo the user sent or an image a tool returned (the read tool's) is kept in
-// its entry as base64, up to 4.5 MB; a client that asks for references (`hello { media: true }`) gets each one as
-// `{ type: "image", mimeType, media: { entryId, index, bytes, width, height } }` instead, and fetches the data with
+// its entry as base64, up to 4.5 MB; clients get each one as
+// `{ type: "image", mimeType, media: { entryId, index, bytes, width, height } }` instead, and fetch the data with
 // `media.get` when it shows it. History then syncs in kilobytes, and a phone decodes only what is on screen.
 // See docs/media.md.
 import type { EntryRecord } from "@earendil-works/pi-durable";

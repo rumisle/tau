@@ -44,13 +44,12 @@ socket, so a client must not send one (content limits below are far under it).
 ## Methods
 
 ### `hello`
-`{ protocol: 1, media?: true }` -> `{ protocol: 1, media: boolean, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number, apns: boolean, files: true, maxFileBytes: number }`
+`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number, apns: boolean, maxFileBytes: number }`
 
 `defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
 `hostname` is the computer's name, `piRevision` the pi commit the server links, `uptime` seconds since it started.
-`apns`: the server has the account's APNs key and sends Apple's pushes (docs/notifications.md). `files`: it keeps
-files, uploaded over HTTP and named by `conversation.submit`'s `attachments`, up to `maxFileBytes` each
-(docs/files.md).
+`apns`: the server has the account's APNs key and sends Apple's pushes (docs/notifications.md). `maxFileBytes`: the
+largest file it keeps (docs/files.md).
 
 Must be the first request. A different `protocol` is rejected.
 
@@ -302,7 +301,7 @@ transcript up to date without subscribing, as the app preloads the chats at the 
 `hasOlder` then means a gap between the cache and `entries`.
 
 ### `conversation.submit`
-`{ conversationId, requestId: string, content: string | ContentBlock[], attachments?: { id: string, as?: "image" | "file" }[], whenBusy?: "steer" | "followUp" | "reject" }`
+`{ conversationId, requestId: string, content: string | { type: "text", text }[], attachments?: { id: string, as?: "image" | "file" }[], whenBusy?: "steer" | "followUp" | "reject" }`
 -> `{ submission: SubmissionRecord }`
 
 `attachments` names files uploaded with `POST /files` (at most 20): the message starts with a block naming each by path,
@@ -314,9 +313,8 @@ the existing submission instead of sending twice. Persist it with the outgoing m
 `SubmissionRecord.status`: `queued` (in the inbox) -> `placed` (in the transcript, `entry` set) -> `done` (`answer` set)
 or `unanswered` (`reason`: `aborted`, `model_error`, `stale`, ...).
 
-Content is refused before admission, with nothing written: `too_large` over 1,000,000 characters of text, 20 images,
-or 5 MB per image; `unsupported` for an image type other than JPEG, PNG, GIF and WebP, or any image when the
-conversation's model takes none; `withdrawn` when `submission.withdraw` named the request ID first; `file_missing`
+Photos and files are attachments, not content: an image block is `bad_request`. Content is refused before admission,
+with nothing written: `too_large` over 1,000,000 characters of text or 20 attachments; `withdrawn` when `submission.withdraw` named the request ID first; `file_missing`
 when an attachment's ID names no file (never uploaded, or swept a day after): upload it again.
 
 ### `submission.withdraw`

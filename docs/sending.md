@@ -28,8 +28,8 @@ The server refuses a message when it will never take it, before anything is writ
 
 | Code | When |
 |---|---|
-| `too_large` | more than 1,000,000 characters, more than 20 images, an image over 5 MB |
-| `unsupported` | an image that is not JPEG, PNG, GIF or WebP, or any image for a model that takes none |
+| `too_large` | more than 1,000,000 characters, more than 20 photos or files, a file over the server's limit |
+| `file_missing` | a file it does not have (swept a day after an upload no message took): uploaded again, once |
 | `not_found` | the conversation does not exist (deleted, or the server's database was replaced) |
 | `bad_request` | malformed content |
 | `withdrawn` | the request ID was withdrawn first (see below) |

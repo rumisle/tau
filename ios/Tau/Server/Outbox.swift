@@ -22,11 +22,6 @@ struct OutgoingMessage: Codable, Equatable {
         case withdrawing
     }
 
-    struct File: Codable, Equatable {
-        let name: String
-        let size: Int64
-    }
-
     /// A photo or file the message carries (docs/files.md): uploaded before the submit, which names it by its ID.
     struct Upload: Codable, Equatable {
         enum Kind: String, Codable {
@@ -56,11 +51,8 @@ struct OutgoingMessage: Codable, Equatable {
     /// The chat row's ID, the same before and after the message is in the transcript.
     let rowId: Int
     let text: String
-    /// JPEG files next to the outbox, in order, sent inline: an outbox written before files were uploaded.
-    let imageFiles: [String]
-    let files: [File]
-    /// Photos and files, uploaded first; nil in an outbox written before.
-    var uploads: [Upload]? = nil
+    /// Photos and files, uploaded first.
+    var uploads: [Upload]
     var mode: Mode
     let date: Date
     var state: State
@@ -91,12 +83,12 @@ struct OutgoingMessage: Codable, Equatable {
     }
 
     var photoCount: Int {
-        return self.imageFiles.count + (self.uploads ?? []).filter { $0.kind == .photo }.count
+        return self.uploads.filter { $0.kind == .photo }.count
     }
 
-    /// Its photos and files, as its entry's attachments block counts them (or its image blocks, inline).
+    /// Its photos and files, as its entry's attachments block counts them.
     var attachmentCount: Int {
-        return self.imageFiles.count + (self.uploads ?? []).count
+        return self.uploads.count
     }
 }
 
@@ -283,13 +275,10 @@ final class Outbox {
         guard let item = self.item(requestId) else {
             return []
         }
-        if let uploads = item.uploads {
-            // Only when this device has each: the entry's images are these, in order.
-            let photos = uploads.filter { $0.kind == .photo }
-            let data = photos.compactMap { upload in upload.localName.flatMap { try? Data(contentsOf: self.directory.appendingPathComponent($0)) } }
-            return data.count == photos.count ? data : []
-        }
-        return item.imageFiles.compactMap { try? Data(contentsOf: self.directory.appendingPathComponent($0)) }
+        // Only when this device has each: the entry's images are these, in order.
+        let photos = item.uploads.filter { $0.kind == .photo }
+        let data = photos.compactMap { upload in upload.localName.flatMap { try? Data(contentsOf: self.directory.appendingPathComponent($0)) } }
+        return data.count == photos.count ? data : []
     }
 
     /// The device's copy of an upload.
@@ -302,15 +291,7 @@ final class Outbox {
             return cached
         }
         var result: [MessageAttachment] = []
-        for name in item.imageFiles {
-            if let data = try? Data(contentsOf: self.directory.appendingPathComponent(name)), let image = UIImage(data: data) {
-                result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .image(image)))
-            }
-        }
-        for file in item.files {
-            result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .file(FileAttachment(name: file.name, size: file.size, mimeType: "application/octet-stream"))))
-        }
-        for (index, upload) in (item.uploads ?? []).enumerated() {
+        for (index, upload) in item.uploads.enumerated() {
             let url = self.localURL(upload)
             if upload.kind == .photo, let url, let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
                 result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .image(image)))
@@ -387,8 +368,6 @@ final class Outbox {
             createRequestId: createRequestId,
             rowId: self.takeRowId(),
             text: text,
-            imageFiles: [],
-            files: [],
             uploads: uploads,
             mode: mode,
             date: Date(),
@@ -461,24 +440,16 @@ final class Outbox {
 
     private func appendReplacement(of item: OutgoingMessage, conversationId: Int, mode: OutgoingMessage.Mode, showsInQueue: Bool) {
         let requestId = UUID().uuidString
-        var imageFiles: [String] = []
-        for name in item.imageFiles {
-            let copy = "\(requestId)-\(imageFiles.count).jpg"
-            try? FileManager.default.copyItem(at: self.directory.appendingPathComponent(name), to: self.directory.appendingPathComponent(copy))
-            imageFiles.append(copy)
-        }
         // What is uploaded goes again by its ID; what is not, from a copy of its own.
-        let uploads = item.uploads.map { uploads in
-            uploads.enumerated().map { index, upload -> OutgoingMessage.Upload in
-                var copy = upload
-                if let name = upload.localName {
-                    let ext = (name as NSString).pathExtension
-                    let newName = "\(requestId)-\(index)\(ext.isEmpty ? "" : ".\(ext)")"
-                    try? FileManager.default.copyItem(at: self.directory.appendingPathComponent(name), to: self.directory.appendingPathComponent(newName))
-                    copy.localName = newName
-                }
-                return copy
+        let uploads = item.uploads.enumerated().map { index, upload -> OutgoingMessage.Upload in
+            var copy = upload
+            if let name = upload.localName {
+                let ext = (name as NSString).pathExtension
+                let newName = "\(requestId)-\(index)\(ext.isEmpty ? "" : ".\(ext)")"
+                try? FileManager.default.copyItem(at: self.directory.appendingPathComponent(name), to: self.directory.appendingPathComponent(newName))
+                copy.localName = newName
             }
+            return copy
         }
         let replacement = OutgoingMessage(
             requestId: requestId,
@@ -486,8 +457,6 @@ final class Outbox {
             createRequestId: nil,
             rowId: self.takeRowId(),
             text: item.text,
-            imageFiles: imageFiles,
-            files: item.files,
             uploads: uploads,
             mode: mode,
             date: Date(),
@@ -581,7 +550,7 @@ final class Outbox {
 
     private func remove(at index: Int) {
         let item = self.items.remove(at: index)
-        for name in item.imageFiles + (item.uploads ?? []).compactMap(\.localName) {
+        for name in item.uploads.compactMap(\.localName) {
             try? FileManager.default.removeItem(at: self.directory.appendingPathComponent(name))
         }
         self.attachmentsByRequest[item.requestId] = nil
@@ -858,7 +827,7 @@ final class Outbox {
                         return
                     }
                 } else if self.item(original) == nil {
-                    // Unknown outcome (an older outbox): sending a duplicate is worse than not moving it.
+                    // Unknown outcome: sending a duplicate is worse than not moving it.
                     if let index = self.items.firstIndex(where: { $0.requestId == requestId }) {
                         self.remove(at: index)
                     }
@@ -869,16 +838,8 @@ final class Outbox {
             guard self.connection.isReady else {
                 return
             }
-            if let index = item.uploads?.firstIndex(where: { $0.serverId == nil }), self.connection.hello?.files == true {
+            if let index = item.uploads.firstIndex(where: { $0.serverId == nil }) {
                 self.upload(requestId, index: index, conversationId: conversationId, key: key)
-                return
-            }
-            guard let content = self.content(item) else {
-                let takesFiles = item.uploads == nil || item.uploads!.allSatisfy({ $0.kind == .photo }) || self.connection.hello?.files == true
-                self.update(requestId) {
-                    $0.state = .failed(code: "bad_request", message: takesFiles ? "A photo of this message is missing" : "This server does not take files: update it")
-                }
-                self.pump(conversationId: conversationId)
                 return
             }
             if !item.wasSent {
@@ -887,9 +848,9 @@ final class Outbox {
                     $0.wasSent = true
                 }
             }
-            var params: JSONObject = ["conversationId": conversationId, "requestId": requestId, "content": content, "whenBusy": item.mode.rawValue]
-            if let uploads = item.uploads, !uploads.isEmpty, self.connection.hello?.files == true {
-                params["attachments"] = uploads.map { ["id": $0.serverId ?? "", "as": $0.kind == .photo ? "image" : "file"] as JSONObject }
+            var params: JSONObject = ["conversationId": conversationId, "requestId": requestId, "content": item.text, "whenBusy": item.mode.rawValue]
+            if !item.uploads.isEmpty {
+                params["attachments"] = item.uploads.map { ["id": $0.serverId ?? "", "as": $0.kind == .photo ? "image" : "file"] as JSONObject }
             }
             self.inFlight.insert(key)
             self.connection.request("conversation.submit", params) { [weak self] result in
@@ -935,9 +896,10 @@ final class Outbox {
     /// Upload one of a message's files, then go on with the message: the next upload, or its submit. A file the server
     /// refuses fails the message; no answer is tried again, as a submit is.
     private func upload(_ requestId: String, index: Int, conversationId: Int, key: String) {
-        guard let item = self.item(requestId), let upload = item.uploads?[index], let transfer = self.transfer else {
+        guard let item = self.item(requestId), index < item.uploads.count, let transfer = self.transfer else {
             return
         }
+        let upload = item.uploads[index]
         guard let url = self.localURL(upload), FileManager.default.fileExists(atPath: url.path) else {
             self.update(requestId) {
                 $0.state = .failed(code: "bad_request", message: "\(upload.name) is missing")
@@ -958,7 +920,7 @@ final class Outbox {
             }
             switch result {
             case let .success(uploaded):
-                self.items[current].uploads?[index].serverId = uploaded.id
+                self.items[current].uploads[index].serverId = uploaded.id
                 self.items[current].attempts = 0
                 self.save()
                 // Opened from here, never fetched back.
@@ -1017,11 +979,11 @@ final class Outbox {
             switch error.code {
             case "withdrawn":
                 self.remove(at: index)
-            case "file_missing" where self.items[index].uploads?.allSatisfy({ $0.localName != nil }) == true && self.items[index].attempts + 1 < Outbox.maxAttempts:
+            case "file_missing" where self.items[index].uploads.allSatisfy({ $0.localName != nil }) && self.items[index].attempts + 1 < Outbox.maxAttempts:
                 // Not used for a day, the server swept them: upload them again.
                 self.items[index].attempts += 1
-                for upload in self.items[index].uploads!.indices {
-                    self.items[index].uploads![upload].serverId = nil
+                for upload in self.items[index].uploads.indices {
+                    self.items[index].uploads[upload].serverId = nil
                 }
                 self.save()
             case "internal" where self.items[index].attempts + 1 < Outbox.maxAttempts:
@@ -1105,39 +1067,6 @@ final class Outbox {
             self?.backoff.remove(key)
             self?.pump()
         }
-    }
-
-    private func content(_ item: OutgoingMessage) -> Any? {
-        if let uploads = item.uploads, !uploads.isEmpty {
-            if self.connection.hello?.files == true {
-                return item.text
-            }
-            // A server from before files: photos inline, as they went then; files it cannot take.
-            guard uploads.allSatisfy({ $0.kind == .photo }) else {
-                return nil
-            }
-            var images: [JSONObject] = []
-            for upload in uploads {
-                guard let url = self.localURL(upload), let data = try? Data(contentsOf: url) else {
-                    return nil
-                }
-                images.append(["type": "image", "data": data.base64EncodedString(), "mimeType": upload.mimeType])
-            }
-            return (item.text.isEmpty ? [] : [["type": "text", "text": item.text]]) + images
-        }
-        var images: [JSONObject] = []
-        for name in item.imageFiles {
-            guard let data = try? Data(contentsOf: self.directory.appendingPathComponent(name)) else {
-                return nil
-            }
-            images.append(["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"])
-        }
-        let files = item.files.map { "[Attached file: \($0.name), \(ByteCountFormatter.string(fromByteCount: $0.size, countStyle: .file))]" }
-        let text = ([item.text] + files).filter { !$0.isEmpty }.joined(separator: "\n")
-        if images.isEmpty {
-            return text
-        }
-        return (text.isEmpty ? [] : [["type": "text", "text": text]]) + images
     }
 
     // MARK: - Creating drafts

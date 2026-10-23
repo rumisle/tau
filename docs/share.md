@@ -16,7 +16,7 @@ The app and the extension exchange the servers and chats, and unsent shares, in 
 (`$(AppIdentifierPrefix)com.rumisle.tau.shared`), not an App Group: a free developer account's profiles allow the
 team's keychain groups but not App Groups. Unsent photos are kept at most four, 1280 px a side, to fit.
 
-Files (PDFs, archives, videos) and photos go to a server that keeps files as uploads (docs/files.md), once for all its
-chats, named by the messages; a server from before gets the photos inline and no files. What the server refuses
+Files (PDFs, archives, videos) and photos are uploaded (docs/files.md), once for all a server's chats, and named by the
+messages. What the server refuses
 (a file too large) the sheet says, and stays open. Unsent files are not left for the app: the keychain cannot hold
 them, so the sheet says to share them again.

@@ -5,8 +5,7 @@ image a tool returned (the read tool's, for an image file) one of its `pi.tool-r
 
 ## By reference
 
-A client that says so in `hello { media: true }` gets every entry with its images replaced by references
-(`server/src/media.ts`):
+Clients get every entry with its images replaced by references (`server/src/media.ts`):
 
 ```ts
 { type: "image", mimeType: "image/png", media: { entryId, index, bytes, width?, height? } }
@@ -14,8 +13,7 @@ A client that says so in `hello { media: true }` gets every entry with its image
 
 `index` counts the entry's images in order; `width` and `height` come from the image's header, read without decoding
 it. `media.get { conversationId, entryId, index }` -> `{ mimeType, data }` returns one. A transcript then syncs in
-kilobytes however many photos it has, and the phone decodes only what it shows. A client that does not ask (the share
-extension, older apps) gets the data inline, as before.
+kilobytes however many photos it has, and the phone decodes only what it shows.
 
 ## In the app
 

@@ -96,9 +96,8 @@ final class ShareConnection {
 
 enum ShareSender {
     /// Sends the share to each chat (as a follow-up when its agent is working: a share must not turn a run aside) and
-    /// to a new chat, grouped by server. A server that keeps files (docs/files.md) gets the photos and files uploaded,
-    /// once for all its chats, and named by the messages; one from before, the photos inline and no files. Returns what
-    /// could not be sent, and why when the server said.
+    /// to a new chat, grouped by server: its photos and files uploaded once for all the server's chats, and named by the
+    /// messages (docs/files.md). Returns what could not be sent, and why when the server said.
     static func send(text: String, images: [Data], files: [URL], chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?, servers: [ShareSnapshot.Server]) async -> (chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?, reason: String?) {
         var failedChats: [ShareSnapshot.Chat] = []
         var failedNew: ShareSnapshot.Project?
@@ -115,51 +114,30 @@ enum ShareSender {
             defer {
                 connection.close()
             }
-            let hello: [String: Any]
+            var attachments: [[String: Any]] = []
             do {
-                hello = try await connection.request("hello", ["protocol": 1])
+                _ = try await connection.request("hello", ["protocol": 1])
+                for data in images {
+                    let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jpg")
+                    try data.write(to: url)
+                    defer {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                    attachments.append(["id": try await upload(url, name: "photo.jpg", to: server), "as": "image"])
+                }
+                for url in files {
+                    attachments.append(["id": try await upload(url, name: url.lastPathComponent, to: server), "as": "file"])
+                }
             } catch {
+                if case let ShareConnection.Failure.server(message) = error {
+                    reason = message
+                }
                 failedChats += chatsHere
                 failedNew = newHere ?? failedNew
                 continue
             }
-            var content: Any = text
-            var attachments: [[String: Any]] = []
-            if (hello["files"] as? Bool) == true {
-                do {
-                    for data in images {
-                        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jpg")
-                        try data.write(to: url)
-                        defer {
-                            try? FileManager.default.removeItem(at: url)
-                        }
-                        attachments.append(["id": try await upload(url, name: "photo.jpg", to: server), "as": "image"])
-                    }
-                    for url in files {
-                        attachments.append(["id": try await upload(url, name: url.lastPathComponent, to: server), "as": "file"])
-                    }
-                } catch {
-                    if case let ShareConnection.Failure.server(message) = error {
-                        reason = message
-                    }
-                    failedChats += chatsHere
-                    failedNew = newHere ?? failedNew
-                    continue
-                }
-            } else {
-                if !files.isEmpty {
-                    reason = "\(server.name) does not take files: update it"
-                    failedChats += chatsHere
-                    failedNew = newHere ?? failedNew
-                    continue
-                }
-                if !images.isEmpty {
-                    let blocks: [[String: Any]] = images.map { ["type": "image", "data": $0.base64EncodedString(), "mimeType": "image/jpeg"] }
-                    content = (text.isEmpty ? [] : [["type": "text", "text": text]]) + blocks
-                }
-            }
             func submit(_ conversationId: Int, busy: String?) async throws {
-                var params: [String: Any] = ["conversationId": conversationId, "requestId": UUID().uuidString, "content": content]
+                var params: [String: Any] = ["conversationId": conversationId, "requestId": UUID().uuidString, "content": text]
                 if let busy {
                     params["whenBusy"] = busy
                 }

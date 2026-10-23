@@ -57,5 +57,4 @@ renewed every 50 minutes), one HTTP/2 connection per environment, opened again w
   with its alert, the device gets no notification for it.
 
 The push's tap opens `tau://chat?server=<serverId>&id=<conversation>` too, the URL the app routes to the chat on the
-server with that database ID. (Before Apple's push, pushes went through ntfy; a server drops a topic left in
-`tau.settings` from then.)
+server with that database ID.

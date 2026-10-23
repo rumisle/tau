@@ -362,21 +362,19 @@ describe("tau server", () => {
 		}
 	});
 
-	test("images go by reference to a client that asks, and come with media.get", async () => {
-		// A 3 by 2 PNG.
+	test("images go by reference, and come with media.get", async () => {
+		// A 3 by 2 PNG, uploaded and sent as a photo (docs/files.md).
 		const png = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAEklEQVR4nGP4z8DwHwYZYBwAeKgL9dO6vN0AAAAASUVORK5CYII=";
-		const client = await TauClient.connect(server.url, undefined, { media: true });
-		const plain = await TauClient.connect(server.url);
+		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", {});
 		const replica = new ConversationReplica(dialog.conversation.id);
 		await replica.sync(client);
+		const upload = (await (await fetch(`${server.url.replace(/^ws/, "http")}/files?name=dot.png`, { method: "POST", body: Buffer.from(png, "base64") })).json()) as { id: string };
 		const { submission } = await client.request("conversation.submit", {
 			conversationId: replica.id,
 			requestId: "m1",
-			content: [
-				{ type: "text", text: "look" },
-				{ type: "image", data: png, mimeType: "image/png" },
-			],
+			content: "look",
+			attachments: [{ id: upload.id, as: "image" }],
 		});
 		await until(replica, () => replica.submissions.get(submission.id)?.status === "done" && idle(replica));
 		const user = replica.ordered().find((entry) => entry.kind === "pi.user") as unknown as { id: number; model: { content: { type: string; data?: string; media?: { entryId: number; index: number; bytes: number; width: number; height: number } }[] }[] };
@@ -386,13 +384,7 @@ describe("tau server", () => {
 		const fetched = await client.request("media.get", { conversationId: replica.id, entryId: user.id, index: 0 });
 		assert.deepEqual(fetched, { mimeType: "image/png", data: png });
 		await assert.rejects(client.request("media.get", { conversationId: replica.id, entryId: user.id, index: 1 }), (error: RequestError) => error.code === "not_found");
-		// A client that did not ask gets the data, as before.
-		const old = new ConversationReplica(dialog.conversation.id);
-		await old.sync(plain);
-		const inline = (old.ordered().find((entry) => entry.kind === "pi.user") as unknown as typeof user).model[0]!.content.find((block) => block.type === "image");
-		assert.equal(inline?.data, png);
 		await client.close();
-		await plain.close();
 	});
 
 	test("read marks, Mark as Unread, archive, and the default model", async () => {
@@ -565,14 +557,10 @@ describe("tau server", () => {
 			client.request("conversation.submit", { conversationId: id, requestId: "big", content: "x".repeat(1_000_001) }),
 			(error: RequestError) => error.code === "too_large",
 		);
-		const image = { type: "image", data: "A".repeat(8 * 1024 * 1024), mimeType: "image/jpeg" };
+		// Photos are attachments, not content.
 		await assert.rejects(
-			client.request("conversation.submit", { conversationId: id, requestId: "img", content: [image] }),
-			(error: RequestError) => error.code === "too_large",
-		);
-		await assert.rejects(
-			client.request("conversation.submit", { conversationId: id, requestId: "tiff", content: [{ type: "image", data: "AAAA", mimeType: "image/tiff" }] }),
-			(error: RequestError) => error.code === "unsupported",
+			client.request("conversation.submit", { conversationId: id, requestId: "img", content: [{ type: "image", data: "AAAA", mimeType: "image/png" }] }),
+			(error: RequestError) => error.code === "bad_request",
 		);
 		await assert.rejects(
 			client.request("conversation.submit", { conversationId: 999_999, requestId: "nowhere", content: "hi" }),

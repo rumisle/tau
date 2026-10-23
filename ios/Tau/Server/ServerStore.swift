@@ -8,7 +8,6 @@ final class ServerStore: ConversationStore, TauServer {
     let connection: TauConnection
     private let cache: EntryCache
     private let scroll: ScrollStateStorage
-    private let images = ImageDecoder()
     /// Images of entries, fetched when shown.
     let media: MediaLoader
 
@@ -100,14 +99,6 @@ final class ServerStore: ConversationStore, TauServer {
             if let id = Int(key) {
                 pendingHides[id] = value
             }
-        }
-        // Before Hide was the server's, Delete hid a chat on this device only: those go to the server now.
-        if let legacy = UserDefaults.standard.array(forKey: "hidden.\(url.absoluteString)") as? [Int] {
-            for id in legacy where pendingHides[id] == nil {
-                pendingHides[id] = true
-            }
-            UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: pendingHides.map { (String($0.key), $0.value) }), forKey: "hides.\(url.absoluteString)")
-            UserDefaults.standard.removeObject(forKey: "hidden.\(url.absoluteString)")
         }
         self.pendingHides = pendingHides
         for var dialog in self.cache.loadDialogs() {
@@ -679,7 +670,7 @@ final class ServerStore: ConversationStore, TauServer {
         }
         var text = latest.text
         if text.isEmpty {
-            let files = (latest.uploads ?? []).filter { $0.kind == .file }
+            let files = latest.uploads.filter { $0.kind == .file }
             if let first = files.first {
                 text = files.count > 1 ? "\(files.count) Files" : first.name
             } else {
@@ -900,7 +891,7 @@ final class ServerStore: ConversationStore, TauServer {
                     preview.upsert(parent.entries.filter { $0.key <= forkAt }.map(\.value))
                 }
                 preview.isSynced = true
-                var state = TranscriptBuilder.build(replica: preview, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[forkOf] ?? [:], images: self.images, media: self.media)
+                var state = TranscriptBuilder.build(replica: preview, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[forkOf] ?? [:], media: self.media)
                 let items = draft.createRequestId.map { self.outbox.items(forCreate: $0) } ?? draft.realId.map { self.outbox.items(for: $0) } ?? []
                 state.messages += items.map { TranscriptBuilder.row(for: $0, outbox: self.outbox) }
                 state.busy = false
@@ -919,7 +910,7 @@ final class ServerStore: ConversationStore, TauServer {
             return state
         }
         let replica = self.replica(realId)
-        var state = TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], images: self.images, media: self.media)
+        var state = TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], media: self.media)
         state.agent = self.agent(realId)
         state.title = self.dialog(id)?.title
         // A background subagent works on after its call returned: its card follows its conversation.
@@ -1307,9 +1298,9 @@ final class ServerStore: ConversationStore, TauServer {
 
     /// `attachments` with the server's images fetched, as photos to send again; at once when there are none.
     private func resolvingRemote(_ attachments: [MessageAttachment], completion: @escaping ([MessageAttachment]) -> Void) {
-        // A photo the server keeps as a file goes again by its ID; only older ones are fetched.
+        // A photo the server keeps as a file goes again by its ID; one sent before files were kept is fetched.
         let remote = attachments.compactMap { attachment -> (Int, RemoteImage)? in
-            if case let .remote(image) = attachment.kind, image.fileId == nil || self.connection.hello?.files != true {
+            if case let .remote(image) = attachment.kind, image.fileId == nil {
                 return (attachment.id, image)
             }
             return nil

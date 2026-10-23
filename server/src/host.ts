@@ -243,12 +243,6 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		compactionThreshold = savedSettings.compaction;
 		updateSettings();
 	}
-	// An ntfy topic from before pushes went through Apple's service only: nothing reads it now.
-	if (savedSettings !== undefined && "ntfy" in savedSettings) {
-		await harness.commit(async (tx) => {
-			delete (await tx.doc(SettingsDoc) as { ntfy?: unknown }).ntfy;
-		}, context);
-	}
 	// Continue runs the last process left unfinished.
 	harness.resume();
 
