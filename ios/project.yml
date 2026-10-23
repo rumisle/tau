@@ -99,12 +99,17 @@ targets:
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_CFBundleDisplayName: tau
+        # Only TLS, which is exempt: no export compliance question for each upload.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Send photos to the agent."
         INFOPLIST_KEY_NSCameraUsageDescription: "Take a photo to send to the agent."
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Dictate messages to the agent."
+        # Telegram's camera code (LegacyComponents' PGCameraDeviceAngleSampler) uses Core Motion, which needs a purpose
+        # string to upload.
+        INFOPLIST_KEY_NSMotionUsageDescription: "Keep the photos you take upright."
         # The Live Activity (TauWidgets, docs/live-activity.md).
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
   TauWidgets:

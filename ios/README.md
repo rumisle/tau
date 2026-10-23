@@ -9,6 +9,7 @@ wallpapers, the context menus, the selection mode, the attachment menu. It talks
 ```bash
 ios/scripts/build.sh --run     # xcodegen + xcodebuild, install and launch on the "iPhone 17 Pro" simulator
 ios/scripts/build.sh --device  # signed Release build on the connected iPhone (TAU_TEAM, default TEAMID)
+ios/scripts/testflight.sh      # archive and upload to App Store Connect ("tau agent") for TestFlight
 ios/scripts/uitest.sh          # UI walkthroughs in the simulator; screenshots of each step in /tmp/tau-ui
 ios/scripts/sending-tests.sh   # the sending state machine against the dev server (scripts/devserver.sh, port 7979)
 uv run ios/scripts/uitests.py  # all of them on 3 simulators at once, a dev server each: about 14 min instead of 40

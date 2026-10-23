@@ -139,10 +139,14 @@ final class PushRegistration {
         return data.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// `aps-environment` of the provisioning profile the app was signed with; the sandbox without one (the simulator).
+    /// `aps-environment` of the provisioning profile the app was signed with. TestFlight's and the App Store's builds
+    /// have no profile in them, and get production pushes; the simulator gets the sandbox's.
     private static func signedEnvironment() -> String {
+        #if targetEnvironment(simulator)
+        return "development"
+        #else
         guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"), let data = try? Data(contentsOf: url) else {
-            return "development"
+            return "production"
         }
         // The profile is a signed message around a property list.
         let text = String(decoding: data, as: UTF8.self)
@@ -153,5 +157,6 @@ final class PushRegistration {
         let object = try? PropertyListSerialization.propertyList(from: plist, format: nil) as? [String: Any]
         let entitlements = object?["Entitlements"] as? [String: Any]
         return entitlements?["aps-environment"] as? String ?? "development"
+        #endif
     }
 }
