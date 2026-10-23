@@ -145,6 +145,8 @@ struct ToolCallInfo: Equatable {
     var subagent: SubagentCall?
     /// Images the result gave the model, as the read tool returns an image file: the card shows them.
     var images: [MessageAttachment] = []
+    /// What `send_file` sent the user (server/src/send-file.ts): shown in the chat as photos and files, with no card.
+    var sentFiles: [MessageAttachment] = []
 }
 
 /// One step of a background subagent, as its card shows it: the subagent, as the quote Telegram puts over a reply, and
@@ -184,13 +186,33 @@ enum ToolDetail: Equatable {
     case edit(path: String, diff: String)
 }
 
-/// Something sent with a message: a photo or a file. Images are sent to the model as image content blocks.
+/// A file of a message, the user's or what the agent sent (docs/files.md): on the server once it has its ID, fetched
+/// from `/files/<id>` when opened.
+struct FileAttachment: Equatable {
+    var name: String
+    var size: Int64
+    var mimeType: String
+    /// The server's ID for it.
+    var serverId: String?
+    /// The device's copy while it is on its way (the outbox's): opened from there.
+    var localURL: URL?
+    /// What the transfer of it is known by while it uploads (Server/FileTransfer.swift).
+    var transferKey: String?
+    /// An image's pixels, as the server read them from its header: the agent's images show as photos.
+    var pixelSize: CGSize?
+
+    var isImage: Bool {
+        return ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif"].contains(self.mimeType)
+    }
+}
+
+/// Something sent with a message: a photo or a file. Photos go to the model as image blocks too; files only by path.
 struct MessageAttachment: Equatable {
     enum Kind {
         case image(UIImage)
         /// On the server, fetched when shown (Server/MediaLoader.swift).
         case remote(RemoteImage)
-        case file(name: String, size: Int64)
+        case file(FileAttachment)
     }
 
     let id: Int

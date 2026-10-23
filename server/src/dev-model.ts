@@ -1,10 +1,12 @@
 // A free scripted model for development: streams an echo of each message, runs `$ <command>` through bash, and starts
 // a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`,
 // fails as an overloaded provider would `!overloaded <times> <text>` before answering, and fails for good `!fatal <text>`.
-// `!read <path>` reads a file with the read tool (an image comes back as one). `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
+// `!read <path>` reads a file with the read tool (an image comes back as one); `!send <path> [<path>…]` sends files to
+// the user (src/send-file.ts). `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
 // streams. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
 // that long after it was last used, to try cache warming (src/cache.ts) without paying for it.
 import { type Api, calculateCost, createAssistantMessageEventStream, type AssistantMessage, type Message, type Model, type Provider } from "@earendil-works/pi-ai";
+import { ownText, parseAttachments } from "./attachments.ts";
 import {
 	type FauxProviderHandle,
 	type FauxResponseFactory,
@@ -133,6 +135,11 @@ function reply(messages: readonly Message[]) {
 		return fauxAssistantMessage([fauxText(`Ran it${last.isError ? " (it failed)" : ""}:\n\n\`\`\`\n${output.trimEnd()}\n\`\`\``)]);
 	}
 	const text = last?.role === "user" ? userText(last.content) : "";
+	// Commands are what the user wrote, after any attachments block.
+	const command = last?.role === "user" ? ownText(last.content).trim() : "";
+	if (command.startsWith("!send ")) {
+		return fauxAssistantMessage([fauxToolCall("send_file", { paths: command.slice(6).trim().split(/\s+/) })], { stopReason: "toolUse" });
+	}
 	if (text.startsWith("$ ")) {
 		return fauxAssistantMessage([fauxToolCall("bash", { command: text.slice(2) })], { stopReason: "toolUse" });
 	}
@@ -162,7 +169,14 @@ function reply(messages: readonly Message[]) {
 
 function userText(content: Extract<Message, { role: "user" }>["content"]): string {
 	if (typeof content === "string") return content;
-	return content.map((part) => (part.type === "text" ? part.text : "[image]")).join("");
+	// An attachments block reads as the files' names.
+	return content
+		.map((part) => {
+			if (part.type !== "text") return "[image]";
+			const files = parseAttachments(part.text);
+			return files === undefined ? part.text : `[${files.map((file) => file.path.split("/").at(-1)).join(", ")}] `;
+		})
+		.join("");
 }
 
 /** A long answer of every kind of block, `sections` times over, numbered so a screen shows where it is. */

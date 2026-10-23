@@ -17,6 +17,9 @@ import {
 	type SubmissionId,
 } from "@earendil-works/pi-durable";
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { attachmentsText, ownText } from "./attachments.ts";
+import type { StoredFile } from "./files.ts";
 import { homedir, hostname } from "node:os";
 import { CACHE_WARMING_MODES, type CacheWarmingMode } from "./cache.ts";
 import { type CompactionThreshold, MAX_COMPACTION_RATIO, MIN_COMPACTION_RATIO, MIN_COMPACTION_TOKENS } from "./compaction.ts";
@@ -48,6 +51,8 @@ const TITLE_CHARS = 60;
 // sender sees it as not sent, rather than failing the run after the message is in the transcript.
 const MAX_TEXT_CHARS = 1_000_000;
 const MAX_IMAGES = 20;
+/** Files one message may carry (docs/files.md), each up to the server's file limit. */
+const MAX_ATTACHMENTS = 20;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 /** Tombstones kept per conversation; a withdrawn submit arrives within seconds, if ever. */
@@ -470,6 +475,9 @@ export class Connection {
 			compaction: this.#host.compactionThreshold,
 			// Whether it can send Apple's pushes: it has the account's APNs key.
 			apns: this.#notifier?.canPush === true,
+			// It keeps files: uploads over HTTP, `attachments` in conversation.submit, send_file (docs/files.md).
+			files: true,
+			maxFileBytes: this.#host.files.maxBytes,
 			defaultCwd: this.#host.cwd,
 			home: homedir(),
 			hostname: hostname(),
@@ -684,7 +692,8 @@ export class Connection {
 		const conversation = await this.#conversation(params);
 		const requestId = str(params, "requestId");
 		if (requestId === "") throw new ProtocolError("bad_request", "requestId must not be empty");
-		const content = userContent(params.content);
+		const attachmentIds = attachmentList(params.attachments);
+		const own = attachmentIds.length > 0 && isEmptyContent(params.content) ? [] : userContent(params.content);
 		const whenBusy = str(params, "whenBusy", true) ?? "followUp";
 		if (whenBusy !== "steer" && whenBusy !== "followUp" && whenBusy !== "reject") {
 			throw new ProtocolError("bad_request", "whenBusy must be steer, followUp, or reject");
@@ -694,17 +703,46 @@ export class Connection {
 		if (meta?.withdrawn?.includes(requestId)) {
 			throw new ProtocolError("withdrawn", `Request ${requestId} was withdrawn`);
 		}
-		await this.#checkContent(conversation, content);
+		await this.#checkContent(conversation, own);
+		const attached = await this.#attachments(conversation, attachmentIds);
+		const content = await withAttachments(own, attached);
 		if (meta?.title === undefined) {
-			const title = titleFrom(content);
+			const title = titleFrom(own) || (attached.length === 0 ? "" : attached.every((each) => each.shown) ? (attached.length > 1 ? `${attached.length} Photos` : "Photo") : attached[0]!.file.name);
 			if (title !== "") {
 				await conversation.commit(async (tx) => {
 					(await tx.doc(MetaDoc, conversation.id)).title ??= title;
 				}, this.#context);
 			}
 		}
+		// Kept for good before the message is in: an upload is swept only while no message refers to it.
+		await this.#host.files.keep(attached.map((each) => each.file.id));
 		const submission = await conversation.submit({ type: "input", content, whenBusy, requestId }, this.#context);
 		return { submission: await submission.status(this.#context) };
+	}
+
+	/**
+	 * The uploads a message names, with whether each goes to the model as an image too: one sent as a photo, of a type
+	 * and size every provider takes, to a model that takes images. The rest are files, named only.
+	 */
+	async #attachments(conversation: Conversation, ids: readonly { id: string; as: "image" | "file" }[]): Promise<{ file: StoredFile; shown: boolean }[]> {
+		if (ids.length === 0) return [];
+		const takesImages = await this.#takesImages(conversation);
+		const result: { file: StoredFile; shown: boolean }[] = [];
+		for (const { id, as } of ids) {
+			const file = await this.#host.files.get(id);
+			if (file === undefined) throw new ProtocolError("file_missing", `No file ${id}: it was never uploaded, or not used for a day`);
+			const shown = as === "image" && takesImages && IMAGE_TYPES.has(file.mimeType) && file.bytes <= MAX_IMAGE_BYTES;
+			result.push({ file, shown });
+		}
+		if (result.filter((each) => each.shown).length > MAX_IMAGES) throw new ProtocolError("too_large", `A message can carry at most ${MAX_IMAGES} images`);
+		return result;
+	}
+
+	async #takesImages(conversation: Conversation): Promise<boolean> {
+		const ref = (await conversation.agent(this.#context)).model;
+		if (ref === undefined) return true;
+		const model = (await this.#host.models.getAvailable()).find((candidate) => candidate.provider === ref.provider && candidate.id === ref.modelId);
+		return model === undefined || model.input.includes("image");
 	}
 
 	/**
@@ -853,14 +891,38 @@ function userContent(value: unknown): string | (TextContent | ImageContent)[] {
 	});
 }
 
+/** `attachments`: `[{ id, as?: "image" | "file" }]`, `as` "file" by default. */
+function attachmentList(value: unknown): { id: string; as: "image" | "file" }[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) throw new ProtocolError("bad_request", "attachments must be an array");
+	if (value.length > MAX_ATTACHMENTS) throw new ProtocolError("too_large", `A message can carry at most ${MAX_ATTACHMENTS} files`);
+	return value.map((item: unknown) => {
+		const attachment = item as { id?: unknown; as?: unknown } | null;
+		if (typeof attachment?.id !== "string") throw new ProtocolError("bad_request", "attachments must be { id, as? }");
+		if (attachment.as !== undefined && attachment.as !== "image" && attachment.as !== "file") {
+			throw new ProtocolError("bad_request", "attachments' as must be image or file");
+		}
+		return { id: attachment.id, as: attachment.as === "image" ? "image" : "file" };
+	});
+}
+
+function isEmptyContent(value: unknown): boolean {
+	return value === undefined || value === null || (typeof value === "string" && value.trim() === "") || (Array.isArray(value) && value.length === 0);
+}
+
+/** The message as the model gets it: the attachments block, the images shown, then what the user wrote. */
+async function withAttachments(own: string | (TextContent | ImageContent)[], attached: readonly { file: StoredFile; shown: boolean }[]): Promise<string | (TextContent | ImageContent)[]> {
+	if (attached.length === 0) return own;
+	const images: ImageContent[] = [];
+	for (const { file, shown } of attached) {
+		if (shown) images.push({ type: "image", mimeType: file.mimeType, data: (await readFile(file.path)).toString("base64") });
+	}
+	const rest = typeof own === "string" ? (own === "" ? [] : [{ type: "text" as const, text: own }]) : own;
+	return [{ type: "text", text: attachmentsText(attached) }, ...images, ...rest];
+}
+
 function titleFrom(content: string | (TextContent | ImageContent)[]): string {
-	const text =
-		typeof content === "string"
-			? content
-			: content
-					.filter((part) => part.type === "text")
-					.map((part) => part.text)
-					.join(" ");
+	const text = ownText(content);
 	const line = text.trim().split("\n")[0]!.trim();
 	return line.length <= TITLE_CHARS ? line : `${line.slice(0, TITLE_CHARS - 1)}…`;
 }

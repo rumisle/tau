@@ -20,6 +20,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/sending.md` | How a message reaches the model: steer and follow-up, refusals, the client's outbox state machine, and what the user sees |
 | `docs/chat-open.md` | Opening a chat at once: ready without the network, Telegram's spinner, the top of the list preloaded |
 | `docs/media.md` | Images by reference: a photo or a tool's image laid out from its size, fetched when shown |
+| `docs/files.md` | Files: kept beside the database, named to the model by path, sent back with `send_file`, shown as Telegram's documents |
 | `docs/compaction.md` | Compaction: durable's, started at 90% of the window (at most 700k tokens), with the summary asked for after the conversation's cached context |
 | `docs/skills.md` | Skills: `.agents/skills` in the system prompt, as a section durable updates with a delta |
 | `docs/dictation.md` | Dictation in the composer: Telegram's field with the microphone in it and Send that morphs in; off until a provider is chosen in Settings; Aqua Voice's realtime API with the user's session key |

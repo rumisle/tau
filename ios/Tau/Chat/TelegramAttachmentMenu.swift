@@ -9,9 +9,11 @@ import AttachmentUI
 import MediaPickerUI
 import LegacyComponents
 
-/// What the attachment menu produced: photos with an optional caption, or a request for the file or camera picker.
+/// What the attachment menu produced: photos with an optional caption; photos and videos as files, from the picker's
+/// Send as File (as they are, the original's quality); or a request for the file or camera picker.
 enum TelegramAttachmentResult {
     case photos([UIImage], caption: String)
+    case mediaFiles([URL], caption: String)
     case files
     case camera
 }
@@ -33,9 +35,13 @@ func makeTelegramAttachmentMenu(context: TauAccountContext, presentationData: Pr
                 completion(.camera)
             }
             picker.legacyCompletion = { _, signals, _, _, _, _, sendCompletion in
-                resolveLegacyMediaSignals(signals, completion: { images, caption in
+                resolveLegacyMediaSignals(signals, completion: { images, files, caption in
                     sendCompletion()
-                    completion(.photos(images, caption: caption))
+                    if !files.isEmpty {
+                        completion(.mediaFiles(files, caption: caption))
+                    } else {
+                        completion(.photos(images, caption: caption))
+                    }
                 })
             }
             var pickerContext = picker.mediaPickerContext
@@ -62,9 +68,10 @@ func makeTelegramAttachmentMenu(context: TauAccountContext, presentationData: Pr
 /// The picker sends LegacyComponents result signals (TGMediaAssetsController.resultSignalsForSelectionContext), each
 /// with a dictionary: an edited photo carries its image, a library photo its asset, which is loaded here at the size the
 /// model gets.
-private func resolveLegacyMediaSignals(_ signals: [Any], completion: @escaping ([UIImage], String) -> Void) {
+private func resolveLegacyMediaSignals(_ signals: [Any], completion: @escaping ([UIImage], [URL], String) -> Void) {
     let group = DispatchGroup()
     var images: [Int: UIImage] = [:]
+    var files: [Int: URL] = [:]
     var caption = ""
     let lock = NSLock()
     for (index, item) in signals.enumerated() {
@@ -88,7 +95,22 @@ private func resolveLegacyMediaSignals(_ signals: [Any], completion: @escaping (
                 caption = text
                 lock.unlock()
             }
-            if let image = dict["image"] as? UIImage {
+            if dict["type"] as? String == "file", let temporary = dict["tempFileUrl"] as? URL {
+                // Send as File: the photo's own data, under its own name (TGMediaAssetsController's file intent).
+                let url = namedCopy(of: temporary, name: dict["fileName"] as? String)
+                lock.lock()
+                files[index] = url
+                lock.unlock()
+                finish()
+            } else if dict["document"] as? Bool == true, let asset = dict["asset"] as? TGMediaAsset, let phAsset = asset.backingAsset {
+                // A video, or a photo still in iCloud, as a file: the original, fetched.
+                originalFile(of: phAsset, name: dict["fileName"] as? String) { url in
+                    lock.lock()
+                    files[index] = url
+                    lock.unlock()
+                    finish()
+                }
+            } else if let image = dict["image"] as? UIImage {
                 lock.lock()
                 images[index] = image
                 lock.unlock()
@@ -119,7 +141,38 @@ private func resolveLegacyMediaSignals(_ signals: [Any], completion: @escaping (
         })
     }
     group.notify(queue: .main) {
-        completion(images.keys.sorted().compactMap { images[$0] }, caption)
+        completion(images.keys.sorted().compactMap { images[$0] }, files.keys.sorted().compactMap { files[$0] }, caption)
+    }
+}
+
+/// A file under `name` in a directory of its own: the picker writes them nameless.
+private func namedCopy(of url: URL, name: String?) -> URL {
+    guard let name, !name.isEmpty else {
+        return url
+    }
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let destination = directory.appendingPathComponent((name as NSString).lastPathComponent)
+    if (try? FileManager.default.moveItem(at: url, to: destination)) != nil {
+        return destination
+    }
+    return url
+}
+
+/// An asset's original (a video, a photo as it was taken), written to a temporary file; nil when it cannot be had.
+private func originalFile(of asset: PHAsset, name: String?, completion: @escaping (URL?) -> Void) {
+    let resources = PHAssetResource.assetResources(for: asset)
+    guard let resource = resources.first(where: { $0.type == .video || $0.type == .photo || $0.type == .fullSizeVideo || $0.type == .fullSizePhoto }) ?? resources.first else {
+        completion(nil)
+        return
+    }
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appendingPathComponent(((name?.isEmpty == false ? name : nil) ?? resource.originalFilename) as String)
+    let options = PHAssetResourceRequestOptions()
+    options.isNetworkAccessAllowed = true
+    PHAssetResourceManager.default().writeData(for: resource, toFile: url, options: options) { error in
+        completion(error == nil ? url : nil)
     }
 }
 

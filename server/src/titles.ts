@@ -3,6 +3,7 @@
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { AgentDoc, type ConversationId, type EntryRecord } from "@earendil-works/pi-durable";
+import { attachedFiles, ownText } from "./attachments.ts";
 import { type Host, MetaDoc } from "./host.ts";
 
 const PROMPT =
@@ -52,7 +53,7 @@ export class Titler {
 		if (handle === undefined) return;
 		const firstUser = [...(await handle.entries({}, 50, undefined, context)).items].reverse().find((entry) => entry.kind === "pi.user");
 		// Photos alone: the answer says what they are.
-		const question = text(firstUser?.model?.[0]) || (hasImage(firstUser?.model?.[0]) ? "(photos)" : "");
+		const question = text(firstUser?.model?.[0]) || (hasImage(firstUser?.model?.[0]) ? "(photos)" : "") || fileNames(firstUser?.model?.[0]);
 		const reply = text(answer.model?.[0]);
 		if (question === "") return;
 		const agent = await harness.snapshot(AgentDoc, id, context);
@@ -80,13 +81,22 @@ export class Titler {
 	}
 }
 
+/** What a message says: a user's without its attachments block (src/attachments.ts). */
 function text(message: Message | AssistantMessage | undefined): string {
 	if (message === undefined) return "";
 	if (typeof message.content === "string") return message.content;
+	if (message.role === "user") return ownText(message.content).trim();
 	return message.content
 		.flatMap((part) => (part.type === "text" ? [part.text] : []))
 		.join(" ")
 		.trim();
+}
+
+/** "(files: a.pdf, b.csv)" for a message of files alone. */
+function fileNames(message: Message | AssistantMessage | undefined): string {
+	if (message?.role !== "user") return "";
+	const names = attachedFiles(message.content).map((file) => file.path.split("/").at(-1) ?? "");
+	return names.length === 0 ? "" : `(files: ${names.join(", ")})`;
 }
 
 function hasImage(message: Message | AssistantMessage | undefined): boolean {

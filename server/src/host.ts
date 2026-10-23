@@ -28,6 +28,8 @@ import { DEV_MODEL, devProvider } from "./dev-model.ts";
 import { Serial } from "./serial.ts";
 import { skillsSection } from "./skills.ts";
 import { Subagent } from "./subagent.ts";
+import { FileStore } from "./files.ts";
+import { sendFileExtension } from "./send-file.ts";
 
 /** Per-conversation metadata the chat list shows. */
 export type MetaState = {
@@ -109,6 +111,10 @@ export type HostOptions = {
 	onReport?: (error: unknown, info: ReportInfo) => void;
 	/** Whose `.agents/skills` the prompt lists besides the conversation directory's (src/skills.ts); default home. */
 	skillsHome?: string;
+	/** Where files are kept (src/files.ts); default beside the database (`tau.db`'s `tau.files`), or a temporary one. */
+	files?: string;
+	/** The largest file a message or `send_file` may carry; default 1 GB. */
+	maxFileBytes?: number;
 };
 
 export type Host = {
@@ -135,11 +141,16 @@ export type Host = {
 	readonly compactionThreshold: CompactionThreshold;
 	setCompactionThreshold(threshold: CompactionThreshold): Promise<void>;
 	readonly cwd: string;
+	/** The files messages refer to (src/files.ts). */
+	readonly files: FileStore;
 	close(): Promise<void>;
 };
 
 const PREAMBLE = `You are tau, a coding agent reached from a phone. Be concise: answers are read on a small screen.
-Use the tools to inspect and change files and run commands in the working directory.`;
+Use the tools to inspect and change files and run commands in the working directory.
+Files the user attaches are named at the start of their message, in <attachments>, each at its path: an <image> is also
+shown to you, a <file> only named. They are kept with the chat, read-only: use them where they are, and copy one to
+change it. send_file sends files to the user.`;
 
 export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const context = BACKGROUND_CONTEXT;
@@ -157,9 +168,13 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const compaction = new FollowUpCompaction({ retry: () => retry });
 	let compactionThreshold: CompactionThreshold = DEFAULT_COMPACTION_THRESHOLD;
 
+	const files = new FileStore(options.files ?? (options.database === undefined ? undefined : `${options.database.replace(/\.db$/, "")}.files`), {
+		...(options.maxFileBytes === undefined ? {} : { maxBytes: options.maxFileBytes }),
+	});
 	const registry = createRegistry();
 	registry.install(CodingTools);
 	registry.install(Subagent);
+	registry.install(sendFileExtension(files));
 	registry.install(
 		defineExtension({
 			name: "tau",
@@ -277,9 +292,11 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 			updateSettings();
 		},
 		cwd,
-		close: () => {
+		files,
+		close: async () => {
 			cache.close();
-			return harness.close(context);
+			await harness.close(context);
+			files.close();
 		},
 	};
 }

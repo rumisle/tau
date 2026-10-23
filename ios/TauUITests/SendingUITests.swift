@@ -595,6 +595,72 @@ final class SendingUITests: XCTestCase {
         self.shot("rename-4-list")
     }
 
+    /// Files (docs/files.md): a message's file goes up from the phone and is named to the model; the agent's send_file
+    /// shows its image as a photo and its files as Telegram's document rows, which download on a tap and open in Quick
+    /// Look on the next.
+    func testFiles() {
+        let directory = "/tmp/tau-ui-files"
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        try? "name,score\nalice,3\nbob,5\n".write(toFile: "\(directory)/scores.csv", atomically: true, encoding: .utf8)
+        try? Data(count: 3_000_000).write(to: URL(fileURLWithPath: "\(directory)/build.zip"))
+        // A new chat, with the file the document picker would give.
+        self.launch(["-newChat", "YES", "-attachFile", "\(directory)/scores.csv", "-attachCaption", "what is in it?"])
+        sleep(5)
+        self.shot("files-0-sent")
+        XCTAssertTrue(self.app.descendants(matching: .any)["scores.csv"].firstMatch.waitForExistence(timeout: 5), "the file's row, in the message")
+        // The agent sends two files back.
+        self.app.textViews.firstMatch.tap()
+        self.type("!send \(directory)/scores.csv \(directory)/build.zip")
+        self.send()
+        sleep(4)
+        self.shot("files-1-received")
+        // build.zip: fetched on a tap, then opened on the next.
+        let rows = self.app.otherElements.matching(identifier: "sentFiles")
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
+        let frame = rows.firstMatch.frame
+        let zip = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: frame.minX + 22.0, dy: frame.maxY - 22.0))
+        zip.tap()
+        sleep(3)
+        self.shot("files-2-downloaded")
+        zip.tap()
+        sleep(2)
+        self.shot("files-3-opened")
+        XCTAssertFalse(self.app.descendants(matching: .any)["sentFiles"].firstMatch.isHittable, "Quick Look is over the chat")
+    }
+
+    /// The photo picker's Send as File (its ... menu, as Telegram's): the photo goes as it is, a file, its row in the
+    /// bubble (docs/files.md).
+    func testSendPhotoAsFile() {
+        self.launch(["-newChat", "YES"])
+        self.app.buttons["attach"].firstMatch.tap()
+        sleep(2)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for label in ["Allow Full Access", "Allow Access to All Photos", "Allow"] where springboard.buttons[label].exists {
+            springboard.buttons[label].tap()
+            sleep(2)
+            break
+        }
+        self.point(0.5, 0.49).tap()
+        sleep(1)
+        self.point(0.895, 0.375).tap()
+        sleep(1)
+        self.shot("asfile-0-menu")
+        let item = self.app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Send as File'")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 3))
+        item.tap()
+        // A HEIC photo: Telegram asks whether to keep it so; the alert goes once answered.
+        let convert = self.app.descendants(matching: .any)["Convert to JPEG"].firstMatch
+        if convert.waitForExistence(timeout: 3) {
+            self.shot("asfile-0b-heic")
+            convert.tap()
+            sleep(1)
+            XCTAssertFalse(convert.exists, "the alert is gone")
+        }
+        sleep(5)
+        self.shot("asfile-1-sent")
+        XCTAssertTrue(self.app.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH[c] '.jpg' OR label ENDSWITH[c] '.heic' OR label ENDSWITH[c] '.jpeg' OR label ENDSWITH[c] '.png'")).firstMatch.waitForExistence(timeout: 5), "the photo's file row")
+    }
+
     /// Hide, from the swipe actions: the chat leaves the list with Telegram's toast, and Undo brings it back; hidden
     /// again, it stays hidden after a relaunch, as the server's (on every device).
     func testHideChat() {

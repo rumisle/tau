@@ -18,6 +18,8 @@ export type ErrorCode =
 	| "too_large"
 	| "unsupported"
 	| "withdrawn"
+	/** A message names a file the server does not have (never uploaded, or swept a day after): upload it again. */
+	| "file_missing"
 	| "internal";
 
 export class ProtocolError extends Error {

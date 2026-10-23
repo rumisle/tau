@@ -306,6 +306,16 @@ final class MockStore: TauStore, TauServer {
         self.publishDialogs()
     }
 
+    func fileStatus(_ file: FileAttachment, in id: Int) -> Signal<FileTransferStatus, NoError> {
+        return .single(file.localURL.map { .local($0) } ?? .remote)
+    }
+
+    func downloadFile(_ file: FileAttachment, in id: Int) {
+    }
+
+    func cancelFileDownload(_ file: FileAttachment, in id: Int) {
+    }
+
     func setPinned(_ id: Int, _ pinned: Bool) {
         self.dialogs[id]?.pinned = pinned ? Date().timeIntervalSince1970 * 1000.0 : nil
         self.publishDialogs()
@@ -633,8 +643,8 @@ final class MockStore: TauStore, TauServer {
         if let last = state.messages.last {
             var text = last.text
             if text.isEmpty, let attachment = last.attachments.first {
-                if case let .file(name, _) = attachment.kind {
-                    text = name
+                if case let .file(file) = attachment.kind {
+                    text = file.name
                 } else {
                     text = last.attachments.count > 1 ? "\(last.attachments.count) Photos" : "Photo"
                 }

@@ -378,6 +378,18 @@ final class MultiStore: TauStore {
         self.route(id).map { $0.0.setArchived($0.1, archived) }
     }
 
+    func fileStatus(_ file: FileAttachment, in id: Int) -> Signal<FileTransferStatus, NoError> {
+        return self.route(id).map { $0.0.fileStatus(file, in: $0.1) } ?? .single(file.localURL.map { .local($0) } ?? .remote)
+    }
+
+    func downloadFile(_ file: FileAttachment, in id: Int) {
+        self.route(id).map { $0.0.downloadFile(file, in: $0.1) }
+    }
+
+    func cancelFileDownload(_ file: FileAttachment, in id: Int) {
+        self.route(id).map { $0.0.cancelFileDownload(file, in: $0.1) }
+    }
+
     func send(_ text: String, attachments: [MessageAttachment], to id: Int, mode: SendMode) {
         self.route(id).map { $0.0.send(text, attachments: attachments, to: $0.1, mode: mode) }
         LiveActivityController.shared.watch(id)

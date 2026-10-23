@@ -104,6 +104,10 @@ protocol ConversationStore: AnyObject {
     /// Mark as Read / Mark as Unread.
     func setUnread(_ id: Int, _ unread: Bool)
     func setArchived(_ id: Int, _ archived: Bool)
+    /// A file of the chat (docs/files.md): where it is, as its row shows; fetching it; giving up fetching it.
+    func fileStatus(_ file: FileAttachment, in id: Int) -> Signal<FileTransferStatus, NoError>
+    func downloadFile(_ file: FileAttachment, in id: Int)
+    func cancelFileDownload(_ file: FileAttachment, in id: Int)
     /// Pin to the top of the list, or unpin; a new pin goes above the others.
     func setPinned(_ id: Int, _ pinned: Bool)
 
@@ -282,13 +286,15 @@ struct StorageUsage: Equatable {
     var draftBytes: Int64 = 0
     /// Photos fetched to show them.
     var mediaBytes: Int64 = 0
+    /// Files fetched to open (Server/FileTransfer.swift), counted with the images.
+    var fileBytes: Int64 = 0
 
     var cacheBytes: Int64 {
-        return self.chats.reduce(0) { $0 + $1.bytes } + self.mediaBytes
+        return self.chats.reduce(0) { $0 + $1.bytes } + self.mediaBytes + self.fileBytes
     }
 
     static func == (lhs: StorageUsage, rhs: StorageUsage) -> Bool {
-        return lhs.chats.map(\.id) == rhs.chats.map(\.id) && lhs.chats.map(\.bytes) == rhs.chats.map(\.bytes) && lhs.unsentBytes == rhs.unsentBytes && lhs.draftBytes == rhs.draftBytes && lhs.mediaBytes == rhs.mediaBytes
+        return lhs.chats.map(\.id) == rhs.chats.map(\.id) && lhs.chats.map(\.bytes) == rhs.chats.map(\.bytes) && lhs.unsentBytes == rhs.unsentBytes && lhs.draftBytes == rhs.draftBytes && lhs.mediaBytes == rhs.mediaBytes && lhs.fileBytes == rhs.fileBytes
     }
 }
 

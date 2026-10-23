@@ -27,6 +27,25 @@ struct OutgoingMessage: Codable, Equatable {
         let size: Int64
     }
 
+    /// A photo or file the message carries (docs/files.md): uploaded before the submit, which names it by its ID.
+    struct Upload: Codable, Equatable {
+        enum Kind: String, Codable {
+            /// Shown to the model too, when it takes images.
+            case photo
+            /// Only named.
+            case file
+        }
+
+        let kind: Kind
+        /// The device's copy, beside the outbox; nil for one the server has already (an edited message's).
+        var localName: String?
+        let name: String
+        let size: Int64
+        let mimeType: String
+        /// The server's ID, once uploaded.
+        var serverId: String?
+    }
+
     let requestId: String
     /// Nil until the draft conversation it starts exists; `createRequestId` names that draft.
     var conversationId: Int?
@@ -34,9 +53,11 @@ struct OutgoingMessage: Codable, Equatable {
     /// The chat row's ID, the same before and after the message is in the transcript.
     let rowId: Int
     let text: String
-    /// JPEG files next to the outbox, in order.
+    /// JPEG files next to the outbox, in order, sent inline: an outbox written before files were uploaded.
     let imageFiles: [String]
     let files: [File]
+    /// Photos and files, uploaded first; nil in an outbox written before.
+    var uploads: [Upload]? = nil
     var mode: Mode
     let date: Date
     var state: State
@@ -64,6 +85,15 @@ struct OutgoingMessage: Codable, Equatable {
             return true
         }
         return false
+    }
+
+    var photoCount: Int {
+        return self.imageFiles.count + (self.uploads ?? []).filter { $0.kind == .photo }.count
+    }
+
+    /// Its photos and files, as its entry's attachments block counts them (or its image blocks, inline).
+    var attachmentCount: Int {
+        return self.imageFiles.count + (self.uploads ?? []).count
     }
 }
 
@@ -134,6 +164,15 @@ final class Outbox {
     /// Something the user should hear about, as a toast.
     var notice: ((Int, String) -> Void)?
     var mintAttachmentId: (() -> Int)?
+    /// Uploads, and the copies of what was uploaded (Server/FileTransfer.swift).
+    var transfer: FileTransfer?
+    /// The largest file the server takes, as its `hello` said; 0 when unknown.
+    var maxFileBytes: (() -> Int64)?
+
+    /// An upload's transfer, for its row's progress.
+    static func transferKey(_ requestId: String, _ index: Int) -> String {
+        return "up-\(requestId)-\(index)"
+    }
 
     static let maxAttempts = 5
 
@@ -239,7 +278,18 @@ final class Outbox {
         guard let item = self.item(requestId) else {
             return []
         }
+        if let uploads = item.uploads {
+            // Only when this device has each: the entry's images are these, in order.
+            let photos = uploads.filter { $0.kind == .photo }
+            let data = photos.compactMap { upload in upload.localName.flatMap { try? Data(contentsOf: self.directory.appendingPathComponent($0)) } }
+            return data.count == photos.count ? data : []
+        }
         return item.imageFiles.compactMap { try? Data(contentsOf: self.directory.appendingPathComponent($0)) }
+    }
+
+    /// The device's copy of an upload.
+    private func localURL(_ upload: OutgoingMessage.Upload) -> URL? {
+        return upload.localName.map { self.directory.appendingPathComponent($0) }
     }
 
     func attachments(_ item: OutgoingMessage) -> [MessageAttachment] {
@@ -253,7 +303,15 @@ final class Outbox {
             }
         }
         for file in item.files {
-            result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .file(name: file.name, size: file.size)))
+            result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .file(FileAttachment(name: file.name, size: file.size, mimeType: "application/octet-stream"))))
+        }
+        for (index, upload) in (item.uploads ?? []).enumerated() {
+            let url = self.localURL(upload)
+            if upload.kind == .photo, let url, let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+                result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .image(image)))
+            } else {
+                result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .file(FileAttachment(name: upload.name, size: upload.size, mimeType: upload.mimeType, serverId: upload.serverId, localURL: url, transferKey: Outbox.transferKey(item.requestId, index)))))
+            }
         }
         self.attachmentsByRequest[item.requestId] = result
         return result
@@ -265,10 +323,9 @@ final class Outbox {
     @discardableResult
     func enqueue(text: String, attachments: [MessageAttachment], conversationId: Int?, createRequestId: String?, mode: OutgoingMessage.Mode, showsInQueue: Bool, replaces: String? = nil) -> OutgoingMessage {
         let requestId = UUID().uuidString
-        var imageFiles: [String] = []
-        var files: [OutgoingMessage.File] = []
-        var totalBytes = text.utf8.count
+        var uploads: [OutgoingMessage.Upload] = []
         var failure: String?
+        let maxFileBytes = self.maxFileBytes?() ?? 0
         for attachment in attachments {
             switch attachment.kind {
             case let .image(image):
@@ -276,28 +333,45 @@ final class Outbox {
                     failure = "A photo could not be encoded"
                     continue
                 }
-                let name = "\(requestId)-\(imageFiles.count).jpg"
+                let name = "\(requestId)-\(uploads.count).jpg"
                 try? data.write(to: self.directory.appendingPathComponent(name), options: .atomic)
-                imageFiles.append(name)
-                totalBytes += data.count * 4 / 3
+                uploads.append(OutgoingMessage.Upload(kind: .photo, localName: name, name: "photo.jpg", size: Int64(data.count), mimeType: "image/jpeg"))
                 if data.count > 5 * 1024 * 1024 {
                     failure = "A photo is larger than 5 MB"
                 }
-            case let .file(name, size):
-                files.append(OutgoingMessage.File(name: name, size: size))
-            case .remote:
-                // The store fetches these first (ServerStore.resolvingRemote): what is queued has its data on disk.
-                failure = "A photo was not loaded"
+            case let .remote(remote):
+                // An edited message's photo: the file the server kept. One sent before files were kept the store
+                // fetches first (ServerStore.resolvingRemote), so what is queued has its data on disk.
+                guard let fileId = remote.fileId else {
+                    failure = "A photo was not loaded"
+                    continue
+                }
+                uploads.append(OutgoingMessage.Upload(kind: .photo, localName: nil, name: "photo.jpg", size: Int64(remote.bytes), mimeType: remote.mimeType, serverId: fileId))
+            case let .file(file):
+                if let serverId = file.serverId {
+                    uploads.append(OutgoingMessage.Upload(kind: .file, localName: nil, name: file.name, size: file.size, mimeType: file.mimeType, serverId: serverId))
+                    continue
+                }
+                // A copy beside the outbox: the picked one may go before it is sent.
+                let ext = (file.name as NSString).pathExtension
+                let name = "\(requestId)-\(uploads.count)\(ext.isEmpty ? "" : ".\(ext)")"
+                guard let source = file.localURL, (try? FileManager.default.copyItem(at: source, to: self.directory.appendingPathComponent(name))) != nil else {
+                    failure = "\(file.name) could not be read"
+                    continue
+                }
+                uploads.append(OutgoingMessage.Upload(kind: file.isImage && attachment.isPhoto ? .photo : .file, localName: name, name: file.name, size: file.size, mimeType: file.mimeType))
+                if maxFileBytes > 0 && file.size > maxFileBytes {
+                    failure = "\(file.name) is larger than \(ByteCountFormatter.string(fromByteCount: maxFileBytes, countStyle: .file))"
+                }
             }
         }
-        // The server refuses these too; a message this big must not even be sent, as an oversized frame closes the
-        // socket and would be retried forever.
-        if imageFiles.count > 20 {
+        // The server refuses these too.
+        if uploads.filter({ $0.kind == .photo }).count > 20 {
             failure = "A message can carry at most 20 photos"
+        } else if uploads.count > 20 {
+            failure = "A message can carry at most 20 files"
         } else if text.count > 1_000_000 {
             failure = "The message is longer than 1,000,000 characters"
-        } else if totalBytes > 64 * 1024 * 1024 {
-            failure = "The message is larger than 64 MB"
         }
         let item = OutgoingMessage(
             requestId: requestId,
@@ -305,8 +379,9 @@ final class Outbox {
             createRequestId: createRequestId,
             rowId: self.takeRowId(),
             text: text,
-            imageFiles: imageFiles,
-            files: files,
+            imageFiles: [],
+            files: [],
+            uploads: uploads,
             mode: mode,
             date: Date(),
             state: failure.map { .failed(code: "too_large", message: $0) } ?? .pending,
@@ -384,6 +459,19 @@ final class Outbox {
             try? FileManager.default.copyItem(at: self.directory.appendingPathComponent(name), to: self.directory.appendingPathComponent(copy))
             imageFiles.append(copy)
         }
+        // What is uploaded goes again by its ID; what is not, from a copy of its own.
+        let uploads = item.uploads.map { uploads in
+            uploads.enumerated().map { index, upload -> OutgoingMessage.Upload in
+                var copy = upload
+                if let name = upload.localName {
+                    let ext = (name as NSString).pathExtension
+                    let newName = "\(requestId)-\(index)\(ext.isEmpty ? "" : ".\(ext)")"
+                    try? FileManager.default.copyItem(at: self.directory.appendingPathComponent(name), to: self.directory.appendingPathComponent(newName))
+                    copy.localName = newName
+                }
+                return copy
+            }
+        }
         let replacement = OutgoingMessage(
             requestId: requestId,
             conversationId: conversationId,
@@ -392,6 +480,7 @@ final class Outbox {
             text: item.text,
             imageFiles: imageFiles,
             files: item.files,
+            uploads: uploads,
             mode: mode,
             date: Date(),
             state: .pending,
@@ -484,7 +573,7 @@ final class Outbox {
 
     private func remove(at index: Int) {
         let item = self.items.remove(at: index)
-        for name in item.imageFiles {
+        for name in item.imageFiles + (item.uploads ?? []).compactMap(\.localName) {
             try? FileManager.default.removeItem(at: self.directory.appendingPathComponent(name))
         }
         self.attachmentsByRequest[item.requestId] = nil
@@ -650,7 +739,7 @@ final class Outbox {
                     guard item.conversationId == conversationId, !used.contains(item.requestId), item.wasSent, case .pending = item.state else {
                         return false
                     }
-                    return entry.text.hasPrefix(item.text) && entry.images == item.imageFiles.count
+                    return entry.text.hasPrefix(item.text) && entry.images == item.attachmentCount
                 }
             }
             if let match {
@@ -772,9 +861,14 @@ final class Outbox {
             guard self.connection.isReady else {
                 return
             }
+            if let index = item.uploads?.firstIndex(where: { $0.serverId == nil }), self.connection.hello?.files == true {
+                self.upload(requestId, index: index, conversationId: conversationId, key: key)
+                return
+            }
             guard let content = self.content(item) else {
+                let takesFiles = item.uploads == nil || item.uploads!.allSatisfy({ $0.kind == .photo }) || self.connection.hello?.files == true
                 self.update(requestId) {
-                    $0.state = .failed(code: "bad_request", message: "A photo of this message is missing")
+                    $0.state = .failed(code: "bad_request", message: takesFiles ? "A photo of this message is missing" : "This server does not take files: update it")
                 }
                 self.pump(conversationId: conversationId)
                 return
@@ -785,8 +879,12 @@ final class Outbox {
                     $0.wasSent = true
                 }
             }
+            var params: JSONObject = ["conversationId": conversationId, "requestId": requestId, "content": content, "whenBusy": item.mode.rawValue]
+            if let uploads = item.uploads, !uploads.isEmpty, self.connection.hello?.files == true {
+                params["attachments"] = uploads.map { ["id": $0.serverId ?? "", "as": $0.kind == .photo ? "image" : "file"] as JSONObject }
+            }
             self.inFlight.insert(key)
-            self.connection.request("conversation.submit", ["conversationId": conversationId, "requestId": requestId, "content": content, "whenBusy": item.mode.rawValue]) { [weak self] result in
+            self.connection.request("conversation.submit", params) { [weak self] result in
                 guard let self else {
                     return
                 }
@@ -826,6 +924,62 @@ final class Outbox {
         }
     }
 
+    /// Upload one of a message's files, then go on with the message: the next upload, or its submit. A file the server
+    /// refuses fails the message; no answer is tried again, as a submit is.
+    private func upload(_ requestId: String, index: Int, conversationId: Int, key: String) {
+        guard let item = self.item(requestId), let upload = item.uploads?[index], let transfer = self.transfer else {
+            return
+        }
+        guard let url = self.localURL(upload), FileManager.default.fileExists(atPath: url.path) else {
+            self.update(requestId) {
+                $0.state = .failed(code: "bad_request", message: "\(upload.name) is missing")
+                $0.showsInQueue = false
+            }
+            self.pump(conversationId: conversationId)
+            return
+        }
+        self.inFlight.insert(key)
+        transfer.upload(url, name: upload.name, key: Outbox.transferKey(requestId, index)) { [weak self] result in
+            guard let self else {
+                return
+            }
+            self.inFlight.remove(key)
+            guard let current = self.items.firstIndex(where: { $0.requestId == requestId }) else {
+                self.pump(conversationId: conversationId)
+                return
+            }
+            switch result {
+            case let .success(uploaded):
+                self.items[current].uploads?[index].serverId = uploaded.id
+                self.items[current].attempts = 0
+                self.save()
+                // Opened from here, never fetched back.
+                transfer.seed(id: uploaded.id, name: upload.name, from: url)
+            case .failure(.network):
+                self.items[current].attempts = min(self.items[current].attempts + 1, 4)
+                self.wait(key: key, attempt: self.items[current].attempts)
+                return
+            case let .failure(.refused(status, message)):
+                if status == 401 {
+                    // Its socket is turned away too: tried again when that connects.
+                    self.wait(key: key, attempt: 4)
+                    return
+                }
+                if status >= 500 && self.items[current].attempts + 1 < Outbox.maxAttempts {
+                    self.items[current].attempts += 1
+                    self.save()
+                    self.wait(key: key, attempt: self.items[current].attempts)
+                    return
+                }
+                self.update(requestId) {
+                    $0.state = .failed(code: status == 413 ? "too_large" : "bad_request", message: message)
+                    $0.showsInQueue = false
+                }
+            }
+            self.pump(conversationId: conversationId)
+        }
+    }
+
     private func handleSubmit(_ requestId: String, conversationId: Int, result: Result<JSONObject, RequestError>) {
         guard let index = self.items.firstIndex(where: { $0.requestId == requestId }) else {
             return
@@ -855,12 +1009,19 @@ final class Outbox {
             switch error.code {
             case "withdrawn":
                 self.remove(at: index)
+            case "file_missing" where self.items[index].uploads?.allSatisfy({ $0.localName != nil }) == true && self.items[index].attempts + 1 < Outbox.maxAttempts:
+                // Not used for a day, the server swept them: upload them again.
+                self.items[index].attempts += 1
+                for upload in self.items[index].uploads!.indices {
+                    self.items[index].uploads![upload].serverId = nil
+                }
+                self.save()
             case "internal" where self.items[index].attempts + 1 < Outbox.maxAttempts:
                 self.items[index].attempts += 1
                 self.save()
                 self.wait(key: "c\(conversationId)", attempt: self.items[index].attempts)
             default:
-                let message = error.code == "not_found" ? "This chat no longer exists" : error.message
+                let message = error.code == "not_found" ? "This chat no longer exists" : error.code == "file_missing" ? "A file of this message is no longer on the server" : error.message
                 self.update(requestId) {
                     $0.state = .failed(code: error.code, message: message)
                     $0.showsInQueue = false
@@ -939,6 +1100,23 @@ final class Outbox {
     }
 
     private func content(_ item: OutgoingMessage) -> Any? {
+        if let uploads = item.uploads, !uploads.isEmpty {
+            if self.connection.hello?.files == true {
+                return item.text
+            }
+            // A server from before files: photos inline, as they went then; files it cannot take.
+            guard uploads.allSatisfy({ $0.kind == .photo }) else {
+                return nil
+            }
+            var images: [JSONObject] = []
+            for upload in uploads {
+                guard let url = self.localURL(upload), let data = try? Data(contentsOf: url) else {
+                    return nil
+                }
+                images.append(["type": "image", "data": data.base64EncodedString(), "mimeType": upload.mimeType])
+            }
+            return (item.text.isEmpty ? [] : [["type": "text", "text": item.text]]) + images
+        }
         var images: [JSONObject] = []
         for name in item.imageFiles {
             guard let data = try? Data(contentsOf: self.directory.appendingPathComponent(name)) else {

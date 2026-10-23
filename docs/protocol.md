@@ -1,7 +1,8 @@
 # tau wire protocol (v1)
 
 One WebSocket per client, JSON text frames. The server hosts one pi-durable Harness; the client keeps its own cache
-and syncs against it.
+and syncs against it. Files go over HTTP on the same port, behind the same token: `POST /files?name=<name>` uploads one,
+`GET /files/<id>` fetches one (docs/files.md).
 
 ## Sync model
 
@@ -35,18 +36,21 @@ Requests may run concurrently; responses carry the request's `id`. Those that ch
 `submission.withdraw`, `submission.abort`, `conversation.abort`, `reset`, `compact`, `configure`) run one at a time
 per conversation, in the order they arrived, across connections; creates run one at a time.
 
-Error codes: `bad_request`, `not_found`, `busy`, `unauthorized`, `too_large`, `unsupported`, `withdrawn`, `internal`.
+Error codes: `bad_request`, `not_found`, `busy`, `unauthorized`, `too_large`, `unsupported`, `withdrawn`,
+`file_missing`, `internal`.
 Only `internal` may pass on a retry; the others are final for that request. A frame larger than 96 MB closes the
 socket, so a client must not send one (content limits below are far under it).
 
 ## Methods
 
 ### `hello`
-`{ protocol: 1, media?: true }` -> `{ protocol: 1, media: boolean, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number, apns: boolean }`
+`{ protocol: 1, media?: true }` -> `{ protocol: 1, media: boolean, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number, apns: boolean, files: true, maxFileBytes: number }`
 
 `defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
 `hostname` is the computer's name, `piRevision` the pi commit the server links, `uptime` seconds since it started.
-`apns`: the server has the account's APNs key and sends Apple's pushes (docs/notifications.md).
+`apns`: the server has the account's APNs key and sends Apple's pushes (docs/notifications.md). `files`: it keeps
+files, uploaded over HTTP and named by `conversation.submit`'s `attachments`, up to `maxFileBytes` each
+(docs/files.md).
 
 Must be the first request. A different `protocol` is rejected.
 
@@ -298,8 +302,11 @@ transcript up to date without subscribing, as the app preloads the chats at the 
 `hasOlder` then means a gap between the cache and `entries`.
 
 ### `conversation.submit`
-`{ conversationId, requestId: string, content: string | ContentBlock[], whenBusy?: "steer" | "followUp" | "reject" }`
+`{ conversationId, requestId: string, content: string | ContentBlock[], attachments?: { id: string, as?: "image" | "file" }[], whenBusy?: "steer" | "followUp" | "reject" }`
 -> `{ submission: SubmissionRecord }`
+
+`attachments` names files uploaded with `POST /files` (at most 20): the message starts with a block naming each by path,
+and those `as: "image"` the model also sees (docs/files.md). With attachments, `content` may be empty.
 
 `requestId` is client-generated (a UUID) and makes the send idempotent: retrying after a dropped connection returns
 the existing submission instead of sending twice. Persist it with the outgoing message until the server acknowledges.
@@ -309,7 +316,8 @@ or `unanswered` (`reason`: `aborted`, `model_error`, `stale`, ...).
 
 Content is refused before admission, with nothing written: `too_large` over 1,000,000 characters of text, 20 images,
 or 5 MB per image; `unsupported` for an image type other than JPEG, PNG, GIF and WebP, or any image when the
-conversation's model takes none; `withdrawn` when `submission.withdraw` named the request ID first.
+conversation's model takes none; `withdrawn` when `submission.withdraw` named the request ID first; `file_missing`
+when an attachment's ID names no file (never uploaded, or swept a day after): upload it again.
 
 ### `submission.withdraw`
 `{ conversationId, requestId }` -> `{ result: "withdrawn" | "aborted" | "already_placed" | "settled", submission? }`

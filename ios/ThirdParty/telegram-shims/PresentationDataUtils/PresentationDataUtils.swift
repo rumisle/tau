@@ -21,5 +21,6 @@ public func textAlertController(context: AccountContext, updatedPresentationData
         presentationData = presentationData.withUpdated(theme: forceTheme)
     }
     let theme = AlertControllerTheme(presentationData: presentationData)
-    return Display.textAlertController(theme: theme, title: title.map { NSAttributedString(string: $0, font: Font.semibold(17.0), textColor: theme.primaryColor) }, text: NSAttributedString(string: text, font: Font.regular(13.0), textColor: theme.primaryColor, paragraphAlignment: .center), actions: actions, actionLayout: actionLayout, dismissOnOutsideTap: dismissOnOutsideTap, linkAction: linkAction)
+    // As Telegram's: standardTextAlertController, whose actions dismiss the alert before they run.
+    return standardTextAlertController(theme: theme, title: title, text: text, actions: actions, actionLayout: actionLayout, allowInputInset: allowInputInset, parseMarkdown: parseMarkdown, dismissOnOutsideTap: dismissOnOutsideTap, linkAction: linkAction)
 }

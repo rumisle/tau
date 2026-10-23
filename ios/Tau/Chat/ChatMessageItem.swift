@@ -9,6 +9,7 @@ import ChatMessageSelectionNode
 import ActivityIndicator
 import TextSelectionNode
 import TelegramPresentationData
+import SemanticStatusNode
 
 /// What a message's neighbors need to know about it: who wrote it, so consecutive user bubbles merge.
 private enum ChatHistoryNeighbor: Equatable {
@@ -30,6 +31,9 @@ final class ChatMessageItemInteraction {
     let openImage: (Int) -> Void
     /// A tap on a code block or inline code copied it (Telegram's `.copy` tap action); the chat says so.
     var copied: (String) -> Void = { _ in }
+    /// A file's row: where the file is, as its circle shows; a tap fetches, stops fetching, or opens it.
+    var fileStatus: (FileAttachment) -> Signal<FileTransferStatus, NoError> = { file in .single(file.localURL.map { .local($0) } ?? .remote) }
+    var openFile: (FileAttachment, FileTransferStatus) -> Void = { _, _ in }
     /// Shows a controller above everything, the context menu included: the menu over selected text.
     var presentInGlobalOverlay: (ViewController, Any?) -> Void = { _, _ in }
     /// The chat's view, which text selection keeps its knobs and menu inside.
@@ -165,8 +169,6 @@ private func dateFont(_ theme: TauTheme) -> UIFont {
 }
 private let toolTitleFont = Font.semibold(13.0)
 private let toolFont = Font.monospace(13.0)
-private let fileTitleFont = Font.semibold(16.0)
-private let fileSizeFont = Font.regular(13.0)
 
 // Telegram ChatMessageItemLayoutConstants.compact.
 private let bubbleEdgeInset: CGFloat = 3.0
@@ -442,6 +444,12 @@ final class ChatMessageItemNode: ListViewItemNode {
                 return
             }
         }
+        for node in self.fileNodes where !node.isHidden && node.frame.contains(point) {
+            if let file = node.file {
+                item.interaction.openFile(file, node.status)
+            }
+            return
+        }
         // As ChatMessageTextBubbleContentNode's tap actions: a code block or inline code copies.
         for textNode in self.textNodes {
             let local = self.contentNode.view.convert(point, to: textNode.view)
@@ -663,15 +671,15 @@ final class ChatMessageItemNode: ListViewItemNode {
                 // (chatMessageBubbleMosaicLayout, as ChatMessageBubbleItemNode lays out a grouped message), the
                 // caption wrapping to their width. Files are rows above the text.
                 var photoSizes: [CGSize] = []
-                var files: [(name: String, size: Int64)] = []
+                var files: [FileAttachment] = []
                 for attachment in message.attachments {
                     switch attachment.kind {
                     case let .image(image):
                         photoSizes.append(image.size.width > 0.0 && image.size.height > 0.0 ? image.size : CGSize(width: 256.0, height: 256.0))
                     case let .remote(remote):
                         photoSizes.append(remote.pixelSize ?? CGSize(width: 256.0, height: 256.0))
-                    case let .file(name, size):
-                        files.append((name, size))
+                    case let .file(file):
+                        files.append(file)
                     }
                 }
                 let photos = photoMosaic(photoSizes, maxWidth: maxContentWidth - mediaInset * 2.0)
@@ -684,7 +692,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let hasText = !message.text.isEmpty
                 let (textLayout, textApply) = InteractiveTextNode.asyncLayout(textNode)(InteractiveTextNodeLayoutArguments(attributedString: MarkdownText.render(message.text, style: style), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
                 let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: messageTimeString(message.date), font: dateFont(item.theme), textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 200.0, height: 40.0)))
-                let fileLayouts = files.map { FileAttachmentNode.measure(name: $0.name, size: $0.size, maxWidth: maxTextWidth) }
+                let fileLayouts = files.map { FileAttachmentNode.measure($0, fontSize: item.theme.fontSize, maxWidth: maxTextWidth) }
 
                 // The time and status share the last line when they fit, as ChatMessageDateAndStatusNode's trailing
                 // layout does. Its status takes 5 pt plus 13 pt after the time; a refused message has none.
@@ -780,7 +788,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         let fileNode = self.fileNodes[index]
                         fileNode.isHidden = false
                         let size = fileLayouts[index]
-                        fileNode.update(name: file.name, size: file.size, color: theme.outgoing.primaryTextColor, secondaryColor: theme.outgoing.secondaryTextColor, width: size.width)
+                        fileNode.update(file: file, incoming: false, theme: item.theme, status: item.interaction.fileStatus(file), width: size.width)
                         fileNode.frame = CGRect(origin: CGPoint(x: backgroundFrame.minX + textInsets.left, y: contentY), size: size)
                         contentY += size.height + 6.0
                     }
@@ -1292,6 +1300,81 @@ final class ChatMessageItemNode: ListViewItemNode {
                 }
 
             case let .tool(name):
+                if name == "send_file", let tool = message.tool, tool.status == .done, !tool.sentFiles.isEmpty {
+                    // What the agent sent: no card, but its photos as an album and its files as Telegram's document rows,
+                    // as a message of media from someone writes them, on the background as the agent's text.
+                    let maxWidth = min(contentWidth - freeTextInset * 2.0 - leftShift, 320.0)
+                    let photos = tool.sentFiles.filter(\.isPhoto)
+                    let files = tool.sentFiles.compactMap { attachment -> FileAttachment? in
+                        if case let .file(file) = attachment.kind {
+                            return file
+                        }
+                        return nil
+                    }
+                    let mosaic = photoMosaic(photos.map(photoPixelSize), maxWidth: maxWidth)
+                    let fileSizes = files.map { FileAttachmentNode.measure($0, fontSize: item.theme.fontSize, maxWidth: maxWidth) }
+                    let fileSpacing: CGFloat = 8.0
+                    let photosHeight: CGFloat = photos.isEmpty ? 0.0 : mosaic.size.height
+                    let filesHeight = fileSizes.reduce(0.0) { $0 + $1.height } + CGFloat(max(0, files.count - 1)) * fileSpacing
+                    let gap: CGFloat = !photos.isEmpty && !files.isEmpty ? 10.0 : 0.0
+                    let height = photosHeight + gap + filesHeight
+                    let width = max(mosaic.size.width, fileSizes.map(\.width).max() ?? 0.0)
+                    let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets(top: 6.0, left: 0.0, bottom: 6.0, right: 0.0))
+                    return (layout, { animation in
+                        guard let self else {
+                            return
+                        }
+                        self.item = item
+                        self.stopReveal()
+                        self.laidOutBlocks = []
+                        self.bubbleNode.isHidden = true
+                        self.dateNode.isHidden = true
+                        self.hideStatus()
+                        self.setTextNodes([])
+                        self.setTableNodes([])
+                        self.setToolVisible(false)
+                        self.setSubagentVisible(false)
+                        self.updateToolActivity(isActive: false, color: theme.toolCardTextColor, frame: CGRect())
+                        self.setTimerTick(nil)
+                        let origin = CGPoint(x: params.leftInset + freeTextInset + leftShift, y: 0.0)
+                        self.contentFrame = CGRect(origin: origin, size: CGSize(width: width, height: height))
+                        self.ensureImageNodes(photos.count)
+                        self.imageAttachmentIds = []
+                        for (index, attachment) in photos.enumerated() {
+                            let imageNode = self.imageNodes[index]
+                            let (frame, position) = mosaic.frames[index]
+                            imageNode.setAttachment(attachment.kind, placeholderColor: theme.serviceFillColor)
+                            imageNode.isHidden = false
+                            imageNode.alpha = attachment.id == self.hiddenAttachmentId ? 0.0 : 1.0
+                            imageNode.frame = frame.offsetBy(dx: origin.x, dy: origin.y)
+                            photoCorners(imageNode.layer, position: position, captioned: false, mergedTop: false, mergedBottom: false, radius: 12.0)
+                            self.imageAttachmentIds.append(attachment.id)
+                        }
+                        for index in photos.count ..< self.imageNodes.count {
+                            self.imageNodes[index].isHidden = true
+                        }
+                        while self.fileNodes.count < files.count {
+                            let fileNode = FileAttachmentNode()
+                            self.fileNodes.append(fileNode)
+                            self.contentNode.addSubnode(fileNode)
+                        }
+                        var y = origin.y + photosHeight + gap
+                        for (index, file) in files.enumerated() {
+                            let fileNode = self.fileNodes[index]
+                            fileNode.isHidden = false
+                            fileNode.update(file: file, incoming: true, theme: item.theme, status: item.interaction.fileStatus(file), width: fileSizes[index].width)
+                            fileNode.frame = CGRect(origin: CGPoint(x: origin.x, y: y), size: fileSizes[index])
+                            y += fileSizes[index].height + fileSpacing
+                        }
+                        for index in files.count ..< self.fileNodes.count {
+                            self.fileNodes[index].isHidden = true
+                        }
+                        self.isAccessibilityElement = false
+                        self.accessibilityIdentifier = "sentFiles"
+                        self.layoutContainers(size: layout.contentSize)
+                        self.updateSelection(item: item, size: layout.contentSize, animation: animation)
+                    })
+                }
                 if let call = message.tool?.subagent {
                     let tool = message.tool!
                     let status = tool.status
@@ -1513,6 +1596,9 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.setToolVisible(true)
                     self.setSubagentVisible(false)
                     self.toolTextNode.isHidden = body.length == 0
+                    for node in self.fileNodes {
+                        node.isHidden = true
+                    }
 
                     self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
                     let cardFrame = CGRect(origin: CGPoint(x: params.leftInset + freeTextInset - 4.0 + leftShift, y: 0.0), size: cardSize)
@@ -2082,46 +2168,139 @@ final class GradientBubbleNode: ASDisplayNode {
 }
 
 /// A file in a user bubble: an icon, the name and the size.
+/// A file of a message, as Telegram's ChatMessageInteractiveFileNode shows a document: a 44 pt circle (its
+/// SemanticStatusNode, in the message's media color) with a download arrow, the progress of a transfer, or the
+/// document icon once the file is here; the name, and the size, or how much of it came so far. Followed as its
+/// transfer goes (Server/FileTransfer.swift).
 final class FileAttachmentNode: ASDisplayNode {
-    private let iconNode = ASImageNode()
+    private var statusNode: SemanticStatusNode?
     private let nameNode = ImmediateTextNode()
     private let sizeNode = ImmediateTextNode()
+    private var statusDisposable: Disposable?
+    private(set) var file: FileAttachment?
+    private(set) var status: FileTransferStatus = .remote
+    private var colors: (name: UIColor, size: UIColor, fill: UIColor, icon: UIColor, document: UIImage?)?
+    private var fontSize: CGFloat = 17.0
 
-    static func measure(name: String, size: Int64, maxWidth: CGFloat) -> CGSize {
-        let nameWidth = ceil((name as NSString).size(withAttributes: [.font: fileTitleFont]).width)
-        return CGSize(width: min(maxWidth, 52.0 + nameWidth), height: 44.0)
+    static func titleFont(_ fontSize: CGFloat) -> UIFont {
+        return Font.regular(floor(fontSize * 16.0 / 17.0))
+    }
+
+    static func sizeFont(_ fontSize: CGFloat) -> UIFont {
+        return Font.with(size: floor(fontSize * 13.0 / 17.0), design: .regular, weight: .regular, traits: [.monospacedNumbers])
+    }
+
+    /// ChatMessageInteractiveFileNode's: the circle, 8 pt, then the text, at least as tall as the circle.
+    static func measure(_ file: FileAttachment, fontSize: CGFloat, maxWidth: CGFloat) -> CGSize {
+        let nameWidth = ceil((file.name as NSString).size(withAttributes: [.font: FileAttachmentNode.titleFont(fontSize)]).width)
+        let sizeWidth = ceil(("0000.0 MB / 0000.0 MB" as NSString).size(withAttributes: [.font: FileAttachmentNode.sizeFont(fontSize)]).width)
+        return CGSize(width: min(maxWidth, 52.0 + max(nameWidth, min(sizeWidth, 120.0))), height: 44.0)
     }
 
     override init() {
         super.init()
-        self.iconNode.displaysAsynchronously = false
         self.nameNode.maximumNumberOfLines = 1
         self.nameNode.truncationMode = .byTruncatingMiddle
-        self.addSubnode(self.iconNode)
+        self.nameNode.displaysAsynchronously = false
+        self.sizeNode.maximumNumberOfLines = 1
+        self.sizeNode.displaysAsynchronously = false
         self.addSubnode(self.nameNode)
         self.addSubnode(self.sizeNode)
     }
 
-    func update(name: String, size: Int64, color: UIColor, secondaryColor: UIColor, width: CGFloat) {
-        self.iconNode.image = generateImage(CGSize(width: 44.0, height: 44.0), rotatedContext: { imageSize, context in
-            context.clear(CGRect(origin: CGPoint(), size: imageSize))
-            context.setFillColor(color.withAlphaComponent(0.2).cgColor)
-            context.fillEllipse(in: CGRect(origin: CGPoint(), size: imageSize))
-            if let icon = UIImage(systemName: "doc.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18.0, weight: .medium))?.withTintColor(color, renderingMode: .alwaysOriginal) {
-                UIGraphicsPushContext(context)
-                icon.draw(at: CGPoint(x: (imageSize.width - icon.size.width) / 2.0, y: (imageSize.height - icon.size.height) / 2.0))
-                UIGraphicsPopContext()
-            }
-        })
-        self.iconNode.frame = CGRect(x: 0.0, y: 0.0, width: 44.0, height: 44.0)
-        self.nameNode.attributedText = NSAttributedString(string: name, font: fileTitleFont, textColor: color)
-        self.sizeNode.attributedText = NSAttributedString(string: ByteCountFormatter.string(fromByteCount: size, countStyle: .file), font: fileSizeFont, textColor: secondaryColor)
+    deinit {
+        self.statusDisposable?.dispose()
+    }
+
+    /// `incoming`: the agent's, in its colors; else the user's, in the outgoing bubble's.
+    func update(file: FileAttachment, incoming: Bool, theme: TauTheme, status: Signal<FileTransferStatus, NoError>, width: CGFloat) {
+        let message = incoming ? theme.presentationTheme.chat.message.incoming : theme.presentationTheme.chat.message.outgoing
+        let fill = message.mediaActiveControlColor
+        // Telegram's: white on an incoming circle; cut out of an outgoing one, so the bubble shows through.
+        let icon: UIColor = incoming && fill.rgb != 0xffffff ? .white : .clear
+        let document = generateTintedImage(image: UIImage(bundleImageName: "Chat/Message/RadialProgressIconDocument"), color: .black)
+        self.colors = (message.fileTitleColor, message.fileDescriptionColor, fill, icon, document)
+        self.fontSize = theme.fontSize
+        let changed = self.file?.serverId != file.serverId || self.file?.transferKey != file.transferKey || self.file?.name != file.name
+        self.file = file
+        if self.statusNode == nil {
+            let statusNode = SemanticStatusNode(backgroundNodeColor: fill, foregroundNodeColor: icon)
+            statusNode.displaysAsynchronously = false
+            self.statusNode = statusNode
+            self.addSubnode(statusNode)
+        }
+        self.statusNode?.backgroundNodeColor = fill
+        self.statusNode?.foregroundNodeColor = icon
+        self.statusNode?.frame = CGRect(x: 0.0, y: 0.0, width: 44.0, height: 44.0)
+        self.nameNode.attributedText = NSAttributedString(string: file.name, font: FileAttachmentNode.titleFont(theme.fontSize), textColor: message.fileTitleColor)
+        self.isAccessibilityElement = true
+        self.accessibilityLabel = file.name
+        self.accessibilityTraits = .button
         let textWidth = max(10.0, width - 52.0)
-        let nameSize = self.nameNode.updateLayout(CGSize(width: textWidth, height: 22.0))
-        let sizeSize = self.sizeNode.updateLayout(CGSize(width: textWidth, height: 18.0))
-        self.nameNode.frame = CGRect(origin: CGPoint(x: 52.0, y: 3.0), size: nameSize)
+        let nameSize = self.nameNode.updateLayout(CGSize(width: textWidth, height: 24.0))
+        self.nameNode.frame = CGRect(origin: CGPoint(x: 52.0, y: 2.0), size: nameSize)
+        self.layoutSize(width: width)
+        if changed || self.statusDisposable == nil {
+            self.statusDisposable?.dispose()
+            var first = true
+            self.statusDisposable = (status |> deliverOnMainQueue).start(next: { [weak self] status in
+                guard let self else {
+                    return
+                }
+                self.apply(status, animated: !first)
+                first = false
+            })
+        } else {
+            self.apply(self.status, animated: false)
+        }
+    }
+
+    private var width: CGFloat = 0.0
+
+    private func layoutSize(width: CGFloat) {
+        self.width = width
+        let textWidth = max(10.0, width - 52.0)
+        let sizeSize = self.sizeNode.updateLayout(CGSize(width: textWidth, height: 20.0))
         self.sizeNode.frame = CGRect(origin: CGPoint(x: 52.0, y: 24.0), size: sizeSize)
     }
+
+    private func apply(_ status: FileTransferStatus, animated: Bool) {
+        guard let file = self.file, let colors = self.colors else {
+            return
+        }
+        self.status = status
+        let total = fileSizeString(file.size)
+        var sizeText = total
+        let state: SemanticStatusNodeState
+        switch status {
+        case .remote:
+            state = .download
+        case let .downloading(progress), let .uploading(progress):
+            // As Telegram's "1.2 MB / 4.8 MB" while it moves.
+            sizeText = "\(fileSizeString(Int64(Double(file.size) * progress))) / \(total)"
+            state = .progress(value: CGFloat(max(0.027, progress)), cancelEnabled: true, appearance: nil, animateRotation: true)
+        case .local:
+            state = colors.document.map { .customIcon($0) } ?? .none
+        }
+        self.sizeNode.attributedText = NSAttributedString(string: sizeText, font: FileAttachmentNode.sizeFont(self.fontSize), textColor: colors.size)
+        self.layoutSize(width: self.width)
+        self.statusNode?.transitionToState(state, animated: animated)
+    }
+}
+
+/// A size as Telegram's dataSizeString writes one: 25 B, 812 KB, 2.9 MB, 1.2 GB.
+func fileSizeString(_ bytes: Int64) -> String {
+    let value = Double(bytes)
+    if bytes < 1024 {
+        return "\(bytes) B"
+    }
+    if bytes < 1024 * 1024 {
+        return String(format: "%.1f KB", value / 1024.0).replacingOccurrences(of: ".0 ", with: " ")
+    }
+    if bytes < 1024 * 1024 * 1024 {
+        return String(format: "%.1f MB", value / 1024.0 / 1024.0).replacingOccurrences(of: ".0 ", with: " ")
+    }
+    return String(format: "%.1f GB", value / 1024.0 / 1024.0 / 1024.0).replacingOccurrences(of: ".0 ", with: " ")
 }
 
 private let timerFont = Font.with(size: 12.0, traits: .monospacedNumbers)

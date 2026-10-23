@@ -23,6 +23,8 @@ final class ServerStore: ConversationStore, TauServer {
     private var watchers: [Int: Int] = [:]
     private var statePromises: [Int: ValuePromise<ConversationState>] = [:]
     let outbox: Outbox
+    /// Files over HTTP: the outbox's uploads, the chat's downloads (Server/FileTransfer.swift).
+    let transfer: FileTransfer
     /// Row IDs of sent messages by the entry each became, so a row does not change identity when it is placed.
     private var rowIdForUserEntry: [Int: [Int: Int]] = [:]
     private var nextAttachmentId = 1
@@ -66,6 +68,7 @@ final class ServerStore: ConversationStore, TauServer {
         self.configuredName = name
         self.connection = TauConnection(url: url, token: token)
         self.outbox = Outbox(connection: self.connection, namespace: url.absoluteString)
+        self.transfer = FileTransfer(connection: self.connection, namespace: url.absoluteString)
         self.inputDrafts = InputDraftStorage(namespace: url.absoluteString)
         self.cache = EntryCache(namespace: url.absoluteString)
         let connection = self.connection
@@ -76,6 +79,21 @@ final class ServerStore: ConversationStore, TauServer {
             }
             connection.request(method, params, completion: completion)
         })
+        // The agent's images are files (server/src/send-file.ts), fetched over HTTP.
+        self.media.fetchFile = { [weak connection] id, completion in
+            guard let connection else {
+                completion(nil)
+                return
+            }
+            var request = URLRequest(url: connection.httpBase.appendingPathComponent("files/\(id)"))
+            connection.authorize(&request)
+            URLSession.shared.dataTask(with: request) { data, response, _ in
+                let ok = (response as? HTTPURLResponse)?.statusCode == 200
+                DispatchQueue.main.async {
+                    completion(ok ? data : nil)
+                }
+            }.resume()
+        }
         self.scroll = ScrollStateStorage(namespace: url.absoluteString)
         var pendingHides: [Int: Bool] = [:]
         for (key, value) in UserDefaults.standard.dictionary(forKey: "hides.\(url.absoluteString)") as? [String: Bool] ?? [:] {
@@ -240,6 +258,10 @@ final class ServerStore: ConversationStore, TauServer {
         let outbox = self.outbox
         outbox.mintAttachmentId = { [weak self] in
             return self?.mintAttachmentId() ?? 0
+        }
+        outbox.transfer = self.transfer
+        outbox.maxFileBytes = { [weak self] in
+            return self?.connection.hello?.maxFileBytes ?? 0
         }
         outbox.changed = { [weak self] id in
             guard let self else {
@@ -544,8 +566,11 @@ final class ServerStore: ConversationStore, TauServer {
             replica.apply(commit: push)
             let inboxAfter = Set(replica.inboxItems.compactMap { $0.int("id") })
             let users = replica.entries.filter { $0.key > maxBefore && $0.value.string("kind") == "pi.user" }.map { entry -> (id: Int, text: String, images: Int) in
-                let (text, images) = TranscriptBuilder.userContent(entry.value.objects("model").first?["content"])
-                return (entry.key, text, images.count)
+                let content = entry.value.objects("model").first?["content"]
+                let (text, images) = TranscriptBuilder.userContent(content)
+                // Its photos and files, as the outbox counts them.
+                let files = TranscriptBuilder.attachmentLines(content)
+                return (entry.key, text, files.isEmpty ? images.count : files.count)
             }
             if !users.isEmpty {
                 self.outbox.matchPlacements(conversationId: id, removedSubmissions: Array(inboxBefore.subtracting(inboxAfter)), newUserEntries: users)
@@ -651,7 +676,12 @@ final class ServerStore: ConversationStore, TauServer {
         }
         var text = latest.text
         if text.isEmpty {
-            text = latest.imageFiles.count > 1 ? "\(latest.imageFiles.count) Photos" : "Photo"
+            let files = (latest.uploads ?? []).filter { $0.kind == .file }
+            if let first = files.first {
+                text = files.count > 1 ? "\(files.count) Files" : first.name
+            } else {
+                text = latest.photoCount > 1 ? "\(latest.photoCount) Photos" : "Photo"
+            }
         }
         return DialogModel.Outgoing(text: text, date: latest.date, failed: self.hasFailedMessage(id))
     }
@@ -1274,8 +1304,9 @@ final class ServerStore: ConversationStore, TauServer {
 
     /// `attachments` with the server's images fetched, as photos to send again; at once when there are none.
     private func resolvingRemote(_ attachments: [MessageAttachment], completion: @escaping ([MessageAttachment]) -> Void) {
+        // A photo the server keeps as a file goes again by its ID; only older ones are fetched.
         let remote = attachments.compactMap { attachment -> (Int, RemoteImage)? in
-            if case let .remote(image) = attachment.kind {
+            if case let .remote(image) = attachment.kind, image.fileId == nil || self.connection.hello?.files != true {
                 return (attachment.id, image)
             }
             return nil
@@ -1290,7 +1321,7 @@ final class ServerStore: ConversationStore, TauServer {
                 images[id] = data.flatMap { UIImage(data: $0) }
             }
             completion(attachments.compactMap { attachment in
-                guard case .remote = attachment.kind else {
+                guard case .remote = attachment.kind, images.keys.contains(attachment.id) || remote.contains(where: { $0.0 == attachment.id }) else {
                     return attachment
                 }
                 return images[attachment.id].map { MessageAttachment(id: attachment.id, kind: .image($0)) }
@@ -1428,6 +1459,33 @@ final class ServerStore: ConversationStore, TauServer {
         self.connection.request("conversation.mark", ["conversationId": realId, "pinned": pinned ? key : false]) { _ in }
     }
 
+    func fileStatus(_ file: FileAttachment, in id: Int) -> Signal<FileTransferStatus, NoError> {
+        if let key = file.transferKey, file.serverId == nil {
+            // On its way up: its upload's progress, and at rest the device's copy.
+            let local = file.localURL
+            return self.transfer.status(key) |> map { status -> FileTransferStatus in
+                if case .remote = status, let local {
+                    return .local(local)
+                }
+                return status
+            }
+        }
+        guard let serverId = file.serverId else {
+            return .single(file.localURL.map { .local($0) } ?? .remote)
+        }
+        return self.transfer.status(serverId)
+    }
+
+    func downloadFile(_ file: FileAttachment, in id: Int) {
+        self.transfer.download(file)
+    }
+
+    func cancelFileDownload(_ file: FileAttachment, in id: Int) {
+        if let serverId = file.serverId {
+            self.transfer.cancelDownload(serverId)
+        }
+    }
+
     func setArchived(_ id: Int, _ archived: Bool) {
         guard let realId = self.resolve(id) else {
             return
@@ -1487,6 +1545,7 @@ final class ServerStore: ConversationStore, TauServer {
         usage.unsentBytes = self.outbox.diskBytes
         usage.draftBytes = self.inputDrafts.diskBytes
         usage.mediaBytes = self.media.diskBytes
+        usage.fileBytes = self.transfer.diskBytes
         return usage
     }
 
@@ -1496,6 +1555,7 @@ final class ServerStore: ConversationStore, TauServer {
         self.cache.remove(except: open)
         self.preloadedThrough = [:]
         self.media.clear()
+        self.transfer.clear()
         for (id, replica) in self.replicas where !open.contains(id) {
             replica.removeAll()
             self.replicas[id] = nil
@@ -1911,8 +1971,8 @@ func attachmentsTitle(_ attachments: [MessageAttachment]) -> String {
         switch attachment.kind {
         case .image, .remote:
             photos += 1
-        case let .file(name, _):
-            file = file ?? name
+        case let .file(attachment):
+            file = file ?? attachment.name
         }
     }
     if photos > 0 {

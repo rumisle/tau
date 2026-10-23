@@ -13,6 +13,7 @@ import {
 	type SubmissionRecord,
 } from "@earendil-works/pi-durable";
 import { CacheDoc, type CacheState, cacheModel } from "./cache.ts";
+import { attachedFiles, ownText } from "./attachments.ts";
 import { type Host, MetaDoc } from "./host.ts";
 import type { Dialog, EntrySummary } from "./protocol.ts";
 
@@ -222,11 +223,12 @@ function previewText(entry: EntryRecord, message: Message | undefined): string {
 	switch (message.role) {
 		case "user": {
 			if (typeof message.content === "string") return message.content;
-			// A caption stands for its photos, as in Telegram's chat list; photos alone read "Photo".
-			const text = message.content
-				.flatMap((part) => (part.type === "text" ? [part.text] : []))
-				.join(" ");
+			// A caption stands for its photos and files, as in Telegram's chat list; photos alone read "Photo", a file
+			// its name.
+			const text = ownText(message.content).replace(/\n/g, " ");
 			if (text.trim() !== "") return text;
+			const files = attachedFiles(message.content).filter((file) => file.kind === "file");
+			if (files.length > 0) return files.length > 1 ? `${files.length} Files` : (files[0]!.path.split("/").at(-1) ?? "File");
 			const images = message.content.filter((part) => part.type === "image").length;
 			return images > 1 ? `${images} Photos` : "Photo";
 		}

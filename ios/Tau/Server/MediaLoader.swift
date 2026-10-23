@@ -15,9 +15,13 @@ final class RemoteImage {
     let bytes: Int
     /// As its header declares it, in pixels; nil when the server could not read it.
     let pixelSize: CGSize?
+    /// The file it was sent from, kept by the server (docs/files.md): an edit sends that again, not the image.
+    var fileId: String?
+    /// Only a file, not an entry's image (one the agent sent): fetched from `/files/<id>`.
+    let isFile: Bool
     fileprivate let loader: MediaLoader
 
-    fileprivate init(conversationId: Int, entryId: Int, index: Int, mimeType: String, bytes: Int, pixelSize: CGSize?, loader: MediaLoader) {
+    fileprivate init(conversationId: Int, entryId: Int, index: Int, mimeType: String, bytes: Int, pixelSize: CGSize?, loader: MediaLoader, fileId: String? = nil) {
         self.conversationId = conversationId
         self.entryId = entryId
         self.index = index
@@ -25,9 +29,14 @@ final class RemoteImage {
         self.bytes = bytes
         self.pixelSize = pixelSize
         self.loader = loader
+        self.fileId = fileId
+        self.isFile = fileId != nil
     }
 
     var key: String {
+        if self.isFile, let fileId = self.fileId {
+            return "file-\(fileId)"
+        }
         return "\(self.conversationId)-\(self.entryId)-\(self.index)"
     }
 
@@ -63,6 +72,8 @@ final class MediaLoader {
     private static let types: Set<String> = ["public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp"]
 
     private let request: (String, JSONObject, @escaping (Result<JSONObject, RequestError>) -> Void) -> Void
+    /// A kept file's bytes over HTTP (server/src/http-files.ts): an image the agent sent.
+    var fetchFile: ((String, @escaping (Data?) -> Void) -> Void)?
     let directory: URL
     private let queue = Queue(name: "tau.media")
     private let decoded = NSCache<NSString, UIImage>()
@@ -88,6 +99,11 @@ final class MediaLoader {
             size = CGSize(width: width, height: height)
         }
         return RemoteImage(conversationId: conversationId, entryId: entryId, index: media.int("index") ?? index, mimeType: block.string("mimeType") ?? "", bytes: media.int("bytes") ?? 0, pixelSize: size, loader: self)
+    }
+
+    /// An image the agent sent, by its file (server/src/send-file.ts): shown as the user's photos are.
+    func fileImage(id: String, mimeType: String, bytes: Int, pixelSize: CGSize?) -> RemoteImage {
+        return RemoteImage(conversationId: 0, entryId: 0, index: 0, mimeType: mimeType, bytes: bytes, pixelSize: pixelSize, loader: self, fileId: id)
     }
 
     private func file(_ key: String) -> URL {
@@ -143,6 +159,28 @@ final class MediaLoader {
             return
         }
         self.waiting[key] = [completion]
+        if image.isFile, let fileId = image.fileId {
+            guard let fetchFile = self.fetchFile else {
+                self.waiting[key] = nil
+                completion(nil)
+                return
+            }
+            fetchFile(fileId) { [weak self] data in
+                guard let self else {
+                    return
+                }
+                let waiting = self.waiting.removeValue(forKey: key) ?? []
+                if let data {
+                    self.queue.async {
+                        try? data.write(to: url, options: .atomic)
+                    }
+                }
+                for completion in waiting {
+                    completion(data)
+                }
+            }
+            return
+        }
         self.request("media.get", ["conversationId": image.conversationId, "entryId": image.entryId, "index": image.index]) { [weak self] result in
             guard let self else {
                 return

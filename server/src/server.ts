@@ -1,11 +1,12 @@
 // WebSocket transport: one Connection per socket, optional bearer token.
 import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import type { IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 import { Connection } from "./connection.ts";
 import { Dialogs } from "./dialogs.ts";
+import { handleFiles } from "./http-files.ts";
 import type { Host } from "./host.ts";
 import { Notifier, type PushSender } from "./notifier.ts";
 import { Search } from "./search/service.ts";
@@ -38,9 +39,21 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 	// Beside the database, or in memory with it.
 	const search = new Search(host, host.database === undefined ? ":memory:" : searchIndexPath(host.database));
 	const connections = new Set<Connection>();
+	// HTTP for files (src/http-files.ts), behind the same token; the WebSocket upgrades on the same port.
+	const http = createServer((request, response) => {
+		if (!authorized(request, options.token)) {
+			response.writeHead(401, { "Content-Type": "application/json" });
+			response.end(JSON.stringify({ error: { code: "unauthorized", message: "A token is needed" } }));
+			request.resume();
+			return;
+		}
+		void handleFiles(host.files, request, response);
+	});
+	// A large upload over a slow link takes as long as it takes; a stalled one is cut after a few minutes.
+	http.requestTimeout = 0;
+	http.timeout = 5 * 60 * 1000;
 	const wss = new WebSocketServer({
-		host: options.host ?? "127.0.0.1",
-		port: options.port ?? 0,
+		server: http,
 		perMessageDeflate: { threshold: 1024 },
 		// Above the content limits of conversation.submit, so too much content is refused with `too_large` instead
 		// of closing the socket, which the client would take for a network failure and retry forever.
@@ -62,10 +75,10 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 		socket.on("error", () => socket.close());
 	});
 	await new Promise<void>((resolve, reject) => {
-		wss.once("listening", resolve);
-		wss.once("error", reject);
+		http.once("error", reject);
+		http.listen(options.port ?? 0, options.host ?? "127.0.0.1", () => resolve());
 	});
-	const address = wss.address() as AddressInfo;
+	const address = http.address() as AddressInfo;
 	return {
 		url: `ws://${address.address.includes(":") ? `[${address.address}]` : address.address}:${address.port}`,
 		notifier,
@@ -77,6 +90,8 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 			notifier.close();
 			search.close();
 			await new Promise<void>((resolve) => wss.close(() => resolve()));
+			http.closeAllConnections();
+			await new Promise<void>((resolve) => http.close(() => resolve()));
 		},
 	};
 }

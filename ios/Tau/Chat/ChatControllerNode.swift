@@ -519,6 +519,12 @@ final class ChatControllerNode: ASDisplayNode {
 
     var openImage: ((Int) -> Void)?
 
+    /// Set by the controller: where a file of the chat is, and a tap on its row (docs/files.md).
+    func setFileHandlers(status: @escaping (FileAttachment) -> Signal<FileTransferStatus, NoError>, open: @escaping (FileAttachment, FileTransferStatus) -> Void) {
+        self.interaction.fileStatus = status
+        self.interaction.openFile = open
+    }
+
     /// Set by the controller: text selection's menu goes above the context menu.
     var presentInGlobalOverlay: ((ViewController, Any?) -> Void)? {
         didSet {
@@ -543,7 +549,7 @@ final class ChatControllerNode: ASDisplayNode {
         var result: [ImageGalleryEntry] = []
         // A user's photos, and the images tools gave the model; those on the server once the chat shows them.
         for entry in self.entries.reversed() {
-            for attachment in entry.message.attachments + (entry.message.tool?.images ?? []) {
+            for attachment in entry.message.attachments + (entry.message.tool?.images ?? []) + (entry.message.tool?.sentFiles ?? []) {
                 switch attachment.kind {
                 case let .image(image):
                     result.append(ImageGalleryEntry(attachmentId: attachment.id, image: image))

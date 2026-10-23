@@ -44,6 +44,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         let piRevision: String
         /// It has the account's APNs key: it sends Apple's pushes, and Live Activity updates.
         var apns: Bool = false
+        /// It keeps files (docs/files.md): uploads over HTTP, and messages that name them; and the largest it takes.
+        var files: Bool = false
+        var maxFileBytes: Int64 = 0
     }
 
     let url: URL
@@ -91,6 +94,22 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     var onPush: ((JSONObject) -> Void)?
     /// After `hello` succeeded on a new socket.
     var onConnected: ((Hello) -> Void)?
+
+    /// The same server over HTTP, for files (server/src/http-files.ts).
+    var httpBase: URL {
+        var components = URLComponents(url: self.url, resolvingAgainstBaseURL: false) ?? URLComponents()
+        components.scheme = components.scheme == "wss" ? "https" : "http"
+        components.path = ""
+        components.query = nil
+        return components.url ?? self.url
+    }
+
+    /// With the server's token, as the socket has it.
+    func authorize(_ request: inout URLRequest) {
+        if let token = self.token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+    }
 
     init(url: URL, token: String?) {
         self.url = url
@@ -179,7 +198,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                     home: value.string("home") ?? "~",
                     hostname: value.string("hostname") ?? "",
                     piRevision: value.string("piRevision") ?? "",
-                    apns: value.bool("apns") ?? false
+                    apns: value.bool("apns") ?? false,
+                    files: value.bool("files") ?? false,
+                    maxFileBytes: Int64(value.double("maxFileBytes") ?? 0.0)
                 )
                 self.hello = hello
                 self.startPinging(generation: generation)

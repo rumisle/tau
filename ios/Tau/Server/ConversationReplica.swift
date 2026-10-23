@@ -120,7 +120,7 @@ enum TranscriptBuilder {
                 if case .withdrawing = item.state {
                     continue
                 }
-                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.imageFiles.count, isSending: false, outgoingId: item.requestId, submissionId: submissionId))
+                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.photoCount, isSending: false, outgoingId: item.requestId, submissionId: submissionId))
             } else {
                 let (text, images) = self.userContent(raw["content"])
                 result.append(QueuedMessage(id: "s\(submissionId)", mode: mode, text: text, imageCount: images.count, isSending: false, outgoingId: nil, submissionId: submissionId))
@@ -134,9 +134,9 @@ enum TranscriptBuilder {
                 if replica.isSynced && !item.needsRefresh {
                     continue
                 }
-                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.imageFiles.count, isSending: false, outgoingId: item.requestId, submissionId: submissionId))
+                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.photoCount, isSending: false, outgoingId: item.requestId, submissionId: submissionId))
             case .pending where item.showsInQueue:
-                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.imageFiles.count, isSending: true, outgoingId: item.requestId, submissionId: nil))
+                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.photoCount, isSending: true, outgoingId: item.requestId, submissionId: nil))
             default:
                 break
             }
@@ -236,8 +236,19 @@ enum TranscriptBuilder {
                     turnStart = date
                 }
                 let (text, imageBlocks) = self.userContent(message["content"])
-                let attachments = imageBlocks.enumerated().compactMap { index, block in
+                var attachments = imageBlocks.enumerated().compactMap { index, block in
                     attachment(entryId: id, index: index, block: block)
+                }
+                // Its files: each photo's, for an edit to send again, and the ones only named.
+                let lines = self.attachmentLines(message["content"])
+                let photoLines = lines.filter { $0.kind == .image }
+                for (index, attachment) in attachments.enumerated() where index < photoLines.count {
+                    if case let .remote(remote) = attachment.kind {
+                        remote.fileId = photoLines[index].fileId
+                    }
+                }
+                attachments += lines.filter { $0.kind == .file }.enumerated().map { index, line in
+                    MessageAttachment(id: id * 64 + 32 + index, kind: .file(line.file))
                 }
                 if let report = SubagentReport(text) {
                     // A background subagent's answer, posted as a message: its card, not the user's bubble.
@@ -306,6 +317,25 @@ enum TranscriptBuilder {
                         call.model = details.string("model") ?? call.model
                         call.thinking = details.string("thinking") ?? call.thinking
                         tool.subagent = call
+                    }
+                }
+                // What send_file sent: shown as photos and files, not as a card (server/src/send-file.ts).
+                if tool.name == "send_file", let files = message.object("details")?.objects("files") {
+                    tool.sentFiles = files.enumerated().compactMap { index, file -> MessageAttachment? in
+                        guard let fileId = file.string("id") else {
+                            return nil
+                        }
+                        var size: CGSize?
+                        if let width = file.double("width"), let height = file.double("height"), width > 0.0, height > 0.0 {
+                            size = CGSize(width: width, height: height)
+                        }
+                        let mimeType = file.string("mimeType") ?? "application/octet-stream"
+                        let bytes = file.double("bytes") ?? 0.0
+                        // An image the chat can show (a known format, at most 20 MB) as a photo; anything else a file.
+                        if let media, ["image/jpeg", "image/png", "image/gif", "image/webp"].contains(mimeType), bytes <= 20.0 * 1024.0 * 1024.0 {
+                            return MessageAttachment(id: id * 64 + index, kind: .remote(media.fileImage(id: fileId, mimeType: mimeType, bytes: Int(bytes), pixelSize: size)))
+                        }
+                        return MessageAttachment(id: id * 64 + index, kind: .file(FileAttachment(name: file.string("name") ?? "file", size: Int64(bytes), mimeType: mimeType, serverId: fileId, pixelSize: size)))
                     }
                 }
                 // The edit tool's result carries the diff with line numbers.
@@ -419,13 +449,25 @@ enum TranscriptBuilder {
     }
 
     /// A user message's text and its image blocks.
+    /// What a user message says (without its attachments block) and its image blocks.
     static func userContent(_ content: Any?) -> (String, [JSONObject]) {
         if let text = content as? String {
             return (text, [])
         }
         let blocks = (content as? [Any])?.compactMap { $0 as? JSONObject } ?? []
-        let text = blocks.filter { $0.string("type") == "text" }.compactMap { $0.string("text") }.joined(separator: "\n")
+        let text = blocks.filter { $0.string("type") == "text" }.compactMap { $0.string("text") }.filter { AttachmentLine.parse($0) == nil }.joined(separator: "\n")
         return (text, blocks.filter { $0.string("type") == "image" })
+    }
+
+    /// The files a user message's attachments block names (Server/AttachmentsBlock.swift); none without one.
+    static func attachmentLines(_ content: Any?) -> [AttachmentLine] {
+        let blocks = (content as? [Any])?.compactMap { $0 as? JSONObject } ?? []
+        for block in blocks where block.string("type") == "text" {
+            if let lines = block.string("text").flatMap(AttachmentLine.parse) {
+                return lines
+            }
+        }
+        return []
     }
 
     static func text(of content: Any?) -> String {

@@ -4,6 +4,7 @@ import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationId, ConversationRecord, Cursor, EntryId, EntryRecord } from "@earendil-works/pi-durable";
+import { attachedFiles, ownText } from "../attachments.ts";
 import { type Host, MetaDoc } from "../host.ts";
 import { type IndexEntry, type IndexPart, Kind, type KindName, SearchIndex, type SearchResponse } from "./index.ts";
 import { type UsageReport, UsageLedger, type UsageRow } from "./usage.ts";
@@ -13,8 +14,7 @@ export function searchParts(entry: EntryRecord): IndexPart[] {
 	const message = entry.model?.[0] as Message | undefined;
 	if (message === undefined) return [];
 	if (entry.kind === "pi.user" && message.role === "user") {
-		const content = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
-		const text = content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+		const text = userSearchText(message.content);
 		// A subagent's report reads as the agent's.
 		return text.trim() === "" ? [] : [{ kind: text.startsWith("<subagent ") ? Kind.assistant : Kind.user, text, idx: 0 }];
 	}
@@ -31,14 +31,17 @@ export function searchParts(entry: EntryRecord): IndexPart[] {
 	return [];
 }
 
+/** A user message as search finds it: what it says, then its files' names, without the attachments block's paths. */
+function userSearchText(content: Extract<Message, { role: "user" }>["content"]): string {
+	const names = attachedFiles(content).map((file) => file.path.split("/").at(-1) ?? "");
+	return [ownText(content), ...names].filter((part) => part !== "").join("\n");
+}
+
 /** The text of part `idx` of an entry, as `searchParts` indexed it. */
 function partText(entry: EntryRecord, idx: number): string | undefined {
 	const message = entry.model?.[0] as Message | undefined;
 	if (message === undefined) return undefined;
-	if (message.role === "user") {
-		const content = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
-		return content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
-	}
+	if (message.role === "user") return userSearchText(message.content);
 	if (message.role === "assistant") {
 		const block = message.content[idx];
 		if (block?.type === "text") return block.text;

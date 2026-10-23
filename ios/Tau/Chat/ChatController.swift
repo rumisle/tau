@@ -358,6 +358,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         node.openImage = { [weak self] attachmentId in
             self?.openImage(attachmentId: attachmentId)
         }
+        let store = self.context.store
+        let conversationId = self.conversationId
+        node.setFileHandlers(status: { file in
+            return store.fileStatus(file, in: conversationId)
+        }, open: { [weak self] file, status in
+            self?.openFile(file, status: status)
+        })
         node.loadOlder = { [weak self] in
             guard let self else {
                 return
@@ -462,8 +469,17 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     /// On screen and not a preview: what arrives is read, as Telegram reads the messages a chat shows.
     private var isOnScreen = false
 
+    /// For UI tests: `-attachFile <path> [-attachCaption <text>]` sends that file from the first chat opened, as the
+    /// document picker gives one (docs/files.md).
+    private static var attachedTestFile = false
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if !self.isPreview, !ChatController.attachedTestFile, let path = UserDefaults.standard.string(forKey: "attachFile") {
+            ChatController.attachedTestFile = true
+            let attachment = MessageAttachment(id: self.context.store.mintAttachmentId(), kind: .file(FileAttachment(local: URL(fileURLWithPath: path))))
+            self.send(text: UserDefaults.standard.string(forKey: "attachCaption") ?? "", attachments: [attachment])
+        }
         if !self.isPreview {
             self.isOnScreen = true
             self.context.store.markSeen(self.conversationId)
@@ -1288,6 +1304,17 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                     inputPanel.setText("")
                 }
                 self.send(text: text, attachments: attachments)
+            case let .mediaFiles(urls, pickedCaption):
+                guard !urls.isEmpty else {
+                    return
+                }
+                sent = true
+                let attachments = urls.map { MessageAttachment(id: self.context.store.mintAttachmentId(), kind: .file(FileAttachment(local: $0))) }
+                let text = (pickedCaption.isEmpty ? caption : pickedCaption).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !written.isEmpty && self.editingMessageId == nil {
+                    inputPanel.setText("")
+                }
+                self.send(text: text, attachments: attachments)
             case .files:
                 let documentPicker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
                 documentPicker.delegate = self
@@ -1319,11 +1346,28 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        // Copies (`asCopy`), which the outbox copies again before they go.
         let attachments = urls.map { url -> MessageAttachment in
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }.map(Int64.init) ?? 0
-            return MessageAttachment(id: self.context.store.mintAttachmentId(), kind: .file(name: url.lastPathComponent, size: size))
+            return MessageAttachment(id: self.context.store.mintAttachmentId(), kind: .file(FileAttachment(local: url)))
         }
         self.send(text: "", attachments: attachments)
+    }
+
+    /// A file's row tapped, as Telegram's: fetch it, stop fetching it, or open it in Quick Look (DocumentPreviewController),
+    /// where it shares, saves to Files or opens in another app.
+    private func openFile(_ file: FileAttachment, status: FileTransferStatus) {
+        switch status {
+        case .remote:
+            self.context.store.downloadFile(file, in: self.conversationId)
+        case .downloading:
+            self.context.store.cancelFileDownload(file, in: self.conversationId)
+        case .uploading:
+            break
+        case let .local(url):
+            self.controllerNode.inputPanelNode.deactivateInput()
+            let preview = FilePreviewController(url: url)
+            self.view.window?.rootViewController?.present(preview, animated: true)
+        }
     }
 
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
