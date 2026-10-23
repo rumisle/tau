@@ -74,6 +74,12 @@ export function attachedFiles(content: string | readonly (TextContent | ImageCon
 	return [];
 }
 
+/** The file ID in a kept file's path: the directory it is in (src/files.ts). */
+export function fileIdFromPath(path: string): string | undefined {
+	const id = path.split("/").at(-2) ?? "";
+	return /^[0-9a-f]{32}$/.test(id) ? id : undefined;
+}
+
 function escape(value: string): string {
 	return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "&#10;");
 }

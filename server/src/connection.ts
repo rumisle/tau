@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { attachmentsText, ownText } from "./attachments.ts";
 import type { StoredFile } from "./files.ts";
+import { DEFAULT_IMAGE_LIMITS } from "@earendil-works/pi-durable/tools";
 import { homedir, hostname } from "node:os";
 import { CACHE_WARMING_MODES, type CacheWarmingMode } from "./cache.ts";
 import { type CompactionThreshold, MAX_COMPACTION_RATIO, MIN_COMPACTION_RATIO, MIN_COMPACTION_TOKENS } from "./compaction.ts";
@@ -714,8 +715,8 @@ export class Connection {
 				}, this.#context);
 			}
 		}
-		// Kept for good before the message is in: an upload is swept only while no message refers to it.
-		await this.#host.files.keep(attached.map((each) => each.file.id));
+		// Before the message is in: its uploads wait for its entry a week, not a day (src/files.ts).
+		await this.#host.files.submitted(attached.map((each) => each.file.id));
 		const submission = await conversation.submit({ type: "input", content, whenBusy, requestId }, this.#context);
 		return { submission: await submission.status(this.#context) };
 	}
@@ -724,18 +725,32 @@ export class Connection {
 	 * The uploads a message names, with whether each goes to the model as an image too: one sent as a photo, of a type
 	 * and size every provider takes, to a model that takes images. The rest are files, named only.
 	 */
-	async #attachments(conversation: Conversation, ids: readonly { id: string; as: "image" | "file" }[]): Promise<{ file: StoredFile; shown: boolean }[]> {
+	async #attachments(conversation: Conversation, ids: readonly { id: string; as: "image" | "file" }[]): Promise<Attached[]> {
 		if (ids.length === 0) return [];
 		const takesImages = await this.#takesImages(conversation);
-		const result: { file: StoredFile; shown: boolean }[] = [];
+		const result: Attached[] = [];
 		for (const { id, as } of ids) {
 			const file = await this.#host.files.get(id);
 			if (file === undefined) throw new ProtocolError("file_missing", `No file ${id}: it was never uploaded, or not used for a day`);
-			const shown = as === "image" && takesImages && IMAGE_TYPES.has(file.mimeType) && file.bytes <= MAX_IMAGE_BYTES;
-			result.push({ file, shown });
+			let image: ImageContent | undefined;
+			if (as === "image" && takesImages && IMAGE_TYPES.has(file.mimeType)) image = await this.#shownImage(file);
+			result.push({ file, shown: image !== undefined, ...(image === undefined ? {} : { image }) });
 		}
 		if (result.filter((each) => each.shown).length > MAX_IMAGES) throw new ProtocolError("too_large", `A message can carry at most ${MAX_IMAGES} images`);
 		return result;
+	}
+
+	/**
+	 * A photo as the model sees it: as it is within durable's limits (2000 pixels a side, 4.5 MB of base64), else shrunk
+	 * by the image processor; undefined when it cannot be, and it goes as a file.
+	 */
+	async #shownImage(file: StoredFile): Promise<ImageContent | undefined> {
+		const bytes = await readFile(file.path);
+		const limits = DEFAULT_IMAGE_LIMITS;
+		const fits = file.width !== undefined && file.height !== undefined && file.width <= limits.maxWidth && file.height <= limits.maxHeight && Math.ceil(bytes.length / 3) * 4 <= limits.maxBytes;
+		if (fits) return { type: "image", mimeType: file.mimeType, data: bytes.toString("base64") };
+		const prepared = await this.#host.images.prepare(bytes, file.mimeType, limits).catch(() => undefined);
+		return prepared === undefined ? undefined : { type: "image", mimeType: prepared.mimeType, data: prepared.data };
 	}
 
 	async #takesImages(conversation: Conversation): Promise<boolean> {
@@ -911,12 +926,12 @@ function isEmptyContent(value: unknown): boolean {
 }
 
 /** The message as the model gets it: the attachments block, the images shown, then what the user wrote. */
-async function withAttachments(own: string | (TextContent | ImageContent)[], attached: readonly { file: StoredFile; shown: boolean }[]): Promise<string | (TextContent | ImageContent)[]> {
+/** A message's file, with the image the model sees of it when it does. */
+type Attached = { file: StoredFile; shown: boolean; image?: ImageContent };
+
+async function withAttachments(own: string | (TextContent | ImageContent)[], attached: readonly Attached[]): Promise<string | (TextContent | ImageContent)[]> {
 	if (attached.length === 0) return own;
-	const images: ImageContent[] = [];
-	for (const { file, shown } of attached) {
-		if (shown) images.push({ type: "image", mimeType: file.mimeType, data: (await readFile(file.path)).toString("base64") });
-	}
+	const images = attached.flatMap((each) => (each.image === undefined ? [] : [each.image]));
 	const rest = typeof own === "string" ? (own === "" ? [] : [{ type: "text" as const, text: own }]) : own;
 	return [{ type: "text", text: attachmentsText(attached) }, ...images, ...rest];
 }

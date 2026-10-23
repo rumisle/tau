@@ -44,6 +44,9 @@ struct OutgoingMessage: Codable, Equatable {
         let mimeType: String
         /// The server's ID, once uploaded.
         var serverId: String?
+        /// A photo's pixels, for laying it out before it is fetched (an edit's, which this device may not have).
+        var width: Double? = nil
+        var height: Double? = nil
     }
 
     let requestId: String
@@ -168,6 +171,8 @@ final class Outbox {
     var transfer: FileTransfer?
     /// The largest file the server takes, as its `hello` said; 0 when unknown.
     var maxFileBytes: (() -> Int64)?
+    /// A photo the server keeps, shown from its file (MediaLoader.fileImage): an edit's, which this device may not have.
+    var fileImage: ((String, String, Int, CGSize?) -> RemoteImage?)?
 
     /// An upload's transfer, for its row's progress.
     static func transferKey(_ requestId: String, _ index: Int) -> String {
@@ -309,6 +314,9 @@ final class Outbox {
             let url = self.localURL(upload)
             if upload.kind == .photo, let url, let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
                 result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .image(image)))
+            } else if upload.kind == .photo, url == nil, let serverId = upload.serverId, let remote = self.fileImage?(serverId, upload.mimeType, Int(upload.size), upload.width.flatMap { width in upload.height.map { CGSize(width: width, height: $0) } }) {
+                // An edit's photo, which the server has: shown from its file, as a photo still.
+                result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .remote(remote)))
             } else {
                 result.append(MessageAttachment(id: self.mintAttachmentId?() ?? 0, kind: .file(FileAttachment(name: upload.name, size: upload.size, mimeType: upload.mimeType, serverId: upload.serverId, localURL: url, transferKey: Outbox.transferKey(item.requestId, index)))))
             }
@@ -346,7 +354,7 @@ final class Outbox {
                     failure = "A photo was not loaded"
                     continue
                 }
-                uploads.append(OutgoingMessage.Upload(kind: .photo, localName: nil, name: "photo.jpg", size: Int64(remote.bytes), mimeType: remote.mimeType, serverId: fileId))
+                uploads.append(OutgoingMessage.Upload(kind: .photo, localName: nil, name: "photo.jpg", size: Int64(remote.bytes), mimeType: remote.mimeType, serverId: fileId, width: remote.pixelSize.map { Double($0.width) }, height: remote.pixelSize.map { Double($0.height) }))
             case let .file(file):
                 if let serverId = file.serverId {
                     uploads.append(OutgoingMessage.Upload(kind: .file, localName: nil, name: file.name, size: file.size, mimeType: file.mimeType, serverId: serverId))

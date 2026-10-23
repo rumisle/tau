@@ -9,7 +9,7 @@ import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { type Compiled, compile, excerpt, ftsExpression, highlight, parseQuery, type Range, type Vocabulary } from "./match.ts";
 import { tokenize } from "./tokenize.ts";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const Kind = { user: 0, assistant: 1, reasoning: 2, title: 3 } as const;
 export type KindName = keyof typeof Kind;
@@ -26,7 +26,8 @@ export const kindOf = (rowid: number): number => rowid % 8;
 const range = (conversation: number): [number, number] => [conversation * CONV_SHIFT, (conversation + 1) * CONV_SHIFT - 1];
 
 export type IndexPart = { kind: number; text: string; idx: number };
-export type IndexEntry = { conversationId: number; entryId: number; time: number; parts: IndexPart[] };
+/** `files`: the kept files the entry names (src/files.ts), so a file an entry names is never swept. */
+export type IndexEntry = { conversationId: number; entryId: number; time: number; parts: IndexPart[]; files?: string[] };
 
 export type ConversationInfo = {
 	/** Fork source and the last entry it shares. */
@@ -144,7 +145,9 @@ export class SearchIndex {
 		const version = (this.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
 		if (version === SCHEMA_VERSION) return;
 		this.db.exec("BEGIN");
-		for (const table of ["conv", "part", "vocab", "fts", "usage"]) this.db.exec(`DROP TABLE IF EXISTS ${table}`);
+		for (const table of ["conv", "part", "vocab", "fts", "usage", "file_ref"]) this.db.exec(`DROP TABLE IF EXISTS ${table}`);
+		// The files each entry names.
+		this.db.exec("CREATE TABLE file_ref (file TEXT NOT NULL, entry INTEGER NOT NULL, PRIMARY KEY (file, entry)) WITHOUT ROWID");
 		this.db.exec(`CREATE TABLE conv (
 			id INTEGER PRIMARY KEY, counter INTEGER NOT NULL, cursor INTEGER NOT NULL, updated INTEGER NOT NULL,
 			parent INTEGER, parent_at INTEGER, archived INTEGER NOT NULL DEFAULT 0)`);
@@ -192,6 +195,7 @@ export class SearchIndex {
 		const insertPart = this.#statement("INSERT INTO part (rowid, entry, idx, time) VALUES (?, ?, ?, ?)");
 		const insertVocab = this.#statement("INSERT OR IGNORE INTO vocab (term, head, len) VALUES (?, ?, ?)");
 		const updateConv = this.#statement("UPDATE conv SET counter = ?, cursor = ?, updated = ? WHERE id = ?");
+		const insertFile = this.#statement("INSERT OR IGNORE INTO file_ref (file, entry) VALUES (?, ?)");
 		const touched = new Set<ConvRow>();
 		this.db.exec("BEGIN");
 		try {
@@ -201,6 +205,7 @@ export class SearchIndex {
 				conv.cursor = entry.entryId;
 				conv.updated = Math.max(conv.updated, entry.time);
 				touched.add(conv);
+				for (const file of entry.files ?? []) insertFile.run(file, entry.entryId);
 				for (const part of entry.parts) {
 					if (conv.counter >= MAX_SEQ) break;
 					const tokens = tokenize(part.text.length > MAX_PART ? part.text.slice(0, MAX_PART) : part.text);
@@ -248,6 +253,11 @@ export class SearchIndex {
 			tokens.filter((token) => token.part !== true).map((token) => token.text).join(" "),
 			tokens.filter((token) => token.part === true).map((token) => token.text).join(" "),
 		);
+	}
+
+	/** Whether an entry names the kept file. */
+	referencesFile(id: string): boolean {
+		return this.#statement("SELECT 1 FROM file_ref WHERE file = ? LIMIT 1").get(id) !== undefined;
 	}
 
 	/** Where a conversation was forked from. */

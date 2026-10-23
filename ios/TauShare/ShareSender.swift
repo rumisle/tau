@@ -95,16 +95,14 @@ final class ShareConnection {
 }
 
 enum ShareSender {
-    /// Sends `content` to each chat (as a follow-up when its agent is working: a share must not turn a run aside) and
-    /// to a new chat, grouped by server. Returns what could not be sent.
-    static func send(text: String, images: [Data], chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?, servers: [ShareSnapshot.Server]) async -> (chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?) {
-        var content: Any = text
-        if !images.isEmpty {
-            let blocks: [[String: Any]] = images.map { ["type": "image", "data": $0.base64EncodedString(), "mimeType": "image/jpeg"] }
-            content = (text.isEmpty ? [] : [["type": "text", "text": text]]) + blocks
-        }
+    /// Sends the share to each chat (as a follow-up when its agent is working: a share must not turn a run aside) and
+    /// to a new chat, grouped by server. A server that keeps files (docs/files.md) gets the photos and files uploaded,
+    /// once for all its chats, and named by the messages; one from before, the photos inline and no files. Returns what
+    /// could not be sent, and why when the server said.
+    static func send(text: String, images: [Data], files: [URL], chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?, servers: [ShareSnapshot.Server]) async -> (chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?, reason: String?) {
         var failedChats: [ShareSnapshot.Chat] = []
         var failedNew: ShareSnapshot.Project?
+        var reason: String?
         let slots = Set(chats.map(\.slot) + (newChat.map { [$0.slot] } ?? []))
         for slot in slots {
             let chatsHere = chats.filter { $0.slot == slot }
@@ -117,34 +115,107 @@ enum ShareSender {
             defer {
                 connection.close()
             }
+            let hello: [String: Any]
             do {
-                _ = try await connection.request("hello", ["protocol": 1])
+                hello = try await connection.request("hello", ["protocol": 1])
             } catch {
                 failedChats += chatsHere
                 failedNew = newHere ?? failedNew
                 continue
             }
+            var content: Any = text
+            var attachments: [[String: Any]] = []
+            if (hello["files"] as? Bool) == true {
+                do {
+                    for data in images {
+                        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jpg")
+                        try data.write(to: url)
+                        defer {
+                            try? FileManager.default.removeItem(at: url)
+                        }
+                        attachments.append(["id": try await upload(url, name: "photo.jpg", to: server), "as": "image"])
+                    }
+                    for url in files {
+                        attachments.append(["id": try await upload(url, name: url.lastPathComponent, to: server), "as": "file"])
+                    }
+                } catch {
+                    if case let ShareConnection.Failure.server(message) = error {
+                        reason = message
+                    }
+                    failedChats += chatsHere
+                    failedNew = newHere ?? failedNew
+                    continue
+                }
+            } else {
+                if !files.isEmpty {
+                    reason = "\(server.name) does not take files: update it"
+                    failedChats += chatsHere
+                    failedNew = newHere ?? failedNew
+                    continue
+                }
+                if !images.isEmpty {
+                    let blocks: [[String: Any]] = images.map { ["type": "image", "data": $0.base64EncodedString(), "mimeType": "image/jpeg"] }
+                    content = (text.isEmpty ? [] : [["type": "text", "text": text]]) + blocks
+                }
+            }
+            func submit(_ conversationId: Int, busy: String?) async throws {
+                var params: [String: Any] = ["conversationId": conversationId, "requestId": UUID().uuidString, "content": content]
+                if let busy {
+                    params["whenBusy"] = busy
+                }
+                if !attachments.isEmpty {
+                    params["attachments"] = attachments
+                }
+                _ = try await connection.request("conversation.submit", params)
+            }
             for chat in chatsHere {
                 do {
-                    _ = try await connection.request("conversation.submit", ["conversationId": chat.localId, "requestId": UUID().uuidString, "content": content, "whenBusy": "followUp"])
+                    try await submit(chat.localId, busy: "followUp")
                 } catch {
                     failedChats.append(chat)
                 }
             }
             if let project = newHere {
                 do {
-                    let title = String(text.split(separator: "\n").first?.prefix(60) ?? "Shared")
+                    let title = String(text.split(separator: "\n").first?.prefix(60) ?? Substring(files.first?.lastPathComponent ?? "Shared"))
                     let created = try await connection.request("conversation.create", ["requestId": UUID().uuidString, "title": title.isEmpty ? "Shared" : title, "autoTitle": true, "agent": ["cwd": project.path]])
                     guard let id = ((created["dialog"] as? [String: Any])?["conversation"] as? [String: Any])?["id"] as? NSNumber else {
                         throw ShareConnection.Failure.server("no conversation")
                     }
-                    _ = try await connection.request("conversation.submit", ["conversationId": id.intValue, "requestId": UUID().uuidString, "content": content])
+                    try await submit(id.intValue, busy: nil)
                 } catch {
                     failedNew = project
                 }
             }
         }
-        return (failedChats, failedNew)
+        return (failedChats, failedNew, reason)
+    }
+
+    /// One file to a server over HTTP (server/src/http-files.ts), streamed from disk; its ID.
+    private static func upload(_ url: URL, name: String, to server: ShareSnapshot.Server) async throws -> String {
+        guard var components = URLComponents(string: server.address) else {
+            throw ShareConnection.Failure.connection("bad address")
+        }
+        components.scheme = components.scheme == "wss" ? "https" : "http"
+        components.path = "/files"
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        guard let endpoint = components.url else {
+            throw ShareConnection.Failure.connection("bad address")
+        }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        if let token = server.token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 60.0
+        let (data, response) = try await URLSession(configuration: configuration).upload(for: request, fromFile: url)
+        let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard (response as? HTTPURLResponse)?.statusCode == 201, let id = body?["id"] as? String else {
+            throw ShareConnection.Failure.server((body?["error"] as? [String: Any])?["message"] as? String ?? "The server refused \(name)")
+        }
+        return id
     }
 
     /// What could not be sent, for the app to send through its outbox when it opens; photos smaller, to fit the keychain.

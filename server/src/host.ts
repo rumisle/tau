@@ -21,7 +21,8 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { createCodingTools, type ImageProcessor } from "@earendil-works/pi-durable/tools";
+import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 import { CacheWarmer, type CacheWarmingMode } from "./cache.ts";
 import { type CompactionThreshold, compactionOverrides, DEFAULT_COMPACTION_THRESHOLD, FollowUpCompaction } from "./compaction.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
@@ -143,6 +144,11 @@ export type Host = {
 	readonly cwd: string;
 	/** The files messages refer to (src/files.ts). */
 	readonly files: FileStore;
+	/**
+	 * Shrinks and converts images for the model (durable's Photon one, in a worker thread): an image the read tool
+	 * returns, a photo past the limits.
+	 */
+	readonly images: ImageProcessor;
 	close(): Promise<void>;
 };
 
@@ -172,7 +178,9 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		...(options.maxFileBytes === undefined ? {} : { maxBytes: options.maxFileBytes }),
 	});
 	const registry = createRegistry();
-	registry.install(CodingTools);
+	// Without one, the read tool refuses an image past 2000 pixels or 4.5 MB instead of shrinking it, as pi's does.
+	const images = await createNodePhotonImages();
+	registry.install(createCodingTools({ images }));
 	registry.install(Subagent);
 	registry.install(sendFileExtension(files));
 	registry.install(
@@ -293,6 +301,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		},
 		cwd,
 		files,
+		images,
 		close: async () => {
 			cache.close();
 			await harness.close(context);

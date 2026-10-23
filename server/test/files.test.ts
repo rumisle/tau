@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
 import { after, before, describe, test } from "node:test";
 import { parseAttachments } from "../src/attachments.ts";
 import { ConversationReplica, type RequestError, TauClient } from "../src/client.ts";
@@ -13,6 +14,26 @@ const TOKEN = "a-token-long-enough-for-files";
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64");
 
 type Content = { type: string; text?: string; data?: string; mimeType?: string }[];
+
+/** A grey PNG of `width` by `height`, built by hand. */
+function png(width: number, height: number): Buffer {
+	const chunk = (type: string, data: Buffer) => {
+		const length = Buffer.alloc(4);
+		length.writeUInt32BE(data.length);
+		const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+		const crc = Buffer.alloc(4);
+		crc.writeUInt32BE(crc32(body));
+		return Buffer.concat([length, body, crc]);
+	};
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(width, 0);
+	header.writeUInt32BE(height, 4);
+	header[8] = 8;
+	header[9] = 2;
+	const rows = Buffer.alloc((width * 3 + 1) * height, 0x80);
+	for (let y = 0; y < height; y++) rows[y * (width * 3 + 1)] = 0;
+	return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", header), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]);
+}
 
 describe("files", () => {
 	let host: Host;
@@ -125,6 +146,29 @@ describe("files", () => {
 		await client.close();
 	});
 
+	test("images past the limits are shrunk for the model, read or sent as a photo", async () => {
+		writeFileSync(join(cwd, "wide.png"), png(2320, 540));
+		const client = await TauClient.connect(server.url, TOKEN);
+		const { dialog } = await client.request("conversation.create", { agent: { cwd } });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "w-1", content: "!read wide.png" });
+		await until(replica, () => replica.ordered().some((entry) => entry.kind === "pi.tool-result"));
+		const result = replica.ordered().find((entry) => entry.kind === "pi.tool-result") as unknown as { model: { content: Content; isError: boolean }[] };
+		assert.equal(result.model[0]!.isError, false, JSON.stringify(result.model[0]!.content).slice(0, 300));
+		assert.ok(result.model[0]!.content.some((part) => part.type === "image"), "the read tool shows it");
+		assert.match(JSON.stringify(result.model[0]!.content), /2000x466/);
+		// Sent as a photo: shown too, shrunk.
+		await until(replica, () => (replica.docs["pi.live"] as { run?: unknown } | undefined)?.run === undefined);
+		const wide = await uploaded("wide.png", png(2320, 540));
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "w-2", content: "and this", attachments: [{ id: wide.id, as: "image" }] });
+		await until(replica, () => replica.ordered().filter((entry) => entry.kind === "pi.user").length >= 2);
+		const user = replica.ordered().filter((entry) => entry.kind === "pi.user").at(-1) as unknown as { model: { content: Content }[] };
+		assert.equal(parseAttachments(user.model[0]!.content[0]!.text!)?.[0]?.kind, "image");
+		assert.equal(user.model[0]!.content[1]!.type, "image");
+		await client.close();
+	});
+
 	test("send_file copies a file for the user, once however often the call runs", async () => {
 		writeFileSync(join(cwd, "chart.png"), PNG);
 		mkdirSync(join(cwd, "folder"), { recursive: true });
@@ -164,11 +208,20 @@ describe("file store", () => {
 			const { Readable } = await import("node:stream");
 			const kept = await store.upload("kept.txt", Readable.from([Buffer.from("a")]));
 			const dropped = await store.upload("dropped.txt", Readable.from([Buffer.from("b")]));
-			await store.keep([kept.id]);
-			await store.age(dropped.id, 25 * 60 * 60 * 1000);
-			assert.equal(await store.sweep(), 1);
-			assert.ok(await store.get(kept.id));
+			const withdrawn = await store.upload("withdrawn.txt", Readable.from([Buffer.from("c")]));
+			const named = new Set([kept.id]);
+			store.referenced = async (id) => named.has(id);
+			// Named by a message: a week to wait for its entry, not a day.
+			await store.submitted([kept.id, withdrawn.id]);
+			for (const file of [kept, dropped, withdrawn]) await store.age(file.id, 25 * 60 * 60 * 1000);
+			assert.equal(await store.sweep(), 1, "a day on, only the upload no message named");
 			assert.equal(await store.get(dropped.id), undefined);
+			assert.ok(await store.get(withdrawn.id), "its message may still be queued");
+			for (const file of [kept, withdrawn]) await store.age(file.id, 8 * 24 * 60 * 60 * 1000);
+			assert.equal(await store.sweep(), 1, "a week on, the one no entry names");
+			assert.ok(await store.get(kept.id), "the one an entry names is kept for good");
+			assert.equal(await store.get(withdrawn.id), undefined);
+			assert.equal(await store.sweep(0), 0, "and is no longer pending");
 			assert.equal(statSync(root).mode & 0o777, 0o700);
 		} finally {
 			store.close();

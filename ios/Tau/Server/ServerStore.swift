@@ -263,6 +263,9 @@ final class ServerStore: ConversationStore, TauServer {
         outbox.maxFileBytes = { [weak self] in
             return self?.connection.hello?.maxFileBytes ?? 0
         }
+        outbox.fileImage = { [weak self] id, mimeType, bytes, size in
+            return self?.media.fileImage(id: id, mimeType: mimeType, bytes: bytes, pixelSize: size)
+        }
         outbox.changed = { [weak self] id in
             guard let self else {
                 return

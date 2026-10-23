@@ -66,6 +66,8 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
 
     private var sharedText = ""
     private var sharedImages: [UIImage] = []
+    /// Files (a PDF, an archive, a video), copied here: the provider's URL lasts only while it is read.
+    private var sharedFiles: [URL] = []
 
     private let titleLabel = UILabel()
     private let cancelButton = UIButton(type: .system)
@@ -255,9 +257,28 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         var texts: [String] = []
         var urls: [String] = []
         var images: [UIImage] = []
+        var files: [URL] = []
         let lock = NSLock()
         for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            // A file that is no image, link or text (one from Files, a PDF from Safari): as it is, to upload.
+            let isFile = provider.hasItemConformingToTypeIdentifier(UTType.data.identifier) && !provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) && !provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) && !provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
+            if isFile || (provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) && !provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)) {
+                group.enter()
+                let type = provider.registeredTypeIdentifiers.first { UTType($0)?.conforms(to: .data) == true } ?? UTType.data.identifier
+                provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
+                    if let url {
+                        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                        let copy = directory.appendingPathComponent(provider.suggestedName.map { name in (url.pathExtension.isEmpty || name.hasSuffix(".\(url.pathExtension)")) ? name : "\(name).\(url.pathExtension)" } ?? url.lastPathComponent)
+                        if (try? FileManager.default.copyItem(at: url, to: copy)) != nil {
+                            lock.lock()
+                            files.append(copy)
+                            lock.unlock()
+                        }
+                    }
+                    group.leave()
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
                 group.enter()
                 provider.loadItem(forTypeIdentifier: UTType.image.identifier) { item, _ in
                     var image: UIImage?
@@ -301,13 +322,21 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
             // A link shared with its page's title comes as both; the title, then the link.
             self.sharedText = (texts + urls.filter { url in !texts.contains(where: { $0.contains(url) }) }).joined(separator: "\n")
             self.sharedImages = images
-            self.previewImage.image = images.first
-            self.previewImage.isHidden = images.isEmpty
+            self.sharedFiles = files
+            self.previewImage.image = images.first ?? (files.isEmpty ? nil : UIImage(systemName: "doc.fill"))
+            self.previewImage.isHidden = images.isEmpty && files.isEmpty
             var preview = self.sharedText.replacingOccurrences(of: "\n", with: " ")
+            var parts: [String] = []
+            if !images.isEmpty {
+                parts.append(images.count == 1 ? "Photo" : "\(images.count) Photos")
+            }
+            if !files.isEmpty {
+                parts.append(files.count == 1 ? files[0].lastPathComponent : "\(files.count) Files")
+            }
             if preview.isEmpty {
-                preview = images.count == 1 ? "Photo" : "\(images.count) Photos"
-            } else if !images.isEmpty {
-                preview = (images.count == 1 ? "Photo · " : "\(images.count) Photos · ") + preview
+                preview = parts.joined(separator: " · ")
+            } else if !parts.isEmpty {
+                preview = parts.joined(separator: " · ") + " · " + preview
             }
             self.previewLabel.text = preview
             self.updateSendState()
@@ -387,7 +416,7 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
 
     private func updateSendState() {
         let count = self.selected.count + (self.newChatSelected ? 1 : 0)
-        let hasContent = !self.sharedText.isEmpty || !self.sharedImages.isEmpty || !self.commentView.text.isEmpty
+        let hasContent = !self.sharedText.isEmpty || !self.sharedImages.isEmpty || !self.sharedFiles.isEmpty || !self.commentView.text.isEmpty
         self.sendButton.isEnabled = count > 0 && hasContent
         self.sendButton.alpha = self.sendButton.isEnabled ? 1.0 : 0.4
         self.countBadge.text = "\(count)"
@@ -411,11 +440,29 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         self.sendButton.setImage(nil, for: .normal)
         self.spinner.startAnimating()
         let servers = self.snapshot.servers
+        let files = self.sharedFiles
         Task {
-            let failed = await ShareSender.send(text: text, images: images, chats: chats, newChat: newChat, servers: servers)
+            let failed = await ShareSender.send(text: text, images: images, files: files, chats: chats, newChat: newChat, servers: servers)
             await MainActor.run {
                 if failed.chats.isEmpty && failed.newChat == nil {
                     self.extensionContext?.completeRequest(returningItems: nil)
+                } else if let reason = failed.reason {
+                    // The server answered no: nothing to leave for later.
+                    let alert = UIAlertController(title: "Not Sent", message: reason, preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+                        // Back as it was, to pick otherwise or cancel.
+                        self?.sendButton.isEnabled = true
+                        self?.sendButton.setImage(UIImage(systemName: "arrow.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16.0, weight: .bold)), for: .normal)
+                        self?.spinner.stopAnimating()
+                    })
+                    self.present(alert, animated: true)
+                } else if !files.isEmpty {
+                    // Files are too large to leave in the keychain for the app: shared again once the server is back.
+                    let alert = UIAlertController(title: "Not Sent", message: "The server could not be reached, and files are not kept for later: share them again once it is.", preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+                        self?.extensionContext?.completeRequest(returningItems: nil)
+                    })
+                    self.present(alert, animated: true)
                 } else {
                     ShareSender.leaveForApp(text: text, images: images, chats: failed.chats, newChat: failed.newChat)
                     let alert = UIAlertController(title: "Not Sent Yet", message: "The server could not be reached. tau sends it when it opens.", preferredStyle: .alert)

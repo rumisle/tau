@@ -38,6 +38,9 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 	});
 	// Beside the database, or in memory with it.
 	const search = new Search(host, host.database === undefined ? ":memory:" : searchIndexPath(host.database));
+	// A pending file an entry names is kept, not swept (src/files.ts).
+	host.files.referenced = (id) => search.referencesFile(id);
+	void host.files.sweep().catch(() => {});
 	const connections = new Set<Connection>();
 	// HTTP for files (src/http-files.ts), behind the same token; the WebSocket upgrades on the same port.
 	const http = createServer((request, response) => {
@@ -88,6 +91,7 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 			dialogs.close();
 			titler.close();
 			notifier.close();
+			host.files.referenced = undefined;
 			search.close();
 			await new Promise<void>((resolve) => wss.close(() => resolve()));
 			http.closeAllConnections();

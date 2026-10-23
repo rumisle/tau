@@ -17,9 +17,11 @@ tau.files/.pending/<id>    an upload no message refers to yet
 - **Private**: the data directory and `tau.files` only their owner may enter (0700), whatever the umask. Not `/tmp`,
   where other users may look.
 - **Kept for good**: a message refers to its files by path, and durable deletes no conversation (Hide keeps it), so a
-  file a message names is never removed. Only an upload no message took (one whose message failed, or was cancelled)
-  is swept, a day after it came. A message is admitted only after its files are marked kept, so none is swept from
-  under it.
+  file an entry names is never removed. An upload is pending until then (`.pending/<id>`): swept a day after it came
+  when no message named it (its message failed), a week after a message did when no entry names it (the message was
+  withdrawn before it reached the model). Before one goes the store asks the search index, which records the files each
+  entry names (`file_ref`): one an entry names is kept, whichever message it was uploaded for, as an edit sends its
+  message's files again by ID.
 - **Read-only**: a model's command cannot change or remove one by accident; to change a file it copies it, as the
   prompt says.
 - **IDs** are 128 random bits, hex. **Names** are the file's own (the model knows a PDF by its name, and copies keep
@@ -49,8 +51,9 @@ empty. The message's first text block names each file by path, as `pi @file` doe
 </attachments>
 ```
 
-- An `<image>` (sent `as: "image"`: a JPEG, PNG, GIF or WebP of at most 5 MB, to a model that takes images) is in the
-  message as an image block too, after this one, in the same order. Anything else is a `<file>`, only named: a model
+- An `<image>` (sent `as: "image"`: a JPEG, PNG, GIF or WebP, to a model that takes images) is in the message as an
+  image block too, after this one, in the same order; past durable's limits (2000 pixels a side, 4.5 MB) shrunk by its
+  Photon image processor, which the read tool uses too. One that cannot be is a `<file>`. Anything else is a `<file>`, only named: a model
   without image input still gets a photo, as a path.
 - The system prompt says how to read them.
 - The chat list, search and titles read the message without the block (`server/src/attachments.ts`): a message of
@@ -67,7 +70,9 @@ height? }`.
 
 ## In the app
 
-- **Sending**: the attachment menu's File (the document picker), and the photo picker's Send as File (its `...` menu,
+- **Sending**: the attachment menu's File (the document picker), Share from another app (the share extension uploads
+  them itself; with the server out of reach it cannot keep files for the app, and says so), and the photo picker's Send
+  as File (its `...` menu,
   as Telegram's), which sends the photos and videos as they are, the original's quality. Photos sent as photos are
   2000 pixels at most (docs/media.md).
 - **The outbox** copies each file beside itself, uploads them one by one (`Server/FileTransfer.swift`), then submits the

@@ -4,7 +4,13 @@
 //
 //   <root>/<id>/<name>      the file, read-only (0400) in a read-only directory (0500): a model's command cannot
 //                           change or remove it by accident; it copies one to change it
-//   <root>/.pending/<id>    an upload no message refers to yet; swept after a day (a message that failed to send)
+//   <root>/.pending/<id>    an upload no entry refers to yet: empty, swept a day after it came (its message failed
+//                           to send); "submitted", a week after its message was (withdrawn before it reached the
+//                           model, or still queued)
+//
+// Before a pending file goes, the store asks whether an entry names it (`referenced`, the search index's record of
+// what each entry names): one that does is kept for good, so a file a message refers to is never removed, whichever
+// message it was uploaded for (an edit sends its message's files again by ID).
 //
 // The root only its owner may enter (0700), whatever the umask. IDs are 128 random bits, hex; a tool's file gets one
 // derived from its call, so a call run again after a restart writes the same file.
@@ -40,6 +46,9 @@ export class FileError extends Error {
 const ID = /^[0-9a-f]{32}$/;
 /** An upload no message took is swept after this long: long enough for an outbox that waits for the network. */
 const PENDING_LIFETIME_MS = 24 * 60 * 60 * 1000;
+/** One a message named, which no entry does: its message was withdrawn, or waits in the inbox, longer than any run. */
+const SUBMITTED_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+const SUBMITTED = "submitted";
 /** Default largest file, uploaded or sent; `--max-file-size` sets another. */
 export const DEFAULT_MAX_FILE_BYTES = 1024 * 1024 * 1024;
 
@@ -48,6 +57,8 @@ export class FileStore {
 	readonly maxBytes: number;
 	readonly #temporary: boolean;
 	#sweeper: ReturnType<typeof setInterval> | undefined;
+	/** Whether an entry names the file (src/search/service.ts); until it is set, nothing is swept. */
+	referenced: ((id: string) => Promise<boolean>) | undefined;
 
 	/** Files under `root`, made if need be; without one, a temporary directory removed on close. */
 	constructor(root?: string, options: { maxBytes?: number } = {}) {
@@ -56,7 +67,6 @@ export class FileStore {
 		this.maxBytes = options.maxBytes ?? DEFAULT_MAX_FILE_BYTES;
 		mkdirSync(join(this.root, ".pending"), { recursive: true, mode: 0o700 });
 		void chmod(this.root, 0o700).catch(() => {});
-		void this.sweep().catch(() => {});
 		this.#sweeper = setInterval(() => void this.sweep().catch(() => {}), 60 * 60 * 1000);
 		this.#sweeper.unref();
 	}
@@ -155,21 +165,46 @@ export class FileStore {
 		return file;
 	}
 
-	/** Uploads a message now refers to: kept for good. Before the message is admitted, so none is swept under it. */
-	async keep(ids: readonly string[]): Promise<void> {
-		for (const id of ids) if (ID.test(id)) await unlink(this.#pending(id)).catch(() => {});
+	/**
+	 * Uploads a message names, before it is admitted: they wait a week for an entry to name them, not a day. A file
+	 * already kept (an edit's) stays so.
+	 */
+	async submitted(ids: readonly string[]): Promise<void> {
+		for (const id of ids) {
+			if (!ID.test(id)) continue;
+			const marker = this.#pending(id);
+			if ((await stat(marker).catch(() => undefined)) !== undefined) await writeFile(marker, SUBMITTED, { mode: 0o600 });
+		}
 	}
 
-	/** Remove uploads pending longer than `lifetimeMs`, and what an interrupted one left. */
-	async sweep(lifetimeMs = PENDING_LIFETIME_MS, now = Date.now()): Promise<number> {
+	/**
+	 * Remove uploads pending past their time that no entry names, and what an interrupted one left; one an entry names
+	 * is kept for good. `lifetimeMs` overrides both lifetimes (tests). Returns how many went.
+	 */
+	async sweep(lifetimeMs?: number, now = Date.now()): Promise<number> {
 		let removed = 0;
 		for (const id of await readdir(join(this.root, ".pending")).catch(() => [] as string[])) {
 			const marker = this.#pending(id);
 			const info = await stat(marker).catch(() => undefined);
-			if (info === undefined || now - info.mtimeMs < lifetimeMs) continue;
-			if (ID.test(id)) await removeUpload(join(this.root, id));
+			if (info === undefined) continue;
+			const submitted = info.size > 0;
+			if (now - info.mtimeMs < (lifetimeMs ?? (submitted ? SUBMITTED_LIFETIME_MS : PENDING_LIFETIME_MS))) continue;
+			if (ID.test(id)) {
+				// Nothing known of what entries name: nothing goes.
+				if (this.referenced === undefined) continue;
+				let named: boolean;
+				try {
+					named = await this.referenced(id);
+				} catch {
+					// Unknown: asked again next time.
+					continue;
+				}
+				if (!named) {
+					await removeUpload(join(this.root, id));
+					removed++;
+				}
+			}
 			await unlink(marker).catch(() => {});
-			removed++;
 		}
 		return removed;
 	}

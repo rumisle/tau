@@ -4,7 +4,7 @@ import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationId, ConversationRecord, Cursor, EntryId, EntryRecord } from "@earendil-works/pi-durable";
-import { attachedFiles, ownText } from "../attachments.ts";
+import { attachedFiles, fileIdFromPath, ownText } from "../attachments.ts";
 import { type Host, MetaDoc } from "../host.ts";
 import { type IndexEntry, type IndexPart, Kind, type KindName, SearchIndex, type SearchResponse } from "./index.ts";
 import { type UsageReport, UsageLedger, type UsageRow } from "./usage.ts";
@@ -53,7 +53,19 @@ function partText(entry: EntryRecord, idx: number): string | undefined {
 /** Every entry moves its conversation's cursor; those with something to search add parts. */
 function indexEntry(entry: EntryRecord): IndexEntry {
 	const timestamp = (entry.model?.[0] as { timestamp?: number } | undefined)?.timestamp;
-	return { conversationId: entry.conversationId, entryId: entry.id, time: timestamp ?? Date.now(), parts: searchParts(entry) };
+	const files = entryFiles(entry);
+	return { conversationId: entry.conversationId, entryId: entry.id, time: timestamp ?? Date.now(), parts: searchParts(entry), ...(files.length === 0 ? {} : { files }) };
+}
+
+/** The kept files an entry names: a user message's attachments, what send_file sent. */
+function entryFiles(entry: EntryRecord): string[] {
+	const message = entry.model?.[0] as Message | undefined;
+	if (message?.role === "user") return attachedFiles(message.content).flatMap((file) => fileIdFromPath(file.path) ?? []);
+	if (message?.role === "toolResult" && message.toolName === "send_file") {
+		const files = (message.details as { files?: { id?: unknown }[] } | undefined)?.files ?? [];
+		return files.flatMap((file) => (typeof file.id === "string" ? [file.id] : []));
+	}
+	return [];
 }
 
 /** An answer's spend, for the usage ledger. */
@@ -220,6 +232,12 @@ export class Search {
 	async report(days: number, tzOffset: number): Promise<UsageReport> {
 		await this.ready;
 		return this.usage.report(days, tzOffset);
+	}
+
+	/** Whether an entry names the kept file, once the index has every entry. */
+	async referencesFile(id: string): Promise<boolean> {
+		await this.ready;
+		return this.index.referencesFile(id);
 	}
 
 	/** One conversation's matching entries, newest first. */
