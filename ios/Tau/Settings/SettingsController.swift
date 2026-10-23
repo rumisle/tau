@@ -2,6 +2,7 @@ import UIKit
 import AsyncDisplayKit
 import Display
 import SwiftSignalKit
+import UndoUI
 
 /// A grouped list screen, like Telegram's ItemListController: it rebuilds its rows from `items(theme)` whenever the
 /// theme or its own state changes.
@@ -194,7 +195,7 @@ final class SettingsController: SettingsListController {
                 }
                 self.push(NotificationsController(context: self.context))
             }),
-            SettingsRowItem(theme: theme, icon: SettingsIcon.dictation, title: "Dictation", accessory: .disclosure(label: DictationSettings.title(language: DictationSettings.language)), position: middle, action: { [weak self] in
+            SettingsRowItem(theme: theme, icon: SettingsIcon.dictation, title: "Dictation", accessory: .disclosure(label: DictationSettings.provider?.title ?? "Off"), position: middle, action: { [weak self] in
                 guard let self else {
                     return
                 }
@@ -297,46 +298,101 @@ final class AppearanceController: SettingsListController {
     }
 }
 
-/// Settings > Dictation: the language and the model the composer's microphone asks Aqua Voice for
-/// (Chat/AquaDictation.swift), and the sign-in it uses, which comes with the build from the Mac's Aqua app.
+/// Settings > Dictation: who turns speech into text, if anyone (off until the user picks one), and what that provider
+/// needs: for Aqua Voice, the session key of the user's account, a command for a Mac that copies it, its language and
+/// its model.
 final class DictationController: SettingsListController {
+    private var observer: NSObjectProtocol?
+
     init(context: AppContext) {
         super.init(context: context, title: "Dictation")
+        self.observer = NotificationCenter.default.addObserver(forName: DictationSettings.changed, object: nil, queue: .main) { [weak self] _ in
+            self?.reload()
+        }
     }
 
     required init(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        if let observer = self.observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
     override func items(theme: TauTheme) -> [ListViewItem] {
-        var items: [ListViewItem] = [SettingsTextItem(theme: theme, text: "Language", kind: .header)]
-        let language = DictationSettings.language
-        let languages = DictationSettings.languages
+        let provider = DictationSettings.provider
+        var items: [ListViewItem] = [SettingsTextItem(theme: theme, text: "Provider", kind: .header)]
+        let choices: [DictationProvider?] = [nil] + DictationProvider.allCases.map { $0 }
+        for (index, choice) in choices.enumerated() {
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: choice?.title ?? "Off", accessory: .checkmark(choice == provider), position: SettingsRowPosition(isFirst: index == 0, isLast: index == choices.count - 1), action: {
+                DictationSettings.provider = choice
+            }))
+        }
+        items.append(SettingsTextItem(theme: theme, text: provider == nil ? "Turn a provider on for a microphone in the message field that writes what you say." : "The microphone in the message field writes what you say: tap it to start and stop, or hold it while you speak.", kind: .footer))
+        guard provider == .aqua else {
+            return items
+        }
+
+        items.append(SettingsTextItem(theme: theme, text: "Aqua Voice", kind: .header))
+        let stored = AquaSessionKey.stored
+        let keyLabel: String
+        if let stored, let expiry = AquaSessionKey.expiry(of: stored) {
+            if expiry > Date() {
+                keyLabel = "Until \(expiry.formatted(date: .abbreviated, time: .omitted))"
+            } else {
+                keyLabel = "Expired"
+            }
+        } else {
+            keyLabel = "Not Set"
+        }
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Session Key", accessory: .disclosure(label: keyLabel), position: SettingsRowPosition(isFirst: true, isLast: false), action: { [weak self] in
+            self?.editKey()
+        }))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Copy Command for Mac", titleColor: theme.accentColor, accessory: .none, position: SettingsRowPosition(isFirst: false, isLast: stored == nil), action: { [weak self] in
+            UIPasteboard.general.string = AquaSessionKey.macCommand
+            guard let self else {
+                return
+            }
+            self.present(UndoOverlayController(presentationData: self.theme.presentationData, content: .copy(text: "Command copied. Run it in Terminal on a Mac signed in to Aqua Voice, then paste the key here."), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .current)
+        }))
+        if stored != nil {
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: "Remove Key", titleColor: theme.list.itemDestructiveColor, accessory: .none, position: SettingsRowPosition(isFirst: false, isLast: true), action: {
+                AquaSessionKey.remove()
+            }))
+        }
+        items.append(SettingsTextItem(theme: theme, text: "Aqua Voice has no API keys: tau listens with the session of your own Aqua account. On a Mac where the Aqua Voice app is signed in, run the command in Terminal: it copies the key, and Universal Clipboard brings it to this iPhone. The key stays in this iPhone's keychain.", kind: .footer))
+
+        items.append(SettingsTextItem(theme: theme, text: "Language", kind: .header))
+        let language = AquaSettings.language
+        let languages = AquaSettings.languages
         for (index, option) in languages.enumerated() {
             items.append(SettingsRowItem(theme: theme, icon: nil, title: option.title, subtitle: option.subtitle, accessory: .checkmark(option.id == language), position: SettingsRowPosition(isFirst: index == 0, isLast: index == languages.count - 1), action: { [weak self] in
-                DictationSettings.language = option.id
+                AquaSettings.language = option.id
                 self?.reload()
             }))
         }
         items.append(SettingsTextItem(theme: theme, text: "Auto-Detect can take a few words for another language. For one you mostly speak, choose it.", kind: .footer))
         items.append(SettingsTextItem(theme: theme, text: "Model", kind: .header))
-        let model = DictationSettings.model
-        let models = DictationSettings.models
+        let model = AquaSettings.model
+        let models = AquaSettings.models
         for (index, option) in models.enumerated() {
             items.append(SettingsRowItem(theme: theme, icon: nil, title: option.title, subtitle: option.subtitle, accessory: .checkmark(option.id == model), position: SettingsRowPosition(isFirst: index == 0, isLast: index == models.count - 1), action: { [weak self] in
-                DictationSettings.model = option.id
+                AquaSettings.model = option.id
                 self?.reload()
             }))
         }
-        items.append(SettingsTextItem(theme: theme, text: "Aqua Voice", kind: .header))
-        let signIn: String
-        if let expiry = AquaDictationEngine.Config.signInExpiry() {
-            signIn = expiry > Date() ? "Until \(expiry.formatted(date: .abbreviated, time: .omitted))" : "Expired"
-        } else {
-            signIn = "None"
-        }
-        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Sign-In", accessory: .value(signIn), position: SettingsRowPosition(isFirst: true, isLast: true), action: nil))
-        items.append(SettingsTextItem(theme: theme, text: "The sign-in, and the words of your Aqua dictionary, come with the app from Aqua Voice on the Mac it was built on. Sign in to Aqua there, then build again.", kind: .footer))
         return items
+    }
+
+    /// Telegram's alert with a field: the key pasted in, checked before it is kept.
+    private func editKey() {
+        let alert = fieldsAlertController(context: self.context.telegram, presentationData: self.theme.presentationData, title: "Session Key", text: "Paste the key the command copied on your Mac.", fields: [
+            AlertField(placeholder: "eyJ…", value: nil, isSecure: true, isVerbatim: true),
+        ], apply: { values in
+            return AquaSessionKey.set(values[0])
+        })
+        self.present(alert, in: .window(.root))
     }
 }

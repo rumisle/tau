@@ -147,7 +147,14 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
 
     deinit {
         self.dictationDisposable.dispose()
+        if let observer = self.settingsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
+
+    /// Settings > Dictation changed: the microphone shows only while a provider is on.
+    private var settingsObserver: NSObjectProtocol?
+    private var showsMic = DictationSettings.isEnabled
 
     override func didLoad() {
         super.didLoad()
@@ -222,6 +229,21 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             view.accessibilityTraits = .button
         }
         self.listenView.accessibilityElementsHidden = true
+        self.settingsObserver = NotificationCenter.default.addObserver(forName: DictationSettings.changed, object: nil, queue: .main) { [weak self] _ in
+            guard let self else {
+                return
+            }
+            let shows = DictationSettings.isEnabled
+            // Another provider: the next dictation makes its engine.
+            self.dictationEngine = nil
+            if shows != self.showsMic {
+                self.showsMic = shows
+                if !shows {
+                    self.cancelDictation()
+                }
+                self.requestLayout?(.immediate)
+            }
+        }
         self.applyTheme()
     }
 
@@ -398,7 +420,9 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         }
         // The last words of a stretch stopped a moment ago are not waited for.
         self.dropDictation()
-        let engine = self.dictationEngine ?? makeDictationEngine()
+        guard let engine = self.dictationEngine ?? makeDictationEngine() else {
+            return
+        }
         self.dictationEngine = engine
         self.isDictating = true
         self.micPressed?()
@@ -472,8 +496,8 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         transition.updateTransformScale(layer: self.micIconView.layer, scale: listening ? 0.5 : 1.0)
         self.listenView.isUserInteractionEnabled = listening
         self.listenView.accessibilityElementsHidden = !listening
-        self.micButton.isUserInteractionEnabled = !listening
-        self.micButton.accessibilityElementsHidden = listening
+        self.micButton.isUserInteractionEnabled = !listening && self.showsMic
+        self.micButton.accessibilityElementsHidden = listening || !self.showsMic
     }
 
     private func layoutListenContents() {
@@ -601,9 +625,9 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         return action == nil ? ChatInputPanelNode.accessoryInset : ChatInputPanelNode.actionBoxWidth
     }
 
-    /// The field's end that the text keeps clear of: the microphone and the action button.
+    /// The field's end that the text keeps clear of: the microphone, when dictation is on, and the action button.
     private func fieldTrailing(action: Action?) -> CGFloat {
-        return self.micTrailing(action: action) + ChatInputPanelNode.micWidth
+        return self.micTrailing(action: action) + (self.showsMic ? ChatInputPanelNode.micWidth : 12.0)
     }
 
     private func measureTextHeight(width: CGFloat) -> CGFloat {
@@ -687,6 +711,10 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         let micFrame = CGRect(x: fieldFrame.width - self.micTrailing(action: action) - ChatInputPanelNode.micWidth, y: fieldHeight - size, width: ChatInputPanelNode.micWidth, height: size)
         transition.updatePosition(layer: self.micButton.layer, position: micFrame.center)
         transition.updateBounds(layer: self.micButton.layer, bounds: CGRect(origin: CGPoint(), size: micFrame.size))
+        // Dictation off: no microphone at all.
+        self.micButton.isHidden = !self.showsMic
+        self.micButton.isUserInteractionEnabled = self.showsMic && !self.isDictating
+        self.micButton.accessibilityElementsHidden = !self.showsMic || self.isDictating
         self.micIconView.bounds = CGRect(origin: CGPoint(), size: micFrame.size)
         self.micIconView.center = CGPoint(x: micFrame.width / 2.0, y: micFrame.height / 2.0)
 

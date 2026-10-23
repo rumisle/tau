@@ -53,20 +53,32 @@ change without notice.
   go at its pace: the server, sent a recording at once, gives nothing.
 - Aqua writes Chinese with a space between words; the spaces between two Chinese characters are taken out.
 
-**Settings > Dictation** sets the language (Aqua's codes: Auto-Detect, `en`, `cmn`, `ja`, `ko`, `de`, `fr`, `es`,
-`ru`) and the model (`avalon-v1.1`, Aqua's default and fastest; `avalon-v1.5`, slower and better with Chinese;
-`whisper`), kept on the phone; until changed, they are what the Mac's Aqua app was set to when the app was built. The
-screen also shows until when the build's sign-in is valid. The token is not in the source and cannot be set in the
-app: it comes with the build.
+## Settings > Dictation
 
-The sign-in is the user's own Aqua app's: `ios/scripts/aqua_secrets.py`, which `build.sh` runs, reads the JWT from its
-LevelDB local storage (`~/Library/Application Support/Aqua Voice/Local Storage/leveldb`, valid about 1000 days) and the
-model, language and dictionary from its `settings.json`, into `ios/Tau/Secrets/Aqua.plist` (gitignored), which the app
-bundles. Without it, dictation says so.
+Dictation is off until a provider is chosen, and off, the composer has no microphone. Providers are
+`DictationProvider` cases, each with its engine (`ios/Tau/Chat/Dictation.swift`); there is one, Aqua Voice.
+
+For Aqua Voice:
+
+- **Session Key.** Aqua has no API keys; tau listens with the session of the user's own account: the JWT Aqua's app
+  signs in with (its localStorage `token`, valid about a thousand days). The user pastes it in an alert, which keeps
+  it only if it is a JWT with a `user_id` and not expired, in this iPhone's keychain (`AfterFirstUnlockThisDeviceOnly`).
+  The row shows until when it is valid, Not Set or Expired; without a valid key the microphone says where to add one.
+- **Copy Command for Mac** copies a command that, run in Terminal on a Mac where Aqua Voice is signed in, finds the key
+  in the app's LevelDB local storage and copies it (Universal Clipboard brings it to the iPhone):
+
+  ```sh
+  k=$(grep -rahoE 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}' ~/Library/Application\ Support/Aqua\ Voice/Local\ Storage/leveldb 2>/dev/null | tail -n 1); [ -n "$k" ] && printf %s "$k" | pbcopy && echo 'Aqua session key copied' || echo 'No Aqua Voice sign-in on this Mac'
+  ```
+- **Language** (Aqua's codes: Auto-Detect, `en`, `cmn`, `yue`, `ja`, `ko`, `de`, `fr`, `es`, `ru`) and **Model**
+  (`avalon-v1.1`, Aqua's default and fastest; `avalon-v1.5`, slower and better with Chinese; `whisper`), on the phone;
+  Auto-Detect and Avalon 1.1 until changed.
+
+Nothing of the user's is in the build or the repository.
 
 ## Testing
 
-`-mockDictation YES` (and the mock store, unless `-mockDictation NO`) uses the stand-in engine, which "hears" a sentence
+`-mockDictation YES` (and the mock store, unless `-mockDictation NO`) uses the stand-in engine, with the microphone shown whatever the setting, which "hears" a sentence
 a word at a time. `-dictationFile <16 kHz mono WAV>` sends a file to Aqua instead of the microphone, at the pace of
 speech, for trying the connection on the simulator (`say -o f.wav --data-format=LEI16@16000 "…"`). UI test:
 `testDictation`.

@@ -2,8 +2,8 @@ import Foundation
 import AVFoundation
 import SwiftSignalKit
 
-/// Dictation through Aqua Voice's realtime API (unofficial, with the
-/// sign-in of the user's own Aqua app, which ios/scripts/aqua_secrets.py writes into the build).
+/// Dictation through Aqua Voice's realtime API (unofficial), with the
+/// session key of the user's own Aqua account, which they paste in Settings > Dictation.
 ///
 /// One session is one WebSocket to wss://realtime.aquavoice.com: a `start` message, then, once the server says
 /// `ready`, the microphone as 16 kHz mono 16-bit PCM in 100 ms frames, each behind an 8-byte header. The server answers
@@ -16,45 +16,12 @@ final class AquaDictationEngine: DictationEngine {
         var token: String
         var language: String
         var model: String
-        var dictionary: [String]
-        var replacements: [[String: String]]
 
-        /// What the build carries, from the Mac's Aqua app; the language and model as Settings > Dictation sets them.
         static func load() -> Config? {
-            guard let plist = Config.bundled(), let token = plist["token"] as? String, !token.isEmpty else {
+            guard let token = AquaSessionKey.current else {
                 return nil
             }
-            return Config(
-                token: token,
-                language: DictationSettings.language,
-                model: DictationSettings.model,
-                dictionary: plist["dictionary"] as? [String] ?? [],
-                replacements: plist["replacements"] as? [[String: String]] ?? []
-            )
-        }
-
-        static func bundled() -> [String: Any]? {
-            guard let url = Bundle.main.url(forResource: "Aqua", withExtension: "plist"), let data = try? Data(contentsOf: url) else {
-                return nil
-            }
-            return try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
-        }
-
-        /// When the build's sign-in expires, read from the token (a JWT's `exp`).
-        static func signInExpiry() -> Date? {
-            guard let token = Config.bundled()?["token"] as? String else {
-                return nil
-            }
-            let parts = token.split(separator: ".")
-            guard parts.count == 3 else {
-                return nil
-            }
-            var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-            payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
-            guard let data = Data(base64Encoded: payload), let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let exp = claims["exp"] as? Double else {
-                return nil
-            }
-            return Date(timeIntervalSince1970: exp)
+            return Config(token: token, language: AquaSettings.language, model: AquaSettings.model)
         }
     }
 
@@ -63,7 +30,7 @@ final class AquaDictationEngine: DictationEngine {
     func start() -> Signal<DictationEvent, NoError> {
         return Signal { [weak self] subscriber in
             guard let config = Config.load() else {
-                subscriber.putNext(.failed("This build has no Aqua Voice sign-in. Sign in to Aqua Voice on the Mac and build again."))
+                subscriber.putNext(.failed(AquaSessionKey.stored == nil ? "Add your Aqua Voice session key in Settings > Dictation." : "Your Aqua Voice session key has expired. Copy a new one in Settings > Dictation."))
                 subscriber.putCompletion()
                 return EmptyDisposable
             }
@@ -353,8 +320,8 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
             "privacy_mode": false,
             "casual_messaging": false,
             "context": [
-                "custom_words": self.config.dictionary,
-                "replacements": self.config.replacements,
+                "custom_words": [String](),
+                "replacements": [[String: String]](),
                 "app": "terminal",
             ] as [String: Any],
             "metadata": [
@@ -574,9 +541,65 @@ private final class AquaSession: NSObject, URLSessionWebSocketDelegate {
     }
 }
 
-/// The language and model dictation asks Aqua for: Settings > Dictation's, else what the Mac's Aqua app was set to when
-/// the app was built, else Aqua's defaults.
-enum DictationSettings {
+/// The user's Aqua Voice session key: the JWT Aqua's app signs in with (its localStorage `token`), valid about a
+/// thousand days. Kept in the keychain.
+enum AquaSessionKey {
+    private static let account = "aqua"
+
+    /// Prints the key from the Aqua app's local storage on a Mac, and copies it: its LevelDB has it as text.
+    static let macCommand = "k=$(grep -rahoE 'eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}' ~/Library/Application\\ Support/Aqua\\ Voice/Local\\ Storage/leveldb 2>/dev/null | tail -n 1); [ -n \"$k\" ] && printf %s \"$k\" | pbcopy && echo 'Aqua session key copied' || echo 'No Aqua Voice sign-in on this Mac'"
+
+    static var stored: String? {
+        return DictationKeychain.read(account)
+    }
+
+    /// The stored key while it is valid.
+    static var current: String? {
+        guard let key = self.stored, let expiry = self.expiry(of: key), expiry > Date() else {
+            return nil
+        }
+        return key
+    }
+
+    /// Keeps `key` if it is one: a JWT for a user, not expired. False otherwise, keeping what was there.
+    static func set(_ key: String) -> Bool {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'")))
+        guard let claims = self.claims(of: key), claims["user_id"] != nil, let expiry = self.expiry(of: key), expiry > Date() else {
+            return false
+        }
+        DictationKeychain.write(key, account: account)
+        NotificationCenter.default.post(name: DictationSettings.changed, object: nil)
+        return true
+    }
+
+    static func remove() {
+        DictationKeychain.write(nil, account: account)
+        NotificationCenter.default.post(name: DictationSettings.changed, object: nil)
+    }
+
+    static func expiry(of key: String) -> Date? {
+        guard let exp = self.claims(of: key)?["exp"] as? Double else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: exp)
+    }
+
+    private static func claims(of key: String) -> [String: Any]? {
+        let parts = key.split(separator: ".")
+        guard parts.count == 3 else {
+            return nil
+        }
+        var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
+        guard let data = Data(base64Encoded: payload) else {
+            return nil
+        }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+}
+
+/// The language and model dictation asks Aqua for, kept on the phone; Aqua's defaults until changed.
+enum AquaSettings {
     struct Option {
         let id: String
         let title: String
@@ -587,7 +610,8 @@ enum DictationSettings {
     static let languages: [Option] = [
         Option(id: "auto", title: "Auto-Detect"),
         Option(id: "en", title: "English"),
-        Option(id: "cmn", title: "Chinese, Simplified", subtitle: "中文（简体）"),
+        Option(id: "cmn", title: "Mandarin", subtitle: "普通话"),
+        Option(id: "yue", title: "Cantonese", subtitle: "粵語"),
         Option(id: "ja", title: "Japanese", subtitle: "日本語"),
         Option(id: "ko", title: "Korean", subtitle: "한국어"),
         Option(id: "de", title: "German", subtitle: "Deutsch"),
@@ -603,12 +627,12 @@ enum DictationSettings {
         Option(id: "whisper", title: "Whisper", subtitle: "Many languages"),
     ]
 
-    private static let languageKey = "dictation.language"
-    private static let modelKey = "dictation.model"
+    private static let languageKey = "dictation.aqua.language"
+    private static let modelKey = "dictation.aqua.model"
 
     static var language: String {
         get {
-            return UserDefaults.standard.string(forKey: languageKey) ?? (AquaDictationEngine.Config.bundled()?["language"] as? String) ?? "auto"
+            return UserDefaults.standard.string(forKey: languageKey) ?? "auto"
         }
         set {
             UserDefaults.standard.set(newValue, forKey: languageKey)
@@ -617,7 +641,7 @@ enum DictationSettings {
 
     static var model: String {
         get {
-            return UserDefaults.standard.string(forKey: modelKey) ?? (AquaDictationEngine.Config.bundled()?["model"] as? String) ?? "avalon-v1.1"
+            return UserDefaults.standard.string(forKey: modelKey) ?? "avalon-v1.1"
         }
         set {
             UserDefaults.standard.set(newValue, forKey: modelKey)

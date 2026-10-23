@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import SwiftSignalKit
 
 /// What dictation hears, as it goes: the words so far of what is being said, which may still change, then what was
@@ -73,13 +74,98 @@ final class MockDictationEngine: DictationEngine {
     }
 }
 
-/// The engine the composer uses: Aqua Voice when this build has its sign-in (ios/scripts/aqua_secrets.py), the
-/// stand-in under `-mockDictation YES`, or with the mock store unless `-mockDictation NO`.
-func makeDictationEngine() -> DictationEngine {
-    let defaults = UserDefaults.standard
-    let mock = defaults.object(forKey: "mockDictation") != nil ? defaults.bool(forKey: "mockDictation") : defaults.bool(forKey: "mock")
-    if mock {
+/// Who turns speech into text. Dictation is off until the user picks one in Settings > Dictation and gives it what it
+/// needs; more can come, each an engine of its own.
+enum DictationProvider: String, CaseIterable {
+    case aqua
+
+    var title: String {
+        switch self {
+        case .aqua:
+            return "Aqua Voice"
+        }
+    }
+
+    /// Whether it has what it needs to listen.
+    var isReady: Bool {
+        switch self {
+        case .aqua:
+            return AquaSessionKey.current != nil
+        }
+    }
+
+    func makeEngine() -> DictationEngine {
+        switch self {
+        case .aqua:
+            return AquaDictationEngine()
+        }
+    }
+}
+
+/// Settings > Dictation, on the phone.
+enum DictationSettings {
+    /// Posted when the provider or its settings change: the composer shows its microphone or not.
+    static let changed = Notification.Name("tau.dictation.changed")
+    private static let providerKey = "dictation.provider"
+
+    /// Nil: dictation is off, and the composer has no microphone.
+    static var provider: DictationProvider? {
+        get {
+            return UserDefaults.standard.string(forKey: providerKey).flatMap(DictationProvider.init(rawValue:))
+        }
+        set {
+            UserDefaults.standard.set(newValue?.rawValue, forKey: providerKey)
+            NotificationCenter.default.post(name: changed, object: nil)
+        }
+    }
+
+    /// The stand-in engine, for tests: under `-mockDictation YES`, or with the mock store unless `-mockDictation NO`.
+    static var usesMock: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: "mockDictation") != nil ? defaults.bool(forKey: "mockDictation") : defaults.bool(forKey: "mock")
+    }
+
+    /// Whether the composer shows its microphone.
+    static var isEnabled: Bool {
+        return self.usesMock || self.provider != nil
+    }
+}
+
+/// The engine the composer uses: the provider's, or the stand-in for tests. Nil while dictation is off.
+func makeDictationEngine() -> DictationEngine? {
+    if DictationSettings.usesMock {
         return MockDictationEngine()
     }
-    return AquaDictationEngine()
+    return DictationSettings.provider?.makeEngine()
+}
+
+/// A secret of dictation's, in the keychain (this device only).
+enum DictationKeychain {
+    private static let service = "com.rumisle.tau.dictation"
+
+    private static func query(_ account: String) -> [String: Any] {
+        return [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: self.service, kSecAttrAccount as String: account]
+    }
+
+    static func read(_ account: String) -> String? {
+        var query = self.query(account)
+        query[kSecReturnData as String] = true
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func write(_ value: String?, account: String) {
+        let query = self.query(account)
+        guard let value, let data = value.data(using: .utf8) else {
+            SecItemDelete(query as CFDictionary)
+            return
+        }
+        let attributes: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        if SecItemUpdate(query as CFDictionary, attributes as CFDictionary) == errSecItemNotFound {
+            SecItemAdd(query.merging(attributes) { $1 } as CFDictionary, nil)
+        }
+    }
 }
