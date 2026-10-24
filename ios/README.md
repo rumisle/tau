@@ -76,7 +76,8 @@ device agrees; Settings > Default Model sets the server's default (`settings.con
 
 ## How the Telegram code is used
 
-Telegram-iOS is GPLv2, and so is this app.
+Telegram-iOS is GPL v2 or later; tau, with the parts it takes from elsewhere, is GPL v3 or later (`../LICENSE`,
+`../README.md`).
 
 `scripts/vendor_telegram.py` copies modules verbatim into `ThirdParty/Telegram`, at the commit in
 `ThirdParty/Telegram/REVISION`, with Telegram's paths so `diff -r` against a checkout shows every change, and generates a

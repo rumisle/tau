@@ -76,3 +76,11 @@ usual provider environment variables. The `dev/echo` model is free: it echoes, r
 `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`, fails as an overloaded provider
 `!overloaded <times> <text>` or for good `!fatal <text>`, streams a long Markdown answer for `!doc <sections>`, reads a file for `!read <path>`, runs a code mode script for `!code <script>` or `!code @<path>`, and writes a
 short summary when asked to compact. `--dev-cache-ttl <seconds>` gives it a prompt cache and prices, to try cache warming.
+
+## License
+
+GPL v3 or later (`LICENSE`). The app is built on Telegram-iOS's code, which Telegram licenses under the GPL v2 or later
+(telegram.org/apps), and bundles Telegram Desktop's default wallpaper pattern, GPL v3 with an OpenSSL exception
+(`ios/ThirdParty/tdesktop/NOTICE`); with Apache 2.0 parts (Texture's AsyncDisplayKit, lottie-ios), which the GPL v2 does
+not take, the whole is GPL v3. The server uses pi (MIT), and the app SwiftMath (MIT). Each part copied in keeps its
+notice: `ios/ThirdParty/Telegram/NOTICE`, and the LICENSE files of the modules that have one.
