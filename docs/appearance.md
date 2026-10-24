@@ -29,6 +29,18 @@ The swatches are Telegram's ThemeSettingsAccentColorItem: a 2 pt ring around a f
 ring (scale 1.2) until chosen and shrinks inside it (0.3 s); a row that scrolls sideways when they do not fit, a last
 one peeking out.
 
+## Readable text
+
+Tinted Night's colors are the accent's, its brightness scaled (`customizeDefaultDarkTintedPresentationTheme`), so a
+darker accent darkens the text with the backgrounds: on green, the chat list's previews, the title's subtitle, the
+agent's times and the tab bar's labels measured APCA Lc 20, half of Night's. `Readability` (`ios/Tau/Theme`) lifts
+them after Telegram makes a theme, after the approach of pi's system theme: each rule names a color, the surfaces it
+is drawn on and the contrast it needs, and a color short of it on any is made more opaque, or lighter (darker on a
+light surface) in OKLCH, keeping its hue and chroma. Secondary text needs Lc 37, Night's lowest (its messages' times);
+the tab bar's unselected labels Lc 75, as Night's white and Day's black are. A color that reads already is Telegram's:
+Classic, Day and Night are unchanged, and Tinted Night's blue moves by a step. An outgoing bubble's time is left on
+its accent, where it reads no better on Night or Day.
+
 ## The Live Activity
 
 The Dynamic Island and the lock screen card draw in the accent (`TauWidgets/TauLiveActivity.swift`): the app sends it

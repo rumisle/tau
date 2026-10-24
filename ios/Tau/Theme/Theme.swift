@@ -326,12 +326,14 @@ final class TauTheme {
         let plain = makeDefaultPresentationTheme(reference: builtin.reference, serviceBackgroundColor: nil)
         // As Telegram makes a built-in theme with an accent (makePresentationTheme(mediaBox:themeReference:accentColor:)):
         // editing, so the accent also colors the outgoing bubbles. Blue is the themes' own accent: unchanged.
-        let theme = accent == .blue ? plain : customizePresentationTheme(plain, editing: true, accentColor: UIColor(rgb: accent.rgb(for: builtin)), outgoingAccentColor: nil, backgroundColors: [], bubbleColors: [], animateBubbleColors: false, baseColor: accent.baseColor)
+        let accented = accent == .blue ? plain : customizePresentationTheme(plain, editing: true, accentColor: UIColor(rgb: accent.rgb(for: builtin)), outgoingAccentColor: nil, backgroundColors: [], bubbleColors: [], animateBubbleColors: false, baseColor: accent.baseColor)
+        let plainBackground = TauTheme.plainBackground(builtin, accent: accent)
+        // Telegram's colors, each text color lifted where it reads worse than on Night and Day (Readability).
+        let theme = Readability.apply(to: accented, chatBackground: UIColor(rgb: plainBackground))
         self.builtin = builtin
         self.accent = accent
         self.presentationTheme = theme
         self.presentationStrings = base.strings
-        let plainBackground = TauTheme.plainBackground(builtin, accent: accent)
         let wallpaper = TelegramWallpaper.color(plainBackground)
         self.wallpaper = wallpaper
         self.presentationData = base.withUpdated(theme: theme).withUpdated(chatWallpaper: wallpaper)
