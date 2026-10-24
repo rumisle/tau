@@ -141,7 +141,7 @@ func makeDictationEngine() -> DictationEngine? {
 
 /// A secret of dictation's, in the keychain (this device only).
 enum DictationKeychain {
-    private static let service = "com.rumisle.tau.dictation"
+    private static let service = tauBundleID + ".dictation"
 
     private static func query(_ account: String) -> [String: Any] {
         return [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: self.service, kSecAttrAccount as String: account]

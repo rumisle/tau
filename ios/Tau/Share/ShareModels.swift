@@ -2,12 +2,16 @@ import Foundation
 
 import Security
 
+/// The app's bundle ID (`TAU_BUNDLE_ID`, ios/Config/Tau.xcconfig), the same in its extensions: their keychain items
+/// are named under it.
+let tauBundleID = Bundle.main.object(forInfoDictionaryKey: "TauBundleID") as? String ?? "tau"
+
 /// What the app and its share extension (TauShare) exchange, in a keychain group both are in: the app writes the servers
 /// and chats for the share sheet to list; the extension sends itself, and leaves what it could not send for the app.
 /// A keychain group rather than an App Group: a free developer account's profiles allow the team's keychain groups,
 /// not App Groups.
 enum ShareGroup {
-    private static let service = "com.rumisle.tau.share"
+    private static let service = tauBundleID + ".share"
 
     private static var accessGroup: String? {
         return Bundle.main.object(forInfoDictionaryKey: "TauKeychainGroup") as? String

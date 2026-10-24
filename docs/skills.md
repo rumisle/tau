@@ -29,7 +29,7 @@ When a skill file references a relative path, resolve it against the skill direc
   <skill>
     <name>exa</name>
     <description>Web search, content retrieval, …</description>
-    <location>/home/remote/.agents/skills/exa/SKILL.md</location>
+    <location>/home/me/.agents/skills/exa/SKILL.md</location>
   </skill>
   …
 </available_skills>
@@ -45,8 +45,8 @@ With no skills the section is absent.
 ## The server's environment
 
 Skills call tools with keys from the environment (`EXA_API_KEY`, `SERPER_API_KEY`, …), which the agent's commands
-inherit from the server. On remote they are set in `~/.zshrc`, so the server runs through a login, interactive zsh
-(`server/contrib/tau-server.service`), as ocelot's does.
+inherit from the server. Where they are set in `~/.zshrc`, the server runs through a login, interactive zsh
+(`server/contrib/tau-server.service` does).
 
 ## Tests
 

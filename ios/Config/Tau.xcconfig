@@ -1,0 +1,10 @@
+// Who the app is: its bundle ID, under which each extension's is (.widgets, .share, .notifications), and the team
+// that signs it. Yours go in Local.xcconfig beside this file (gitignored): cp Local.example.xcconfig Local.xcconfig.
+// The keychain group the app shares with its extensions is $(AppIdentifierPrefix)$(TAU_BUNDLE_ID).shared.
+TAU_BUNDLE_ID = com.example.tau
+DEVELOPMENT_TEAM =
+// The server a new install connects to before Settings names one, as host:port (no scheme: "//" starts a comment
+// here); empty, 127.0.0.1:7878, which the simulator reaches.
+TAU_DEFAULT_SERVER =
+
+#include? "Local.xcconfig"

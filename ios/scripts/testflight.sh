@@ -8,7 +8,8 @@ cd "$(dirname "$0")/.."
 # Xcode's packaging runs /usr/bin/rsync, which starts the rsync first on PATH as its other end: a newer one (nix's,
 # Homebrew's) refuses its options ("Copy failed").
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-team="${TAU_TEAM:-TEAMID}"
+. scripts/config.sh
+[ -n "$team" ] || { echo "no signing team: set DEVELOPMENT_TEAM in ios/Config/Local.xcconfig (see Local.example.xcconfig)" >&2; exit 1; }
 asc_key=$(ls "$HOME"/.config/tau/asc_AuthKey_*.p8 2>/dev/null | head -n 1 || true)
 [ -n "$asc_key" ] && [ -s "$HOME/.config/tau/asc_issuer" ] || { echo "no App Store Connect API key in ~/.config/tau" >&2; exit 1; }
 asc_id=$(basename "$asc_key" .p8); asc_id=${asc_id#asc_AuthKey_}

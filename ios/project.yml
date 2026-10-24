@@ -1,10 +1,13 @@
 # XcodeGen spec: `scripts/generate.sh` (or `nix shell nixpkgs#xcodegen -c xcodegen`) writes Tau.xcodeproj.
 name: Tau
 options:
-  bundleIdPrefix: com.rumisle
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
+# The bundle ID and the signing team: Config/Tau.xcconfig, and yours in Config/Local.xcconfig.
+configFiles:
+  Debug: Config/Tau.xcconfig
+  Release: Config/Tau.xcconfig
 packages:
   TelegramFoundation:
     path: ThirdParty/Telegram
@@ -86,7 +89,7 @@ targets:
           - SemanticStatusNode
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau
+        PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID)
         PRODUCT_NAME: Tau
         # The keychain group the share extension reads the chats from and leaves what it could not send in.
         CODE_SIGN_ENTITLEMENTS: Tau/Tau.entitlements
@@ -121,7 +124,7 @@ targets:
       - path: Tau/LiveActivity/TauActivityAttributes.swift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID).widgets
         PRODUCT_NAME: TauWidgets
         INFOPLIST_FILE: TauWidgets/Info.plist
         GENERATE_INFOPLIST_FILE: YES
@@ -140,7 +143,7 @@ targets:
       - path: Tau/Share/ImageEncoding.swift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau.share
+        PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID).share
         PRODUCT_NAME: TauShare
         INFOPLIST_FILE: TauShare/Info.plist
         GENERATE_INFOPLIST_FILE: YES
@@ -161,7 +164,7 @@ targets:
       - path: Tau/Common/LetterAvatar.swift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau.notifications
+        PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID).notifications
         PRODUCT_NAME: TauNotifications
         INFOPLIST_FILE: TauNotifications/Info.plist
         GENERATE_INFOPLIST_FILE: YES
@@ -181,7 +184,7 @@ targets:
       - target: Tau
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.rumisle.tau.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID).uitests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Tau
         SWIFT_VERSION: "5.0"

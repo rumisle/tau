@@ -3,17 +3,17 @@
 #   ios/scripts/build.sh            build for the simulator
 #   ios/scripts/build.sh --run      ...and install and launch on the "iPhone 17 Pro" simulator
 #   ios/scripts/build.sh --device   build signed for a connected iPhone, install and launch it
-#                                   (TAU_TEAM: signing team, default TEAMID; TAU_DEVICE: device name or id)
+#                                   (the team from Config/Local.xcconfig, or TAU_TEAM; TAU_DEVICE: device name or id)
 # Signing makes profiles with the Apple ID in Xcode's Accounts, or, without one, with an App Store Connect API key:
 # ~/.config/tau/asc_AuthKey_<key id>.p8 (owner-only) and its issuer ID in ~/.config/tau/asc_issuer.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if command -v xcodegen >/dev/null; then xcodegen generate --quiet; else nix shell nixpkgs#xcodegen -c xcodegen generate --quiet; fi
 derived="${TAU_DERIVED_DATA:-/tmp/tau-dd}"
-bundle=com.rumisle.tau
+. scripts/config.sh
 
 if [ "${1:-}" = "--device" ]; then
-	team="${TAU_TEAM:-TEAMID}"
+	[ -n "$team" ] || { echo "no signing team: set DEVELOPMENT_TEAM in ios/Config/Local.xcconfig (see Local.example.xcconfig)" >&2; exit 1; }
 	# The extensions (the Live Activity, the share sheet) need provisioning profiles of their own, which only an Apple ID signed in
 	# to Xcode (Settings > Accounts) can make; without one the app is built for the device without it.
 	profiles="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"

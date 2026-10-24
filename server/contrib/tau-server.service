@@ -1,4 +1,5 @@
-# tau's server as a systemd user unit: cp to ~/.config/systemd/user/, then
+# tau's server as a systemd user unit: cp to ~/.config/systemd/user/, set your own in ExecStart (the model, and for
+# Apple's pushes your APNs key's ID and your team's ID in place of KEYID and TEAMID, or drop those two options), then
 #   systemctl --user daemon-reload && systemctl --user enable --now tau-server
 #   loginctl enable-linger $USER   # from boot, without logging in
 # Clients need the token in ~/.config/tau/token (only the owner may read it; the server will not start beyond loopback

@@ -6,11 +6,14 @@ import XCTest
 /// screenshots go to /tmp/tau-ui.
 /// The dev server: TAU_DEV_SERVER, which ios/scripts/uitests.sh gives each simulator its own of.
 let devServer = ProcessInfo.processInfo.environment["TAU_DEV_SERVER"] ?? "ws://127.0.0.1:7979"
-/// The tokens of this Mac's tau server (port 7878) and remote's, which the test scripts read (`TAU_TOKEN`,
-/// `TAU_REMOTE_TOKEN`): as launch arguments, none when unset. Quoted: the argument domain reads a value as a property
-/// list, and one starting with "-" as the next argument's name.
+/// The tokens of this Mac's tau server (port 7878) and of a second server, which the test scripts read (`TAU_TOKEN`;
+/// `TAU_SERVER2_URL` and `TAU_SERVER2_TOKEN`, from ios/Config/Local.env): as launch arguments, none when unset.
+/// Quoted: the argument domain reads a value as a property list, and one starting with "-" as the next argument's name.
 let mainServerToken = ProcessInfo.processInfo.environment["TAU_TOKEN"].flatMap { $0.isEmpty ? nil : ["-server.token", "\"\($0)\""] } ?? []
-let remoteServer = ["-server2.url", "ws://remote.example.ts.net:7878"] + (ProcessInfo.processInfo.environment["TAU_REMOTE_TOKEN"].flatMap { $0.isEmpty ? nil : ["-server2.token", "\"\($0)\""] } ?? [])
+/// The second server, for the tests of several servers; they are skipped without one.
+let secondServer: [String] = ProcessInfo.processInfo.environment["TAU_SERVER2_URL"].flatMap { $0.isEmpty ? nil : ["-server2.url", $0] + (ProcessInfo.processInfo.environment["TAU_SERVER2_TOKEN"].flatMap { $0.isEmpty ? nil : ["-server2.token", "\"\($0)\""] } ?? []) } ?? []
+/// This Mac's name, as the main server's Browse row shows it.
+let mainServerHostname = ProcessInfo.processInfo.environment["TAU_HOSTNAME"] ?? ""
 
 final class SendingUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -782,8 +785,9 @@ final class SendingUITests: XCTestCase {
     }
 
     /// Two servers: one list, Telegram's proxy-style server list, a server's page, and a new chat's card.
-    func testMultiServer() {
-        self.launch(remoteServer)
+    func testMultiServer() throws {
+        try XCTSkipIf(secondServer.isEmpty, "needs a second server (ios/Config/Local.example.env)")
+        self.launch(secondServer)
         sleep(4)
         self.shot("multi-0-list")
         self.point(0.75, 0.96).tap()
@@ -952,8 +956,9 @@ final class SendingUITests: XCTestCase {
     }
 
     /// A new chat moved to another server's folder stays the same screen, with what was written; back is the list.
-    func testNewChatNavigation() {
-        self.launch(remoteServer)
+    func testNewChatNavigation() throws {
+        try XCTSkipIf(secondServer.isEmpty, "needs a second server (ios/Config/Local.example.env)")
+        self.launch(secondServer)
         sleep(4)
         self.point(0.9, 0.098).tap()
         sleep(2)
@@ -964,8 +969,9 @@ final class SendingUITests: XCTestCase {
         self.app.descendants(matching: .any)["newChatProject"].firstMatch.tap()
         sleep(2)
         self.shot("nav-1-picker")
-        // The other server's Browse row (the chat starts on the most recent project, remote here), then its home.
-        self.app.descendants(matching: .any)["my-mac"].firstMatch.tap()
+        // The other server's Browse row (the chat starts on the most recent project, the second server's here), then
+        // its home.
+        self.app.descendants(matching: .any)[mainServerHostname].firstMatch.tap()
         sleep(3)
         self.shot("nav-2-browse")
         self.app.descendants(matching: .any)["Use This Folder"].firstMatch.tap()

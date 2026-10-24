@@ -35,7 +35,7 @@ final class PushRegistration {
             self.deviceId = id
         }
         self.environment = PushRegistration.signedEnvironment()
-        self.topic = Bundle.main.bundleIdentifier ?? "com.rumisle.tau"
+        self.topic = Bundle.main.bundleIdentifier ?? tauBundleID
     }
 
     /// At launch: the categories, the permission (asked once), the device token, and the push-to-start token.

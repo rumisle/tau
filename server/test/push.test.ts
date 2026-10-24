@@ -92,7 +92,7 @@ describe("APNs", () => {
 		const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 		const apns = new Apns({ keyPath: keyFile(directory), teamId: "TEAM123456", origins: { development: origin } });
 		try {
-			const push: ApnsPush = { type: "alert", topic: "com.rumisle.tau", priority: 10, payload: { aps: { alert: { title: "t", body: "b" } } } };
+			const push: ApnsPush = { type: "alert", topic: "com.example.tau", priority: 10, payload: { aps: { alert: { title: "t", body: "b" } } } };
 			const ok = await apns.send({ token: "abc", environment: "development" }, push);
 			assert.equal(ok.status, 200);
 			const gone = await apns.send({ token: "gone", environment: "development" }, push);
@@ -100,7 +100,7 @@ describe("APNs", () => {
 			const first = requests[0]!;
 			assert.equal(first.headers[":path"], "/3/device/abc");
 			assert.equal(first.headers["apns-push-type"], "alert");
-			assert.equal(first.headers["apns-topic"], "com.rumisle.tau");
+			assert.equal(first.headers["apns-topic"], "com.example.tau");
 			assert.equal(first.headers["apns-priority"], "10");
 			assert.match(String(first.headers.authorization), /^bearer [\w-]+\.[\w-]+\.[\w-]+$/);
 			assert.deepEqual(JSON.parse(first.body), push.payload);
@@ -138,8 +138,8 @@ describe("pushes", () => {
 	test("an answer goes to each device that wants answers, with the chat to open", async () => {
 		const client = await TauClient.connect(server.url);
 		assert.equal(((await client.request("hello", { protocol: 1 })) as { apns: boolean }).apns, true);
-		await client.request("devices.register", { deviceId: "phone", environment: "development", topic: "com.rumisle.tau", token: "t-phone" });
-		await client.request("devices.register", { deviceId: "quiet", environment: "production", topic: "com.rumisle.tau", token: "t-quiet", alerts: false });
+		await client.request("devices.register", { deviceId: "phone", environment: "development", topic: "com.example.tau", token: "t-phone" });
+		await client.request("devices.register", { deviceId: "quiet", environment: "production", topic: "com.example.tau", token: "t-quiet", alerts: false });
 		const { dialog } = await client.request("conversation.create", { title: "Push me" });
 		const replica = new ConversationReplica(dialog.conversation.id);
 		await replica.sync(client);
@@ -150,7 +150,7 @@ describe("pushes", () => {
 		assert.deepEqual(sent.map((each) => each.device.token), ["t-phone"], "not to the one that turned answers off");
 		const push = sent[0]!.push;
 		assert.equal(push.type, "alert");
-		assert.equal(push.topic, "com.rumisle.tau");
+		assert.equal(push.topic, "com.example.tau");
 		assert.deepEqual(aps(push).alert, { title: "Push me", body: (aps(push).alert as { body: string }).body });
 		assert.match((aps(push).alert as { body: string }).body, /You said: hello/);
 		assert.equal(aps(push)["thread-id"], `${host.serverId}:${replica.id}`);
@@ -168,7 +168,7 @@ describe("pushes", () => {
 
 	test("forgets a device token Apple says is gone", async () => {
 		const client = await TauClient.connect(server.url);
-		await client.request("devices.register", { deviceId: "old", environment: "development", topic: "com.rumisle.tau", token: "t-old" });
+		await client.request("devices.register", { deviceId: "old", environment: "development", topic: "com.example.tau", token: "t-old" });
 		refuse = (token) => (token === "t-old" ? { status: 410, reason: "Unregistered" } : undefined);
 		const { dialog } = await client.request("conversation.create", {});
 		const replica = new ConversationReplica(dialog.conversation.id);
@@ -185,7 +185,7 @@ describe("pushes", () => {
 
 	test("a chat in a Live Activity: its finish updates the activity, with the alert, instead of a notification, and it ends later", async () => {
 		const client = await TauClient.connect(server.url);
-		await client.request("devices.register", { deviceId: "la", environment: "development", topic: "com.rumisle.tau", token: "t-la" });
+		await client.request("devices.register", { deviceId: "la", environment: "development", topic: "com.example.tau", token: "t-la" });
 		const { dialog } = await client.request("conversation.create", { title: "Waiting" });
 		const id = dialog.conversation.id;
 		const replica = new ConversationReplica(id);
@@ -211,7 +211,7 @@ describe("pushes", () => {
 			"no notification to the device whose activity says it",
 		);
 		const update = sent[0]!.push;
-		assert.equal(update.topic, "com.rumisle.tau.push-type.liveactivity");
+		assert.equal(update.topic, "com.example.tau.push-type.liveactivity");
 		assert.equal(update.priority, 10);
 		const state = aps(update)["content-state"] as { chats: Record<string, unknown>[]; more: number; accent: number };
 		assert.equal(state.more, 0);
@@ -235,7 +235,7 @@ describe("pushes", () => {
 
 	test("starts an activity with the push-to-start token when the app cannot", async () => {
 		const client = await TauClient.connect(server.url);
-		await client.request("devices.register", { deviceId: "start", environment: "development", topic: "com.rumisle.tau", pushToStart: "t-start" });
+		await client.request("devices.register", { deviceId: "start", environment: "development", topic: "com.example.tau", pushToStart: "t-start" });
 		const now = Date.now();
 		const { result } = (await client.request("liveActivity.start", { deviceId: "start", rows: [{ appId: 5, conversationId: 5, title: "Replied", state: "working", since: now, watchedAt: now }] })) as { result: string };
 		assert.equal(result, "started");

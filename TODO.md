@@ -39,8 +39,8 @@ cover the app's files; sharing a PDF or a video from another app has not been tr
 
 ## Widgets and share extension profiles
 
-The provisioning profiles of `com.rumisle.tau.widgets` and `com.rumisle.tau.share` expire on October 29, 2026. To check
-they are the current ones, and make new ones before then.
+The provisioning profiles of the widgets and share extensions (`$(TAU_BUNDLE_ID).widgets`, `.share`) expire on
+October 29, 2026. To check they are the current ones, and make new ones before then.
 
 ## Archived Chats goes blank
 
@@ -65,7 +65,7 @@ Shard 1's last run left 25 tests unrun; `testEditQueued` and `testMoveToSteer` a
 
 - Aqua dictation: more robust.
 - Opening a chat: part C (A and B are done).
-- Emoji showing as boxes on remote.
+- Emoji showing as boxes on a Linux server.
 - Keep Cache: turning itself off.
 - Folders.
 - Dynamic Type for tool cards.

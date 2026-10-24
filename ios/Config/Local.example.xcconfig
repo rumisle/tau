@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig (gitignored) and set your own: a bundle ID you can register, and your team's ID
+// (developer.apple.com > Membership). The scripts read both from here (scripts/config.sh).
+TAU_BUNDLE_ID = com.yourname.tau
+DEVELOPMENT_TEAM = ABCDE12345
+// Optional: the server a new install connects to, as host:port, for example your Mac's tailnet name.
+TAU_DEFAULT_SERVER = my-mac.example.ts.net:7878

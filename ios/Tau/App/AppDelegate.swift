@@ -217,7 +217,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     /// For screenshots and UI checks from the command line, e.g.
-    /// `xcrun simctl launch booted com.rumisle.tau -openChat 2 -send "hello"`.
+    /// `xcrun simctl launch booted <bundle ID> -openChat 2 -send "hello"`.
     private func applyDebugLaunchArguments(context: AppContext, chatList: ChatListController, root: RootTabController, navigationController: NavigationController) {
         let defaults = UserDefaults.standard
         // -theme classic|day|night|tintedNight (light and dark map to Classic and Tinted Night).
@@ -411,8 +411,12 @@ private final class ApplicationStatusBarHost: StatusBarHost {
     }
 }
 
-/// The server unless Settings names another: the Mac's tau server, by its tailnet name.
-let defaultServerURL = "ws://nest.example.ts.net:7878"
+/// The server unless Settings names another: the build's (`TAU_DEFAULT_SERVER`, a host and port, ios/Config), else
+/// this computer's, which the simulator reaches.
+let defaultServerURL: String = {
+    let configured = (Bundle.main.object(forInfoDictionaryKey: "TauDefaultServer") as? String ?? "").trimmingCharacters(in: .whitespaces)
+    return normalizedServerAddress(configured.isEmpty ? "127.0.0.1:7878" : configured) ?? "ws://127.0.0.1:7878"
+}()
 
 /// The server from Settings, or canned data with `-mock YES` (UI tests and screenshots).
 func makeStore() -> TauStore {

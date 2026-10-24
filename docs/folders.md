@@ -4,7 +4,7 @@ Telegram's folders, for tau's chats: tabs over the chat list (All, then the user
 folder takes in. Telegram's folders take in chat types (contacts, groups, bots); tau's chats differ by where they run,
 so a folder takes in:
 
-- **servers**: every chat on nest, or on remote;
+- **servers**: every chat on one server, say the Mac's or a Linux box's;
 - **projects**: every chat in a working directory on a server;
 - **chats** picked by hand;
 - **two live types**: Working (an agent is busy in it, or one of its subagents) and Unread (an answer not seen).

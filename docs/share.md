@@ -13,7 +13,7 @@ chat picked, with a count on the button when it is more than one.
   next time it opens, as it sends anything.
 
 The app and the extension exchange the servers and chats, and unsent shares, in a shared keychain group
-(`$(AppIdentifierPrefix)com.rumisle.tau.shared`), not an App Group: a free developer account's profiles allow the
+(`$(AppIdentifierPrefix)$(TAU_BUNDLE_ID).shared`), not an App Group: a free developer account's profiles allow the
 team's keychain groups but not App Groups. Unsent photos are kept at most four, 1280 px a side, to fit.
 
 Files (PDFs, archives, videos) and photos are uploaded (docs/files.md), once for all a server's chats, and named by the

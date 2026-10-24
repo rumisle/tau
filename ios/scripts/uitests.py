@@ -39,13 +39,24 @@ CACHE_PORT = 7982
 
 
 def server_tokens() -> dict[str, str]:
-    """This Mac's tau server's token and remote's, for the tests against them (TauUITests/SendingUITests.swift)."""
+    """This Mac's tau server's token, and a second server's (TAU_SERVER2, an ssh host: in Config/Local.env, see
+    Local.example.env), for the tests against them (TauUITests/SendingUITests.swift); this Mac's name too."""
     local = Path.home() / ".config/tau/token"
-    remote = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "remote", "cat ~/.config/tau/token"], capture_output=True, text=True)
-    return {
+    result = {
         "TEST_RUNNER_TAU_TOKEN": local.read_text().strip() if local.exists() else "",
-        "TEST_RUNNER_TAU_REMOTE_TOKEN": remote.stdout.strip() if remote.returncode == 0 else "",
+        "TEST_RUNNER_TAU_HOSTNAME": subprocess.run(["hostname", "-s"], capture_output=True, text=True).stdout.strip(),
     }
+    settings = IOS / "Config" / "Local.env"
+    host = os.environ.get("TAU_SERVER2", "")
+    if not host and settings.exists():
+        for line in settings.read_text().splitlines():
+            if line.startswith("TAU_SERVER2="):
+                host = line.split("=", 1)[1].strip()
+    if host:
+        token = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "cat ~/.config/tau/token"], capture_output=True, text=True)
+        result["TEST_RUNNER_TAU_SERVER2_URL"] = f"ws://{host}:7878"
+        result["TEST_RUNNER_TAU_SERVER2_TOKEN"] = token.stdout.strip() if token.returncode == 0 else ""
+    return result
 
 
 def run(*args: str, **kwargs) -> subprocess.CompletedProcess:

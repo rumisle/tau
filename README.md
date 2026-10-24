@@ -68,8 +68,8 @@ which the server makes only its owner may enter; `--db <file>` names a database 
 stays apart, so a deploy replaces it freely.
 
 `server/contrib/tau-server.service` runs it with a token under systemd, as a user unit: as its user, since the agents
-work on that user's files. The UI test scripts read this Mac's token and
-remote's and pass them to the tests.
+work on that user's files. The UI test scripts read this Mac's token, and a second server's for the tests of several
+servers (`ios/Config/Local.example.env`), and pass them to the tests.
 
 Model credentials come from pi's `~/.pi/agent/auth.json` (the same logins as the `pi` CLI, safe to share) and the
 usual provider environment variables. The `dev/echo` model is free: it echoes, runs `$ <command>` through bash, starts a subagent for

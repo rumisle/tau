@@ -5,3 +5,5 @@ data/
 *.sqlite-*
 .DS_Store
 ios/Tau.xcodeproj/
+ios/Config/Local.xcconfig
+ios/Config/Local.env

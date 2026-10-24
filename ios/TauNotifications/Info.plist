@@ -4,7 +4,10 @@
 <dict>
 	<!-- The keychain group the app shares its servers in (ShareModels.swift): which slot a push's server is. -->
 	<key>TauKeychainGroup</key>
-	<string>$(AppIdentifierPrefix)com.rumisle.tau.shared</string>
+	<string>$(AppIdentifierPrefix)$(TAU_BUNDLE_ID).shared</string>
+	<!-- The app's bundle ID, which names its keychain items (in an extension too). -->
+	<key>TauBundleID</key>
+	<string>$(TAU_BUNDLE_ID)</string>
 	<key>CFBundleDisplayName</key>
 	<string>tau</string>
 	<key>NSExtension</key>

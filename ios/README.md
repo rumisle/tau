@@ -8,7 +8,7 @@ wallpapers, the context menus, the selection mode, the attachment menu. It talks
 
 ```bash
 ios/scripts/build.sh --run     # xcodegen + xcodebuild, install and launch on the "iPhone 17 Pro" simulator
-ios/scripts/build.sh --device  # signed Release build on the connected iPhone (TAU_TEAM, default TEAMID)
+ios/scripts/build.sh --device  # signed Release build on the connected iPhone (the team in Config/Local.xcconfig)
 ios/scripts/testflight.sh      # archive and upload to App Store Connect ("tau agent") for TestFlight
 ios/scripts/uitest.sh          # UI walkthroughs in the simulator; screenshots of each step in /tmp/tau-ui
 ios/scripts/sending-tests.sh   # the sending state machine against the dev server (scripts/devserver.sh, port 7979)
@@ -18,10 +18,16 @@ uv run ios/scripts/uitests.py  # all of them on 3 simulators at once, a dev serv
 XcodeGen comes from nix when it is not installed (`nix shell nixpkgs#xcodegen`). `Tau.xcodeproj` is generated and
 ignored by git; edit `project.yml`.
 
+Who the app is comes from `Config/Tau.xcconfig`, and yours from `Config/Local.xcconfig` (gitignored; copy
+`Config/Local.example.xcconfig`): the bundle ID, under which each extension's is and the keychain group the app shares
+with them (`$(AppIdentifierPrefix)$(TAU_BUNDLE_ID).shared`), the signing team, and the server a new install connects
+to. The scripts read the same file (`scripts/config.sh`).
+
 ## Server
 
-The app connects to `ws://nest.example.ts.net:7878`, the Mac's server by its tailnet name (`Tau/Info.plist` allows
-plain WebSockets to `*.ts.net`, which WireGuard encrypts, and to the local network). Settings > Server sets another address and the server's token. The UI tests pass `-server.url ws://127.0.0.1:7878`
+A new install connects to `TAU_DEFAULT_SERVER` (for example the Mac's server by its tailnet name), else to
+`127.0.0.1:7878` (`Tau/Info.plist` allows plain WebSockets to `*.ts.net`, which WireGuard encrypts, and to the local
+network). Settings > Server sets another address and the server's token. The UI tests pass `-server.url ws://127.0.0.1:7878`
 (and `-server.token`, which the test scripts read from `~/.config/tau/token`) to reach the local server directly. "Use Demo Data" in the same dialog, or the `-mock YES` launch argument, switches to canned
 conversations (`Model/MockStore.swift`).
 
