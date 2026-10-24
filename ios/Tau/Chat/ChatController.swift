@@ -464,7 +464,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             return ImageGalleryTransitionArguments(transitionNode: (node, node.bounds, { [weak node] in
                 return (node?.view.snapshotContentTree(unhide: true), nil)
             }), addToTransitionSurface: { [weak self] view in
-                self?.controllerNode.view.addSubview(view)
+                // Just above the transcript, as Telegram's chat adds it: under the input panel and the bar, which the
+                // photo goes behind on its way back as the message itself does.
+                guard let self else {
+                    return
+                }
+                let history = self.controllerNode.historyNode.view
+                history.superview?.insertSubview(view, aboveSubview: history)
             })
         })
         self.present(gallery, in: .window(.root), with: arguments, blockInteraction: true)

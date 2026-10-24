@@ -571,10 +571,10 @@ final class ChatControllerNode: ASDisplayNode {
             for attachment in entry.message.attachments + (entry.message.tool?.images ?? []) + (entry.message.tool?.sentFiles ?? []) {
                 switch attachment.kind {
                 case let .image(image):
-                    result.append(ImageGalleryEntry(attachmentId: attachment.id, image: image))
+                    result.append(ImageGalleryEntry(attachmentId: attachment.id, image: image, date: entry.message.date))
                 case let .remote(remote):
                     if let image = remote.cachedDisplay {
-                        result.append(ImageGalleryEntry(attachmentId: attachment.id, image: image, remote: remote))
+                        result.append(ImageGalleryEntry(attachmentId: attachment.id, image: image, remote: remote, date: entry.message.date))
                     }
                 case .file:
                     break

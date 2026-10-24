@@ -4,6 +4,10 @@ import Display
 import SwiftSignalKit
 import GalleryUI
 import TelegramPresentationData
+import MoreButtonNode
+import ContextUI
+import UndoUI
+import Photos
 
 /// A photo in the media viewer: one image attachment of the conversation, a user's or a tool's. One on the server
 /// shows as the chat has it and loads at full size when its page opens.
@@ -11,6 +15,8 @@ struct ImageGalleryEntry: Equatable {
     let attachmentId: Int
     let image: UIImage
     var remote: RemoteImage? = nil
+    /// When its message was sent: the viewer's title says it.
+    var date: Date? = nil
 
     static func == (lhs: ImageGalleryEntry, rhs: ImageGalleryEntry) -> Bool {
         return lhs.attachmentId == rhs.attachmentId
@@ -67,24 +73,40 @@ final class ImageGalleryController: ViewController {
     }
 
     private let baseNavigationController: NavigationController?
+    /// Telegram's glass title: when the photo was sent, and "2 of 4" while paging.
+    private let titleView: GalleryTitleView
+    /// Telegram's ⋯: Share, Save Image, Copy; held, the menu follows the finger.
+    private let moreButton: MoreButtonNode
 
     init(context: AppContext, entries: [ImageGalleryEntry], centralIndex: Int, baseNavigationController: NavigationController?) {
         self.context = context
         self.entries = entries
         self.centralIndex = centralIndex
         self.baseNavigationController = baseNavigationController
-        self.presentationData = context.theme.presentationData
+        // The viewer is dark whatever the theme, as Telegram's; so are its menus.
+        self.presentationData = TauTheme.builtin(.night, fontSize: TauTheme.systemFontSize()).presentationData
+        self.titleView = GalleryTitleView(context: context.telegram, presentationData: self.presentationData)
+        self.moreButton = MoreButtonNode(theme: self.presentationData.theme, encircled: false, navigation: true)
 
         super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: ImageGalleryController.darkNavigationTheme, strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)))
 
         let backItem = UIBarButtonItem(backButtonAppearanceWithTitle: self.presentationData.strings.Common_Back, target: self, action: #selector(self.donePressed))
         self.navigationItem.leftBarButtonItem = backItem
-        self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "square.and.arrow.up"), style: .plain, target: self, action: #selector(self.sharePressed))
+        self.moreButton.updateColor(.white, transition: .immediate)
+        self.moreButton.action = { [weak self] node, gesture in
+            self?.openMenu(sourceView: node.view, gesture: gesture)
+        }
+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(customDisplayNode: self.moreButton)
 
         self.statusBar.statusBarStyle = .White
 
         self.centralItemAttributesDisposable.add(self.centralItemTitle.get().start(next: { [weak self] title in
-            self?.navigationItem.title = title
+            guard let self else {
+                return
+            }
+            let date = self.galleryNode.pager.centralItemNode().flatMap { self.entries[$0.index].date }
+            // Telegram's title has the sender above the date; a chat with an agent has two, so the date takes the line.
+            self.titleView.setContent(content: GalleryTitleView.Content(authorTitle: date.map(humanReadableDate), dateTitle: nil, title: title.isEmpty ? nil : title, action: nil))
         }))
         self.centralItemAttributesDisposable.add(self.centralItemFooterContentNode.get().start(next: { [weak self] footerContentNode, _ in
             self?.galleryNode.updatePresentationState({
@@ -108,23 +130,83 @@ final class ImageGalleryController: ViewController {
         self.dismiss(forceAway: false)
     }
 
-    @objc private func sharePressed() {
+    /// The photo on the page, at full size: the file itself when it is on the server, else the image the chat has.
+    private func currentPhoto(_ completion: @escaping (UIImage, Data?) -> Void) {
         guard let node = self.galleryNode.pager.centralItemNode(), node.index < self.entries.count else {
             return
         }
         let entry = self.entries[node.index]
-        // The photo itself, when it is on the server.
-        let share: (Any) -> Void = { [weak self] item in
-            let controller = UIActivityViewController(activityItems: [item], applicationActivities: nil)
-            self?.view.window?.rootViewController?.present(controller, animated: true)
-        }
         if let remote = entry.remote {
             let _ = (remote.data() |> take(1) |> deliverOnMainQueue).start(next: { data in
-                share(data.flatMap { UIImage(data: $0) } ?? entry.image)
+                completion(data.flatMap { UIImage(data: $0) } ?? entry.image, data)
             })
         } else {
-            share(entry.image)
+            completion(entry.image, nil)
         }
+    }
+
+    /// ChatImageGalleryItemNode's ⋯ menu, with what a photo of a chat with an agent can do.
+    private func openMenu(sourceView: UIView, gesture: ContextGesture?) {
+        let icon: (String) -> (PresentationTheme) -> UIImage? = { name in
+            return { theme in generateTintedImage(image: UIImage(bundleImageName: name), color: theme.contextMenu.primaryColor) }
+        }
+        let strings = self.presentationData.strings
+        var items: [ContextMenuItem] = []
+        items.append(.action(ContextMenuActionItem(text: strings.Conversation_ContextMenuShare, icon: icon("Chat/Context Menu/Share"), action: { [weak self] _, f in
+            f(.default)
+            self?.currentPhoto { image, data in
+                let controller = UIActivityViewController(activityItems: [data.flatMap { UIImage(data: $0) } ?? image], applicationActivities: nil)
+                self?.view.window?.rootViewController?.present(controller, animated: true)
+            }
+        })))
+        items.append(.action(ContextMenuActionItem(text: strings.Gallery_SaveImage, icon: icon("Chat/Context Menu/Download"), action: { [weak self] _, f in
+            f(.default)
+            self?.currentPhoto { image, data in
+                self?.save(image, data: data)
+            }
+        })))
+        items.append(.action(ContextMenuActionItem(text: strings.Conversation_ContextMenuCopy, icon: icon("Chat/Context Menu/Copy"), action: { [weak self] _, f in
+            f(.default)
+            self?.currentPhoto { image, _ in
+                guard let self else {
+                    return
+                }
+                UIPasteboard.general.image = image
+                self.presentToast(.copy(text: strings.Conversation_ImageCopied))
+            }
+        })))
+        let controller = makeContextController(presentationData: self.presentationData, source: .reference(ViewContextReferenceSource(view: sourceView)), items: .single(ContextController.Items(content: .list(items))), gesture: gesture)
+        self.presentInGlobalOverlay(controller)
+    }
+
+    /// Into the photo library, as it was sent (its file's bytes, not a re-encoding), then Telegram's "Image Saved".
+    private func save(_ image: UIImage, data: Data?) {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+            guard status == .authorized || status == .limited else {
+                return
+            }
+            PHPhotoLibrary.shared().performChanges({
+                if let data {
+                    PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: nil)
+                } else {
+                    PHAssetChangeRequest.creationRequestForAsset(from: image)
+                }
+            }, completionHandler: { success, _ in
+                guard success else {
+                    return
+                }
+                Queue.mainQueue().async {
+                    guard let self else {
+                        return
+                    }
+                    self.presentToast(.mediaSaved(text: self.presentationData.strings.Gallery_ImageSaved))
+                }
+            })
+        }
+    }
+
+    private func presentToast(_ content: UndoOverlayContent) {
+        self.present(UndoOverlayController(presentationData: self.presentationData, content: content, elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .window(.root))
     }
 
     private func item(_ entry: ImageGalleryEntry, index: Int) -> GalleryItem {
@@ -172,7 +254,7 @@ final class ImageGalleryController: ViewController {
         }, currentItemNode: { [weak self] in
             return self?.galleryNode.pager.centralItemNode()
         })
-        self.displayNode = GalleryControllerNode(context: self.context.telegram, controllerInteraction: controllerInteraction, titleView: nil)
+        self.displayNode = GalleryControllerNode(context: self.context.telegram, controllerInteraction: controllerInteraction, titleView: self.titleView)
         self.displayNodeDidLoad()
 
         self.galleryNode.statusBar = self.statusBar

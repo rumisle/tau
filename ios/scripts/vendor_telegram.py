@@ -298,6 +298,9 @@ IMAGES = [
     # The title menu's Subagents.
     "Chat/Context Menu/Bots",
     "Chat/Context Menu/CellMergeV",
+    # The media viewer's ⋯ (Save Image) and a link's menu (Open in Safari).
+    "Chat/Context Menu/Download",
+    "Chat/Context Menu/Browser",
     # Pinned chats: the list's pin badge and the menu's Pin / Unpin.
     "Chat List/PeerPinnedIcon",
     "Chat/Context Menu/Pin",

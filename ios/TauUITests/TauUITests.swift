@@ -333,6 +333,24 @@ final class TauUITests: XCTestCase {
         self.shot("viewer-opening")
         sleep(1)
         self.shot("viewer-open")
+        // A tap shows the viewer's bar, then Telegram's ⋯: Share, Save Image, Copy.
+        if !self.app.descendants(matching: .any)["Back"].firstMatch.isHittable {
+            self.point(0.5, 0.5).tap()
+            sleep(1)
+        }
+        self.shot("viewer-controls")
+        self.point(0.905, 0.097).tap()
+        sleep(1)
+        self.shot("viewer-menu")
+        XCTAssertTrue(self.app.descendants(matching: .any)["Save Image"].firstMatch.exists, "the viewer's menu")
+        self.point(0.5, 0.85).tap()
+        sleep(1)
+        // Held, the menu follows the finger: lifted on Copy, it copies.
+        self.point(0.905, 0.097).press(forDuration: 0.6, thenDragTo: self.point(0.6, 0.263))
+        sleep(1)
+        self.shot("viewer-held-copy")
+        XCTAssertFalse(self.app.descendants(matching: .any)["Save Image"].firstMatch.exists, "the menu chose and closed")
+        sleep(2)
         self.point(0.5, 0.5).press(forDuration: 0.05, thenDragTo: self.point(0.5, 0.85))
         usleep(150_000)
         self.shot("viewer-closing")
