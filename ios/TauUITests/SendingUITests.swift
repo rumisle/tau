@@ -628,6 +628,44 @@ final class SendingUITests: XCTestCase {
         XCTAssertFalse(self.app.descendants(matching: .any)["sentFiles"].firstMatch.isHittable, "Quick Look is over the chat")
     }
 
+    /// A double tap on an answer's text selects the word there, in place, with Telegram's knobs and menu; Copy copies
+    /// it and says so; a tap elsewhere ends a selection.
+    func testDoubleTapSelect() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("pineapple")
+        self.send()
+        let answer = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage' AND label BEGINSWITH 'You said'")).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 10))
+        sleep(2)
+        self.app.swipeDown()
+        sleep(1)
+        // "You said: pineapple": the last word of the first line.
+        let frame = answer.frame
+        let word = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: frame.minX + 130.0, dy: frame.minY + 16.0))
+        word.doubleTap()
+        sleep(1)
+        self.shot("select-0-word")
+        let copy = self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy'")).firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 3), "the selection's menu")
+        copy.tap()
+        sleep(1)
+        self.shot("select-1-copied")
+        // The toast says so (not an accessibility element); the script checks the pasteboard.
+        XCTAssertFalse(copy.exists, "the selection ends with its menu")
+        // Again, the right knob dragged into the next line: the list stays, the selection grows.
+        word.doubleTap()
+        sleep(1)
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        word.withOffset(CGVector(dx: 19.0, dy: 14.0)).press(forDuration: 0.1, thenDragTo: word.withOffset(CGVector(dx: 150.0, dy: 42.0)))
+        sleep(1)
+        self.shot("select-3-extended")
+        self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+        sleep(1)
+        self.shot("select-2-ended")
+        XCTAssertFalse(copy.exists, "ended by a tap elsewhere")
+    }
+
     /// A code mode script (docs/codemode.md): one card with the script and a line per call; what it sent, after it,
     /// as send_file's own files; tapped, the whole script.
     func testCodemode() {

@@ -38,6 +38,8 @@ final class ChatMessageItemInteraction {
     var presentInGlobalOverlay: (ViewController, Any?) -> Void = { _, _ in }
     /// The chat's view, which text selection keeps its knobs and menu inside.
     var rootView: () -> UIView? = { nil }
+    /// A double tap selected text in a row: the chat keeps one selection, ending the one before.
+    var beganInlineSelection: (ChatMessageItemNode) -> Void = { _ in }
     /// How much of each streaming answer has been revealed, by message: a row that leaves the screen and comes back gets
     /// a new node, which goes on from here instead of revealing the answer again from its first letter. Read by layouts
     /// on background queues.
@@ -401,7 +403,8 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.addSubnode(self.failedNode)
 
         self.containerNode.shouldBegin = { [weak self] point in
-            guard let self, let item = self.item, item.selection == nil, !item.isStreaming else {
+            // Over text selected in place, a long press selects a word instead, as in a text view.
+            guard let self, let item = self.item, item.selection == nil, !item.isStreaming, self.inlineSelection == nil else {
                 return false
             }
             return self.contentFrame.insetBy(dx: -4.0, dy: -4.0).contains(point)
@@ -417,23 +420,54 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
     }
 
+    /// When the touch being recognized began: a press held as long as a long press is not a tap.
+    private var touchBegan: CFTimeInterval = 0.0
+
     override func didLoad() {
         super.didLoad()
-        let tap = UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:)))
-        tap.cancelsTouchesInView = false
-        self.view.addGestureRecognizer(tap)
+        // Telegram's message recognizer (ChatMessageBubbleItemNode): a tap on what acts on a tap (code, a photo, a
+        // file) acts at once; one on a message's text waits to see whether a second follows, which selects.
+        let recognizer = TapLongTapOrDoubleTapGestureRecognizer(target: self, action: #selector(self.tapLongTapOrDoubleTapGesture(_:)))
+        recognizer.tapActionAtPoint = { [weak self] point in
+            guard let self else {
+                return .fail
+            }
+            self.touchBegan = CACurrentMediaTime()
+            return self.selectableText(at: point) != nil ? .waitForDoubleTap : .keepWithSingleTap
+        }
+        recognizer.cancelsTouchesInView = false
+        self.view.addGestureRecognizer(recognizer)
     }
 
-    @objc private func tapGesture(_ recognizer: UITapGestureRecognizer) {
+    @objc private func tapLongTapOrDoubleTapGesture(_ recognizer: TapLongTapOrDoubleTapGestureRecognizer) {
+        guard recognizer.state == .ended, let (gesture, location) = recognizer.lastRecognizedGestureAndLocation else {
+            return
+        }
+        switch gesture {
+        case .tap:
+            // Held long enough for the message's menu: that was the press, not a tap.
+            if CACurrentMediaTime() - self.touchBegan < 0.5 {
+                self.handleTap(at: location)
+            }
+        case .doubleTap:
+            if let (textNode, index) = self.selectableText(at: location) {
+                self.beginInlineSelection(textNode: textNode, at: index)
+            }
+        default:
+            break
+        }
+    }
+
+    private func handleTap(at location: CGPoint) {
         guard let item = self.item, item.selection == nil else {
             return
         }
-        if !self.failedNode.isHidden, self.failedNode.frame.insetBy(dx: -8.0, dy: -8.0).contains(recognizer.location(in: self.view)) {
+        if !self.failedNode.isHidden, self.failedNode.frame.insetBy(dx: -8.0, dy: -8.0).contains(location) {
             // As ChatMessageDeliveryFailedNode's tap: the message's menu, with Resend.
             item.interaction.openContextMenu(item.message.id, self, nil)
             return
         }
-        let point = recognizer.location(in: self.contentNode.view)
+        let point = self.view.convert(location, to: self.contentNode.view)
         if let frame = self.retryButtonFrame, frame.contains(point) {
             item.interaction.openTool(item.message)
             return
@@ -484,46 +518,129 @@ final class ChatMessageItemNode: ListViewItemNode {
 
     private func updateIsExtractedToContextPreview(_ value: Bool) {
         if value {
+            self.endInlineSelection(animated: false)
             guard self.textSelectionNodes.isEmpty, let item = self.item, item.message.tool == nil else {
                 return
             }
-            let theme = item.theme.presentationTheme
-            let colors = item.message.role == .user ? theme.chat.message.outgoing : theme.chat.message.incoming
             for textNode in self.textNodes {
-                let selectionNode = TextSelectionNode(theme: TextSelectionTheme(selection: colors.textSelectionColor, knob: colors.textSelectionKnobColor, isDark: theme.overallDarkAppearance), strings: item.theme.presentationStrings, textNodeOrView: .node(textNode), updateIsActive: { [weak self] value in
+                self.textSelectionNodes.append(self.addTextSelectionNode(over: textNode, item: item, updateIsActive: { [weak self] value in
                     self?.contextSourceNode.updateDistractionFreeMode?(value)
-                }, present: { [weak self] controller, arguments in
-                    self?.item?.interaction.presentInGlobalOverlay(controller, arguments)
-                }, rootView: { [weak self] in
-                    return self?.item?.interaction.rootView()
-                }, performAction: { [weak self] text, action in
-                    self?.performTextSelectionAction(text: text, action: action)
-                })
-                selectionNode.enableQuote = false
-                selectionNode.enableTranslate = false
-                // A code block's node sits in its scroller.
-                let frame = textNode.view.convert(textNode.bounds, to: self.contentNode.view)
-                selectionNode.frame = frame
-                selectionNode.highlightAreaNode.frame = frame
-                if textNode.supernode === self.contentNode {
-                    self.contentNode.insertSubnode(selectionNode.highlightAreaNode, belowSubnode: textNode)
-                } else {
-                    self.contentNode.insertSubnode(selectionNode.highlightAreaNode, belowSubnode: self.dateNode)
-                }
-                self.contentNode.addSubnode(selectionNode)
-                self.textSelectionNodes.append(selectionNode)
+                }))
             }
         } else {
             let nodes = self.textSelectionNodes
             self.textSelectionNodes = []
             for node in nodes {
-                node.highlightAreaNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false)
-                node.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { [weak node] _ in
-                    node?.highlightAreaNode.removeFromSupernode()
-                    node?.removeFromSupernode()
-                })
+                Self.removeTextSelectionNode(node, animated: true)
             }
         }
+    }
+
+    /// Telegram's selection over one of the row's text nodes, with Copy / Share / Look Up over what it selects.
+    private func addTextSelectionNode(over textNode: InteractiveTextNode, item: ChatMessageItem, updateIsActive: @escaping (Bool) -> Void) -> TextSelectionNode {
+        let theme = item.theme.presentationTheme
+        let colors = item.message.role == .user ? theme.chat.message.outgoing : theme.chat.message.incoming
+        let selectionNode = TextSelectionNode(theme: TextSelectionTheme(selection: colors.textSelectionColor, knob: colors.textSelectionKnobColor, isDark: theme.overallDarkAppearance), strings: item.theme.presentationStrings, textNodeOrView: .node(textNode), updateIsActive: updateIsActive, present: { [weak self] controller, arguments in
+            self?.item?.interaction.presentInGlobalOverlay(controller, arguments)
+        }, rootView: { [weak self] in
+            return self?.item?.interaction.rootView()
+        }, performAction: { [weak self] text, action in
+            self?.performTextSelectionAction(text: text, action: action)
+        })
+        selectionNode.enableQuote = false
+        selectionNode.enableTranslate = false
+        // A code block's node sits in its scroller.
+        let frame = textNode.view.convert(textNode.bounds, to: self.contentNode.view)
+        selectionNode.frame = frame
+        selectionNode.highlightAreaNode.frame = frame
+        if textNode.supernode === self.contentNode {
+            self.contentNode.insertSubnode(selectionNode.highlightAreaNode, belowSubnode: textNode)
+        } else {
+            self.contentNode.insertSubnode(selectionNode.highlightAreaNode, belowSubnode: self.dateNode)
+        }
+        self.contentNode.addSubnode(selectionNode)
+        return selectionNode
+    }
+
+    private static func removeTextSelectionNode(_ node: TextSelectionNode, animated: Bool) {
+        guard animated else {
+            node.highlightAreaNode.removeFromSupernode()
+            node.removeFromSupernode()
+            return
+        }
+        node.highlightAreaNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false)
+        node.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { [weak node] _ in
+            node?.highlightAreaNode.removeFromSupernode()
+            node?.removeFromSupernode()
+        })
+    }
+
+    /// Text selected in place by a double tap, as a text view selects a word: the selection, the text node it is over,
+    /// and that node's text when it began, which a layout of other text ends it for.
+    private var inlineSelection: (node: TextSelectionNode, textNode: InteractiveTextNode, text: NSAttributedString)?
+
+    /// The text node and character under a point of the row, when a double tap there selects: a message's own text
+    /// (the user's or the answer's, done), not a tool's card, and not code, which a tap copies.
+    private func selectableText(at point: CGPoint) -> (InteractiveTextNode, Int)? {
+        guard let item = self.item, item.selection == nil, !item.isStreaming, item.message.tool == nil, item.message.role == .assistant || item.message.role == .user else {
+            return nil
+        }
+        for textNode in self.textNodes where textNode.supernode === self.contentNode {
+            let local = self.view.convert(point, to: textNode.view)
+            guard textNode.bounds.contains(local), let (index, attributes) = textNode.attributesAtPoint(local, orNearest: false) else {
+                continue
+            }
+            if attributes[MarkdownText.inlineCodeKey] != nil {
+                return nil
+            }
+            if let quote = attributes[MarkdownText.blockQuoteKey] as? TextNodeBlockQuoteData, case .code = quote.kind {
+                return nil
+            }
+            return (textNode, index)
+        }
+        return nil
+    }
+
+    /// Selects the word at `index`, with its knobs and menu, where the text is.
+    private func beginInlineSelection(textNode: InteractiveTextNode, at index: Int) {
+        guard let item = self.item, let text = textNode.cachedLayout?.attributedString, index < text.length else {
+            return
+        }
+        self.endInlineSelection(animated: false)
+        let selectionNode = self.addTextSelectionNode(over: textNode, item: item, updateIsActive: { [weak self] active in
+            if !active {
+                self?.endInlineSelection(animated: true)
+            }
+        })
+        // A tap elsewhere ends it, as one outside a text view's selection does.
+        selectionNode.cancelSelectionOnOutsideTap = true
+        self.inlineSelection = (selectionNode, textNode, text)
+        item.interaction.beganInlineSelection(self)
+        selectionNode.setSelection(range: wordRange(in: text.string as NSString, at: index), displayMenu: true)
+    }
+
+    func endInlineSelection(animated: Bool) {
+        guard let selection = self.inlineSelection else {
+            return
+        }
+        self.inlineSelection = nil
+        selection.node.cancelSelection()
+        Self.removeTextSelectionNode(selection.node, animated: animated)
+    }
+
+    /// After a layout: the selection follows its text, or ends when the text is not what it selected in.
+    private func layoutInlineSelection() {
+        guard let selection = self.inlineSelection else {
+            return
+        }
+        guard let item = self.item, item.selection == nil, !item.isStreaming, self.textNodes.contains(where: { $0 === selection.textNode }), selection.textNode.supernode === self.contentNode, selection.textNode.cachedLayout?.attributedString?.isEqual(to: selection.text) == true else {
+            self.endInlineSelection(animated: false)
+            return
+        }
+        let frame = selection.textNode.frame
+        selection.node.frame = frame
+        selection.node.highlightAreaNode.frame = frame
+        selection.node.updateLayout()
     }
 
     private func performTextSelectionAction(text: NSAttributedString, action: TextSelectionAction) {
@@ -540,6 +657,13 @@ final class ChatMessageItemNode: ListViewItemNode {
             self.view.window?.rootViewController?.present(controller, animated: true)
         default:
             break
+        }
+        if self.inlineSelection != nil {
+            // Selected in place: nothing to close; a copy says so, as a tap on code does.
+            if case .copy = action {
+                self.item?.interaction.copied(string)
+            }
+            return
         }
         self.contextSourceNode.requestDismiss?()
     }
@@ -577,8 +701,9 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.contentNode.frame = bounds
         self.contextSourceNode.contentRect = self.contentFrame
         self.containerNode.targetNodeForActivationProgressContentRect = self.contentFrame
-        // Every row's apply ends here, its text laid out: search's marks follow the text.
+        // Every row's apply ends here, its text laid out: search's marks and a selection follow the text.
         self.updateSearchHighlight()
+        self.layoutInlineSelection()
     }
 
     override func layoutForParams(_ params: ListViewItemLayoutParams, item: ListViewItem, neighbors: ListViewItemNeighbors) {
@@ -1059,6 +1184,12 @@ final class ChatMessageItemNode: ListViewItemNode {
                     }
                     self.removeCodeScrollers(keeping: zip(textNodes, textScrolls).filter(\.1).map(\.0))
                     self.contentFrame = CGRect(x: x - 8.0, y: -4.0, width: maxTextWidth + 16.0, height: height + 8.0)
+                    // Read as one, as Telegram reads a message.
+                    if message.role == .assistant {
+                        self.isAccessibilityElement = true
+                        self.accessibilityIdentifier = "assistantMessage"
+                        self.accessibilityLabel = message.text
+                    }
                     self.updateReveal(item: item, totalLength: totalLength)
                     self.layoutContainers(size: layout.contentSize)
                     self.updateSelection(item: item, size: layout.contentSize, animation: animation)
@@ -2295,6 +2426,19 @@ final class FileAttachmentNode: ASDisplayNode {
         self.layoutSize(width: self.width)
         self.statusNode?.transitionToState(state, animated: animated)
     }
+}
+
+/// The word around `index`, as TextSelectionNode's long press finds it (CFStringTokenizer); the character alone
+/// where no word is, such as in punctuation or space.
+private func wordRange(in string: NSString, at index: Int) -> NSRange {
+    let tokenizer = CFStringTokenizerCreate(kCFAllocatorDefault, string as CFString, CFRangeMake(0, string.length), UInt(kCFStringTokenizerUnitWord), CFLocaleCopyCurrent())
+    if !CFStringTokenizerGoToTokenAtIndex(tokenizer, index).isEmpty {
+        let range = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+        if range.location <= index && range.location + range.length > index {
+            return NSRange(location: range.location, length: range.length)
+        }
+    }
+    return string.rangeOfComposedCharacterSequence(at: index)
 }
 
 /// A size as Telegram's dataSizeString writes one: 25 B, 812 KB, 2.9 MB, 1.2 GB.

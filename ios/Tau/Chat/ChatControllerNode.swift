@@ -144,6 +144,8 @@ final class ChatControllerNode: ASDisplayNode {
         // Dragging the history away puts the keyboard down, as in Telegram.
         self.historyNode.beganInteractiveDragging = { [weak self] _ in
             self?.inputPanelNode.deactivateInput()
+            // Its menu would stay where the text was.
+            self?.endInlineSelection()
         }
         // The list is inverted, so its top offset is the distance from the end of the chat.
         self.historyNode.visibleContentOffsetChanged = { [weak self] offset, _ in
@@ -519,6 +521,14 @@ final class ChatControllerNode: ASDisplayNode {
 
     var openImage: ((Int) -> Void)?
 
+    /// The row whose text a double tap selected, in place (ChatMessageItemNode.beginInlineSelection): one at a time.
+    private weak var inlineSelectionNode: ChatMessageItemNode?
+
+    func endInlineSelection() {
+        self.inlineSelectionNode?.endInlineSelection(animated: true)
+        self.inlineSelectionNode = nil
+    }
+
     /// Set by the controller: where a file of the chat is, and a tap on its row (docs/files.md).
     func setFileHandlers(status: @escaping (FileAttachment) -> Signal<FileTransferStatus, NoError>, open: @escaping (FileAttachment, FileTransferStatus) -> Void) {
         self.interaction.fileStatus = status
@@ -534,6 +544,15 @@ final class ChatControllerNode: ASDisplayNode {
             }
             self.interaction.rootView = { [weak self] in
                 return self?.view
+            }
+            self.interaction.beganInlineSelection = { [weak self] node in
+                guard let self else {
+                    return
+                }
+                if let current = self.inlineSelectionNode, current !== node {
+                    current.endInlineSelection(animated: true)
+                }
+                self.inlineSelectionNode = node
             }
             self.interaction.copied = { [weak self] _ in
                 guard let self else {

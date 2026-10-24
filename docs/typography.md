@@ -62,6 +62,19 @@ Telegram's code block (a `pre` entity's), with:
 Replaced characters keep what they were under `MarkdownText.originalKey`: copying a selection gives the text as
 written. Copy on a message copies its text.
 
+## Selecting text
+
+Two ways, both Telegram's `TextSelectionNode` with its knobs and its Copy / Look Up / Select All menu:
+
+- **A double tap on a message's text** (an answer's or the user's) selects the word there, in place, as a text view
+  does (`ChatMessageItemNode.beginInlineSelection`). The row takes taps with Telegram's message recognizer
+  (`TapLongTapOrDoubleTapGestureRecognizer`): on code, a photo or a file a tap acts at once, as before; only on text,
+  where a single tap does nothing, does it wait for a second. The knobs extend it across the text (not across a
+  table); Copy copies it and says so. A tap elsewhere, dragging the chat, another selection, or the text changing
+  ends it. Not in a streaming answer, a tool's card, or while selecting messages; over a selection, a long press
+  selects a word instead of opening the menu.
+- **In the message's menu** (a long press lifts it out): a long press on its text, as in Telegram.
+
 ## Text size
 
 The app follows iOS's text size (Settings > Display & Brightness > Text Size), as Telegram does by default: the body

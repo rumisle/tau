@@ -400,7 +400,8 @@ final class TauUITests: XCTestCase {
     func testCodeCopy() {
         self.launch(["-theme", "light", "-openChat", "304"])
         sleep(2)
-        self.point(0.4, 0.32).tap()
+        // On the Swift block: copied at once, with no wait for a second tap.
+        self.point(0.4, 0.38).tap()
         usleep(300_000)
         self.shot("code-copied")
     }
