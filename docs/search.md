@@ -64,7 +64,7 @@ and prefix heuristics are cached for a minute.
 
 ## In the app
 
-- **Chat list**: Telegram's search field under the title. Chats whose title or project match come first, found on the
+- **Chat list**: Telegram's search field under the title. Chats whose title or server match come first, found on the
   phone at once; then messages from the servers once typing pauses for 0.25 s (each key cancels the wait for the one
   before, as Telegram's message search waits; the same query again is not sent), a page of 20 at a time as the list
   scrolls. Each message result is Telegram's: the chat, when it was said, and two lines of excerpt with the matched words

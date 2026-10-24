@@ -38,8 +38,8 @@ export type Dialog = {
 	title?: string;
 	createdAt?: number;
 	last?: EntrySummary;
-	/** Effective model and working directory. */
-	agent: { model?: { provider: string; modelId: string }; cwd: string };
+	/** Effective model. */
+	agent: { model?: { provider: string; modelId: string } };
 	busy: boolean;
 	/** The last entry the user has seen. */
 	read?: EntryId;
@@ -62,7 +62,6 @@ export type AgentPatch = {
 	model?: { provider: string; modelId: string } | null;
 	thinkingLevel?: string | null;
 	instructions?: string | null;
-	cwd?: string | null;
 };
 
 // Param readers: throw bad_request on malformed input.

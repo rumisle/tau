@@ -11,6 +11,7 @@ import ChatTitleActivityNode
 import ContextUI
 import TelegramPresentationData
 import SafariServices
+import MoreButtonNode
 
 final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     private let context: AppContext
@@ -25,6 +26,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private let titleView: ChatTitleView
     /// New Chat and ⋯, on the bar's right; none in a preview.
     private var headerButtons: ChatHeaderButtonsNode?
+    private var modelsDisposable: Disposable?
     private var editingMessageId: Int?
     /// The entry of the message being edited, which the draft keeps across launches.
     private var editingEntryId: Int?
@@ -64,29 +66,33 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
         self.navigationItem.titleView = self.titleView
         if !isPreview {
-            let buttons = ChatHeaderButtonsNode()
-            buttons.update(color: context.theme.navigationBar.primaryTextColor)
-            buttons.compose = { [weak self] in
-                self?.startNewChat()
+            let buttons = ChatHeaderButtonsNode(theme: context.theme)
+            buttons.composeNode.tapped = { [weak self] in
+                self?.startNewChat(server: nil)
             }
-            buttons.more = { [weak self, weak buttons] in
-                guard let self, let buttons else {
-                    return
+            // Held: where to start one, when there is a choice (ChatListController.openComposeMenu).
+            if context.store.servers.count > 1 {
+                buttons.composeNode.contextAction = { [weak self, weak buttons] gesture in
+                    guard let self, let buttons else {
+                        return
+                    }
+                    self.openComposeMenu(sourceView: buttons.composeNode.referenceNode.view, gesture: gesture)
                 }
-                self.openChatMenu(sourceView: buttons.moreNode.view)
+            }
+            buttons.moreNode.action = { [weak self] node, gesture in
+                self?.openChatMenu(sourceView: node.view, gesture: gesture)
             }
             self.headerButtons = buttons
             self.navigationItem.rightBarButtonItem = UIBarButtonItem(customDisplayNode: buttons)
             // The menu names the model; its name comes with the server's model list.
-            let _ = context.store.server(of: conversationId)?.models().start()
+            self.modelsDisposable = context.store.server(of: conversationId)?.models().start(next: { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                self.updateTitle(busy: self.lastState?.busy ?? false)
+            })
         }
         self.updateTitle(busy: false)
-        self.titleView.tapped = { [weak self] in
-            guard let self, let buttons = self.headerButtons else {
-                return
-            }
-            self.openChatMenu(sourceView: buttons.moreNode.view)
-        }
         self.statusBar.statusBarStyle = self.theme.statusBarStyleValue
         self.themeDisposable = (context.themeContext.theme |> deliverOnMainQueue).start(next: { [weak self] theme in
             self?.updateTheme(theme)
@@ -110,6 +116,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.eventsDisposable.dispose()
         self.connectionDisposable?.dispose()
         self.themeDisposable?.dispose()
+        self.modelsDisposable?.dispose()
         self.settingsDisposable?.dispose()
     }
 
@@ -219,7 +226,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.statusBar.statusBarStyle = theme.statusBarStyleValue
         self.navigationBar?.updatePresentationData(theme.navigationBarPresentationData(), transition: .immediate)
         self.titleView.updateTheme(theme)
-        self.headerButtons?.update(color: theme.navigationBar.primaryTextColor)
+        self.headerButtons?.update(theme: theme)
         if self.isNodeLoaded {
             self.controllerNode.updateTheme(theme)
         }
@@ -247,22 +254,28 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             if busy {
                 // How long this run has worked, as it goes.
                 let elapsed = self.lastState?.runStartedAt.map { Date().timeIntervalSince($0) } ?? 0.0
-                status = .working(elapsed >= 1.0 ? "working for \(formatElapsed(elapsed))" : "working")
+                status = .working("working", elapsed: elapsed)
             } else if let since = self.compactingSince {
                 let elapsed = Date().timeIntervalSince(since)
-                status = .working(elapsed >= 1.0 ? "compacting for \(formatElapsed(elapsed))" : "compacting")
+                status = .working("compacting", elapsed: elapsed)
             } else if let activity = dialog.subagentActivity {
                 // Its background subagents, as Telegram's title says who is typing.
-                status = .working(activity)
+                status = .working(activity, elapsed: nil)
             } else {
                 status = nil
             }
         }
         self.titleView.update(status: status)
         self.updateNewChatCard(dialog: dialog)
+        // Who the field writes to, and while the agent works, that Send steers it.
+        let name = self.modelName()
+        let verb = busy && self.compactingSince == nil ? "Steer" : "Message"
+        if self.isNodeLoaded {
+            self.controllerNode.inputPanelNode.placeholder = name.isEmpty ? verb : "\(verb) \(name)"
+        }
     }
 
-    /// A chat not created yet shows where it will run and with what, each a tap from changing.
+    /// A chat not created yet shows which server it will be on (with several) and its model, each a tap from changing.
     private func updateNewChatCard(dialog: DialogModel) {
         guard dialog.id < 0, !self.isPreview else {
             self.controllerNode.newChatCard = nil
@@ -270,34 +283,45 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
         let store = self.context.store
         let agent = store.agent(self.conversationId)
-        let location = ProjectLocation(slot: dialog.serverSlot, path: dialog.cwd)
-        let modelName = agent.provider.flatMap { provider in agent.modelId.flatMap { store.server(of: self.conversationId)?.cachedModel(provider: provider, id: $0)?.name } } ?? agent.modelId ?? dialog.model
+        let server = store.servers.count > 1 ? store.server(dialog.serverSlot) : nil
         self.controllerNode.newChatCard = NewChatCardNode.Content(
-            project: store.projectTitle(location),
-            projectDetail: store.describe(location),
-            model: modelName,
+            server: server.map { ($0.name, URL(string: $0.address)?.host ?? $0.address) },
+            model: self.modelName(),
             modelDetail: "Thinking: \(thinkingTitle(agent.thinkingLevel ?? "off"))"
         )
     }
 
-    private func chooseProject() {
-        guard let dialog = self.context.store.dialog(self.conversationId) else {
-            return
+    /// The chat's model by name ("Claude Opus 5.5"), from the server's list once it has come; its ID until then.
+    private func modelName() -> String {
+        let store = self.context.store
+        let agent = store.agent(self.conversationId)
+        let info = agent.provider.flatMap { provider in agent.modelId.flatMap { store.server(of: self.conversationId)?.cachedModel(provider: provider, id: $0) } }
+        return info.map { modelDisplayName($0.name) } ?? agent.modelId ?? store.dialog(self.conversationId)?.model ?? ""
+    }
+
+    /// The new chat's server row: the servers to move it to, before its first message.
+    private func chooseServer(sourceView: UIView) {
+        let store = self.context.store
+        let current = store.dialog(self.conversationId)?.serverSlot
+        var items: [ContextMenuItem] = []
+        for server in store.servers {
+            let checked = server.slot == current
+            items.append(.action(ContextMenuActionItem(text: server.name, icon: { theme in
+                return checked ? generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: theme.contextMenu.primaryColor) : nil
+            }, action: { [weak self] _, f in
+                f(.default)
+                guard let self else {
+                    return
+                }
+                self.saveInputDraft()
+                let newId = store.relocateDraft(self.conversationId, toServer: server.slot)
+                if newId != self.conversationId {
+                    self.retarget(to: newId)
+                }
+            })))
         }
-        let current = ProjectLocation(slot: dialog.serverSlot, path: dialog.cwd)
-        let picker = ProjectPickerController(context: self.context, current: current, choose: { [weak self] location in
-            guard let self else {
-                return
-            }
-            self.saveInputDraft()
-            let newId = self.context.store.relocateDraft(self.conversationId, to: location)
-            if newId != self.conversationId {
-                self.retarget(to: newId)
-            } else {
-                self.updateTitle(busy: false)
-            }
-        })
-        (self.navigationController as? NavigationController)?.pushViewController(picker)
+        let controller = makeContextController(presentationData: self.theme.presentationData, source: .reference(ViewContextReferenceSource(view: sourceView)), items: .single(ContextController.Items(content: .list(items))), gesture: nil)
+        self.presentInGlobalOverlay(controller)
     }
 
     private func openModelPicker() {
@@ -341,8 +365,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         node.sendMessage = { [weak self] text in
             self?.send(text: text, attachments: [])
         }
-        node.newChatProjectTapped = { [weak self] in
-            self?.chooseProject()
+        node.newChatServerTapped = { [weak self] view in
+            self?.chooseServer(sourceView: view)
         }
         node.newChatModelTapped = { [weak self] in
             self?.openModelPicker()
@@ -380,6 +404,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
         node.openImage = { [weak self] attachmentId in
             self?.openImage(attachmentId: attachmentId)
+        }
+        node.linkReferences = LinkReferenceResolver(store: self.context.store)
+        node.linkReferencesUpdated = { [weak self] in
+            guard let self else {
+                return
+            }
+            self.updateLinkPreview(self.controllerNode.inputPanelNode.text)
         }
         node.setLinkHandlers(open: { [weak self] url in
             self?.openLink(url)
@@ -437,8 +468,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                     self.pendingEditDraft = draft
                 }
             }
-            node.inputPanelNode.textChanged = { [weak self] _ in
+            node.inputPanelNode.textChanged = { [weak self] text in
                 self?.saveInputDraft()
+                self?.updateLinkPreview(text)
+            }
+            node.inputPanelNode.linkPreviewClosed = { [weak self] preview in
+                self?.closedLinkPreviews.insert(preview.url)
+                self?.controllerNode.inputPanelNode.setLinkPreview(nil)
             }
         }
 
@@ -448,6 +484,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
         self.subscribeConversation()
         self.displayNodeDidLoad()
+        self.updateTitle(busy: self.lastState?.busy ?? false)
     }
 
     private let hiddenMediaDisposable = MetaDisposable()
@@ -482,6 +519,18 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.present(gallery, in: .window(.root), with: arguments, blockInteraction: true)
     }
 
+    /// Links whose preview was closed, while the chat is open.
+    private var closedLinkPreviews = Set<String>()
+
+    /// The field's first tau link, previewed above it as Telegram previews a link.
+    private func updateLinkPreview(_ text: String) {
+        guard let resolver = self.controllerNode.linkReferences else {
+            return
+        }
+        let preview = LinkReferenceResolver.links(in: text).first { !self.closedLinkPreviews.contains($0) }.flatMap { resolver.reference($0) }
+        self.controllerNode.inputPanelNode.setLinkPreview(preview)
+    }
+
     /// A link in the chat: the web in Safari's view over the app, as Telegram's in-app browser opens it; mail and the
     /// rest in their own apps.
     func openLink(_ string: String) {
@@ -489,6 +538,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             return
         }
         switch url.scheme?.lowercased() {
+        case "tau":
+            // tau's own (TauLink): the app routes it, as one from outside.
+            self.view.endEditing(true)
+            UIApplication.shared.open(url)
         case "http", "https":
             self.view.endEditing(true)
             let safari = SFSafariViewController(url: url)
@@ -909,22 +962,44 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.present(alert, in: .window(.root))
     }
 
-    /// New Chat from the bar: a fresh chat on this chat's server in this one's place, as ChatGPT's; Back goes to the list.
-    private func startNewChat() {
+    /// New Chat from the bar, on `server` or this chat's: a fresh chat over this one, so Back comes back to it. Over a
+    /// new chat nothing was sent to yet, which leaves no chat behind, it takes that one's place instead.
+    private func startNewChat(server: Int?) {
         guard let navigationController = self.navigationController as? NavigationController, let dialog = self.context.store.dialog(self.conversationId) else {
             return
         }
         self.controllerNode.inputPanelNode.deactivateInput()
-        let id = self.context.store.createConversation(server: dialog.serverSlot, cwd: nil)
+        let id = self.context.store.createConversation(server: server ?? dialog.serverSlot)
         let chat = ChatController(context: self.context, conversationId: id)
-        navigationController.replaceTopController(chat, animated: true)
+        let isUnsent = self.conversationId < 0 && self.lastState?.messages.isEmpty != false
+        if isUnsent {
+            navigationController.replaceTopController(chat, animated: true)
+        } else {
+            navigationController.pushViewController(chat)
+        }
         Queue.mainQueue().after(0.45) {
             chat.activateInput()
         }
     }
 
+    /// New Chat held: the servers, the one last used first, as the chat list's compose menu.
+    private func openComposeMenu(sourceView: UIView, gesture: ContextGesture) {
+        let store = self.context.store
+        var items: [ContextMenuItem] = []
+        for server in store.recentServers() {
+            items.append(.action(ContextMenuActionItem(text: server.name, icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Message"), color: theme.contextMenu.primaryColor)
+            }, action: { [weak self] _, f in
+                f(.default)
+                self?.startNewChat(server: server.slot)
+            })))
+        }
+        let controller = makeContextController(presentationData: self.theme.presentationData, source: .reference(ViewContextReferenceSource(view: sourceView)), items: .single(ContextController.Items(content: .list(items))), gesture: gesture)
+        self.presentInGlobalOverlay(controller)
+    }
+
     /// The bar's ⋯: the chat's title in full, then what can be done with it and how it runs.
-    private func openChatMenu(sourceView: UIView) {
+    private func openChatMenu(sourceView: UIView, gesture: ContextGesture?) {
         guard !self.isPreview, self.controllerNode.selectedIds == nil else {
             return
         }
@@ -949,9 +1024,15 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 
         var items: [ContextMenuItem] = []
         if let dialog = store.dialog(id) {
-            // As Telegram's information rows: small, not a button. The server's name when there are several.
+            // Small, as Telegram's information rows, with the server's name when there are several. A tap copies the
+            // chat's link (docs/links.md), to send on or to paste into another chat.
             let layout: ContextMenuActionItemTextLayout = dialog.serverName.map { .secondLineWithValue($0) } ?? .multiline
-            items.append(.action(ContextMenuActionItem(text: dialog.title, textLayout: layout, textFont: .small, icon: { _ in nil }, action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)))
+            let link = TauLink.chat(self.conversationId, store: store)
+            items.append(.action(ContextMenuActionItem(text: dialog.title, textLayout: layout, textFont: .small, icon: { _ in nil }, action: link.map { link in { [weak self] _, f in
+                f(.default)
+                UIPasteboard.general.string = link.absoluteString
+                self?.presentToast(.linkCopied(title: nil, text: self?.theme.presentationStrings.Conversation_LinkCopied ?? ""))
+            } })))
             items.append(.separator)
         }
         if self.lastState?.messages.isEmpty == false {
@@ -964,7 +1045,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             f(.default)
             self?.openRename()
         })))
-        let modelName = agent.provider.flatMap { provider in agent.modelId.flatMap { store.server(of: id)?.cachedModel(provider: provider, id: $0) } }.map { modelDisplayName($0.name) } ?? agent.modelId ?? "default"
+        let modelName = self.modelName()
         items.append(.action(ContextMenuActionItem(text: "Model", textLayout: .secondLineWithValue(modelName), icon: icon("Chat/Context Menu/Settings"), action: { [weak self] _, f in
             f(.default)
             self?.openModelPicker()
@@ -1177,6 +1258,19 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             }, action: { [weak self] _, f in
                 f(.default)
                 self?.perform(.copy, on: message)
+            })))
+        }
+        // As a channel message's: its link (docs/links.md), to send on or to paste into another chat.
+        if let entryId = message.entryId, let link = TauLink.chat(self.conversationId, entry: entryId, store: self.context.store) {
+            items.append(.action(ContextMenuActionItem(text: strings.Conversation_ContextMenuCopyLink, icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Link"), color: theme.actionSheet.primaryTextColor)
+            }, action: { [weak self] _, f in
+                f(.default)
+                guard let self else {
+                    return
+                }
+                UIPasteboard.general.string = link.absoluteString
+                self.presentToast(.linkCopied(title: nil, text: strings.Conversation_LinkCopied))
             })))
         }
         if case .failed = message.service {
@@ -1495,13 +1589,14 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     }
 }
 
-/// The chat's status in a glass capsule where Telegram's ChatTitleView sits: "working" with Telegram's typing dots,
-/// "connecting…", or "3 Selected" while selecting. With nothing to say it is not there: the chat's title, server and
-/// model are in the menu of the bar's ⋯. The text is an AnimatedTextComponent (so "3 Selected" rolls its count) or a
-/// ChatTitleActivityNode (which slides from one state to the next), and the capsule springs to its new width.
+/// The chat's status in a glass capsule where Telegram's ChatTitleView sits: "working for 11s" after Telegram's typing
+/// dots, "connecting…", or "3 Selected" while selecting. With nothing to say it is not there: the chat's title, server and
+/// model are in the menu of the bar's ⋯. Text is an AnimatedTextComponent, so a count changes in place, its digits
+/// rolling, while the dots go on without a restart; the capsule springs to its new width.
 final class ChatTitleView: UIView {
     enum Status: Equatable {
-        case working(String)
+        /// "working", "compacting", "reader working", and for how long it has been at it.
+        case working(String, elapsed: TimeInterval?)
         /// "connecting…", in Telegram's input control color.
         case network(String)
     }
@@ -1509,37 +1604,32 @@ final class ChatTitleView: UIView {
     private var theme: TauTheme
     private let backgroundView = GlassBackgroundView()
     private let title = ComponentView<Empty>()
-    private let activityNode = ChatTitleActivityNode()
+    private let statusText = ComponentView<Empty>()
+    private let dotsNode: ChatTypingActivityIndicatorNode
     private var titleItems: [AnimatedTextComponent.Item] = []
     private var status: Status?
     private var hasLayout = false
-    var tapped: (() -> Void)?
 
     init(theme: TauTheme) {
         self.theme = theme
+        self.dotsNode = ChatTypingActivityIndicatorNode(color: theme.accentColor)
         super.init(frame: CGRect(x: 0.0, y: 0.0, width: 240.0, height: 44.0))
         self.addSubview(self.backgroundView)
         self.backgroundView.alpha = 0.0
-        self.activityNode.isUserInteractionEnabled = false
-        self.backgroundView.contentView.addSubview(self.activityNode.view)
-        self.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.tapGesture)))
+        // Layer-backed, as Telegram's activity indicators are.
+        self.backgroundView.contentView.layer.addSublayer(self.dotsNode.layer)
+        // Information, not a button: it takes no taps.
+        self.isUserInteractionEnabled = false
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    @objc private func tapGesture() {
-        if self.backgroundView.alpha > 0.0 {
-            self.tapped?()
-        }
-    }
-
     func updateTheme(_ theme: TauTheme) {
         self.theme = theme
-        let status = self.status
-        self.status = nil
-        self.update(titleItems: self.titleItems, status: status, animated: false)
+        self.dotsNode.color = theme.accentColor
+        self.layoutContent(transition: .immediate)
     }
 
     func update(status: Status?) {
@@ -1555,24 +1645,43 @@ final class ChatTitleView: UIView {
     }
 
     private func update(titleItems: [AnimatedTextComponent.Item], status: Status?, animated: Bool) {
-        let animated = animated && self.hasLayout
-        self.titleItems = titleItems
-        if self.status != status {
-            self.status = status
-            let state: ChatTitleActivityNodeState
-            switch status {
-            case let .working(text):
-                state = .typingText(NSAttributedString(string: text, font: Font.regular(12.0), textColor: self.theme.accentColor), self.theme.accentColor)
-            case let .network(text):
-                // Telegram's color for it, lifted where the capsule's glass would swallow it (Readability).
-                let color = Readability.readable(self.theme.presentationTheme.chat.inputPanel.inputControlColor, on: [self.theme.navigationBar.opaqueBackgroundColor], contrast: Readability.secondary)
-                state = .info(NSAttributedString(string: text, font: Font.regular(12.0), textColor: color), .generic)
-            case nil:
-                state = .none
-            }
-            let _ = self.activityNode.transitionToState(state, animation: animated ? .slide : .none)
+        guard titleItems != self.titleItems || status != self.status || !self.hasLayout else {
+            return
         }
-        self.layoutContent(transition: animated ? .spring(duration: 0.4) : .immediate)
+        self.titleItems = titleItems
+        self.status = status
+        self.layoutContent(transition: animated && self.hasLayout ? .spring(duration: 0.4) : .immediate)
+    }
+
+    /// The status as AnimatedTextComponent's items: words, then each number of the time on its own, so only the
+    /// digits that change roll.
+    private static func items(_ status: Status) -> [AnimatedTextComponent.Item] {
+        switch status {
+        case let .network(text):
+            return [AnimatedTextComponent.Item(id: AnyHashable("text"), content: .text(text))]
+        case let .working(label, elapsed):
+            var items = [AnimatedTextComponent.Item(id: AnyHashable("label"), content: .text(label))]
+            guard let elapsed, elapsed >= 1.0 else {
+                return items
+            }
+            let seconds = Int(elapsed)
+            items.append(AnimatedTextComponent.Item(id: AnyHashable("for"), content: .text(" for ")))
+            func number(_ id: String, _ value: Int, digits: Int, unit: String) {
+                items.append(AnimatedTextComponent.Item(id: AnyHashable(id), isUnbreakable: true, content: .number(value, minDigits: digits)))
+                items.append(AnimatedTextComponent.Item(id: AnyHashable(id + "-unit"), content: .text(unit)))
+            }
+            // As formatElapsed: 11s, 2m 05s, 1h 03m.
+            if seconds < 60 {
+                number("s", seconds, digits: 1, unit: "s")
+            } else if seconds < 3600 {
+                number("m", seconds / 60, digits: 1, unit: "m ")
+                number("s", seconds % 60, digits: 2, unit: "s")
+            } else {
+                number("h", seconds / 3600, digits: 1, unit: "h ")
+                number("m", (seconds % 3600) / 60, digits: 2, unit: "m")
+            }
+            return items
+        }
     }
 
     override func layoutSubviews() {
@@ -1584,14 +1693,28 @@ final class ChatTitleView: UIView {
         self.hasLayout = self.bounds.width > 0.0
         let maxTextWidth = max(40.0, self.bounds.width - 24.0)
         let hasTitle = !self.titleItems.isEmpty
-        let hasStatus = self.status != nil
+        let status = hasTitle ? nil : self.status
         let titleSize = self.title.update(
             transition: transition,
             component: AnyComponent(AnimatedTextComponent(font: Font.semibold(16.0), color: self.theme.navigationBar.primaryTextColor, items: self.titleItems, noDelay: false, animateScale: true, animateSlide: true, blur: true)),
             environment: {},
             containerSize: CGSize(width: maxTextWidth, height: 22.0)
         )
-        let statusSize = hasStatus ? self.activityNode.updateLayout(CGSize(width: maxTextWidth, height: 16.0), alignment: .center) : CGSize()
+        var statusColor = self.theme.accentColor
+        var hasDots = false
+        if case .network = status {
+            // Telegram's color for it, lifted where the capsule's glass would swallow it (Readability).
+            statusColor = Readability.readable(self.theme.presentationTheme.chat.inputPanel.inputControlColor, on: [self.theme.navigationBar.opaqueBackgroundColor], contrast: Readability.secondary)
+        } else if status != nil {
+            hasDots = true
+        }
+        let dotsWidth: CGFloat = hasDots ? 24.0 : 0.0
+        let statusSize = self.statusText.update(
+            transition: transition,
+            component: AnyComponent(AnimatedTextComponent(font: Font.with(size: 12.0, traits: .monospacedNumbers), color: statusColor, items: status.map(ChatTitleView.items) ?? [], noDelay: true, animateScale: false, animateSlide: true, blur: false)),
+            environment: {},
+            containerSize: CGSize(width: maxTextWidth - dotsWidth, height: 16.0)
+        )
 
         // "N Selected" in Telegram's 44 pt title capsule, 12 pt wider than the text on each side; a status alone in a
         // 32 pt one, 14 pt wider.
@@ -1599,13 +1722,13 @@ final class ChatTitleView: UIView {
         if hasTitle {
             backgroundSize = CGSize(width: min(maxTextWidth, ceil(titleSize.width)) + 24.0, height: 44.0)
         } else {
-            backgroundSize = CGSize(width: min(maxTextWidth, ceil(statusSize.width)) + 28.0, height: 32.0)
+            backgroundSize = CGSize(width: min(maxTextWidth, dotsWidth + ceil(statusSize.width)) + 28.0, height: 32.0)
         }
         let backgroundFrame = CGRect(origin: CGPoint(x: floor((self.bounds.width - backgroundSize.width) / 2.0), y: floor((self.bounds.height - backgroundSize.height) / 2.0)), size: backgroundSize)
         transition.setFrame(view: self.backgroundView, frame: backgroundFrame)
-        self.backgroundView.update(size: backgroundSize, cornerRadius: backgroundSize.height / 2.0, isDark: self.theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, transition: transition)
+        self.backgroundView.update(size: backgroundSize, cornerRadius: backgroundSize.height / 2.0, isDark: self.theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: false, transition: transition)
         // It comes and goes as Telegram's glass does: a fade and a little scale.
-        let shown = hasTitle || hasStatus
+        let shown = hasTitle || status != nil
         transition.setAlpha(view: self.backgroundView, alpha: shown ? 1.0 : 0.0)
         transition.setScale(view: self.backgroundView, scale: shown ? 1.0 : 0.8)
 
@@ -1618,63 +1741,57 @@ final class ChatTitleView: UIView {
             transition.setFrame(view: titleView, frame: titleFrame)
             transition.setAlpha(view: titleView, alpha: hasTitle ? 1.0 : 0.0)
         }
-        // ChatTitleActivityNode centers its text on its own origin.
-        let statusFrame = CGRect(origin: CGPoint(x: floor(backgroundSize.width / 2.0), y: floor((backgroundSize.height - statusSize.height) / 2.0)), size: statusSize)
-        transition.setFrame(view: self.activityNode.view, frame: statusFrame)
-        transition.setAlpha(view: self.activityNode.view, alpha: hasStatus && !hasTitle ? 1.0 : 0.0)
+        let contentWidth = dotsWidth + statusSize.width
+        let statusOrigin = CGPoint(x: floor((backgroundSize.width - contentWidth) / 2.0), y: floor((backgroundSize.height - statusSize.height) / 2.0))
+        let dotsFrame = CGRect(origin: CGPoint(x: statusOrigin.x, y: floor((backgroundSize.height - 16.0) / 2.0)), size: CGSize(width: 24.0, height: 16.0))
+        transition.setFrame(layer: self.dotsNode.layer, frame: dotsFrame)
+        transition.setAlpha(layer: self.dotsNode.layer, alpha: hasDots ? 1.0 : 0.0)
+        if let statusView = self.statusText.view {
+            let statusFrame = CGRect(origin: CGPoint(x: statusOrigin.x + dotsWidth, y: statusOrigin.y), size: statusSize)
+            if statusView.superview == nil {
+                self.backgroundView.contentView.addSubview(statusView)
+                statusView.frame = statusFrame
+            }
+            transition.setFrame(view: statusView, frame: statusFrame)
+            transition.setAlpha(view: statusView, alpha: status != nil ? 1.0 : 0.0)
+        }
     }
 }
 
-/// The bar's buttons on the right, in one glass capsule: New Chat, as the chat list's compose (Telegram's glyph), and
-/// ⋯, the chat's menu.
+/// The bar's buttons on the right, in one glass capsule: New Chat, as the chat list's compose (Telegram's glyph; held,
+/// where to start one), and Telegram's animated ⋯, the chat's menu (held, it follows the finger). Each is 50 pt wide,
+/// wider than Telegram's 44, so that the two are apart.
 final class ChatHeaderButtonsNode: ASDisplayNode {
-    private let composeNode = ASImageNode()
-    let moreNode = ASDisplayNode()
-    private let moreIconNode = ASImageNode()
-    var compose: (() -> Void)?
-    var more: (() -> Void)?
+    static let buttonWidth: CGFloat = 50.0
 
-    override init() {
+    let composeNode = BarActionButtonNode(image: composeIcon, width: ChatHeaderButtonsNode.buttonWidth, accessibilityLabel: "New Chat")
+    let moreNode: MoreButtonNode
+
+    init(theme: TauTheme) {
+        self.moreNode = MoreButtonNode(theme: theme.presentationTheme, encircled: false, navigation: true)
         super.init()
-        self.composeNode.displaysAsynchronously = false
-        self.moreIconNode.displaysAsynchronously = false
+        self.moreNode.accessibilityLabel = "More"
         self.addSubnode(self.composeNode)
         self.addSubnode(self.moreNode)
-        self.moreNode.addSubnode(self.moreIconNode)
+        self.update(theme: theme)
     }
 
-    override func didLoad() {
-        super.didLoad()
-        self.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:))))
-    }
-
-    @objc private func tapGesture(_ recognizer: UITapGestureRecognizer) {
-        if recognizer.location(in: self.view).x < self.bounds.width / 2.0 {
-            self.compose?()
-        } else {
-            self.more?()
-        }
-    }
-
-    func update(color: UIColor) {
-        self.composeNode.image = generateTintedImage(image: UIImage(bundleImageName: "Chat List/ComposeIcon"), color: color)
-        self.moreIconNode.image = generateTintedImage(image: UIImage(bundleImageName: "Chat List/NavigationMore"), color: color)
-        self.setNeedsLayout()
+    func update(theme: TauTheme) {
+        self.composeNode.update(color: theme.navigationBar.primaryTextColor)
+        self.moreNode.theme = theme.presentationTheme
+        self.moreNode.updateColor(theme.navigationBar.primaryTextColor, transition: .immediate)
     }
 
     override func calculateSizeThatFits(_ constrainedSize: CGSize) -> CGSize {
-        return CGSize(width: 88.0, height: 44.0)
+        return CGSize(width: ChatHeaderButtonsNode.buttonWidth * 2.0, height: 44.0)
     }
 
     override func layout() {
         super.layout()
-        if let image = self.composeNode.image {
-            self.composeNode.frame = CGRect(origin: CGPoint(x: floor((44.0 - image.size.width) / 2.0), y: floor((44.0 - image.size.height) / 2.0)), size: image.size)
-        }
-        self.moreNode.frame = CGRect(x: 44.0, y: 0.0, width: 44.0, height: 44.0)
-        if let image = self.moreIconNode.image {
-            self.moreIconNode.frame = CGRect(origin: CGPoint(x: floor((44.0 - image.size.width) / 2.0), y: floor((44.0 - image.size.height) / 2.0)), size: image.size)
-        }
+        let width = ChatHeaderButtonsNode.buttonWidth
+        self.composeNode.frame = CGRect(x: 0.0, y: 0.0, width: width, height: 44.0)
+        let moreSize = self.moreNode.measure(CGSize(width: width, height: 44.0))
+        self.moreNode.frame = CGRect(origin: CGPoint(x: width + floor((width - moreSize.width) / 2.0), y: 0.0), size: CGSize(width: moreSize.width, height: 44.0))
     }
 }
 

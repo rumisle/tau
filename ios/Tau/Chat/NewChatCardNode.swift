@@ -4,13 +4,18 @@ import Display
 import TelegramPresentationData
 
 /// The card in an empty new chat, after Telegram's ChatEmptyNode: on the service-message fill over the wallpaper,
-/// where the chat will run and with which model, each a row to change it. A new chat needs no screen before it.
+/// which server the chat will be on (while there are several) and with which model, each a row to change it. A new chat
+/// needs no screen before it.
 final class NewChatCardNode: ASDisplayNode {
     struct Content: Equatable {
-        var project: String
-        var projectDetail: String
+        /// The server's name and address; nil with one server.
+        var server: (name: String, address: String)?
         var model: String
         var modelDetail: String
+
+        static func == (lhs: Content, rhs: Content) -> Bool {
+            return lhs.server?.name == rhs.server?.name && lhs.server?.address == rhs.server?.address && lhs.model == rhs.model && lhs.modelDetail == rhs.modelDetail
+        }
     }
 
     private final class Row {
@@ -27,7 +32,8 @@ final class NewChatCardNode: ASDisplayNode {
     private let footerNode = ImmediateTextNode()
     private let separatorNode = ASDisplayNode()
     private let rows = [Row(), Row()]
-    var projectTapped: (() -> Void)?
+    /// The server row, with the row's view to anchor a menu.
+    var serverTapped: ((UIView) -> Void)?
     var modelTapped: (() -> Void)?
     private var content: Content?
     private var theme: TauTheme?
@@ -65,15 +71,15 @@ final class NewChatCardNode: ASDisplayNode {
                     row.button.layer.animateAlpha(from: 0.55, to: 1.0, duration: 0.2)
                 }
             }
-            row.button.addTarget(self, action: index == 0 ? #selector(self.projectPressed) : #selector(self.modelPressed), forControlEvents: .touchUpInside)
+            row.button.addTarget(self, action: index == 0 ? #selector(self.serverPressed) : #selector(self.modelPressed), forControlEvents: .touchUpInside)
             row.button.isAccessibilityElement = true
-            row.button.accessibilityIdentifier = index == 0 ? "newChatProject" : "newChatModel"
+            row.button.accessibilityIdentifier = index == 0 ? "newChatServer" : "newChatModel"
             row.button.accessibilityTraits = .button
         }
     }
 
-    @objc private func projectPressed() {
-        self.projectTapped?()
+    @objc private func serverPressed() {
+        self.serverTapped?(self.rows[0].button.view)
     }
 
     @objc private func modelPressed() {
@@ -92,7 +98,7 @@ final class NewChatCardNode: ASDisplayNode {
             let arrow = generateTintedImage(image: UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12.0, weight: .semibold)), color: textColor.withAlphaComponent(0.6))
             for (index, row) in self.rows.enumerated() {
                 row.arrow.image = arrow
-                row.icon.image = generateTintedImage(image: UIImage(bundleImageName: index == 0 ? "Chat/Context Menu/Folder" : "Chat/Context Menu/Settings"), color: textColor)
+                row.icon.image = generateTintedImage(image: UIImage(bundleImageName: index == 0 ? "Chat/Context Menu/Message" : "Chat/Context Menu/Settings"), color: textColor)
             }
         }
         self.content = content
@@ -106,11 +112,14 @@ final class NewChatCardNode: ASDisplayNode {
         let titleSize = self.titleNode.updateLayout(CGSize(width: innerWidth, height: 40.0))
         let footerSize = self.footerNode.updateLayout(CGSize(width: innerWidth, height: 40.0))
 
-        let values: [(String, String, String)] = [("Project", content.project, content.projectDetail), ("Model", content.model, content.modelDetail)]
+        let values: [(String, String, String)?] = [content.server.map { ("Server", $0.name, $0.address) }, ("Model", content.model, content.modelDetail)]
         var y = insets.top + titleSize.height + 12.0
         var rowFrames: [CGRect] = []
         for (index, row) in self.rows.enumerated() {
-            let (caption, value, detail) = values[index]
+            row.button.isHidden = values[index] == nil
+            guard let (caption, value, detail) = values[index] else {
+                continue
+            }
             row.caption.attributedText = NSAttributedString(string: caption.uppercased(), font: Font.medium(11.0), textColor: textColor.withAlphaComponent(0.6))
             row.value.attributedText = NSAttributedString(string: value, font: Font.semibold(15.0), textColor: textColor)
             row.detail.attributedText = NSAttributedString(string: detail, font: Font.regular(13.0), textColor: textColor.withAlphaComponent(0.7))
@@ -142,7 +151,8 @@ final class NewChatCardNode: ASDisplayNode {
                 y += 1.0
             }
         }
-        self.separatorNode.frame = CGRect(x: insets.left + 34.0, y: rowFrames[0].maxY, width: innerWidth - 34.0, height: UIScreenPixel)
+        self.separatorNode.isHidden = rowFrames.count < 2
+        self.separatorNode.frame = CGRect(x: insets.left + 34.0, y: rowFrames.first?.maxY ?? 0.0, width: innerWidth - 34.0, height: UIScreenPixel)
         y += 10.0
         let size = CGSize(width: maxWidth, height: y + footerSize.height + insets.bottom)
         self.titleNode.frame = CGRect(origin: CGPoint(x: floor((size.width - titleSize.width) / 2.0), y: insets.top), size: titleSize)

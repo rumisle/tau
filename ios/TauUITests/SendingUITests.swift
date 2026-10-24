@@ -672,6 +672,34 @@ final class SendingUITests: XCTestCase {
         XCTAssertTrue(answer.isHittable, "back in the chat")
     }
 
+    /// The chat bar's New Chat: a fresh chat over this one, so Back comes back here; its menu's first row copies the
+    /// chat's link.
+    func testBarNewChat() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("pineapple")
+        self.send()
+        let answer = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage' AND label BEGINSWITH 'You said'")).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 10))
+        sleep(1)
+        self.openChatMenu()
+        sleep(1)
+        self.shot("bar-0-menu")
+        // The menu's first row, the chat's title.
+        self.point(0.7, 0.165).tap()
+        sleep(1)
+        self.shot("bar-1-copied")
+        // New Chat, left of ⋯.
+        self.point(0.775, 0.097).tap()
+        sleep(2)
+        self.shot("bar-2-new")
+        XCTAssertFalse(answer.exists, "a new chat")
+        self.point(0.1, 0.097).tap()
+        sleep(2)
+        self.shot("bar-3-back")
+        XCTAssertTrue(answer.exists, "back in the chat it came from")
+    }
+
     func testDoubleTapSelect() {
         self.launch(["-newChat", "YES"])
         self.focusInput()
@@ -852,16 +880,19 @@ final class SendingUITests: XCTestCase {
         self.point(0.9, 0.098).tap()
         sleep(2)
         self.shot("multi-4-newchat")
-        self.point(0.5, 0.3).tap()
-        sleep(2)
-        self.shot("multi-5-projects")
-        self.point(0.12, 0.11).tap()
+        // Its server row: the servers to move it to.
+        self.app.descendants(matching: .any)["newChatServer"].firstMatch.tap()
+        sleep(1)
+        self.shot("multi-5-servers")
+        self.point(0.5, 0.95).tap()
         sleep(1)
         self.point(0.1, 0.08).tap()
         sleep(1)
+        // Held, compose lists the servers, the latest's first.
         self.point(0.9, 0.098).press(forDuration: 0.8)
         sleep(1)
         self.shot("multi-6-compose-menu")
+        XCTAssertTrue(self.app.descendants(matching: .any)[mainServerHostname].firstMatch.exists, "the servers to start on")
     }
 
     /// A background subagent: the chat is free at once, its card and the title say it works, and its answer arrives
@@ -994,7 +1025,7 @@ final class SendingUITests: XCTestCase {
         self.shot("wait-2-answer")
     }
 
-    /// A new chat moved to another server's folder stays the same screen, with what was written; back is the list.
+    /// A new chat moved to another server stays the same screen, with what was written; back is the list.
     func testNewChatNavigation() throws {
         try XCTSkipIf(secondServer.isEmpty, "needs a second server (ios/Config/Local.example.env)")
         self.launch(secondServer)
@@ -1005,22 +1036,19 @@ final class SendingUITests: XCTestCase {
         self.type("carry me")
         sleep(1)
         self.shot("nav-0-keyboard")
-        self.app.descendants(matching: .any)["newChatProject"].firstMatch.tap()
-        sleep(2)
-        self.shot("nav-1-picker")
-        // The other server's Browse row (the chat starts on the most recent project, the second server's here), then
-        // its home.
+        self.app.descendants(matching: .any)["newChatServer"].firstMatch.tap()
+        sleep(1)
+        self.shot("nav-1-servers")
+        // The other server (the chat starts on the latest chat's, the second server's here).
         self.app.descendants(matching: .any)[mainServerHostname].firstMatch.tap()
-        sleep(3)
-        self.shot("nav-2-browse")
-        self.app.descendants(matching: .any)["Use This Folder"].firstMatch.tap()
         sleep(2)
         self.shot("nav-3-moved")
+        XCTAssertEqual(self.app.textViews.firstMatch.value as? String, "carry me", "what was written moves with it")
         self.point(0.1, 0.08).tap()
         sleep(2)
         self.shot("nav-4-back")
         // The list, not the chat it started as.
-        XCTAssertFalse(self.app.descendants(matching: .any)["newChatProject"].firstMatch.exists)
+        XCTAssertFalse(self.app.descendants(matching: .any)["newChatServer"].firstMatch.exists)
     }
 
     /// Compaction from the title menu: its pill with the τ and its time, messages go on meanwhile, then the summary's

@@ -98,9 +98,14 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     private(set) var editingText: String?
     private(set) var queue: [QueuedMessage] = []
 
-    /// The accessory panel shows the message being edited, else the first queued one.
+    /// A tau link written in the field, as Telegram previews a link in its accessory panel (docs/links.md).
+    private(set) var linkPreview: LinkReference?
+    /// Its ✕: the panel goes for that link.
+    var linkPreviewClosed: ((LinkReference) -> Void)?
+
+    /// The accessory panel shows the message being edited, else the first queued one, else a link's preview.
     private var showsAccessory: Bool {
-        return self.editingText != nil || !self.queue.isEmpty
+        return self.editingText != nil || !self.queue.isEmpty || self.linkPreview != nil
     }
 
     // Telegram ChatTextInputPanelNode: 40 pt controls, 6 pt between glass shapes.
@@ -144,6 +149,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.placeholderLabel = UILabel()
         self.placeholderLabel.font = Font.regular(theme.fontSize)
         self.placeholderLabel.text = "Message"
+        self.placeholderLabel.lineBreakMode = .byTruncatingTail
 
         super.init()
     }
@@ -216,6 +222,8 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
                 self.cancelEditing?()
             } else if let first = self.queue.first {
                 self.queueClosed?(first)
+            } else if let preview = self.linkPreview {
+                self.linkPreviewClosed?(preview)
             }
         }
         self.accessoryView.tapped = { [weak self] in
@@ -336,6 +344,18 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         }
     }
 
+    func setLinkPreview(_ preview: LinkReference?) {
+        guard preview != self.linkPreview else {
+            return
+        }
+        let hadAccessory = self.showsAccessory
+        self.linkPreview = preview
+        self.updateAccessoryContent(animated: true)
+        if hadAccessory != self.showsAccessory {
+            self.requestLayout?(.animated(duration: 0.4, curve: .spring))
+        }
+    }
+
     /// The accessory panel on screen, while it shows a queued message.
     func accessoryFrameInWindow() -> CGRect? {
         guard self.editingText == nil, !self.queue.isEmpty, self.isNodeLoaded else {
@@ -371,6 +391,8 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             }
             let status: InputAccessoryPanelView.Status = first.mode == .newContext ? .none : (first.isSending ? .sending : .queued)
             self.accessoryView.update(content: InputAccessoryPanelView.Content(id: first.id, title: title, text: text, status: status, count: self.queue.count), theme: theme, animated: animated)
+        } else if let preview = self.linkPreview {
+            self.accessoryView.update(content: InputAccessoryPanelView.Content(id: "link:" + preview.url, title: preview.title, text: preview.text, status: .none, count: 1), theme: theme, animated: animated)
         }
     }
 
@@ -602,6 +624,15 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.sendMessage?(text)
         self.textView.text = ""
         self.textViewDidChange(self.textView)
+    }
+
+    /// What the empty field says: "Message Claude Opus 5.5", and "Steer Claude Opus 5.5" while the agent works.
+    var placeholder: String = "Message" {
+        didSet {
+            if self.placeholder != oldValue {
+                self.placeholderLabel.text = self.placeholder
+            }
+        }
     }
 
     func textViewDidChange(_ textView: UITextView) {

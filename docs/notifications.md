@@ -58,5 +58,5 @@ renewed every 50 minutes), one HTTP/2 connection per environment, opened again w
 - **A chat in the Live Activity** (docs/live-activity.md) does not ring twice: when its finish is the activity's update,
   with its alert, the device gets no notification for it.
 
-The push's tap opens `tau://chat?server=<serverId>&id=<conversation>` too, the URL the app routes to the chat on the
-server with that database ID.
+The push's tap opens the chat's link too, `tau://<serverId's first eight>/<conversation>` (docs/links.md), which the
+app routes to the chat on the server with that database ID.

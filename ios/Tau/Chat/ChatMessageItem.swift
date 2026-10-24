@@ -75,10 +75,13 @@ final class ChatMessageItem: ListViewItem {
     let riseFrom: CGRect?
     /// Search's words, marked in the text as Telegram marks a chat search's matches.
     let highlightTerms: [SearchTerm]?
+    /// Its tau links' cards, under its text (docs/links.md).
+    let references: [LinkReference]
     let interaction: ChatMessageItemInteraction
 
-    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, wrapCode: Bool = true, riseFrom: CGRect? = nil, highlightTerms: [SearchTerm]? = nil, interaction: ChatMessageItemInteraction) {
+    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, wrapCode: Bool = true, riseFrom: CGRect? = nil, highlightTerms: [SearchTerm]? = nil, references: [LinkReference] = [], interaction: ChatMessageItemInteraction) {
         self.riseFrom = riseFrom
+        self.references = references
         self.highlightTerms = highlightTerms
         self.theme = theme
         self.message = message
@@ -893,7 +896,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 style.math = false
                 let textNode = existingTextNodes.first
                 let hasText = !message.text.isEmpty
-                let (textLayout, textApply) = InteractiveTextNode.asyncLayout(textNode)(InteractiveTextNodeLayoutArguments(attributedString: MarkdownText.render(message.text, style: style), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
+                let (textLayout, textApply) = InteractiveTextNode.asyncLayout(textNode)(InteractiveTextNodeLayoutArguments(attributedString: withReferences(MarkdownText.render(message.text, style: style), item.references, style: style), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
                 let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: messageTimeString(message.date), font: dateFont(item.theme), textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 200.0, height: 40.0)))
                 let fileLayouts = files.map { FileAttachmentNode.measure($0, fontSize: item.theme.fontSize, maxWidth: maxTextWidth) }
 
@@ -1101,7 +1104,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 style.lineSpacing = MarkdownStyle.answerLineSpacing
                 // Reasoning shows whole, as the answer does.
                 let sourceText = message.text
-                let blocks = MarkdownText.blocks(sourceText, style: style, wrapCode: item.wrapCode)
+                let blocks = MarkdownText.blocks(sourceText, style: style, wrapCode: item.wrapCode) + (item.isStreaming ? [] : item.references.map { .text(MarkdownText.reference($0, style: style)) })
                 let tableStyle = ChatTableStyle(borderColor: theme.tableBorderColor, headerBackgroundColor: theme.tableHeaderBackgroundColor)
 
                 var laidOut: [LaidOutBlock] = []
@@ -2899,4 +2902,17 @@ private final class CodeScrollFade: NSObject, UIScrollViewDelegate {
             scrollView.layer.mask = mask
         }
     }
+}
+
+/// A message's text with its tau links' cards under it (docs/links.md).
+private func withReferences(_ text: NSAttributedString, _ references: [LinkReference], style: MarkdownStyle) -> NSAttributedString {
+    guard !references.isEmpty else {
+        return text
+    }
+    let result = NSMutableAttributedString(attributedString: text)
+    for reference in references {
+        result.append(NSAttributedString(string: "\n", font: Font.regular(style.fontSize), textColor: style.textColor))
+        result.append(MarkdownText.reference(reference, style: style))
+    }
+    return result
 }

@@ -41,7 +41,7 @@ describe("code mode", () => {
 	test("a script's calls run as nested calls, and what the user sees of them comes as display entries", async () => {
 		writeFileSync(join(cwd, "chart.png"), PNG);
 		const client = await TauClient.connect(server.url);
-		const { dialog } = await client.request("conversation.create", { agent: { cwd } });
+		const { dialog } = await client.request("conversation.create", {});
 		const replica = new ConversationReplica(dialog.conversation.id);
 		await replica.sync(client);
 		const script = [

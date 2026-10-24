@@ -80,6 +80,23 @@ enum MarkdownText {
     /// What a character typeset in place of another was (a curly quote, a centered ellipsis): copying gives it back.
     static let originalKey = NSAttributedString.Key("tau.original")
 
+    /// A tau link's card (docs/links.md), as Telegram quotes a message: the chat's title over its words, in a quote
+    /// block, all of it the link.
+    static func reference(_ reference: LinkReference, style: MarkdownStyle) -> NSAttributedString {
+        var text = reference.text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        if text.count > 140 {
+            text = String(text.prefix(140)).trimmingCharacters(in: .whitespaces) + "…"
+        }
+        let fontSize = floor(style.fontSize * 15.0 / 17.0)
+        let string = NSMutableAttributedString(string: text.isEmpty ? " " : text, attributes: [.font: Font.regular(fontSize), .foregroundColor: style.textColor])
+        let title = NSAttributedString(string: reference.title, font: Font.semibold(fontSize), textColor: style.accentColor)
+        let data = TextNodeBlockQuoteData(kind: .quote, title: title, color: style.accentColor, secondaryColor: nil, tertiaryColor: nil, backgroundColor: style.accentColor.withMultipliedAlpha(0.1), isCollapsible: false)
+        let range = NSRange(location: 0, length: string.length)
+        string.addAttribute(self.blockQuoteKey, value: data, range: range)
+        string.addAttribute(self.urlKey, value: reference.url, range: range)
+        return string
+    }
+
     /// The whole message as one attributed string, tables included as plain rows.
     static func render(_ text: String, style: MarkdownStyle) -> NSAttributedString {
         let result = NSMutableAttributedString()
@@ -250,15 +267,22 @@ enum MarkdownText {
             return block
         }
         var result: NSMutableAttributedString?
-        for match in detector.matches(in: string.string, range: NSRange(location: 0, length: text.length)) {
-            guard let url = match.url, let scheme = url.scheme?.lowercased() else {
+        // tau's own links too (docs/links.md), which the detector does not know.
+        let found: [(NSRange, URL)] = detector.matches(in: string.string, range: NSRange(location: 0, length: text.length)).compactMap { match in
+            match.url.map { (match.range, $0) }
+        } + LinkReferenceResolver.links(in: string.string).compactMap { link in
+            URL(string: link).map { (text.range(of: link), $0) }
+        }
+        for (range, url) in found {
+            guard let scheme = url.scheme?.lowercased() else {
                 continue
             }
-            let written = text.substring(with: match.range).lowercased()
+            let written = text.substring(with: range).lowercased()
             let isMail = scheme == "mailto"
-            guard isMail || ((scheme == "http" || scheme == "https") && (written.contains("://") || written.hasPrefix("www."))) else {
+            guard isMail || scheme == "tau" || ((scheme == "http" || scheme == "https") && (written.contains("://") || written.hasPrefix("www."))) else {
                 continue
             }
+            let match = (range: range, url: url)
             var taken = false
             string.enumerateAttributes(in: match.range, options: []) { attributes, _, stop in
                 if attributes[self.urlKey] != nil || attributes[self.inlineCodeKey] != nil {

@@ -54,9 +54,9 @@ socket, so a client must not send one (content limits below are far under it).
 ## Methods
 
 ### `hello`
-`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, defaultCwd: string, home: string, hostname: string, piRevision: string, uptime: number, apns: boolean, maxFileBytes: number }`
+`{ protocol: 1 }` -> `{ protocol: 1, serverId: string, defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming: string, compaction: { enabled: boolean, ratio: number, maxTokens: number }, hostname: string, piRevision: string, uptime: number, apns: boolean, maxFileBytes: number }`
 
-`defaultCwd` is where conversations without their own `cwd` run; `home` is the server user's home directory.
+Where a conversation runs is the server's: every chat starts in its user's home directory (`--cwd` for tests), and the agent goes where the work is. Clients do not pick a directory.
 `hostname` is the computer's name, `piRevision` the pi commit the server links, `uptime` seconds since it started.
 `apns`: the server has the account's APNs key and sends Apple's pushes (docs/notifications.md). `maxFileBytes`: the
 largest file it keeps (docs/files.md).
@@ -110,17 +110,6 @@ The model and thinking level new conversations get, for every client; they survi
 the server's `--model`. A create fixes both in the conversation, the level fitted to its model as pi's
 `clampThinkingLevel` fits it: changing a default moves no existing conversation. `conversation.configure` fits the
 level the same way, and again after a model change.
-
-### `fs.list`
-`{ path?: string, hidden?: boolean }` -> `{ path, parent?, entries: DirEntry[], truncated?: true }`
-
-```ts
-type DirEntry = { name: string; kind: "dir" | "file" | "link" | "other"; git?: true }; // git: a repository root
-```
-
-One directory of the server's file system, for picking a conversation's `cwd`. `path` is absolute or starts with `~`;
-default the home directory. Directories come first; links to directories are `dir`. Dotfiles only with `hidden`. At most
-2000 entries. `parent` is absent at `/`.
 
 ### `search`
 `{ query, typing?: boolean, conversationId?, kinds?: ("user" | "assistant" | "reasoning" | "title")[], offset?, limit? }`
@@ -189,7 +178,7 @@ type Dialog = {
   title?: string;
   createdAt?: number;                 // epoch ms
   last?: EntrySummary;                // newest entry; dialogs sort by last.id descending
-  agent: { model?: ModelRef; cwd: string }; // effective model and working directory
+  agent: { model?: ModelRef }; // effective model
   busy: boolean;                      // a run is going
   read?: number;                      // the last entry the user has seen
   unreadCount: number;                // assistant messages with text after `read`, at most 99
@@ -240,13 +229,10 @@ type AgentPatch = {
   model?: { provider: string; modelId: string } | null;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
   instructions?: string | null;
-  cwd?: string | null;
 };
 ```
 
-`null` clears a field back to the server default. `cwd` must be an existing directory, absolute or starting with `~`;
-it is stored absolute, and an invalid one fails the request with `bad_request`. A changed `cwd` applies from the next
-tool call, also within a running turn.
+`null` clears a field back to the server default.
 
 ### `conversation.rename`
 `{ conversationId, title }` -> `{}`

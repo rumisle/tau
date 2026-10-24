@@ -107,19 +107,21 @@ final class ChatListController: ViewController {
             self.requestLayout(transition: .animated(duration: 0.45, curve: .spring))
         })
         if mode == .main {
-            // The compose button in the bar's glass; a long press lists recent projects.
-            let composeNode = ComposeButtonNode()
-            composeNode.longPressed = { [weak self, weak composeNode] in
-                guard let self, let composeNode else {
-                    return
-                }
-                self.openComposeMenu(sourceView: composeNode.view)
-            }
+            // The compose button in the bar's glass; held, with several servers, which one, the finger sliding to it.
+            let composeNode = BarActionButtonNode(image: composeIcon, accessibilityLabel: "New Chat")
             composeNode.tapped = { [weak self] in
                 self?.compose()
             }
             self.composeNode = composeNode
             composeNode.update(color: context.theme.navigationBar.primaryTextColor)
+            self.serversDisposable = (context.store.serversSignal |> deliverOnMainQueue).start(next: { [weak self, weak composeNode] servers in
+                composeNode?.contextAction = servers.count > 1 ? { [weak self, weak composeNode] gesture in
+                    guard let self, let composeNode else {
+                        return
+                    }
+                    self.openComposeMenu(sourceView: composeNode.referenceNode.view, gesture: gesture)
+                } : nil
+            })
             let item = UIBarButtonItem(customDisplayNode: composeNode)!
             item.target = self
             item.action = #selector(self.composePressed)
@@ -146,6 +148,8 @@ final class ChatListController: ViewController {
 
     deinit {
         self.dialogsDisposable.dispose()
+        self.serversDisposable?.dispose()
+        self.serverTagsDisposable?.dispose()
         self.foldersDisposable.dispose()
         self.themeDisposable?.dispose()
         self.statusDisposable?.dispose()
@@ -169,7 +173,16 @@ final class ChatListController: ViewController {
         interaction.setPinned = { dialog, pinned in
             store.setPinned(dialog.id, pinned)
         }
+        interaction.serverTags = self.context.themeContext.settings.serverTags
         self.displayNode = ChatListControllerNode(context: self.context, theme: self.theme, mode: self.mode, interaction: interaction)
+        // Settings > Appearance > Server Tags: every row again.
+        self.serverTagsDisposable = (self.context.themeContext.settingsSignal |> map { $0.serverTags } |> distinctUntilChanged |> deliverOnMainQueue).start(next: { [weak self, weak interaction] serverTags in
+            guard let self, let interaction, interaction.serverTags != serverTags else {
+                return
+            }
+            interaction.serverTags = serverTags
+            self.controllerNode.updateTheme(self.theme)
+        })
         self.controllerNode.listOffsetChanged = { [weak self] offset in
             self?.searchContentNode?.updateListVisibleContentOffset(offset)
         }
@@ -444,7 +457,9 @@ final class ChatListController: ViewController {
         self.compose()
     }
 
-    private var composeNode: ComposeButtonNode?
+    private var composeNode: BarActionButtonNode?
+    private var serversDisposable: Disposable?
+    private var serverTagsDisposable: Disposable?
     private var searchContentNode: NavigationBarSearchContentNode?
 
     /// Telegram's search: the bar slides away, the field takes the top, results cover the list.
@@ -491,19 +506,19 @@ final class ChatListController: ViewController {
     /// The list as last shown, for where a new chat starts.
     private(set) var latestDialogs: [DialogModel] = []
 
-    /// New Chat: straight into an empty chat in the most recent project; its card changes where and with what.
+    /// New Chat: straight into an empty chat on the server of the latest chat; its card changes where and with what.
     func compose() {
-        guard let location = self.context.store.defaultLocation(self.latestDialogs) else {
+        guard let server = self.context.store.recentServers().first else {
             return
         }
-        self.startChat(at: location)
+        self.startChat(server: server.slot)
     }
 
-    func startChat(at location: ProjectLocation) {
+    func startChat(server slot: Int) {
         guard let navigationController = self.navigationController as? NavigationController else {
             return
         }
-        let id = self.context.store.createConversation(server: location.slot, cwd: location.path)
+        let id = self.context.store.createConversation(server: slot)
         let chat = ChatController(context: self.context, conversationId: id)
         navigationController.pushViewController(chat)
         Queue.mainQueue().after(0.45) {
@@ -511,38 +526,18 @@ final class ChatListController: ViewController {
         }
     }
 
-    /// A long press on compose: Telegram's context menu from the button, with the recent projects, then Choose Project.
-    private func openComposeMenu(sourceView: UIView) {
-        let store = self.context.store
-        let theme = self.theme
+    /// New Chat held: Telegram's context menu from the button, with the servers, the one of the latest chat first.
+    private func openComposeMenu(sourceView: UIView, gesture: ContextGesture) {
         var items: [ContextMenuItem] = []
-        for location in store.recentProjects(self.latestDialogs).prefix(5) {
-            items.append(.action(ContextMenuActionItem(text: store.projectTitle(location), textLayout: .secondLineWithValue(store.describe(location)), icon: { theme in
+        for server in self.context.store.recentServers() {
+            items.append(.action(ContextMenuActionItem(text: server.name, icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Message"), color: theme.contextMenu.primaryColor)
             }, action: { [weak self] _, f in
                 f(.default)
-                self?.startChat(at: location)
+                self?.startChat(server: server.slot)
             })))
         }
-        if !items.isEmpty {
-            items.append(.separator)
-        }
-        items.append(.action(ContextMenuActionItem(text: "Choose Project…", icon: { theme in
-            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Folder"), color: theme.contextMenu.primaryColor)
-        }, action: { [weak self] _, f in
-            f(.default)
-            guard let self else {
-                return
-            }
-            let picker = ProjectPickerController(context: self.context, current: nil, choose: { [weak self] location in
-                Queue.mainQueue().after(0.3) {
-                    self?.startChat(at: location)
-                }
-            })
-            (self.navigationController as? NavigationController)?.pushViewController(picker)
-        })))
-        let source = ComposeContextReferenceSource(view: sourceView)
-        let controller = makeContextController(presentationData: theme.presentationData, source: .reference(source), items: .single(ContextController.Items(content: .list(items))), gesture: nil)
+        let controller = makeContextController(presentationData: self.theme.presentationData, source: .reference(ViewContextReferenceSource(view: sourceView)), items: .single(ContextController.Items(content: .list(items))), gesture: gesture)
         self.presentInGlobalOverlay(controller)
     }
 
@@ -1169,6 +1164,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         }, openArchive: {}, contextAction: { _, _, gesture in
             gesture?.cancel()
         }, toggleRead: { _ in }, setArchived: { _, _ in }, hide: { _ in })
+        interaction.serverTags = self.context.themeContext.settings.serverTags
         interaction.openSearchResult = { dialog, match in
             open(dialog, match)
         }
@@ -1353,55 +1349,6 @@ private final class ChatListContextControllerContentSource: ContextControllerCon
 }
 
 /// The compose glyph inside the navigation bar's glass button, which also takes a long press.
-final class ComposeButtonNode: ASDisplayNode {
-    private let iconNode = ASImageNode()
-    var longPressed: (() -> Void)?
-    var tapped: (() -> Void)?
-
-    override init() {
-        super.init()
-        self.iconNode.displaysAsynchronously = false
-        self.addSubnode(self.iconNode)
-    }
-
-    override func didLoad() {
-        super.didLoad()
-        let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(self.longPressGesture(_:)))
-        recognizer.minimumPressDuration = 0.4
-        self.view.addGestureRecognizer(recognizer)
-        let tap = UITapGestureRecognizer(target: self, action: #selector(self.tapGesture))
-        tap.require(toFail: recognizer)
-        self.view.addGestureRecognizer(tap)
-    }
-
-    @objc private func tapGesture() {
-        self.tapped?()
-    }
-
-    @objc private func longPressGesture(_ recognizer: UILongPressGestureRecognizer) {
-        if recognizer.state == .began {
-            self.longPressed?()
-        }
-    }
-
-    func update(color: UIColor) {
-        // Telegram's own compose glyph, drawn to sit centered in the button.
-        self.iconNode.image = generateTintedImage(image: UIImage(bundleImageName: "Chat List/ComposeIcon"), color: color)
-        self.setNeedsLayout()
-    }
-
-    override func calculateSizeThatFits(_ constrainedSize: CGSize) -> CGSize {
-        return CGSize(width: 44.0, height: 44.0)
-    }
-
-    override func layout() {
-        super.layout()
-        if let image = self.iconNode.image {
-            self.iconNode.frame = CGRect(origin: CGPoint(x: floor((self.bounds.width - image.size.width) / 2.0), y: floor((self.bounds.height - image.size.height) / 2.0)), size: image.size)
-        }
-    }
-}
-
 /// A folder tab as a context menu's anchor, as ChatListHeaderBarContextReferenceContentSource: the menu under the tab.
 private final class ChatListTabContextReferenceSource: ContextReferenceContentSource {
     let keepInPlace: Bool = true
@@ -1417,18 +1364,3 @@ private final class ChatListTabContextReferenceSource: ContextReferenceContentSo
     }
 }
 
-/// The compose button as a context menu's anchor.
-private final class ComposeContextReferenceSource: ContextReferenceContentSource {
-    private weak var view: UIView?
-
-    init(view: UIView) {
-        self.view = view
-    }
-
-    func transitionInfo() -> ContextControllerReferenceViewInfo? {
-        guard let view = self.view else {
-            return nil
-        }
-        return ContextControllerReferenceViewInfo(referenceView: view, contentAreaInScreenSpace: UIScreen.main.bounds)
-    }
-}

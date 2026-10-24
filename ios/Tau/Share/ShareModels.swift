@@ -90,23 +90,24 @@ struct ShareSnapshot: Codable {
         /// Its ID on its server.
         var localId: Int
         var title: String
-        var project: String
+        /// Its server's name while there are several, else empty.
+        var server: String
         var busy: Bool
         var date: Date?
         var pinned: Bool
     }
 
-    struct Project: Codable {
+    /// A server a new chat can start on.
+    struct NewChat: Codable {
         var slot: Int
-        var path: String
         var title: String
     }
 
     var servers: [Server]
     /// Pinned first, then by activity, as the chat list.
     var chats: [Chat]
-    /// Where a new chat can start, the most recent first.
-    var projects: [Project]
+    /// Where a new chat can start: the servers, the one with the latest chat first.
+    var newChats: [NewChat]
 }
 
 /// A share to deliver: to chats that exist (`chatIds`, global), and to a new chat in `newChat` when set.
@@ -116,6 +117,6 @@ struct PendingShare: Codable {
     /// JPEGs, made small enough to keep in the keychain.
     var images: [Data]
     var chatIds: [Int]
-    var newChat: ShareSnapshot.Project?
+    var newChat: ShareSnapshot.NewChat?
     var date: Date
 }

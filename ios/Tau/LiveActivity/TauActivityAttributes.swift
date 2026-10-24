@@ -43,8 +43,8 @@ struct TauActivityAttributes: ActivityAttributes {
 }
 
 extension TauActivityAttributes.Chat {
-    /// tau://chat?server=&id=, as notifications open a chat.
+    /// The chat's link (TauLink), as notifications open a chat.
     var url: URL? {
-        return URL(string: "tau://chat?server=\(self.serverId)&id=\(self.localId)")
+        return URL(string: "tau://\(self.serverId.prefix(8).lowercased())/\(self.localId)")
     }
 }

@@ -111,7 +111,7 @@ describe("skills", () => {
 		const server = await serve(host);
 		try {
 			const client = await TauClient.connect(server.url);
-			const { dialog } = await client.request("conversation.create", { cwd: project });
+			const { dialog } = await client.request("conversation.create", {});
 			const replica = new ConversationReplica(dialog.conversation.id);
 			await replica.sync(client);
 			// What the model was given, from the server's own entries: clients get a pi.system entry without it.

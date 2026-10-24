@@ -34,6 +34,8 @@ final class ChatListInteraction {
     var revealedOptionsChanged: (Int?) -> Void = { _ in }
     var openSearchResult: (DialogModel, SearchMatch) -> Void = { _, _ in }
     var setPinned: (DialogModel, Bool) -> Void = { _, _ in }
+    /// Where a row says its server, while there are several (Settings > Appearance > Server Tags).
+    var serverTags: ThemeContext.Settings.ServerTags = .underMessage
 
     init(open: @escaping (DialogModel) -> Void, openArchive: @escaping () -> Void, contextAction: @escaping (DialogModel, ContextControllerSourceNode, ContextGesture?) -> Void, toggleRead: @escaping (DialogModel) -> Void, setArchived: @escaping (DialogModel, Bool) -> Void, hide: @escaping (DialogModel) -> Void) {
         self.open = open
@@ -47,8 +49,9 @@ final class ChatListInteraction {
 
 /// One chat list row. A trimmed port of Telegram-iOS ChatListUI/Sources/Node/ChatListItem.swift: same metrics (60 pt
 /// avatar, 16/15/14 pt fonts, the same height formula and frames), the unread badge (ChatListBadgeNode, copied), and the
-/// swipe actions (ItemListRevealOptionsItemNode, copied), with the peer replaced by a dialog whose project directory
-/// takes the place of a group message's author line.
+/// swipe actions (ItemListRevealOptionsItemNode, copied), with the peer replaced by a dialog: two lines of its last
+/// message, as a private chat has, and while there are several servers its own's tag, in the place of Telegram's
+/// folder tags or beside the time.
 final class ChatListItem: ListViewItem {
     let theme: TauTheme
     let content: ChatListItemContent
@@ -215,6 +218,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
     private let authorNode: TextNode
     private let textNode: TextNode
     private let dateNode: TextNode
+    /// Its server's tag (ChatListItemTagListComponent's look), while there are several servers.
+    private let serverTagNode = ASImageNode()
     private let statusNode = ChatListStatusNode()
     private let badgeNode: ChatListBadgeNode
     private let separatorNode: ASDisplayNode
@@ -267,6 +272,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
         self.mainContentContainerNode.addSubnode(self.authorNode)
         self.mainContentContainerNode.addSubnode(self.textNode)
         self.mainContentContainerNode.addSubnode(self.dateNode)
+        self.serverTagNode.displaysAsynchronously = false
+        self.mainContentContainerNode.addSubnode(self.serverTagNode)
         self.mainContentContainerNode.addSubnode(self.statusNode)
         self.mainContentContainerNode.addSubnode(self.badgeNode)
         self.mainContentContainerNode.addSubnode(self.busyIndicatorNode)
@@ -433,10 +440,15 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
             var textString: NSAttributedString
             var textLines = 1
             let avatarKey: String
+            var serverTag: UIImage?
             switch item.content {
             case let .dialog(dialog):
                 title = dialog.title
-                author = dialog.projectLabel
+                author = ""
+                if let server = dialog.serverName {
+                    serverTag = serverTagImage(server, slot: dialog.serverSlot, theme: item.theme)
+                }
+                textLines = serverTag != nil && item.interaction.serverTags == .underMessage ? 1 : 2
                 date = dialog.last?.date
                 busy = dialog.busy
                 avatarKey = "\(dialog.id):\(dialog.title)"
@@ -544,7 +556,9 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
 
             // ChatListItem.swift: 24 pt for the status before the date.
             let statusWidth: CGFloat = statusState == .none ? 0.0 : 24.0
-            let titleRectWidth = rawContentWidth - dateLayout.size.width - 10.0 - statusWidth
+            let besideTime = serverTag != nil && item.interaction.serverTags == .besideTime
+            let serverTagWidth: CGFloat = besideTime ? (serverTag.map { $0.size.width + 6.0 } ?? 0.0) : 0.0
+            let titleRectWidth = rawContentWidth - dateLayout.size.width - 10.0 - statusWidth - serverTagWidth
             let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: title, font: titleFont, textColor: theme.titleColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(10.0, titleRectWidth), height: .greatestFiniteMagnitude)))
 
             // The project directory reads like the author line of a group chat.
@@ -623,6 +637,16 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
 
                 let dateFrame = CGRect(origin: CGPoint(x: contentRect.maxX - dateLayout.size.width, y: contentRect.origin.y + 2.0), size: dateLayout.size)
                 transition.updateFrame(node: strongSelf.dateNode, frame: dateFrame)
+                strongSelf.serverTagNode.image = serverTag
+                strongSelf.serverTagNode.isHidden = serverTag == nil
+                if let serverTag {
+                    if besideTime {
+                        strongSelf.serverTagNode.frame = CGRect(origin: CGPoint(x: dateFrame.minX - statusWidth - serverTag.size.width - 6.0, y: floor(dateFrame.midY - serverTag.size.height / 2.0)), size: serverTag.size)
+                    } else {
+                        // Where Telegram puts folder tags: the third line.
+                        strongSelf.serverTagNode.frame = CGRect(origin: CGPoint(x: contentRect.minX, y: contentRect.minY + measureHeight * 2.0 + 2.0), size: serverTag.size)
+                    }
+                }
                 let statusSize = CGSize(width: 24.0, height: 24.0)
                 strongSelf.statusNode.frame = CGRect(origin: CGPoint(x: contentRect.maxX - dateLayout.size.width - statusSize.width, y: contentRect.origin.y + 2.0 - UIScreenPixel + floor((dateLayout.size.height - statusSize.height) / 2.0)), size: statusSize)
                 strongSelf.statusNode.fontSize = 17.0
@@ -732,3 +756,35 @@ final class BusyDotsNode: ASDisplayNode {
         }
     }
 }
+
+/// A server's tag as Telegram draws a chat folder's (ChatListItemTagListComponent): its name uppercase, 11 pt semibold, in
+/// its color on a tenth of it. Telegram's folder tag colors (PeerNameColors, in their display order), one a server, made
+/// readable on the theme's list (Readability).
+private func serverTagImage(_ name: String, slot: Int, theme: TauTheme) -> UIImage? {
+    let key = "\(name)|\(slot)|\(theme.name)"
+    serverTagLock.lock()
+    let cached = serverTagCache[key]
+    serverTagLock.unlock()
+    if let cached {
+        return cached
+    }
+    let colors: [UInt32] = [0x368ad1, 0x40a920, 0xd67722, 0xcc5049, 0x955cdb, 0x309eba, 0xc7508b]
+    let color = Readability.readable(UIColor(rgb: colors[slot % colors.count]), on: [theme.chatList.backgroundColor], contrast: Readability.secondary)
+    let font = Font.semibold(11.0)
+    let text = NSAttributedString(string: name.uppercased(), font: font, textColor: color)
+    let textSize = text.boundingRect(with: CGSize(width: 200.0, height: 40.0), options: .usesLineFragmentOrigin, context: nil).size
+    let size = CGSize(width: ceil(textSize.width) + 8.0, height: ceil(textSize.height) + 4.0)
+    let image = UIGraphicsImageRenderer(size: size).image { _ in
+        color.withAlphaComponent(0.1).setFill()
+        UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: size), cornerRadius: 4.0).fill()
+        text.draw(at: CGPoint(x: 4.0, y: 2.0))
+    }
+    serverTagLock.lock()
+    serverTagCache[key] = image
+    serverTagLock.unlock()
+    return image
+}
+
+/// Rows lay out on background queues.
+private let serverTagLock = NSLock()
+private var serverTagCache: [String: UIImage] = [:]

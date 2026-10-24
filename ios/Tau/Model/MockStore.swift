@@ -51,7 +51,7 @@ final class MockStore: TauStore, TauServer {
                 date = date.addingTimeInterval(20)
             }
             self.conversations[id] = ConversationState(messages: messages, streaming: nil, busy: false)
-            self.dialogs[id] = DialogModel(id: id, title: seed.0, cwd: seed.1, model: "claude-opus-5-5", last: nil, busy: false)
+            self.dialogs[id] = DialogModel(id: id, title: seed.0, model: "claude-opus-5-5", last: nil, busy: false)
             self.refreshDialog(id)
         }
 
@@ -68,7 +68,7 @@ final class MockStore: TauStore, TauServer {
             date = date.addingTimeInterval(97)
         }
         self.conversations[longId] = ConversationState(messages: messages, streaming: nil, busy: false)
-        self.dialogs[longId] = DialogModel(id: longId, title: "Long conversation", cwd: "~", model: "claude-opus-5-5", last: nil, busy: false)
+        self.dialogs[longId] = DialogModel(id: longId, title: "Long conversation", model: "claude-opus-5-5", last: nil, busy: false)
         self.refreshDialog(longId)
         // Formulas as models write them, in every place Markdown puts them.
         let mathId = seeds.count + 2
@@ -76,7 +76,7 @@ final class MockStore: TauStore, TauServer {
             ChatMessage(id: self.mintId(), role: index % 2 == 0 ? .user : .assistant, text: text, date: now.addingTimeInterval(-7_200 + Double(index) * 30))
         }
         self.conversations[mathId] = ConversationState(messages: mathMessages, streaming: nil, busy: false)
-        self.dialogs[mathId] = DialogModel(id: mathId, title: "Math stress", cwd: "~", model: "claude-opus-5-5", last: nil, busy: false)
+        self.dialogs[mathId] = DialogModel(id: mathId, title: "Math stress", model: "claude-opus-5-5", last: nil, busy: false)
         self.refreshDialog(mathId)
         // Some unread answers, and one chat in the archive, to show the badges and Archived Chats.
         self.dialogs[2]?.unreadCount = 2
@@ -194,7 +194,6 @@ final class MockStore: TauStore, TauServer {
     let address = "demo"
     let status: ConnectionStatus = .online
     let latency: Double? = 0.012
-    let home: String? = "/Users/you"
     private(set) var defaultThinkingLevel = "off"
 
     func setDefaultThinkingLevel(_ level: String) {
@@ -229,8 +228,16 @@ final class MockStore: TauStore, TauServer {
         return self
     }
 
-    func createConversation(server slot: Int, cwd: String?) -> Int {
-        return self.createConversation(cwd: cwd)
+    func createConversation(server slot: Int) -> Int {
+        return self.createConversation()
+    }
+
+    func recentServers() -> [TauServer] {
+        return [self]
+    }
+
+    func linkedEntryText(_ id: Int, entryId: Int, completion: @escaping (String?) -> Void) {
+        completion(nil)
     }
 
     let isDemo = true
@@ -256,9 +263,7 @@ final class MockStore: TauStore, TauServer {
 
     func setPushAlerts(_ value: Bool) {}
 
-    func relocateDraft(_ id: Int, to location: ProjectLocation) -> Int {
-        self.dialogs[id]?.cwd = location.path
-        self.publish(id)
+    func relocateDraft(_ id: Int, toServer slot: Int) -> Int {
         return id
     }
 
@@ -458,12 +463,6 @@ final class MockStore: TauStore, TauServer {
         return .single(nil)
     }
 
-    func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError> {
-        let path = path ?? "/Users/you"
-        let entries = ["work", "tau", "webapp", "engine", "notes"].map { DirectoryListing.Entry(name: $0, isDirectory: true, isRepository: $0 != "work" && $0 != "notes") }
-        return .single(DirectoryListing(path: path, parent: path == "/" ? nil : (path as NSString).deletingLastPathComponent, entries: entries))
-    }
-
     func resetContext(_ id: Int) {
     }
 
@@ -478,11 +477,10 @@ final class MockStore: TauStore, TauServer {
         completion(id)
     }
 
-    func createConversation(cwd: String?) -> Int {
-        let cwd = cwd ?? "~/work/tau"
+    func createConversation() -> Int {
         let id = (self.dialogs.keys.max() ?? 0) + 1
         self.conversations[id] = ConversationState(messages: [], streaming: nil, busy: false)
-        self.dialogs[id] = DialogModel(id: id, title: "New chat", cwd: cwd, model: "claude-opus-5-5", last: nil, busy: false)
+        self.dialogs[id] = DialogModel(id: id, title: "New chat", model: "claude-opus-5-5", last: nil, busy: false)
         self.drafts.insert(id)
         return id
     }

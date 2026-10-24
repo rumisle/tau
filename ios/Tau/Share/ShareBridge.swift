@@ -57,12 +57,10 @@ final class ShareBridge {
         let visible = self.latest.filter { !$0.archived && $0.parentConversationId == nil }
         let ordered = visible.filter { $0.pinned != nil }.sorted { ($0.pinned ?? 0) > ($1.pinned ?? 0) } + visible.filter { $0.pinned == nil }
         let chats = ordered.prefix(60).map { dialog in
-            ShareSnapshot.Chat(id: dialog.id, slot: dialog.serverSlot, localId: MultiStore.split(dialog.id).local, title: dialog.title, project: dialog.projectLabel, busy: dialog.busy, date: dialog.last?.date, pinned: dialog.pinned != nil)
+            ShareSnapshot.Chat(id: dialog.id, slot: dialog.serverSlot, localId: MultiStore.split(dialog.id).local, title: dialog.title, server: dialog.serverName ?? "", busy: dialog.busy, date: dialog.last?.date, pinned: dialog.pinned != nil)
         }
-        let projects = store.recentProjects(self.latest).prefix(8).map { location in
-            ShareSnapshot.Project(slot: location.slot, path: location.path, title: store.projectTitle(location))
-        }
-        let snapshot = ShareSnapshot(servers: servers, chats: Array(chats), projects: Array(projects))
+        let newChats = store.recentServers().map { ShareSnapshot.NewChat(slot: $0.slot, title: $0.name) }
+        let snapshot = ShareSnapshot(servers: servers, chats: Array(chats), newChats: newChats)
         DispatchQueue.global(qos: .utility).async {
             ShareGroup.snapshot = snapshot
         }
@@ -85,8 +83,8 @@ final class ShareBridge {
             for id in share.chatIds {
                 store.send(share.text, attachments: attachments, to: id, mode: .followUp)
             }
-            if let project = share.newChat {
-                let id = store.createConversation(server: project.slot, cwd: project.path)
+            if let newChat = share.newChat {
+                let id = store.createConversation(server: newChat.slot)
                 store.send(share.text, attachments: attachments, to: id, mode: .followUp)
             }
         }

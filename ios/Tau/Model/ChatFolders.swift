@@ -3,20 +3,13 @@ import SwiftSignalKit
 
 /// A chat folder, as Telegram's ChatListFilter (docs/folders.md): a tab over the chat list that shows the chats it
 /// takes in and leaves out the ones it excludes. Telegram takes in chat types (contacts, groups, bots); tau's chats
-/// differ by where they run, so a folder takes in servers and projects, plus chats by hand and two live categories:
+/// differ by where they run, so a folder takes in servers, plus chats by hand and two live categories:
 /// chats an agent is working in, and unread ones.
 struct ChatFolder: Codable, Equatable {
-    struct Project: Codable, Hashable {
-        var slot: Int
-        var path: String
-    }
-
     var id: Int32
     var title: String
     /// Every chat on these servers (TauServer.slot).
     var servers: [Int] = []
-    /// Every chat in these projects.
-    var projects: [Project] = []
     /// These chats (global IDs), wherever they are.
     var chats: [Int] = []
     /// Chats an agent is working in now.
@@ -32,7 +25,7 @@ struct ChatFolder: Codable, Equatable {
 
     /// Whether it takes in anything at all.
     var isEmpty: Bool {
-        return self.servers.isEmpty && self.projects.isEmpty && self.chats.isEmpty && !self.working && !self.unread
+        return self.servers.isEmpty && self.chats.isEmpty && !self.working && !self.unread
     }
 
     func contains(_ dialog: DialogModel) -> Bool {
@@ -51,10 +44,7 @@ struct ChatFolder: Codable, Equatable {
         if self.working && (dialog.busy || !dialog.workingSubagents.isEmpty) {
             return true
         }
-        if self.unread && dialog.isUnread {
-            return true
-        }
-        return self.projects.contains(Project(slot: dialog.serverSlot, path: dialog.cwd))
+        return self.unread && dialog.isUnread
     }
 }
 
@@ -122,12 +112,12 @@ final class ChatFolderStore {
     }
 
     /// Folders worth having for these chats that the user does not have yet, as Telegram's recommended folders: each
-    /// server while there are several, then the projects with the most chats, then the live categories.
+    /// server while there are several, then the live categories.
     func suggestions(store: TauStore, dialogs: [DialogModel]) -> [ChatFolder] {
         var suggested: [ChatFolder] = []
         var id = self.nextId
         func add(_ folder: ChatFolder) {
-            guard !self.folders.contains(where: { $0.servers == folder.servers && $0.projects == folder.projects && $0.working == folder.working && $0.unread == folder.unread && $0.chats.isEmpty }) else {
+            guard !self.folders.contains(where: { $0.servers == folder.servers && $0.working == folder.working && $0.unread == folder.unread && $0.chats.isEmpty }) else {
                 return
             }
             suggested.append(folder)
@@ -138,14 +128,6 @@ final class ChatFolderStore {
             for server in store.servers where visible.contains(where: { $0.serverSlot == server.slot }) {
                 add(ChatFolder(id: id, title: server.name, servers: [server.slot]))
             }
-        }
-        var counts: [ChatFolder.Project: Int] = [:]
-        for dialog in visible {
-            counts[ChatFolder.Project(slot: dialog.serverSlot, path: dialog.cwd), default: 0] += 1
-        }
-        let projects = counts.filter { $0.value >= 2 }.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key.path < $1.key.path }
-        for (project, _) in projects.prefix(3) {
-            add(ChatFolder(id: id, title: store.projectTitle(ProjectLocation(slot: project.slot, path: project.path)), projects: [project]))
         }
         add(ChatFolder(id: id, title: "Working", working: true))
         add(ChatFolder(id: id, title: "Unread", unread: true))
@@ -162,8 +144,6 @@ final class ChatFolderStore {
             return
         }
         let suggestions = self.suggestions(store: store, dialogs: dialogs)
-        let servers = suggestions.filter { !$0.servers.isEmpty }
-        let project = suggestions.first { !$0.projects.isEmpty }
-        self.set(servers + (project.map { [$0] } ?? []))
+        self.set(suggestions.filter { !$0.servers.isEmpty })
     }
 }

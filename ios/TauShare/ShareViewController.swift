@@ -55,14 +55,14 @@ private func newChatImage(diameter: CGFloat) -> UIImage {
 
 /// tau's share sheet, after Telegram's (ShareController): the chats as a grid of avatars to pick from, the list's
 /// order with pinned chats first, New Chat leading; a search over them; what is shared and a comment at the bottom; Send
-/// with how many it goes to. A new chat starts in a project picked from the recent ones. It sends itself, as a
+/// with how many it goes to. A new chat starts on the server of the latest chat, or one picked while there are several. It sends itself, as a
 /// follow-up where an agent is working; what it cannot send, tau sends when it opens.
 final class ShareViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate, UITextViewDelegate, UISearchBarDelegate {
-    private var snapshot = ShareSnapshot(servers: [], chats: [], projects: [])
+    private var snapshot = ShareSnapshot(servers: [], chats: [], newChats: [])
     private var filtered: [ShareSnapshot.Chat] = []
     private var selected: [Int] = []
     private var newChatSelected = false
-    private var project: ShareSnapshot.Project?
+    private var newChat: ShareSnapshot.NewChat?
 
     private var sharedText = ""
     private var sharedImages: [UIImage] = []
@@ -99,7 +99,7 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
             self.snapshot = snapshot
         }
         self.filtered = self.snapshot.chats
-        self.project = self.snapshot.projects.first
+        self.newChat = self.snapshot.newChats.first
     }
 
     private func buildViews() {
@@ -167,7 +167,7 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
             view.translatesAutoresizingMaskIntoConstraints = false
             self.view.addSubview(view)
         }
-        // Rows that come and go (the photo, the new chat's project) in a stack, so a hidden one takes no room.
+        // Rows that come and go (the photo, the new chat's server) in a stack, so a hidden one takes no room.
         let previewRow = UIStackView(arrangedSubviews: [self.previewImage, self.previewLabel])
         previewRow.axis = .horizontal
         previewRow.spacing = 10.0
@@ -350,24 +350,24 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return self.snapshot.projects.isEmpty ? self.filtered.count : self.filtered.count + 1
+        return self.snapshot.newChats.isEmpty ? self.filtered.count : self.filtered.count + 1
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "chat", for: indexPath) as! ShareChatCell
-        let offset = self.snapshot.projects.isEmpty ? 0 : 1
+        let offset = self.snapshot.newChats.isEmpty ? 0 : 1
         if indexPath.item < offset {
             cell.update(image: newChatImage(diameter: 60.0), title: "New Chat", subtitle: nil, selected: self.newChatSelected)
         } else {
             let chat = self.filtered[indexPath.item - offset]
             let multi = self.snapshot.servers.count > 1
-            cell.update(image: avatarImage(title: chat.title, index: chat.id, diameter: 60.0), title: chat.title, subtitle: chat.busy ? "working" : (multi ? chat.project : nil), selected: self.selected.contains(chat.id))
+            cell.update(image: avatarImage(title: chat.title, index: chat.id, diameter: 60.0), title: chat.title, subtitle: chat.busy ? "working" : (multi ? chat.server : nil), selected: self.selected.contains(chat.id))
         }
         return cell
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let offset = self.snapshot.projects.isEmpty ? 0 : 1
+        let offset = self.snapshot.newChats.isEmpty ? 0 : 1
         if indexPath.item < offset {
             self.newChatSelected.toggle()
         } else {
@@ -387,7 +387,7 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
         let words = searchText.lowercased().split(separator: " ").map(String.init)
         self.filtered = words.isEmpty ? self.snapshot.chats : self.snapshot.chats.filter { chat in
-            let haystack = "\(chat.title) \(chat.project)".lowercased()
+            let haystack = "\(chat.title) \(chat.server)".lowercased()
             return words.allSatisfy { haystack.contains($0) }
         }
         self.collectionView.reloadData()
@@ -403,12 +403,13 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
     }
 
     private func updateProjectButton() {
-        self.projectRow?.isHidden = !self.newChatSelected
-        let title = "New chat in \(self.project?.title ?? "–") ▾"
+        // Which server, while there is a choice.
+        self.projectRow?.isHidden = !self.newChatSelected || self.snapshot.newChats.count < 2
+        let title = "New chat on \(self.newChat?.title ?? "–") ▾"
         self.projectButton.setTitle(title, for: .normal)
-        self.projectButton.menu = UIMenu(children: self.snapshot.projects.map { project in
-            UIAction(title: project.title, subtitle: project.path, state: project.path == self.project?.path && project.slot == self.project?.slot ? .on : .off) { [weak self] _ in
-                self?.project = project
+        self.projectButton.menu = UIMenu(children: self.snapshot.newChats.map { server in
+            UIAction(title: server.title, state: server.slot == self.newChat?.slot ? .on : .off) { [weak self] _ in
+                self?.newChat = server
                 self?.updateProjectButton()
             }
         })
@@ -435,7 +436,7 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
         // As the app sends photos.
         let images = self.sharedImages.compactMap { ImageEncoding.jpeg($0) }
         let chats = self.snapshot.chats.filter { self.selected.contains($0.id) }
-        let newChat = self.newChatSelected ? self.project : nil
+        let newChat = self.newChatSelected ? self.newChat : nil
         self.sendButton.isEnabled = false
         self.sendButton.setImage(nil, for: .normal)
         self.spinner.startAnimating()

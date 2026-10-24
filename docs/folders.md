@@ -5,7 +5,6 @@ folder takes in. Telegram's folders take in chat types (contacts, groups, bots);
 so a folder takes in:
 
 - **servers**: every chat on one server, say the Mac's or a Linux box's;
-- **projects**: every chat in a working directory on a server;
 - **chats** picked by hand;
 - **two live types**: Working (an agent is busy in it, or one of its subagents) and Unread (an answer not seen).
 
@@ -13,7 +12,7 @@ It leaves out chats picked by hand, and optionally the read ones and the archive
 archive out). A chat is in a folder if anything takes it in and nothing leaves it out (`ChatFolder.contains`).
 
 Folders live on the phone (`ChatFolderStore`, UserDefaults), not on a server: they span servers. The first time the list
-has chats tau makes the obvious ones: a folder per server while there are several, and the project most chats are in.
+has chats tau makes the obvious ones: a folder per server while there are several.
 
 ## What is copied
 
@@ -28,10 +27,10 @@ has chats tau makes the obvious ones: a folder per server while there are severa
 - A chat's menu has Add to Folder (a submenu of the folders it is not in) and, inside a folder, Remove from Folder, with
   Undo.
 - Settings > Chat Folders is `ChatListFilterPresetListController`: its animation, the folders with their chat counts,
-  Create a New Folder, and recommended folders with Add (each server, the biggest projects, Working, Unread). A folder's
+  Create a New Folder, and recommended folders with Add (each server, Working, Unread). A folder's
   screen is `ChatListFilterPresetController`: the name, Included Chats with Add Chats, Excluded Chats with Remove Chats,
-  Delete Folder; the name follows what is picked until the user types one. The picker lists the types, then servers and
-  projects, then the chats, with checks.
+  Delete Folder; the name follows what is picked until the user types one. The picker lists the types, then servers, then
+  the chats, with checks.
 - An empty folder shows `ChatListEmptyNode`'s `.filter` state with Edit Folder.
 
 Not copied: folder icons and colors, shared folder links, and Telegram's limits.

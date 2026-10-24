@@ -14,8 +14,6 @@ protocol TauServer: AnyObject {
     var latency: Double? { get }
     /// What the server reported about itself; nil until it has.
     var serverInfo: ServerInfo? { get }
-    /// The server user's home directory, where a new chat starts unless it picks a project.
-    var home: String? { get }
     /// The model new conversations get, as `provider/id`.
     var defaultModel: String? { get }
     func setDefaultModel(_ model: ModelInfo)
@@ -41,8 +39,6 @@ protocol TauServer: AnyObject {
     func models() -> Signal<[ModelInfo], NoError>
     /// A model from the last list, if one came.
     func cachedModel(provider: String, id: String) -> ModelInfo?
-    /// One directory of the server's file system, for picking where a conversation runs.
-    func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError>
     /// What the models cost over the last `days` days (0: all), by day in this phone's time zone; nil when the
     /// server cannot say.
     func usageReport(days: Int) -> Signal<UsageReport?, NoError>
@@ -57,11 +53,15 @@ protocol TauStore: ConversationStore {
     func server(_ slot: Int) -> TauServer?
     /// The server a conversation is on.
     func server(of id: Int) -> TauServer?
-    /// A new conversation on that server, in `cwd` (nil: the server's home). A draft until its first message.
-    func createConversation(server slot: Int, cwd: String?) -> Int
-    /// A new chat moved to another project before its first message: the same draft on that server, else a new one
-    /// there with what was written. Returns the chat's ID from now on.
-    func relocateDraft(_ id: Int, to location: ProjectLocation) -> Int
+    /// A new conversation on that server. A draft until its first message.
+    func createConversation(server slot: Int) -> Int
+    /// A new chat moved to another server before its first message: a new draft there with what was written. Returns
+    /// the chat's ID from now on.
+    func relocateDraft(_ id: Int, toServer slot: Int) -> Int
+    /// The servers, the one with the latest chat first: where New Chat starts one, and its menu's order.
+    func recentServers() -> [TauServer]
+    /// What an entry of a chat (a global ID) says, for a link to it: nil when it says nothing or cannot be had.
+    func linkedEntryText(_ id: Int, entryId: Int, completion: @escaping (String?) -> Void)
     var isDemo: Bool { get }
     func addServer(address: String, token: String?, name: String?)
     func updateServer(_ slot: Int, address: String, token: String?, name: String?)
@@ -86,9 +86,9 @@ protocol ConversationStore: AnyObject {
     func dialog(_ id: Int) -> DialogModel?
     func conversationSignal(_ id: Int) -> Signal<ConversationState, NoError>
 
-    /// A new conversation in `cwd` (nil: the server's default). It stays a draft, out of the chat list, until the first
+    /// A new conversation, where the server starts chats. It stays a draft, out of the chat list, until the first
     /// message.
-    func createConversation(cwd: String?) -> Int
+    func createConversation() -> Int
     func discardIfDraft(_ id: Int)
     /// Hide, on every device; `false` shows it again (the toast's Undo).
     func setHidden(_ id: Int, _ hidden: Bool)
@@ -262,19 +262,6 @@ struct PromptCache: Equatable {
     func isWarm(now: Date = Date()) -> Bool {
         return self.expiresAt.map { now < $0 } ?? false
     }
-}
-
-struct DirectoryListing: Equatable {
-    struct Entry: Equatable {
-        var name: String
-        var isDirectory: Bool
-        /// A git repository root.
-        var isRepository: Bool
-    }
-
-    var path: String
-    var parent: String?
-    var entries: [Entry]
 }
 
 /// Bytes on this phone for one server.

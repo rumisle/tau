@@ -241,7 +241,7 @@ final class ChatControllerNode: ASDisplayNode {
         }
     }
     private var newChatCardNode: NewChatCardNode?
-    var newChatProjectTapped: (() -> Void)?
+    var newChatServerTapped: ((UIView) -> Void)?
     var newChatModelTapped: (() -> Void)?
 
     private func layoutNewChatCard(size: CGSize, top: CGFloat, bottom: CGFloat, transition: ContainedViewLayoutTransition) {
@@ -263,8 +263,8 @@ final class ChatControllerNode: ASDisplayNode {
         } else {
             transition = .immediate
             node = NewChatCardNode()
-            node.projectTapped = { [weak self] in
-                self?.newChatProjectTapped?()
+            node.serverTapped = { [weak self] view in
+                self?.newChatServerTapped?(view)
             }
             node.modelTapped = { [weak self] in
                 self?.newChatModelTapped?()
@@ -629,8 +629,23 @@ final class ChatControllerNode: ASDisplayNode {
             riseFrom = self.riseSources.removeValue(forKey: entry.message.text)
         }
         let highlight = self.searchHighlight.flatMap { highlight in entry.message.entryId.flatMap { highlight.entryIds.contains($0) ? highlight.terms : nil } }
-        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, wrapCode: self.wrapCode, riseFrom: riseFrom, highlightTerms: highlight, interaction: self.interaction)
+        let references = self.linkReferences?.references(in: entry.message.text) ?? []
+        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, wrapCode: self.wrapCode, riseFrom: riseFrom, highlightTerms: highlight, references: references, interaction: self.interaction)
     }
+
+    /// What the chat's tau links name (docs/links.md); set by the controller. A linked message that comes later lays the
+    /// rows out again.
+    var linkReferences: LinkReferenceResolver? {
+        didSet {
+            self.linkReferences?.updated = { [weak self] in
+                self?.reloadItems()
+                self?.linkReferencesUpdated?()
+            }
+        }
+    }
+
+    /// A linked message came: the field's preview may show it now.
+    var linkReferencesUpdated: (() -> Void)?
 
     /// Settings > Appearance > Wrap Lines in Code.
     var wrapCode = true {

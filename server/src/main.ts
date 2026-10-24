@@ -1,4 +1,5 @@
 // tau server: `node src/main.ts [--data dir | --db path | --memory] [--port n] [--host addr] [--model provider/id] [--cwd dir]
+//   (--cwd: where chats start instead of the home directory, for tests)
 //   [--dev-tps n] [--dev-cache-ttl s]` (speed of the dev/echo model, tokens per second; a prompt cache lifetime that makes it
 //   charge as a costly model, to try cache warming)
 //   [--token-file path] [--no-auth] [--apns-key path --apns-team id [--apns-key-id id]]

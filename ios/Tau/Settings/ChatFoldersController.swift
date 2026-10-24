@@ -34,8 +34,6 @@ extension ChatFolder {
             return "Chats with answers you have not seen"
         } else if let slot = self.servers.first, self.servers.count == 1 {
             return "Every chat on \(store.server(slot)?.name ?? "the server")"
-        } else if let project = self.projects.first, self.projects.count == 1 {
-            return "Chats in \(store.describe(ProjectLocation(slot: project.slot, path: project.path)))"
         }
         return ""
     }
@@ -160,16 +158,13 @@ final class ChatFolderEditController: SettingsListController {
     /// A name for what was picked, as Telegram names a folder of one chat type: the server, the project, the category.
     private func suggestedName(_ folder: ChatFolder) -> String {
         let store = self.context.store
-        if folder.servers.count == 1 && folder.projects.isEmpty && folder.chats.isEmpty, let server = store.server(folder.servers[0]) {
+        if folder.servers.count == 1 && folder.chats.isEmpty, let server = store.server(folder.servers[0]) {
             return server.name
         }
-        if folder.projects.count == 1 && folder.servers.isEmpty && folder.chats.isEmpty {
-            return store.projectTitle(ProjectLocation(slot: folder.projects[0].slot, path: folder.projects[0].path))
-        }
-        if folder.working && folder.servers.isEmpty && folder.projects.isEmpty && folder.chats.isEmpty && !folder.unread {
+        if folder.working && folder.servers.isEmpty && folder.chats.isEmpty && !folder.unread {
             return "Working"
         }
-        if folder.unread && folder.servers.isEmpty && folder.projects.isEmpty && folder.chats.isEmpty && !folder.working {
+        if folder.unread && folder.servers.isEmpty && folder.chats.isEmpty && !folder.working {
             return "Unread"
         }
         return folder.title
@@ -229,17 +224,13 @@ final class ChatFolderEditController: SettingsListController {
         for slot in self.folder.servers {
             included.append((SettingsIcon.server, store.server(slot)?.name ?? "Server", "Server"))
         }
-        for project in self.folder.projects {
-            let location = ProjectLocation(slot: project.slot, path: project.path)
-            included.append((SettingsIcon.projectIcon(for: project.path), store.projectTitle(location), store.describe(location)))
-        }
         for id in self.folder.chats {
             if let dialog = known[id] {
-                included.append((Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: 30.0), dialog.title, dialog.projectLabel))
+                included.append((Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: 30.0), dialog.title, dialog.serverName))
             }
         }
         rows(included, add: "Add Chats", mode: .include)
-        items.append(SettingsTextItem(theme: theme, text: "Choose chats, projects or servers that will appear in this folder.", kind: .footer))
+        items.append(SettingsTextItem(theme: theme, text: "Choose chats or servers that will appear in this folder.", kind: .footer))
 
         items.append(SettingsTextItem(theme: theme, text: "Excluded Chats", kind: .header))
         var excluded: [(UIImage?, String, String?)] = []
@@ -251,7 +242,7 @@ final class ChatFolderEditController: SettingsListController {
         }
         for id in self.folder.excludedChats {
             if let dialog = known[id] {
-                excluded.append((Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: 30.0), dialog.title, dialog.projectLabel))
+                excluded.append((Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: 30.0), dialog.title, dialog.serverName))
             }
         }
         rows(excluded, add: "Remove Chats", mode: .exclude)
@@ -272,7 +263,7 @@ final class ChatFolderEditController: SettingsListController {
 }
 
 /// Add Chats, or Remove Chats, as Telegram's chat picker for a folder: the types of chats first (Working and Unread to
-/// take in; Read and Archived to leave out), then servers and projects to take in, then each chat, with a check on
+/// take in; Read and Archived to leave out), then servers to take in, then each chat, with a check on
 /// what is picked. Done gives the folder back.
 final class ChatFolderPickerController: SettingsListController {
     enum Mode {
@@ -353,21 +344,6 @@ final class ChatFolderPickerController: SettingsListController {
                     })
                 })
             }
-            var counts: [ChatFolder.Project: Int] = [:]
-            for dialog in self.dialogs {
-                counts[ChatFolder.Project(slot: dialog.serverSlot, path: dialog.cwd), default: 0] += 1
-            }
-            let projects = Set(counts.keys).union(self.folder.projects).sorted { (counts[$0] ?? 0) != (counts[$1] ?? 0) ? (counts[$0] ?? 0) > (counts[$1] ?? 0) : $0.path < $1.path }
-            section("Projects", projects.map { project in
-                let location = ProjectLocation(slot: project.slot, path: project.path)
-                let count = counts[project] ?? 0
-                return (SettingsIcon.projectIcon(for: project.path), store.projectTitle(location), "\(store.describe(location)) · \(count == 1 ? "1 chat" : "\(count) chats")", self.folder.projects.contains(project), { [weak self] in
-                    guard let self else {
-                        return
-                    }
-                    self.toggle(&self.folder.projects, project)
-                })
-            })
         case .exclude:
             section("Chat Types", [
                 (ChatFolderIcons.read, "Read", "Chats with nothing new", self.folder.excludeRead, { [weak self] in self?.folder.excludeRead.toggle() }),
@@ -378,7 +354,7 @@ final class ChatFolderPickerController: SettingsListController {
         section("Chats", ChatListControllerNode.pinnedFirst(visible).map { dialog in
             let id = dialog.id
             let selected = self.mode == .include ? self.folder.chats.contains(id) : self.folder.excludedChats.contains(id)
-            return (Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: 30.0), dialog.title, dialog.projectLabel, selected, { [weak self] in
+            return (Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: 30.0), dialog.title, dialog.serverName, selected, { [weak self] in
                 guard let self else {
                     return
                 }

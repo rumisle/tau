@@ -29,7 +29,6 @@ import { entryImages } from "./media.ts";
 import { clientDocs, clientEntry, clientOp } from "./outgoing.ts";
 import type { KindName } from "./search/index.ts";
 import type { Search } from "./search/service.ts";
-import { directory, listDirectory } from "./fs.ts";
 import { CreatesDoc, type Host, MetaDoc } from "./host.ts";
 import type { ActivityRow } from "./devices.ts";
 import type { Notifier } from "./notifier.ts";
@@ -283,13 +282,6 @@ export class Connection {
 				if (compaction !== undefined) await this.#host.setCompactionThreshold(compactionThreshold(compaction, this.#host.compactionThreshold));
 				return { defaultModel: this.#host.defaultModel, defaultThinkingLevel: this.#host.defaultThinkingLevel, cacheWarming: this.#host.cacheWarming, compaction: this.#host.compactionThreshold };
 			}
-			case "fs.list": {
-				const hidden = params.hidden;
-				if (hidden !== undefined && typeof hidden !== "boolean") {
-					throw new ProtocolError("bad_request", "hidden must be a boolean");
-				}
-				return listDirectory(str(params, "path", true) ?? homedir(), { hidden: hidden === true });
-			}
 			case "search": {
 				if (this.#search === undefined) throw new ProtocolError("bad_request", "Search is not available");
 				const kinds = searchKinds(params.kinds);
@@ -487,8 +479,6 @@ export class Connection {
 			apns: this.#notifier?.canPush === true,
 			// The largest file it keeps (docs/files.md).
 			maxFileBytes: this.#host.files.maxBytes,
-			defaultCwd: this.#host.cwd,
-			home: homedir(),
 			hostname: hostname(),
 			piRevision: PI_REVISION,
 			uptime: Math.round(process.uptime()),
@@ -839,13 +829,12 @@ function tail<P extends readonly (string | number)[]>(path: P): [string | number
 	return path.slice(1) as [string | number, ...(string | number)[]];
 }
 
-/** A client agent patch as an AgentChange; a `cwd` must name an existing directory and is stored absolute. */
+/** A client agent patch as an AgentChange. Where a conversation runs is the server's to say (docs/protocol.md). */
 async function agentChange(patch: Record<string, unknown> & AgentPatch): Promise<AgentChange> {
 	const change: {
 		model?: AgentChange["model"];
 		thinkingLevel?: AgentChange["thinkingLevel"];
 		instructions?: AgentChange["instructions"];
-		cwd?: AgentChange["cwd"];
 	} = {};
 	if (patch.model !== undefined) {
 		const model = patch.model as unknown;
@@ -865,13 +854,11 @@ async function agentChange(patch: Record<string, unknown> & AgentPatch): Promise
 		}
 		change.thinkingLevel = patch.thinkingLevel as ModelThinkingLevel | null;
 	}
-	for (const key of ["instructions", "cwd"] as const) {
-		const value = patch[key];
-		if (value === undefined) continue;
-		if (value !== null && typeof value !== "string") {
-			throw new ProtocolError("bad_request", `agent.${key} must be a string or null`);
+	if (patch.instructions !== undefined) {
+		if (patch.instructions !== null && typeof patch.instructions !== "string") {
+			throw new ProtocolError("bad_request", "agent.instructions must be a string or null");
 		}
-		change[key] = key === "cwd" && value !== null ? await directory(value) : value;
+		change.instructions = patch.instructions;
 	}
 	return change;
 }

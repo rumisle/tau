@@ -140,7 +140,7 @@ final class ChatListSearchContainerNode: SearchDisplayControllerContentNode {
         // Chats by their title and project, here and at once.
         let words = query.lowercased().split(separator: " ").map(String.init)
         self.chats = self.dialogs().filter { dialog in
-            let haystack = "\(dialog.title) \(dialog.projectLabel)".lowercased()
+            let haystack = "\(dialog.title) \(dialog.serverName ?? "")".lowercased()
             return words.allSatisfy { haystack.contains($0) }
         }
         // Messages already shown stay until the new page replaces them, so the list does not flash empty between keys.

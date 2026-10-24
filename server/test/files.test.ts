@@ -150,7 +150,7 @@ describe("files", () => {
 	test("images past the limits are shrunk for the model, read or sent as a photo", async () => {
 		writeFileSync(join(cwd, "wide.png"), png(2320, 540));
 		const client = await TauClient.connect(server.url, TOKEN);
-		const { dialog } = await client.request("conversation.create", { agent: { cwd } });
+		const { dialog } = await client.request("conversation.create", {});
 		const replica = new ConversationReplica(dialog.conversation.id);
 		await replica.sync(client);
 		await client.request("conversation.submit", { conversationId: replica.id, requestId: "w-1", content: "!read wide.png" });
@@ -174,7 +174,7 @@ describe("files", () => {
 		writeFileSync(join(cwd, "chart.png"), PNG);
 		mkdirSync(join(cwd, "folder"), { recursive: true });
 		const client = await TauClient.connect(server.url, TOKEN);
-		const { dialog } = await client.request("conversation.create", { agent: { cwd } });
+		const { dialog } = await client.request("conversation.create", {});
 		const replica = new ConversationReplica(dialog.conversation.id);
 		await replica.sync(client);
 		await client.request("conversation.submit", { conversationId: replica.id, requestId: "s-1", content: "!send chart.png folder missing.txt" });

@@ -7,7 +7,8 @@ agent does (`packages/coding-agent/src/core/skills.ts`, whose discovery and prom
 ## Where
 
 `.agents/skills` only: the server user's (`~/.agents/skills`), then the conversation directory's
-(`<cwd>/.agents/skills`). A name both have is the user's; a file reached twice (a symbolic link, as
+(`<cwd>/.agents/skills`), which is the home directory unless the chat is an old one. The preamble asks the agent to
+look for a repository's own when it works in one. A name both have is the user's; a file reached twice (a symbolic link, as
 `agent-config/install.sh` makes) counts once. A directory with a `SKILL.md` is a skill and is not searched further;
 others are searched four levels down, without hidden directories and `node_modules`. A skill needs a `description`
 (at most 1024 characters); its name is the front matter's `name`, or its directory's. `disable-model-invocation: true`

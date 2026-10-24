@@ -30,6 +30,8 @@ final class ServerStore: ConversationStore, TauServer {
     private var pendingHides: [Int: Bool]
 
     private var replicas: [Int: ConversationReplica] = [:]
+    /// What entries that links name say, by entry ID (unique in the server's database): fetched once.
+    private var linkedEntryTexts: [Int: String] = [:]
     private var watchers: [Int: Int] = [:]
     private var statePromises: [Int: ValuePromise<ConversationState>] = [:]
     let outbox: Outbox
@@ -41,7 +43,6 @@ final class ServerStore: ConversationStore, TauServer {
 
     /// Drafts: local negative IDs until the first message creates the conversation on the server.
     private struct Draft {
-        var cwd: String?
         var realId: Int?
         /// Set by the first message: the create request, idempotent, in the outbox.
         var createRequestId: String?
@@ -445,10 +446,6 @@ final class ServerStore: ConversationStore, TauServer {
         return self.connection.currentStatus == .online ? self.connection.latency : nil
     }
 
-    var home: String? {
-        return self.connection.hello?.home
-    }
-
     private var defaultThinkingOverride: String?
 
     var defaultThinkingLevel: String {
@@ -735,7 +732,6 @@ final class ServerStore: ConversationStore, TauServer {
             id: id,
             title: raw.string("title") ?? "New chat",
             parentConversationId: conversation.object("owner")?.int("conversationId"),
-            cwd: agent.string("cwd") ?? "~",
             model: model,
             last: last,
             busy: raw.bool("busy") ?? false,
@@ -938,9 +934,8 @@ final class ServerStore: ConversationStore, TauServer {
             if let realId = draft.realId, let dialog = self.dialogs[realId] {
                 return dialog
             }
-            let cwd = draft.cwd ?? self.connection.hello?.defaultCwd ?? "~"
             let model = self.agent(id).modelId ?? ""
-            return DialogModel(id: id, title: draft.title ?? "New chat", cwd: cwd, model: model, last: nil, busy: false)
+            return DialogModel(id: id, title: draft.title ?? "New chat", model: model, last: nil, busy: false)
         }
         return self.dialogs[id]
     }
@@ -1218,22 +1213,39 @@ final class ServerStore: ConversationStore, TauServer {
 
     // MARK: - Drafts
 
-    func createConversation(cwd: String?) -> Int {
-        let id = self.nextDraftId
-        self.nextDraftId -= 1
-        self.drafts[id] = Draft(cwd: cwd)
-        return id
+    /// What one of a conversation's entries says, for a link to it (docs/links.md): the phone's copy, else the server's.
+    func linkedEntryText(_ realId: Int, entryId: Int, completion: @escaping (String?) -> Void) {
+        if let text = self.linkedEntryTexts[entryId] {
+            completion(text)
+            return
+        }
+        if let entry = self.replicas[realId]?.entries[entryId] {
+            let text = TranscriptBuilder.quotedText(entry)
+            self.linkedEntryTexts[entryId] = text
+            completion(text)
+            return
+        }
+        self.connection.request("conversation.history", ["conversationId": realId, "before": entryId + 1, "limit": 1]) { [weak self] result in
+            guard case let .success(value) = result, let entry = value.objects("entries").first(where: { $0.int("id") == entryId }) else {
+                completion(nil)
+                return
+            }
+            let text = TranscriptBuilder.quotedText(entry)
+            self?.linkedEntryTexts[entryId] = text
+            completion(text)
+        }
     }
 
-    /// A draft not sent yet runs in `cwd` instead. False once its create has gone out.
-    func setDraftCwd(_ id: Int, cwd: String) -> Bool {
-        guard var draft = self.drafts[id], draft.createRequestId == nil, draft.forkOf == nil else {
-            return false
-        }
-        draft.cwd = cwd
-        self.drafts[id] = draft
-        self.statePromises[id]?.set(self.state(for: id))
-        return true
+    /// When its latest chat was last written in: which server New Chat starts on.
+    var lastActivity: Date? {
+        return self.dialogs.values.compactMap { $0.parentConversationId == nil ? $0.last?.date : nil }.max()
+    }
+
+    func createConversation() -> Int {
+        let id = self.nextDraftId
+        self.nextDraftId -= 1
+        self.drafts[id] = Draft()
+        return id
     }
 
     func discardIfDraft(_ id: Int) {
@@ -1286,9 +1298,9 @@ final class ServerStore: ConversationStore, TauServer {
                 let title = draft.titleIsManual ? (draft.title ?? "") : (trimmed.isEmpty ? attachmentsTitle(attachments) : String(trimmed.prefix(48)))
                 if let forkOf = draft.forkOf, let forkAt = draft.forkAt {
                     // A copy made before its message (Restore Full Context): the fork, then the message.
-                    self.outbox.enqueueCreate(requestId: createRequestId, cwd: nil, title: draft.title ?? title, agent: nil, forkOf: forkOf, forkAt: forkAt)
+                    self.outbox.enqueueCreate(requestId: createRequestId, title: draft.title ?? title, agent: nil, forkOf: forkOf, forkAt: forkAt)
                 } else {
-                    self.outbox.enqueueCreate(requestId: createRequestId, cwd: draft.cwd, title: title, agent: draft.agent)
+                    self.outbox.enqueueCreate(requestId: createRequestId, title: title, agent: draft.agent)
                 }
                 if draft.titleIsManual {
                     _ = self.outbox.renameCreate(createRequestId, title: title)
@@ -1477,8 +1489,8 @@ final class ServerStore: ConversationStore, TauServer {
         // Fork at the entry before the edited message, so the fork's transcript ends just before it. Through the
         // outbox, as a create: on disk, idempotent, and the edited message waits for it.
         guard let at = replica.entries.keys.filter({ $0 < entryId }).max() else {
-            // Editing the first message: a fresh conversation in the same directory, with the same model.
-            let draftId = self.createConversation(cwd: parent?.cwd)
+            // Editing the first message: a fresh conversation with the same model.
+            let draftId = self.createConversation()
             self.drafts[draftId]?.agent = self.agent(realId)
             self.send(text, attachments: attachments, to: draftId)
             completion(draftId)
@@ -1487,14 +1499,14 @@ final class ServerStore: ConversationStore, TauServer {
         let draftId = self.nextDraftId
         self.nextDraftId -= 1
         let createRequestId = UUID().uuidString
-        var draft = Draft(cwd: parent?.cwd)
+        var draft = Draft()
         draft.agent = self.agent(realId)
         draft.forkOf = realId
         draft.forkAt = at
         draft.title = parent?.title ?? "Edited"
         draft.createRequestId = createRequestId
         self.drafts[draftId] = draft
-        self.outbox.enqueueCreate(requestId: createRequestId, cwd: nil, title: draft.title ?? "Edited", agent: nil, forkOf: realId, forkAt: at)
+        self.outbox.enqueueCreate(requestId: createRequestId, title: draft.title ?? "Edited", agent: nil, forkOf: realId, forkAt: at)
         self.outbox.enqueue(text: text, attachments: attachments, conversationId: nil, createRequestId: createRequestId, mode: .followUp, showsInQueue: false)
         completion(draftId)
     }
@@ -1506,7 +1518,7 @@ final class ServerStore: ConversationStore, TauServer {
         // Created by its first message, through the outbox, as any draft: leaving it unsent leaves nothing behind.
         let draftId = self.nextDraftId
         self.nextDraftId -= 1
-        var draft = Draft(cwd: self.dialogs[realId]?.cwd)
+        var draft = Draft()
         draft.agent = self.agent(realId)
         draft.forkOf = realId
         draft.forkAt = at
@@ -1862,21 +1874,6 @@ final class ServerStore: ConversationStore, TauServer {
         }
         |> `catch` { _ -> Signal<UsageReport?, NoError> in
             return .single(nil)
-        }
-        |> deliverOnMainQueue
-    }
-
-    func listDirectory(_ path: String?) -> Signal<DirectoryListing, RequestError> {
-        var params: JSONObject = [:]
-        if let path {
-            params["path"] = path
-        }
-        return self.connection.request("fs.list", params)
-        |> map { value -> DirectoryListing in
-            let entries = value.objects("entries").map { entry in
-                DirectoryListing.Entry(name: entry.string("name") ?? "", isDirectory: entry.string("kind") == "dir", isRepository: entry.bool("git") ?? false)
-            }
-            return DirectoryListing(path: value.string("path") ?? path ?? "~", parent: value.string("parent"), entries: entries)
         }
         |> deliverOnMainQueue
     }

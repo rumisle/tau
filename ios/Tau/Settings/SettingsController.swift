@@ -294,6 +294,14 @@ final class AppearanceController: SettingsListController {
             themeContext.update { $0.wrapCode = value }
         }))
         items.append(SettingsTextItem(theme: theme, text: "When off, long lines stay whole and a code block scrolls sideways.", kind: .footer))
+        items.append(SettingsTextItem(theme: theme, text: "Server Tags", kind: .header))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Beside the Time", accessory: .checkmark(settings.serverTags == .besideTime), position: SettingsRowPosition(isFirst: true, isLast: false), action: {
+            themeContext.update { $0.serverTags = .besideTime }
+        }))
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Under the Message", accessory: .checkmark(settings.serverTags == .underMessage), position: SettingsRowPosition(isFirst: false, isLast: true), action: {
+            themeContext.update { $0.serverTags = .underMessage }
+        }))
+        items.append(SettingsTextItem(theme: theme, text: "With more than one server, each chat in the list says which it is on.", kind: .footer))
         return items
     }
 }

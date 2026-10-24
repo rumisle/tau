@@ -15,6 +15,15 @@ final class ThemeContext {
         var wrapCode: Bool
         /// Each theme's accent, as Telegram's `themeSpecificAccentColors`; a theme without one has tau's.
         var accents: [TauTheme.Builtin: TauTheme.Accent]
+        /// Where a chat's server shows in the chat list, while there are several.
+        var serverTags: ServerTags = .underMessage
+
+        enum ServerTags: String {
+            /// A tag in its server's color before the time.
+            case besideTime
+            /// Telegram's folder tags: a line of its own under one of the message.
+            case underMessage
+        }
 
         static let `default` = Settings(theme: .classic, autoNight: true, nightTheme: .night, wrapCode: true, accents: [:])
 
@@ -51,6 +60,9 @@ final class ThemeContext {
             }
             if let value = stored["wrapCode"] as? Bool {
                 settings.wrapCode = value
+            }
+            if let value = (stored["serverTags"] as? String).flatMap(Settings.ServerTags.init(rawValue:)) {
+                settings.serverTags = value
             }
             for (key, value) in stored["accents"] as? [String: String] ?? [:] {
                 if let builtin = TauTheme.Builtin(rawValue: key), let accent = TauTheme.Accent(rawValue: value) {
@@ -106,7 +118,7 @@ final class ThemeContext {
         f(&settings)
         self.settings = settings
         let accents = Dictionary(uniqueKeysWithValues: settings.accents.map { ($0.key.rawValue, $0.value.rawValue) })
-        UserDefaults.standard.set(["version": ThemeContext.settingsVersion, "theme": settings.theme.rawValue, "autoNight": settings.autoNight, "nightTheme": settings.nightTheme.rawValue, "wrapCode": settings.wrapCode, "accents": accents], forKey: ThemeContext.settingsKey)
+        UserDefaults.standard.set(["version": ThemeContext.settingsVersion, "theme": settings.theme.rawValue, "autoNight": settings.autoNight, "nightTheme": settings.nightTheme.rawValue, "wrapCode": settings.wrapCode, "accents": accents, "serverTags": settings.serverTags.rawValue], forKey: ThemeContext.settingsKey)
         self.settingsPromise.set(settings)
         self.apply()
     }

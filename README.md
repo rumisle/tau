@@ -32,7 +32,8 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/streaming.md` | Reading while an answer streams: what moved, overlapped and blanked, and why it no longer does |
 | `docs/search.md` | Search: the index each server keeps as entries are written (`server/src/search`), matching and ranking, and the benchmark |
 | `docs/live-activity.md` | The Live Activity and Dynamic Island (`ios/TauWidgets`): which chats, what they show, and what waits for APNs |
-| `docs/folders.md` | Chat folders: tabs by server, project or chat over the list, and Settings > Chat Folders |
+| `docs/folders.md` | Chat folders: tabs by server or chat over the list, and Settings > Chat Folders |
+| `docs/links.md` | tau's links to chats and messages: copying, opening, the cards they show |
 | `docs/share.md` | The share extension (`ios/TauShare`): sending to chats or a new one from any app |
 | `server/` | The server: `src/host.ts` (Harness setup), `src/connection.ts` (protocol), `src/dialogs.ts` (chat list), `src/subagent.ts` (the subagent tool), `src/titles.ts` (automatic titles) |
 | `server/src/client.ts` | Reference client in TypeScript: the state machine the iOS app implements (cache, holes, ops) |
@@ -48,7 +49,7 @@ scripts/setup-pi.sh                         # once, and after changing PI_REVISI
 cd server
 npm start                                   # dev/echo model, data in ~/.local/share/tau, ws://127.0.0.1:7878
 npm start -- --data ../data                 # data beside the code, as on a dev machine
-npm start -- --model anthropic/claude-haiku-5-5 --cwd ~/work  # default cwd; clients pick their own
+npm start -- --model anthropic/claude-haiku-5-5   # the default model; chats start in ~
 npm start -- --memory --dev-tps 20          # throwaway storage, slow streaming
 npm start -- --host 0.0.0.0 --token-file ~/.config/tau/token  # reachable from the phone: clients need the token
 npm test

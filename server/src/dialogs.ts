@@ -37,7 +37,7 @@ export type SubmissionListener = (record: SubmissionRecord) => void;
 type DialogState = {
 	conversation: ConversationRecord;
 	meta: MetaState | undefined;
-	agent: { model?: { provider: string; modelId: string }; cwd?: string } | undefined;
+	agent: { model?: { provider: string; modelId: string } } | undefined;
 	cache: CacheState | undefined;
 	busy: boolean;
 	last: EntrySummary | undefined;
@@ -249,7 +249,7 @@ export class Dialogs {
 		const state: DialogState = {
 			conversation,
 			meta,
-			agent: agent === undefined ? undefined : { ...(agent.model === undefined ? {} : { model: agent.model }), ...(agent.cwd === undefined ? {} : { cwd: agent.cwd }) },
+			agent: agent === undefined ? undefined : { ...(agent.model === undefined ? {} : { model: agent.model }) },
 			cache,
 			busy: live?.run !== undefined,
 			last: undefined,
@@ -291,7 +291,6 @@ export class Dialogs {
 			...(state.last === undefined ? {} : { last: state.last }),
 			agent: {
 				...(agent?.model === undefined ? {} : { model: agent.model }),
-				cwd: agent?.cwd ?? this.#host.cwd,
 			},
 			busy: state.busy,
 			...(meta?.read === undefined ? {} : { read: meta.read as EntryId }),

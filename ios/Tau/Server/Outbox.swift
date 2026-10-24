@@ -95,7 +95,6 @@ struct OutgoingMessage: Codable, Equatable {
 /// A draft conversation being created for the messages sent to it, idempotent through its request ID.
 struct PendingCreate: Codable, Equatable {
     let requestId: String
-    let cwd: String?
     var title: String
     /// False once the user named it: the server does not name it after its first answer.
     var autoTitle: Bool?
@@ -394,11 +393,11 @@ final class Outbox {
     }
 
     /// A draft conversation to create; its messages wait for it.
-    func enqueueCreate(requestId: String, cwd: String?, title: String, agent: AgentSettings?, forkOf: Int? = nil, forkAt: Int? = nil) {
+    func enqueueCreate(requestId: String, title: String, agent: AgentSettings?, forkOf: Int? = nil, forkAt: Int? = nil) {
         guard self.create(requestId) == nil else {
             return
         }
-        self.creates.append(PendingCreate(requestId: requestId, cwd: cwd, title: title, provider: agent?.provider, modelId: agent?.modelId, thinkingLevel: agent?.thinkingLevel, forkOf: forkOf, forkAt: forkAt))
+        self.creates.append(PendingCreate(requestId: requestId, title: title, provider: agent?.provider, modelId: agent?.modelId, thinkingLevel: agent?.thinkingLevel, forkOf: forkOf, forkAt: forkAt))
         self.save()
         self.pump()
     }
@@ -1096,9 +1095,6 @@ final class Outbox {
         }
         var params: JSONObject = ["requestId": create.requestId, "title": create.title, "autoTitle": create.autoTitle ?? true]
         var agent: JSONObject = [:]
-        if let cwd = create.cwd {
-            agent["cwd"] = cwd
-        }
         if let provider = create.provider, let modelId = create.modelId {
             agent["model"] = ["provider": provider, "modelId": modelId]
         }

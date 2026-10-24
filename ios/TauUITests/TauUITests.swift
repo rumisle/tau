@@ -210,21 +210,6 @@ final class TauUITests: XCTestCase {
         }
     }
 
-    func testServerBrowse() {
-        self.launch(["-theme", "night"])
-        sleep(2)
-        // A long press on compose: recent projects, then Choose Project.
-        self.point(0.9, 0.098).press(forDuration: 0.8)
-        sleep(1)
-        self.shot("browse-menu")
-        self.app.descendants(matching: .any)["Choose Project…"].firstMatch.tap()
-        sleep(2)
-        self.shot("browse-recent")
-        self.app.descendants(matching: .any)["Home"].firstMatch.tap()
-        sleep(2)
-        self.shot("browse-home")
-    }
-
     func testDownButton() {
         self.launch(["-mock", "YES", "-theme", "light", "-openChat", "5"])
         sleep(1)

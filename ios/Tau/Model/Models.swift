@@ -11,12 +11,6 @@ struct DialogModel: Equatable {
     /// That server's name, while there is more than one server.
     var serverName: String?
 
-    /// The project, after its server's name when there are several: `nest:tau`.
-    var projectLabel: String {
-        return self.serverName.map { "\($0):\(self.projectName)" } ?? self.projectName
-    }
-    /// The conversation's working directory on the server.
-    var cwd: String
     var model: String
     var last: EntrySummary?
     var busy: Bool
@@ -69,9 +63,6 @@ struct DialogModel: Equatable {
         var date: Date
     }
 
-    var projectName: String {
-        return (self.cwd as NSString).lastPathComponent
-    }
 }
 
 enum MessageRole: Equatable {

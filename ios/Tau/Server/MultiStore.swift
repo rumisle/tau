@@ -272,27 +272,42 @@ final class MultiStore: TauStore {
         }
     }
 
-    func createConversation(cwd: String?) -> Int {
-        return self.createConversation(server: self.configs.first?.slot ?? 0, cwd: cwd)
+    func createConversation() -> Int {
+        return self.createConversation(server: self.recentServers().first?.slot ?? self.configs.first?.slot ?? 0)
     }
 
-    func createConversation(server slot: Int, cwd: String?) -> Int {
+    func createConversation(server slot: Int) -> Int {
         guard let store = self.stores[slot] else {
             return 0
         }
-        return MultiStore.global(slot, store.createConversation(cwd: cwd ?? store.home))
+        return MultiStore.global(slot, store.createConversation())
     }
 
-    func relocateDraft(_ id: Int, to location: ProjectLocation) -> Int {
-        guard let (store, local) = self.route(id) else {
+    func relocateDraft(_ id: Int, toServer slot: Int) -> Int {
+        guard let (store, local) = self.route(id), store.slot != slot else {
             return id
         }
-        if store.slot == location.slot, store.setDraftCwd(local, cwd: location.path) {
-            return id
-        }
-        let moved = self.createConversation(server: location.slot, cwd: location.path)
+        let moved = self.createConversation(server: slot)
         self.setInputDraft(store.inputDraft(local), for: moved)
         return moved
+    }
+
+    func linkedEntryText(_ id: Int, entryId: Int, completion: @escaping (String?) -> Void) {
+        guard let (store, local) = self.route(id) else {
+            completion(nil)
+            return
+        }
+        store.linkedEntryText(local, entryId: entryId, completion: completion)
+    }
+
+    func recentServers() -> [TauServer] {
+        let servers = self.servers
+        let latest = Dictionary(uniqueKeysWithValues: servers.map { ($0.slot, self.stores[$0.slot]?.lastActivity ?? .distantPast) })
+        // Stable: servers without chats keep the user's order.
+        return servers.enumerated().sorted { a, b in
+            let (da, db) = (latest[a.element.slot]!, latest[b.element.slot]!)
+            return da != db ? da > db : a.offset < b.offset
+        }.map(\.element)
     }
 
     var answers: Signal<ChatAnswer, NoError> {

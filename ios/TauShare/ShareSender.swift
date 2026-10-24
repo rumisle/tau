@@ -98,9 +98,9 @@ enum ShareSender {
     /// Sends the share to each chat (as a follow-up when its agent is working: a share must not turn a run aside) and
     /// to a new chat, grouped by server: its photos and files uploaded once for all the server's chats, and named by the
     /// messages (docs/files.md). Returns what could not be sent, and why when the server said.
-    static func send(text: String, images: [Data], files: [URL], chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?, servers: [ShareSnapshot.Server]) async -> (chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?, reason: String?) {
+    static func send(text: String, images: [Data], files: [URL], chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.NewChat?, servers: [ShareSnapshot.Server]) async -> (chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.NewChat?, reason: String?) {
         var failedChats: [ShareSnapshot.Chat] = []
-        var failedNew: ShareSnapshot.Project?
+        var failedNew: ShareSnapshot.NewChat?
         var reason: String?
         let slots = Set(chats.map(\.slot) + (newChat.map { [$0.slot] } ?? []))
         for slot in slots {
@@ -156,7 +156,7 @@ enum ShareSender {
             if let project = newHere {
                 do {
                     let title = String(text.split(separator: "\n").first?.prefix(60) ?? Substring(files.first?.lastPathComponent ?? "Shared"))
-                    let created = try await connection.request("conversation.create", ["requestId": UUID().uuidString, "title": title.isEmpty ? "Shared" : title, "autoTitle": true, "agent": ["cwd": project.path]])
+                    let created = try await connection.request("conversation.create", ["requestId": UUID().uuidString, "title": title.isEmpty ? "Shared" : title, "autoTitle": true])
                     guard let id = ((created["dialog"] as? [String: Any])?["conversation"] as? [String: Any])?["id"] as? NSNumber else {
                         throw ShareConnection.Failure.server("no conversation")
                     }
@@ -197,7 +197,7 @@ enum ShareSender {
     }
 
     /// What could not be sent, for the app to send through its outbox when it opens; photos smaller, to fit the keychain.
-    static func leaveForApp(text: String, images: [Data], chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.Project?) {
+    static func leaveForApp(text: String, images: [Data], chats: [ShareSnapshot.Chat], newChat: ShareSnapshot.NewChat?) {
         let small = images.prefix(4).compactMap { data -> Data? in
             return UIImage(data: data).flatMap { ImageEncoding.jpeg($0, maxPixels: 1280.0, quality: 0.7) }
         }

@@ -534,6 +534,21 @@ enum TranscriptBuilder {
         return []
     }
 
+    /// What an entry says, as a link to it shows it (docs/links.md): a user's message, or an answer's text without its
+    /// reasoning and tool calls; nil for anything else.
+    static func quotedText(_ entry: JSONObject) -> String? {
+        let message = entry.objects("model").first ?? [:]
+        switch entry.string("kind") {
+        case "pi.user":
+            return self.userContent(message["content"]).0
+        case "pi.assistant":
+            let blocks = (message["content"] as? [Any])?.compactMap { $0 as? JSONObject } ?? []
+            return blocks.filter { $0.string("type") == "text" }.compactMap { $0.string("text") }.joined(separator: "\n")
+        default:
+            return nil
+        }
+    }
+
     static func text(of content: Any?) -> String {
         if let text = content as? String {
             return text

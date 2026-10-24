@@ -47,6 +47,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             PushRegistration.shared.refreshAuthorization()
+            // As Telegram's handleDidBecomeActive: Telegram's shared display link runs in the foreground only, and one
+            // made while the app was still launching (inactive, as a chat opened at launch makes it) thinks it is not.
+            SharedDisplayLinkDriver.shared.updateForegroundState(true)
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { _ in
+            SharedDisplayLinkDriver.shared.updateForegroundState(false)
         }
 
         let makeRoot: () -> (RootTabController, ChatListController) = {
@@ -112,28 +118,52 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }))
     }
 
-    /// Opens a chat over whatever is on screen, as Telegram's banner and push taps do.
-    private func openChat(_ id: Int, context: AppContext) {
+    /// Opens a chat over whatever is on screen, as Telegram's banner and push taps do; at one of its messages, marked.
+    private func openChat(_ id: Int, context: AppContext, focus: ChatFocus? = nil) {
         guard let navigationController = self.navigationController else {
             return
         }
-        if let chat = navigationController.topViewController as? ChatController, chat.conversationId == id {
+        if focus == nil, let chat = navigationController.topViewController as? ChatController, chat.conversationId == id {
             return
         }
-        navigationController.pushViewController(ChatController(context: context, conversationId: id))
+        navigationController.pushViewController(ChatController(context: context, conversationId: id, focus: focus))
     }
 
-    /// `tau://chat?server=<serverId>&id=<conversation>`: what a push opens (server/src/notifier.ts).
+    /// tau's links (TauLink, docs/links.md): what a push or the Live Activity opens (server/src/notifier.ts), a link
+    /// tapped in a chat, or one from anywhere else.
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        guard url.scheme == "tau", url.host == "chat", let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+        guard let link = TauLink(url) else {
             return false
         }
-        let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
-        guard let local = query["id"].flatMap(Int.init) else {
-            return false
-        }
-        self.withChat(serverId: query["server"], local: local) { [weak self] id, context in
-            self?.openChat(id, context: context)
+        switch link {
+        case let .chat(server, conversation, entry, quote):
+            self.withChat(serverId: server, local: conversation) { [weak self] id, context in
+                // The message, its quoted words marked as a search's are.
+                let terms = quote.map { [SearchTerm(tokens: $0.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init), prefix: false, variants: [])] } ?? []
+                self?.openChat(id, context: context, focus: entry.map { ChatFocus(entryId: $0, terms: terms) })
+            }
+        case let .newChat(text, server, model):
+            guard let context = self.context, let navigationController = self.navigationController else {
+                return false
+            }
+            let store = context.store
+            let slot = server.flatMap { TauLink.server($0, in: store)?.slot } ?? store.recentServers().first?.slot ?? 0
+            let id = store.createConversation(server: slot)
+            let chat = ChatController(context: context, conversationId: id)
+            navigationController.pushViewController(chat)
+            if let text, !text.isEmpty {
+                Queue.mainQueue().after(0.5) {
+                    chat.setDraft(text)
+                }
+            }
+            // The model asked for, when the server has it ("provider/id" or the ID alone); else the server's default.
+            if let model, let tauServer = store.server(slot) {
+                let _ = (tauServer.models() |> take(1) |> deliverOnMainQueue).start(next: { models in
+                    if let found = models.first(where: { "\($0.provider)/\($0.id)" == model }) ?? models.first(where: { $0.id == model }) {
+                        store.configure(id, model: found, thinkingLevel: nil)
+                    }
+                })
+            }
         }
         return true
     }
@@ -143,8 +173,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         guard let context = self.context else {
             return
         }
+        // By the server's ID, or as links name it, its first characters.
         let find = { () -> TauServer? in
-            return context.store.servers.first { $0.serverInfo?.serverId == serverId }
+            guard let serverId, !serverId.isEmpty else {
+                return nil
+            }
+            return TauLink.server(serverId, in: context.store)
         }
         if let server = find() {
             body(MultiStore.global(server.slot, local), context)
@@ -276,7 +310,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         guard defaults.object(forKey: "openChat") != nil || isNewChat else {
             return
         }
-        let conversationId = isNewChat ? context.store.createConversation(server: context.store.servers.first?.slot ?? 0, cwd: nil) : defaults.integer(forKey: "openChat")
+        let conversationId = isNewChat ? context.store.createConversation(server: context.store.servers.first?.slot ?? 0) : defaults.integer(forKey: "openChat")
         if isNewChat {
             // A test's fresh chat: not what an earlier one left written.
             context.store.setInputDraft(nil, for: conversationId)

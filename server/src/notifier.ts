@@ -226,7 +226,8 @@ export class Notifier {
 		const failed = message.stopReason === "error" || message.stopReason === "aborted";
 		const text = failed ? `Failed: ${message.errorMessage ?? "the model stopped"}` : textOf(message);
 		const body = text.replace(/\s+/g, " ").trim().slice(0, 400) || "Answered.";
-		const url = `tau://chat?server=${this.#host.serverId}&id=${id}`;
+		// The chat's link, as the app copies one (docs/links.md): the server by the start of its ID.
+		const url = `tau://${this.#host.serverId.slice(0, 8).toLowerCase()}/${id}`;
 		if (this.#apns === undefined) return;
 		const devices = (await harness.snapshot(DevicesDoc, context))?.devices ?? {};
 		// A chat in a device's activity with nothing more to wait for: the activity's update says it, with its alert,
