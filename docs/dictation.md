@@ -30,8 +30,7 @@ in a toast (no microphone access, no sign-in in the build, a connection that fai
 
 ## Aqua Voice
 
-Aqua's realtime API. Unofficial: it can
-change without notice.
+Aqua's realtime API. Unofficial: it can change without notice.
 
 - `wss://realtime.aquavoice.com?token=<JWT>`, then a `start` message as Aqua's macOS client builds it (16 kHz,
   `pcm_s16le`, streaming, the model, language, dictionary and replacements), then `ready`.
