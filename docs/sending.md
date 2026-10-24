@@ -120,7 +120,7 @@ Telegram's sending, with the agent's two ways of reading a message.
   messages to the editor. Send Now does the same with the others.
 - **Refused**: Telegram's red badge beside the bubble (ChatMessageDeliveryFailedNode), which opens the reason with
   Resend and Delete. The chat list shows the red badge too, and the clock for a message on its way.
-- **No connection**: the chat's title says "Connecting…" as Telegram's does, and messages keep their clocks.
+- **No connection**: a capsule in the chat's bar says "Connecting…" where Telegram's title does, and messages keep their clocks.
 - **In the background**: the app keeps running briefly to finish sending, as Telegram does.
 
 ## Testing

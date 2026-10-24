@@ -22,6 +22,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private var themeDisposable: Disposable?
     private var settingsDisposable: Disposable?
     private let titleView: ChatTitleView
+    /// New Chat and ⋯, on the bar's right; none in a preview.
+    private var headerButtons: ChatHeaderButtonsNode?
     private var editingMessageId: Int?
     /// The entry of the message being edited, which the draft keeps across launches.
     private var editingEntryId: Int?
@@ -60,9 +62,29 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         super.init(navigationBarPresentationData: isPreview ? nil : context.theme.navigationBarPresentationData())
 
         self.navigationItem.titleView = self.titleView
+        if !isPreview {
+            let buttons = ChatHeaderButtonsNode()
+            buttons.update(color: context.theme.navigationBar.primaryTextColor)
+            buttons.compose = { [weak self] in
+                self?.startNewChat()
+            }
+            buttons.more = { [weak self, weak buttons] in
+                guard let self, let buttons else {
+                    return
+                }
+                self.openChatMenu(sourceView: buttons.moreNode.view)
+            }
+            self.headerButtons = buttons
+            self.navigationItem.rightBarButtonItem = UIBarButtonItem(customDisplayNode: buttons)
+            // The menu names the model; its name comes with the server's model list.
+            let _ = context.store.server(of: conversationId)?.models().start()
+        }
         self.updateTitle(busy: false)
         self.titleView.tapped = { [weak self] in
-            self?.openTitleMenu()
+            guard let self, let buttons = self.headerButtons else {
+                return
+            }
+            self.openChatMenu(sourceView: buttons.moreNode.view)
         }
         self.statusBar.statusBarStyle = self.theme.statusBarStyleValue
         self.themeDisposable = (context.themeContext.theme |> deliverOnMainQueue).start(next: { [weak self] theme in
@@ -196,6 +218,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.statusBar.statusBarStyle = theme.statusBarStyleValue
         self.navigationBar?.updatePresentationData(theme.navigationBarPresentationData(), transition: .immediate)
         self.titleView.updateTheme(theme)
+        self.headerButtons?.update(color: theme.navigationBar.primaryTextColor)
         if self.isNodeLoaded {
             self.controllerNode.updateTheme(theme)
         }
@@ -209,10 +232,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         guard let dialog = self.context.store.dialog(self.conversationId) else {
             return
         }
-        let model = self.context.store.agent(self.conversationId).modelId ?? dialog.model
-        // As Telegram's ChatTitleComponent: the connection's state takes the subtitle's place until it is back.
+        // As Telegram's ChatTitleComponent: the connection's state until it is back, then what the agent does.
         let strings = self.theme.presentationStrings
-        let status: ChatTitleView.Status
+        let status: ChatTitleView.Status?
         switch self.connectionStatus {
         case .waitingForNetwork:
             status = .network(strings.ChatState_WaitingForNetwork)
@@ -232,10 +254,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 // Its background subagents, as Telegram's title says who is typing.
                 status = .working(activity)
             } else {
-                status = .info("\(dialog.projectLabel) · \(model)")
+                status = nil
             }
         }
-        self.titleView.update(title: dialog.title, status: status)
+        self.titleView.update(status: status)
         self.updateNewChatCard(dialog: dialog)
     }
 
@@ -814,7 +836,22 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.present(alert, in: .window(.root))
     }
 
-    private func openTitleMenu() {
+    /// New Chat from the bar: a fresh chat on this chat's server in this one's place, as ChatGPT's; Back goes to the list.
+    private func startNewChat() {
+        guard let navigationController = self.navigationController as? NavigationController, let dialog = self.context.store.dialog(self.conversationId) else {
+            return
+        }
+        self.controllerNode.inputPanelNode.deactivateInput()
+        let id = self.context.store.createConversation(server: dialog.serverSlot, cwd: nil)
+        let chat = ChatController(context: self.context, conversationId: id)
+        navigationController.replaceTopController(chat, animated: true)
+        Queue.mainQueue().after(0.45) {
+            chat.activateInput()
+        }
+    }
+
+    /// The bar's ⋯: the chat's title in full, then what can be done with it and how it runs.
+    private func openChatMenu(sourceView: UIView) {
         guard !self.isPreview, self.controllerNode.selectedIds == nil else {
             return
         }
@@ -838,6 +875,12 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
 
         var items: [ContextMenuItem] = []
+        if let dialog = store.dialog(id) {
+            // As Telegram's information rows: small, not a button. The server's name when there are several.
+            let layout: ContextMenuActionItemTextLayout = dialog.serverName.map { .secondLineWithValue($0) } ?? .multiline
+            items.append(.action(ContextMenuActionItem(text: dialog.title, textLayout: layout, textFont: .small, icon: { _ in nil }, action: nil as ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?)))
+            items.append(.separator)
+        }
         if self.lastState?.messages.isEmpty == false {
             items.append(.action(ContextMenuActionItem(text: self.theme.presentationStrings.Common_Search, icon: icon("Chat/Context Menu/Search"), action: { [weak self] _, f in
                 f(.default)
@@ -848,7 +891,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             f(.default)
             self?.openRename()
         })))
-        items.append(.action(ContextMenuActionItem(text: "Model", textLayout: .secondLineWithValue(agent.modelId ?? "default"), icon: icon("Chat/Context Menu/Settings"), action: { [weak self] _, f in
+        let modelName = agent.provider.flatMap { provider in agent.modelId.flatMap { store.server(of: id)?.cachedModel(provider: provider, id: $0) } }.map { modelDisplayName($0.name) } ?? agent.modelId ?? "default"
+        items.append(.action(ContextMenuActionItem(text: "Model", textLayout: .secondLineWithValue(modelName), icon: icon("Chat/Context Menu/Settings"), action: { [weak self] _, f in
             f(.default)
             self?.openModelPicker()
         })))
@@ -906,7 +950,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             })))
         }
 
-        let source = ChatTitleContextReferenceSource(view: self.titleView, contentArea: self.controllerNode.view.convert(self.controllerNode.frameForVisibleArea(), to: nil))
+        let source = ChatTitleContextReferenceSource(view: sourceView, contentArea: self.controllerNode.view.convert(self.controllerNode.frameForVisibleArea(), to: nil))
         let controller = makeContextController(presentationData: self.theme.presentationData, source: .reference(source), items: .single(ContextController.Items(content: .list(items))), gesture: nil)
         self.presentInGlobalOverlay(controller)
     }
@@ -1378,14 +1422,14 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     }
 }
 
-/// The chat title in a glass capsule, as Telegram's ChatTitleView draws it in the glass navigation bar. The title is
-/// an AnimatedTextComponent (so "3 Selected" rolls its count), the subtitle a ChatTitleActivityNode (project and model,
-/// or "working" with Telegram's typing dots), and the capsule springs to its new width when either changes.
+/// The chat's status in a glass capsule where Telegram's ChatTitleView sits: "working" with Telegram's typing dots,
+/// "connecting…", or "3 Selected" while selecting. With nothing to say it is not there: the chat's title, server and
+/// model are in the menu of the bar's ⋯. The text is an AnimatedTextComponent (so "3 Selected" rolls its count) or a
+/// ChatTitleActivityNode (which slides from one state to the next), and the capsule springs to its new width.
 final class ChatTitleView: UIView {
     enum Status: Equatable {
-        case info(String)
         case working(String)
-        /// "connecting...", in Telegram's input control color.
+        /// "connecting…", in Telegram's input control color.
         case network(String)
     }
 
@@ -1402,6 +1446,7 @@ final class ChatTitleView: UIView {
         self.theme = theme
         super.init(frame: CGRect(x: 0.0, y: 0.0, width: 240.0, height: 44.0))
         self.addSubview(self.backgroundView)
+        self.backgroundView.alpha = 0.0
         self.activityNode.isUserInteractionEnabled = false
         self.backgroundView.contentView.addSubview(self.activityNode.view)
         self.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.tapGesture)))
@@ -1412,7 +1457,9 @@ final class ChatTitleView: UIView {
     }
 
     @objc private func tapGesture() {
-        self.tapped?()
+        if self.backgroundView.alpha > 0.0 {
+            self.tapped?()
+        }
     }
 
     func updateTheme(_ theme: TauTheme) {
@@ -1422,37 +1469,12 @@ final class ChatTitleView: UIView {
         self.update(titleItems: self.titleItems, status: status, animated: false)
     }
 
-    func update(title: String, subtitle: String?, isActive: Bool = false) {
-        self.update(title: title, status: subtitle.map { isActive ? .working($0) : .info($0) })
-    }
-
-    func update(title: String, status: Status?) {
-        self.fullTitle = title
-        self.update(titleItems: [AnimatedTextComponent.Item(id: AnyHashable("title"), content: .text(self.fitted(title)))], status: status, animated: true)
-    }
-
-    private var fullTitle: String?
-
-    /// AnimatedTextComponent does not truncate; a long conversation title is cut to the capsule's width here.
-    private func fitted(_ title: String) -> String {
-        let maxWidth = max(40.0, self.bounds.width - 24.0)
-        let font = Font.semibold(16.0)
-        func width(_ text: String) -> CGFloat {
-            return ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        }
-        if width(title) <= maxWidth {
-            return title
-        }
-        var characters = Array(title)
-        while !characters.isEmpty && width(String(characters) + "…") > maxWidth {
-            characters.removeLast()
-        }
-        return String(characters).trimmingCharacters(in: .whitespaces) + "…"
+    func update(status: Status?) {
+        self.update(titleItems: [], status: status, animated: true)
     }
 
     /// "N Selected", with N rolling as Telegram's counters do.
     func update(selectedCount: Int) {
-        self.fullTitle = nil
         self.update(titleItems: [
             AnimatedTextComponent.Item(id: AnyHashable("count"), content: .number(selectedCount, minDigits: 1)),
             AnimatedTextComponent.Item(id: AnyHashable("label"), content: .text(" Selected")),
@@ -1466,16 +1488,15 @@ final class ChatTitleView: UIView {
             self.status = status
             let state: ChatTitleActivityNodeState
             switch status {
-            case let .info(text):
-                state = .info(NSAttributedString(string: text, font: Font.regular(12.0), textColor: self.theme.navigationBar.secondaryTextColor), .generic)
             case let .working(text):
                 state = .typingText(NSAttributedString(string: text, font: Font.regular(12.0), textColor: self.theme.accentColor), self.theme.accentColor)
             case let .network(text):
-                state = .info(NSAttributedString(string: text, font: Font.regular(12.0), textColor: self.theme.presentationTheme.chat.inputPanel.inputControlColor), .generic)
+                // Telegram's color for it, lifted where the capsule's glass would swallow it (Readability).
+                let color = Readability.readable(self.theme.presentationTheme.chat.inputPanel.inputControlColor, on: [self.theme.navigationBar.opaqueBackgroundColor], contrast: Readability.secondary)
+                state = .info(NSAttributedString(string: text, font: Font.regular(12.0), textColor: color), .generic)
             case nil:
                 state = .none
             }
-            // Telegram's subtitle slides from one state to the next.
             let _ = self.activityNode.transitionToState(state, animation: animated ? .slide : .none)
         }
         self.layoutContent(transition: animated ? .spring(duration: 0.4) : .immediate)
@@ -1483,43 +1504,104 @@ final class ChatTitleView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if let title = self.fullTitle, self.titleItems.count == 1 {
-            self.titleItems = [AnimatedTextComponent.Item(id: AnyHashable("title"), content: .text(self.fitted(title)))]
-        }
         self.layoutContent(transition: .immediate)
     }
 
     private func layoutContent(transition: ComponentTransition) {
         self.hasLayout = self.bounds.width > 0.0
         let maxTextWidth = max(40.0, self.bounds.width - 24.0)
+        let hasTitle = !self.titleItems.isEmpty
+        let hasStatus = self.status != nil
         let titleSize = self.title.update(
             transition: transition,
             component: AnyComponent(AnimatedTextComponent(font: Font.semibold(16.0), color: self.theme.navigationBar.primaryTextColor, items: self.titleItems, noDelay: false, animateScale: true, animateSlide: true, blur: true)),
             environment: {},
             containerSize: CGSize(width: maxTextWidth, height: 22.0)
         )
-        let hasStatus = self.status != nil
         let statusSize = hasStatus ? self.activityNode.updateLayout(CGSize(width: maxTextWidth, height: 16.0), alignment: .center) : CGSize()
-        let textWidth = min(maxTextWidth, ceil(max(titleSize.width, statusSize.width)))
 
-        // Telegram ChatTitleView: a 44 pt capsule, 12 pt wider than the text on each side.
-        let backgroundSize = CGSize(width: textWidth + 24.0, height: 44.0)
+        // "N Selected" in Telegram's 44 pt title capsule, 12 pt wider than the text on each side; a status alone in a
+        // 32 pt one, 14 pt wider.
+        let backgroundSize: CGSize
+        if hasTitle {
+            backgroundSize = CGSize(width: min(maxTextWidth, ceil(titleSize.width)) + 24.0, height: 44.0)
+        } else {
+            backgroundSize = CGSize(width: min(maxTextWidth, ceil(statusSize.width)) + 28.0, height: 32.0)
+        }
         let backgroundFrame = CGRect(origin: CGPoint(x: floor((self.bounds.width - backgroundSize.width) / 2.0), y: floor((self.bounds.height - backgroundSize.height) / 2.0)), size: backgroundSize)
         transition.setFrame(view: self.backgroundView, frame: backgroundFrame)
         self.backgroundView.update(size: backgroundSize, cornerRadius: backgroundSize.height / 2.0, isDark: self.theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, transition: transition)
+        // It comes and goes as Telegram's glass does: a fade and a little scale.
+        let shown = hasTitle || hasStatus
+        transition.setAlpha(view: self.backgroundView, alpha: shown ? 1.0 : 0.0)
+        transition.setScale(view: self.backgroundView, scale: shown ? 1.0 : 0.8)
 
-        let titleFrame = CGRect(origin: CGPoint(x: floor((backgroundSize.width - titleSize.width) / 2.0), y: hasStatus ? 4.0 : floor((backgroundSize.height - titleSize.height) / 2.0)), size: titleSize)
+        let titleFrame = CGRect(origin: CGPoint(x: floor((backgroundSize.width - titleSize.width) / 2.0), y: floor((backgroundSize.height - titleSize.height) / 2.0)), size: titleSize)
         if let titleView = self.title.view {
             if titleView.superview == nil {
                 self.backgroundView.contentView.addSubview(titleView)
                 titleView.frame = titleFrame
             }
             transition.setFrame(view: titleView, frame: titleFrame)
+            transition.setAlpha(view: titleView, alpha: hasTitle ? 1.0 : 0.0)
         }
         // ChatTitleActivityNode centers its text on its own origin.
-        let statusFrame = CGRect(origin: CGPoint(x: floor(backgroundSize.width / 2.0), y: 24.0), size: statusSize)
+        let statusFrame = CGRect(origin: CGPoint(x: floor(backgroundSize.width / 2.0), y: floor((backgroundSize.height - statusSize.height) / 2.0)), size: statusSize)
         transition.setFrame(view: self.activityNode.view, frame: statusFrame)
-        transition.setAlpha(view: self.activityNode.view, alpha: hasStatus ? 1.0 : 0.0)
+        transition.setAlpha(view: self.activityNode.view, alpha: hasStatus && !hasTitle ? 1.0 : 0.0)
+    }
+}
+
+/// The bar's buttons on the right, in one glass capsule: New Chat, as the chat list's compose (Telegram's glyph), and
+/// ⋯, the chat's menu.
+final class ChatHeaderButtonsNode: ASDisplayNode {
+    private let composeNode = ASImageNode()
+    let moreNode = ASDisplayNode()
+    private let moreIconNode = ASImageNode()
+    var compose: (() -> Void)?
+    var more: (() -> Void)?
+
+    override init() {
+        super.init()
+        self.composeNode.displaysAsynchronously = false
+        self.moreIconNode.displaysAsynchronously = false
+        self.addSubnode(self.composeNode)
+        self.addSubnode(self.moreNode)
+        self.moreNode.addSubnode(self.moreIconNode)
+    }
+
+    override func didLoad() {
+        super.didLoad()
+        self.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:))))
+    }
+
+    @objc private func tapGesture(_ recognizer: UITapGestureRecognizer) {
+        if recognizer.location(in: self.view).x < self.bounds.width / 2.0 {
+            self.compose?()
+        } else {
+            self.more?()
+        }
+    }
+
+    func update(color: UIColor) {
+        self.composeNode.image = generateTintedImage(image: UIImage(bundleImageName: "Chat List/ComposeIcon"), color: color)
+        self.moreIconNode.image = generateTintedImage(image: UIImage(bundleImageName: "Chat List/NavigationMore"), color: color)
+        self.setNeedsLayout()
+    }
+
+    override func calculateSizeThatFits(_ constrainedSize: CGSize) -> CGSize {
+        return CGSize(width: 88.0, height: 44.0)
+    }
+
+    override func layout() {
+        super.layout()
+        if let image = self.composeNode.image {
+            self.composeNode.frame = CGRect(origin: CGPoint(x: floor((44.0 - image.size.width) / 2.0), y: floor((44.0 - image.size.height) / 2.0)), size: image.size)
+        }
+        self.moreNode.frame = CGRect(x: 44.0, y: 0.0, width: 44.0, height: 44.0)
+        if let image = self.moreIconNode.image {
+            self.moreIconNode.frame = CGRect(origin: CGPoint(x: floor((44.0 - image.size.width) / 2.0), y: floor((44.0 - image.size.height) / 2.0)), size: image.size)
+        }
     }
 }
 
@@ -1558,7 +1640,7 @@ private final class ChatMessageContextExtractedContentSource: ContextExtractedCo
     }
 }
 
-/// The title capsule as a context menu's anchor: the menu drops from it, as Telegram's peer menus do.
+/// A button of the bar as a context menu's anchor: the menu drops from it, as Telegram's peer menus do.
 private final class ChatTitleContextReferenceSource: ContextReferenceContentSource {
     let keepInPlace: Bool = false
     private weak var view: UIView?
@@ -1609,6 +1691,15 @@ private final class ChatViewContextReferenceSource: ContextReferenceContentSourc
         }
         return ContextControllerReferenceViewInfo(referenceView: view, contentAreaInScreenSpace: UIScreen.main.bounds)
     }
+}
+
+/// A model's name without the provider OpenRouter puts before it: "Anthropic: Claude Opus 5.5" is "Claude Opus 5.5".
+func modelDisplayName(_ name: String) -> String {
+    guard let range = name.range(of: ": ") else {
+        return name
+    }
+    let rest = name[range.upperBound...]
+    return rest.isEmpty ? name : String(rest)
 }
 
 /// Tokens as pi's footer counts them: 950, 41.2k, 1.3M.

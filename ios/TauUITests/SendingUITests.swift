@@ -35,6 +35,11 @@ final class SendingUITests: XCTestCase {
         try? data.write(to: URL(fileURLWithPath: "\(uiDirectory)/\(name).png"))
     }
 
+    /// The chat's menu, from the bar's ⋯ (the bar's buttons are out of XCUITest's reach, as the list's compose is).
+    private func openChatMenu() {
+        self.point(0.905, 0.097).tap()
+    }
+
     private func point(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate {
         return self.app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y))
     }
@@ -328,7 +333,7 @@ final class SendingUITests: XCTestCase {
         // After the title menu.
         self.point(0.5, 0.24).tap()
         sleep(2)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.point(0.5, 0.9).tap()
         sleep(1)
@@ -338,7 +343,7 @@ final class SendingUITests: XCTestCase {
         // After the rename alert.
         self.point(0.5, 0.24).tap()
         sleep(2)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.app.descendants(matching: .any)["Rename"].firstMatch.tap()
         sleep(1)
@@ -417,7 +422,7 @@ final class SendingUITests: XCTestCase {
         self.type("hello")
         self.send()
         sleep(4)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.app.descendants(matching: .any)["Model"].firstMatch.tap()
         sleep(2)
@@ -428,7 +433,7 @@ final class SendingUITests: XCTestCase {
         self.point(0.5, 0.25).tap()
         sleep(3)
         self.shot("pick-1-chosen")
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.shot("pick-2-menu")
         self.app.descendants(matching: .any)["Model"].firstMatch.tap()
@@ -437,7 +442,7 @@ final class SendingUITests: XCTestCase {
     }
 
     private func pickModel(_ query: String) {
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.app.descendants(matching: .any)["Model"].firstMatch.tap()
         sleep(2)
@@ -580,7 +585,7 @@ final class SendingUITests: XCTestCase {
         self.type("name me")
         self.send()
         sleep(4)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.shot("rename-0-menu")
         self.app.descendants(matching: .any)["Rename"].firstMatch.tap()
@@ -835,7 +840,7 @@ final class SendingUITests: XCTestCase {
         sleep(4)
         self.shot("sub-0-working")
         // The title menu lists it, with what it does and for how long.
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.app.descendants(matching: .any)["Subagents"].firstMatch.tap()
         sleep(2)
@@ -994,7 +999,7 @@ final class SendingUITests: XCTestCase {
             self.send()
             sleep(3)
         }
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.app.descendants(matching: .any)["Compact Context"].firstMatch.tap()
         usleep(1_500_000)
@@ -1038,7 +1043,7 @@ final class SendingUITests: XCTestCase {
         self.type("& ticker: $ sleep 30 && echo ok")
         self.send()
         sleep(4)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.app.descendants(matching: .any)["Subagents"].firstMatch.tap()
         sleep(1)
@@ -1171,7 +1176,7 @@ final class SendingUITests: XCTestCase {
             self.send()
             sleep(3)
         }
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.app.descendants(matching: .any)["Search"].firstMatch.tap()
         sleep(1)
@@ -1214,7 +1219,7 @@ final class SendingUITests: XCTestCase {
         self.type("$ sleep 24")
         self.send()
         sleep(9)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.shot("pc-0-menu")
         self.app.descendants(matching: .any)["Usage"].firstMatch.tap()
@@ -1224,7 +1229,7 @@ final class SendingUITests: XCTestCase {
         self.shot("pc-2-ticking")
         self.point(0.5, 0.9).tap()
         sleep(18)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.app.descendants(matching: .any)["Usage"].firstMatch.tap()
         sleep(1)
@@ -1233,7 +1238,7 @@ final class SendingUITests: XCTestCase {
         self.shot("pc-4-expired")
         self.point(0.5, 0.9).tap()
         sleep(1)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.shot("pc-5-menu-cold")
         self.launch(["-tab", "1"], server: ProcessInfo.processInfo.environment["TAU_CACHE_SERVER"] ?? "ws://127.0.0.1:7982")

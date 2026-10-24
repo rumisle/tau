@@ -92,7 +92,7 @@ Telegram's own script, and copies every image and Lottie file the copied sources
 |---|---|
 | AsyncDisplayKit, SwiftSignalKit, Display | Nodes, signals, `ListViewImpl`, `NavigationController`, `Window1`, context gestures |
 | TelegramPresentationData, PresentationStrings | The Classic, Day, Night and Tinted Night themes, Telegram's strings |
-| ContextUI, ContextControllerImpl | The context menu: a message lifts out of the list; the chat list preview; the title menu |
+| ContextUI, ContextControllerImpl | The context menu: a message lifts out of the list; the chat list preview; the chat's menu |
 | CheckNode, ChatMessageSelectionNode, AnimatedTextComponent, ChatTitleActivityNode, AnimatedCountLabelNode | Selection mode, the rolling "N Selected" title, "working" with typing dots, the scroll-to-bottom badge |
 | AttachmentUI, MediaPickerUI, LegacyComponents | The attachment menu: glass sheet, photo grid with the camera tile, album switcher, caption field |
 | NavigationBarImpl, GlassBackgroundComponent, EdgeEffect, TabBarComponent, LiquidLens | Liquid Glass bars, buttons and the tab bar |
@@ -156,8 +156,8 @@ The app differs from Telegram where an agent chat needs it: user messages are bu
 and run the full width on the wallpaper, rendered as Markdown (`Chat/MarkdownText.swift`); tool calls are compact cards
 made for each tool (a command with the end of its output, a file highlighted by its language, an edit as a diff);
 thinking is dimmed and folded. With Settings > Appearance > Wrap Lines off, each code block is laid out on its own,
-unwrapped, in a horizontal scroller. The title menu shows the model, the thinking level, and Usage: how full the
-context is (the latest response's tokens against the model's context window) and the spend from `pi.usage`. A long answer is parsed and laid out in chunks split at safe paragraph breaks, so a
+unwrapped, in a horizontal scroller. The bar has no title, as ChatGPT's: Back, then New Chat (on the same server, in this chat's place) and ⋯, the chat's menu, which starts with its title in full (and its server's name, with several) and shows the model by name, the thinking level, and Usage: how full the
+context is (the latest response's tokens against the model's context window) and the spend from `pi.usage`. Where Telegram's title sits, a small glass capsule says what goes on (working and for how long, compacting, subagents working, Connecting…) and is gone when nothing does. A long answer is parsed and laid out in chunks split at safe paragraph breaks, so a
 streaming step costs one chunk rather than the whole answer. The chat list shows each conversation's project directory where
 Telegram shows a group message's author. A new chat starts from a project picker (`ChatList/ComposeController.swift`,
 recent projects and the server's folders through `fs.list`) and stays a draft until its first message.

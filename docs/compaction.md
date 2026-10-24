@@ -55,7 +55,7 @@ the Usage ledger as the model `tau/compaction` (`server/src/search/usage.ts`).
 ## In the app
 
 The summary shows as a card in the chat, "Context compacted", with why (filling up, overflowed, on request) and the
-summary folded under it; a tap unfolds it. The title menu has Compact Context, and Restore Full Context on the card
+summary folded under it; a tap unfolds it. The chat's menu (⋯) has Compact Context, and Restore Full Context on the card
 continues in a copy from before the summary.
 
 ## Tests

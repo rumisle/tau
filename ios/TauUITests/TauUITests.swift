@@ -27,6 +27,11 @@ final class TauUITests: XCTestCase {
         try? data.write(to: URL(fileURLWithPath: "\(uiDirectory)/\(name).png"))
     }
 
+    /// The chat's menu, from the bar's ⋯ (the bar's buttons are out of XCUITest's reach, as the list's compose is).
+    private func openChatMenu() {
+        self.point(0.905, 0.097).tap()
+    }
+
     private func point(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate {
         return self.app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y))
     }
@@ -194,7 +199,7 @@ final class TauUITests: XCTestCase {
     func testTitleMenu() {
         self.launch(["-theme", "light", "-openChat", "3"])
         sleep(2)
-        self.point(0.5, 0.08).tap()
+        self.openChatMenu()
         sleep(1)
         self.shot("title-menu")
         let model = self.app.descendants(matching: .any)["Model"].firstMatch
@@ -389,7 +394,7 @@ final class TauUITests: XCTestCase {
     func testChatModelPicker() {
         self.launch(["-theme", "dark", "-openChat", "3"])
         sleep(2)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.app.descendants(matching: .any)["Model"].firstMatch.tap()
         sleep(2)
@@ -420,7 +425,7 @@ final class TauUITests: XCTestCase {
     func testUsageMenu() {
         self.launch(["-theme", "dark", "-openChat", "304"])
         sleep(2)
-        self.point(0.5, 0.075).tap()
+        self.openChatMenu()
         sleep(1)
         self.shot("usage-menu")
         self.app.descendants(matching: .any)["Usage"].firstMatch.tap()

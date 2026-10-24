@@ -32,7 +32,7 @@ one peeking out.
 ## Readable text
 
 Tinted Night's colors are the accent's, its brightness scaled (`customizeDefaultDarkTintedPresentationTheme`), so a
-darker accent darkens the text with the backgrounds: on green, the chat list's previews, the title's subtitle, the
+darker accent darkens the text with the backgrounds: on green, the chat list's previews, the chat bar's status, the
 agent's times and the tab bar's labels measured APCA Lc 20, half of Night's. `Readability` (`ios/Tau/Theme`) lifts
 them after Telegram makes a theme, after the approach of pi's system theme: each rule names a color, the surfaces it
 is drawn on and the contrast it needs, and a color short of it on any is made more opaque, or lighter (darker on a

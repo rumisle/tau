@@ -70,6 +70,6 @@ and prefix heuristics are cached for a minute.
   scrolls. Each message result is Telegram's: the chat, when it was said, and two lines of excerpt with the matched words
   in the title's color. A result opens its chat at the message, the older history loading until it is there, with the
   words marked.
-- **In a chat**: Search in the title menu. The field replaces the title (Telegram's ChatSearchNavigationContentNode),
+- **In a chat**: Search in the chat's menu (⋯). The field fills the bar (Telegram's ChatSearchNavigationContentNode),
   "3 of 12" with Up and Down replaces the input panel, and the newest match is shown first, its words marked as
   Telegram marks them (LinkHighlightingNode in the theme's text highlight color). Up goes to older matches.
