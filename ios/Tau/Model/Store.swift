@@ -238,8 +238,8 @@ struct ConversationUsage: Equatable {
 }
 
 /// A conversation's prompt cache as the server keeps it (server/src/cache.ts): the provider keeps the prompt of the
-/// last request a few minutes, and the next request that starts with it pays a tenth for it. While a run works the
-/// server refreshes it before it expires; `warming` while it does.
+/// last request a few minutes, and the next request that starts with it pays a tenth for it. The server refreshes it
+/// before it expires, while a run works and, when that pays, a while after; `warming` while it does.
 struct PromptCache: Equatable {
     /// When the last request or refresh wrote or read it, and how long the provider keeps it after that: only while
     /// it is in the cache of the conversation's model, which the next request reads. Nil for a model that declares no
@@ -247,16 +247,20 @@ struct PromptCache: Equatable {
     var at: Date?
     var ttl: TimeInterval?
     var warming: Bool
+    /// While warming between runs: when the entry is to expire after the last refresh the server plans. Nil while a
+    /// run works, which keeps it as long as it does.
+    var until: Date? = nil
     /// Refreshes over the conversation's life, what they cost, and what the requests they kept it for saved.
     var warms: Int
     var cost: Double
     var saved: Double
 
+    /// When it expires: what refreshes keep it to, else its lifetime after the last write or read.
     var expiresAt: Date? {
         guard let at = self.at, let ttl = self.ttl else {
             return nil
         }
-        return at.addingTimeInterval(ttl)
+        return self.warming ? (self.until ?? .distantFuture) : at.addingTimeInterval(ttl)
     }
 
     func isWarm(now: Date = Date()) -> Bool {

@@ -131,6 +131,8 @@ type Run = {
 	timer?: ReturnType<typeof setTimeout>;
 	/** Latest time a refresh may go: later, the entry may be gone and it would write, not read. */
 	deadline: number;
+	/** When the entry was last written or read: the next refresh counts from it. */
+	from: number;
 	/** "idle" once the run that sent it has ended. */
 	phase: "streaming" | "idle";
 };
@@ -242,9 +244,17 @@ export class CacheWarmer {
 		}
 	}
 
-	/** Whether a refresh is scheduled for the conversation now. */
-	isWarming(id: ConversationId): boolean {
-		return this.#runs.has(id);
+	/**
+	 * Whether refreshes keep the conversation's entry now, and until when it is to last: while its run works, as long as
+	 * the run does (no `until`); between runs, the last refresh the idle window allows, plus the entry's lifetime. A
+	 * plan: a refresh that goes otherwise changes the conversation, and its Dialog says so again.
+	 */
+	warming(id: ConversationId): { until?: number } | undefined {
+		const run = this.#runs.get(id);
+		if (run === undefined) return undefined;
+		if (run.phase === "streaming") return {};
+		const refreshes = Math.max(0, Math.floor((run.startedAt + MAX_IDLE_WARMING_MS - run.from) / run.delay));
+		return { until: run.from + refreshes * run.delay + run.ttl };
 	}
 
 	/** A conversation whose warming started or stopped. */
@@ -301,7 +311,7 @@ export class CacheWarmer {
 		}
 		// The request's own signal ends with its attempt; a refresh has its own.
 		const { signal: _signal, ...rest } = options;
-		const run: Run = { model, context, options: rest, ttl, delay, startedAt, controller: new AbortController(), deadline: 0, phase: "streaming" };
+		const run: Run = { model, context, options: rest, ttl, delay, startedAt, controller: new AbortController(), deadline: 0, from: startedAt, phase: "streaming" };
 		this.#runs.set(id, run);
 		this.#schedule(id, run, startedAt);
 		if (!had && this.#runs.get(id) === run) this.#changed(id);
@@ -337,6 +347,7 @@ export class CacheWarmer {
 	}
 
 	#schedule(id: ConversationId, run: Run, from: number): void {
+		run.from = from;
 		const next = from + run.delay;
 		if (next > run.startedAt + (run.phase === "idle" ? MAX_IDLE_WARMING_MS : MAX_WARMING_MS)) {
 			this.#stop(id);

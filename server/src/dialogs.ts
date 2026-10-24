@@ -299,7 +299,7 @@ export class Dialogs {
 			...(meta?.archived === true ? { archived: true as const } : {}),
 			...(meta?.hidden === true ? { hidden: true as const } : {}),
 			...(typeof meta?.pinned === "number" ? { pinned: meta.pinned } : {}),
-			...promptCache(cache, cacheModel(agent?.model ?? this.#host.defaultModel), this.#host.cache.isWarming(conversation.id)),
+			...promptCache(cache, cacheModel(agent?.model ?? this.#host.defaultModel), this.#host.cache.warming(conversation.id)),
 		};
 	}
 }
@@ -321,14 +321,16 @@ function count(state: DialogState, entry: EntryRecord): void {
  * last one may have gone to another model, or the model changed since), and the refresh counters, which are the
  * conversation's whatever its model.
  */
-export function promptCache(cache: CacheState | undefined, model: string, warming: boolean): { cache?: Dialog["cache"] } {
+export function promptCache(cache: CacheState | undefined, model: string, warming: { until?: number } | undefined): { cache?: Dialog["cache"] } {
 	if (cache === undefined) return {};
 	const current = cache.model === model && cache.ttl !== undefined && cache.at !== undefined;
 	const counters = cache.warms !== undefined && cache.warms > 0;
 	if (!current && !counters) return {};
 	return {
 		cache: {
-			...(current ? { ttl: cache.ttl!, at: cache.at!, ...(warming ? { warming: true as const } : {}) } : {}),
+			...(current
+				? { ttl: cache.ttl!, at: cache.at!, ...(warming === undefined ? {} : { warming: true as const, ...(warming.until === undefined ? {} : { until: warming.until }) }) }
+				: {}),
 			...(counters ? { warms: cache.warms!, cost: cache.cost ?? 0, saved: cache.saved ?? 0 } : {}),
 		},
 	};

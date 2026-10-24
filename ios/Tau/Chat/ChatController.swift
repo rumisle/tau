@@ -1938,8 +1938,12 @@ private func usageSummary(_ usage: ConversationUsage, accent: UIColor) -> NSAttr
     return summary
 }
 
-/// "Warm · 4:12 left" in the accent color while it lasts, then how long ago it expired.
+/// "warm, 4:12 left" in the accent color until it expires (refreshes counted in), "warm while working" while a run keeps
+/// it, then how long ago it expired.
 private func promptCacheStatus(expiresAt: Date, accent: UIColor, now: Date = Date()) -> NSAttributedString {
+    if expiresAt == .distantFuture {
+        return NSAttributedString(string: "warm while working", attributes: [.foregroundColor: accent])
+    }
     let left = expiresAt.timeIntervalSince(now)
     if left > 0.0 {
         let seconds = Int(left.rounded(.up))
@@ -1947,11 +1951,11 @@ private func promptCacheStatus(expiresAt: Date, accent: UIColor, now: Date = Dat
     }
     let ago = -left
     if ago < 60.0 {
-        return NSAttributedString(string: "Expired just now")
+        return NSAttributedString(string: "expired just now")
     } else if ago < 3600.0 {
-        return NSAttributedString(string: "Expired \(Int(ago / 60.0)) min ago")
+        return NSAttributedString(string: "expired \(Int(ago / 60.0)) min ago")
     } else if ago < 86400.0 {
-        return NSAttributedString(string: "Expired \(Int(ago / 3600.0)) h ago")
+        return NSAttributedString(string: "expired \(Int(ago / 3600.0)) h ago")
     }
-    return NSAttributedString(string: "Expired")
+    return NSAttributedString(string: "expired")
 }

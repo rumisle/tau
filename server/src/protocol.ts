@@ -53,9 +53,10 @@ export type Dialog = {
 	pinned?: number;
 	/**
 	 * Its prompt cache (src/cache.ts): while the entry is in the cache of the conversation's model, it expires `ttl` ms
-	 * after `at`, and `warming` while refreshes keep it; the refresh counters are the conversation's life.
+	 * after `at`; `warming` while refreshes keep it, as long as its run works or, between runs, until `until`; the
+	 * refresh counters are the conversation's life.
 	 */
-	cache?: { ttl?: number; at?: number; warming?: true; warms?: number; cost?: number; saved?: number };
+	cache?: { ttl?: number; at?: number; warming?: true; until?: number; warms?: number; cost?: number; saved?: number };
 };
 
 export type AgentPatch = {

@@ -51,7 +51,9 @@ Settings > a server > Keep Warm sets pi's three modes for the whole server (`set
 ## In the app
 
 Nothing in the chat. The chat menu's Usage row says "warm" in the accent color while the cache lasts; its submenu has
-the Prompt Cache's time left, ticking, then how long ago it expired (only while the chat's model is the cache's), and Kept Warm: how many refreshes, what they cost
+the Prompt Cache's state (only while the chat's model is the cache's): "warm while working" while a run keeps it, the
+time left to when it will expire, refreshes counted in (the Dialog's `until`: the idle window's last refresh plus the
+lifetime), ticking, then how long ago it expired; and Kept Warm: how many refreshes, what they cost
 and what they saved. The Cost there includes the refreshes. Settings > Usage shows them as Cache Warming.
 
 ## Trying it

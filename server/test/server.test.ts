@@ -336,9 +336,9 @@ describe("tau server", () => {
 		const warmServer = await serve(warm);
 		try {
 			const client = await TauClient.connect(warmServer.url);
-			const caches: ({ warming?: true; warms?: number } | undefined)[] = [];
+			const caches: ({ warming?: true; until?: number; warms?: number } | undefined)[] = [];
 			client.on((push: Push) => {
-				if (push.event === "dialog") caches.push((push.dialog as { cache?: { warming?: true; warms?: number } }).cache);
+				if (push.event === "dialog") caches.push((push.dialog as { cache?: { warming?: true; until?: number; warms?: number } }).cache);
 			});
 			await client.request("dialogs.subscribe");
 			const { dialog } = await client.request("conversation.create", {});
@@ -348,6 +348,9 @@ describe("tau server", () => {
 			await new Promise((resolve) => setTimeout(resolve, 3_500));
 			const idle = caches.at(-1);
 			assert.equal(idle?.warming, true, "kept warm after the run");
+			// Until the idle window's last refresh has expired: half an hour after the run's request, and a lifetime.
+			const until = idle?.until ?? 0;
+			assert.ok(until > Date.now() + 29 * 60_000 && until < Date.now() + 31 * 60_000, `kept until ${new Date(until).toISOString()}`);
 			assert.ok((idle?.warms ?? 0) >= 2, `refreshed ${idle?.warms} times while idle`);
 			const { cacheWarming } = await client.request("settings.configure", { cacheWarming: "streaming" });
 			assert.equal(cacheWarming, "streaming");
@@ -367,7 +370,7 @@ describe("tau server", () => {
 		const warmServer = await serve(warm);
 		try {
 			const client = await TauClient.connect(warmServer.url);
-			const pushes: { cache?: { ttl: number; at: number; warming?: true; warms?: number; cost?: number; saved?: number } }[] = [];
+			const pushes: { cache?: { ttl: number; at: number; warming?: true; until?: number; warms?: number; cost?: number; saved?: number } }[] = [];
 			client.on((push: Push) => {
 				if (push.event === "dialog") pushes.push(push.dialog as (typeof pushes)[number]);
 			});
@@ -385,6 +388,7 @@ describe("tau server", () => {
 			await until(replica, () => replica.submissions.get(submission.id)?.status === "done" && idle(replica), 30_000);
 			await new Promise((resolve) => setTimeout(resolve, 200));
 			assert.ok(pushes.some((push) => push.cache?.warming === true), "warming while the command runs");
+			assert.ok(pushes.every((push) => push.cache?.until === undefined), "for as long as the run works: no end to say");
 			const last = pushes.at(-1)?.cache;
 			assert.equal(last?.warming, undefined, "no longer once the run ends");
 			assert.ok((last?.warms ?? 0) >= 8, `refreshed ${last?.warms} times`);
