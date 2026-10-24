@@ -301,6 +301,8 @@ IMAGES = [
     # The media viewer's ⋯ (Save Image) and a link's menu (Open in Safari).
     "Chat/Context Menu/Download",
     "Chat/Context Menu/Browser",
+    "Chat/Context Menu/Globe",
+    "Chat/Context Menu/ReadingList",
     # Pinned chats: the list's pin badge and the menu's Pin / Unpin.
     "Chat List/PeerPinnedIcon",
     "Chat/Context Menu/Pin",

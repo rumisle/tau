@@ -225,7 +225,7 @@ enum MarkdownText {
             return cached
         }
         self.cacheLock.unlock()
-        let result = self.parseBlocks(text, style: style)
+        let result = self.parseBlocks(text, style: style).map { self.linkified($0, style: style) }
         self.cacheLock.lock()
         self.cache[key] = result
         self.cacheOrder.append(key)
@@ -234,6 +234,51 @@ enum MarkdownText {
         }
         self.cacheLock.unlock()
         return result
+    }
+
+    private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+    /// Addresses written out, which CommonMark leaves as text, as links, as Telegram finds them in a message's text: those
+    /// with a scheme or `www.`, and mail. A file's name that reads like a domain (`README.md`) stays text, and code
+    /// keeps what it says.
+    private static func linkified(_ block: MarkdownBlock, style: MarkdownStyle) -> MarkdownBlock {
+        guard case let .text(string) = block, let detector = self.linkDetector else {
+            return block
+        }
+        let text = string.string as NSString
+        guard text.range(of: "://").location != NSNotFound || text.range(of: "www.").location != NSNotFound || text.range(of: "@").location != NSNotFound else {
+            return block
+        }
+        var result: NSMutableAttributedString?
+        for match in detector.matches(in: string.string, range: NSRange(location: 0, length: text.length)) {
+            guard let url = match.url, let scheme = url.scheme?.lowercased() else {
+                continue
+            }
+            let written = text.substring(with: match.range).lowercased()
+            let isMail = scheme == "mailto"
+            guard isMail || ((scheme == "http" || scheme == "https") && (written.contains("://") || written.hasPrefix("www."))) else {
+                continue
+            }
+            var taken = false
+            string.enumerateAttributes(in: match.range, options: []) { attributes, _, stop in
+                if attributes[self.urlKey] != nil || attributes[self.inlineCodeKey] != nil {
+                    taken = true
+                } else if let quote = attributes[self.blockQuoteKey] as? TextNodeBlockQuoteData, case .code = quote.kind {
+                    taken = true
+                }
+                if taken {
+                    stop.pointee = true
+                }
+            }
+            if taken {
+                continue
+            }
+            let mutable = result ?? NSMutableAttributedString(attributedString: string)
+            mutable.addAttribute(self.urlKey, value: url.absoluteString, range: match.range)
+            mutable.addAttribute(.foregroundColor, value: style.linkColor, range: match.range)
+            result = mutable
+        }
+        return result.map { .text($0) } ?? block
     }
 
     /// GitHub's task list items, `- [ ]` and `- [x]`, which CommonMark reads as text: boxes in their place.

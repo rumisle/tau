@@ -31,6 +31,10 @@ final class ChatMessageItemInteraction {
     let openImage: (Int) -> Void
     /// A tap on a code block or inline code copied it (Telegram's `.copy` tap action); the chat says so.
     var copied: (String) -> Void = { _ in }
+    /// A tap on a link (Telegram's `.url` tap action).
+    var openURL: (String) -> Void = { _ in }
+    /// A long press on a link: Telegram's link menu over the message, which the press goes on driving.
+    var openLinkMenu: (String, Int, TapLongTapOrDoubleTapGestureRecognizer) -> Void = { _, _, _ in }
     /// A file's row: where the file is, as its circle shows; a tap fetches, stops fetching, or opens it.
     var fileStatus: (FileAttachment) -> Signal<FileTransferStatus, NoError> = { file in .single(file.localURL.map { .local($0) } ?? .remote) }
     var openFile: (FileAttachment, FileTransferStatus) -> Void = { _, _ in }
@@ -404,7 +408,7 @@ final class ChatMessageItemNode: ListViewItemNode {
 
         self.containerNode.shouldBegin = { [weak self] point in
             // Over text selected in place, a long press selects a word instead, as in a text view.
-            guard let self, let item = self.item, item.selection == nil, !item.isStreaming, self.inlineSelection == nil else {
+            guard let self, let item = self.item, item.selection == nil, !item.isStreaming, self.inlineSelection == nil, self.link(at: point) == nil else {
                 return false
             }
             return self.contentFrame.insetBy(dx: -4.0, dy: -4.0).contains(point)
@@ -428,15 +432,75 @@ final class ChatMessageItemNode: ListViewItemNode {
         // Telegram's message recognizer (ChatMessageBubbleItemNode): a tap on what acts on a tap (code, a photo, a
         // file) acts at once; one on a message's text waits to see whether a second follows, which selects.
         let recognizer = TapLongTapOrDoubleTapGestureRecognizer(target: self, action: #selector(self.tapLongTapOrDoubleTapGesture(_:)))
-        recognizer.tapActionAtPoint = { [weak self] point in
+        recognizer.tapActionAtPoint = { [weak self, weak recognizer] point in
             guard let self else {
                 return .fail
             }
             self.touchBegan = CACurrentMediaTime()
+            // A link acts on a tap and, held, opens its menu (Telegram's `.url` action and long tap); the message's own
+            // menu does not begin there.
+            if self.link(at: point) != nil {
+                recognizer?.longTap = { [weak self] point, recognizer in
+                    guard let self, let item = self.item, let link = self.link(at: point) else {
+                        return
+                    }
+                    self.updateLinkHighlight(nil)
+                    item.interaction.openLinkMenu(link.url, item.message.id, recognizer)
+                }
+                return .waitForSingleTap
+            }
+            recognizer?.longTap = nil
             return self.selectableText(at: point) != nil ? .waitForDoubleTap : .keepWithSingleTap
+        }
+        recognizer.highlight = { [weak self] point in
+            self?.updateLinkHighlight(point)
         }
         recognizer.cancelsTouchesInView = false
         self.view.addGestureRecognizer(recognizer)
+    }
+
+    /// The link under a point of the row's text, from Markdown or written out: its address, and where it is.
+    private func link(at point: CGPoint) -> (url: String, textNode: InteractiveTextNode, index: Int)? {
+        guard let item = self.item, item.selection == nil else {
+            return nil
+        }
+        for textNode in self.textNodes where textNode.supernode != nil && !textNode.isHidden {
+            let local = self.view.convert(point, to: textNode.view)
+            guard textNode.bounds.contains(local), let (index, attributes) = textNode.attributesAtPoint(local, orNearest: false), let url = attributes[MarkdownText.urlKey] as? String else {
+                continue
+            }
+            return (url, textNode, index)
+        }
+        return nil
+    }
+
+    private var linkHighlightNode: LinkHighlightingNode?
+
+    /// Telegram's pressed link: its rects in the link highlight color, under the text, while the finger is on it.
+    private func updateLinkHighlight(_ point: CGPoint?) {
+        guard let point, let item = self.item, let link = self.link(at: point), let rects = link.textNode.attributeRects(name: MarkdownText.urlKey.rawValue, at: link.index), !rects.isEmpty else {
+            if let node = self.linkHighlightNode {
+                self.linkHighlightNode = nil
+                node.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.18, removeOnCompletion: false, completion: { [weak node] _ in
+                    node?.removeFromSupernode()
+                })
+            }
+            return
+        }
+        let message = item.theme.presentationTheme.chat.message
+        let color = item.message.role == .user ? message.outgoing.linkHighlightColor : message.incoming.linkHighlightColor
+        let node: LinkHighlightingNode
+        if let current = self.linkHighlightNode {
+            node = current
+        } else {
+            node = LinkHighlightingNode(color: color)
+            self.linkHighlightNode = node
+        }
+        if node.supernode !== link.textNode.supernode {
+            link.textNode.supernode?.insertSubnode(node, belowSubnode: link.textNode)
+        }
+        node.frame = link.textNode.frame
+        node.updateRects(rects, color: color)
     }
 
     @objc private func tapLongTapOrDoubleTapGesture(_ recognizer: TapLongTapOrDoubleTapGestureRecognizer) {
@@ -445,6 +509,10 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
         switch gesture {
         case .tap:
+            if let item = self.item, let link = self.link(at: location) {
+                item.interaction.openURL(link.url)
+                return
+            }
             // Held long enough for the message's menu: that was the press, not a tap.
             if CACurrentMediaTime() - self.touchBegan < 0.5 {
                 self.handleTap(at: location)

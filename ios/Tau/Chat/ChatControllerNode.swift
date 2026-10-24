@@ -521,6 +521,12 @@ final class ChatControllerNode: ASDisplayNode {
 
     var openImage: ((Int) -> Void)?
 
+    /// Set by the controller: a link's tap and its long press.
+    func setLinkHandlers(open: @escaping (String) -> Void, menu: @escaping (String, Int, TapLongTapOrDoubleTapGestureRecognizer) -> Void) {
+        self.interaction.openURL = open
+        self.interaction.openLinkMenu = menu
+    }
+
     /// The row whose text a double tap selected, in place (ChatMessageItemNode.beginInlineSelection): one at a time.
     private weak var inlineSelectionNode: ChatMessageItemNode?
 

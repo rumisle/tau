@@ -638,6 +638,40 @@ final class SendingUITests: XCTestCase {
 
     /// A double tap on an answer's text selects the word there, in place, with Telegram's knobs and menu; Copy copies
     /// it and says so; a tap elsewhere ends a selection.
+    /// A link written out in an answer: held, Telegram's link menu over the message, whose Copy Link copies it; a tap
+    /// opens it in Safari's view.
+    func testLinks() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("https://example.com/tau")
+        self.send()
+        let answer = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage' AND label BEGINSWITH 'You said'")).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 10))
+        sleep(2)
+        self.app.swipeDown()
+        sleep(1)
+        // "You said: https://example.com/tau": the link after the first two words.
+        let frame = answer.frame
+        let link = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: frame.minX + 160.0, dy: frame.minY + 16.0))
+        link.press(forDuration: 0.7)
+        sleep(1)
+        self.shot("link-0-menu")
+        let copyLink = self.app.descendants(matching: .any)["Copy Link"].firstMatch
+        XCTAssertTrue(copyLink.waitForExistence(timeout: 3), "the link's menu")
+        XCTAssertFalse(self.app.descendants(matching: .any)["Select"].firstMatch.exists, "not the message's menu")
+        copyLink.tap()
+        sleep(1)
+        XCTAssertFalse(copyLink.exists)
+        link.tap()
+        sleep(3)
+        self.shot("link-1-safari")
+        XCTAssertFalse(answer.isHittable, "Safari's view over the chat")
+        // Its close button, top left.
+        self.point(0.115, 0.095).tap()
+        sleep(2)
+        XCTAssertTrue(answer.isHittable, "back in the chat")
+    }
+
     func testDoubleTapSelect() {
         self.launch(["-newChat", "YES"])
         self.focusInput()

@@ -10,6 +10,7 @@ import AnimatedTextComponent
 import ChatTitleActivityNode
 import ContextUI
 import TelegramPresentationData
+import SafariServices
 
 final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     private let context: AppContext
@@ -380,6 +381,11 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         node.openImage = { [weak self] attachmentId in
             self?.openImage(attachmentId: attachmentId)
         }
+        node.setLinkHandlers(open: { [weak self] url in
+            self?.openLink(url)
+        }, menu: { [weak self] url, messageId, recognizer in
+            self?.openLinkMenu(url, messageId: messageId, recognizer: recognizer)
+        })
         let store = self.context.store
         let conversationId = self.conversationId
         node.setFileHandlers(status: { file in
@@ -474,6 +480,67 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             })
         })
         self.present(gallery, in: .window(.root), with: arguments, blockInteraction: true)
+    }
+
+    /// A link in the chat: the web in Safari's view over the app, as Telegram's in-app browser opens it; mail and the
+    /// rest in their own apps.
+    func openLink(_ string: String) {
+        guard let url = URL(string: string) else {
+            return
+        }
+        switch url.scheme?.lowercased() {
+        case "http", "https":
+            self.view.endEditing(true)
+            let safari = SFSafariViewController(url: url)
+            safari.preferredControlTintColor = self.theme.accentColor
+            self.view.window?.rootViewController?.present(safari, animated: true)
+        default:
+            UIApplication.shared.open(url)
+        }
+    }
+
+    /// A long press on a link: Telegram's link menu (ChatControllerOpenLinkContextMenu), the message lifted with it.
+    private func openLinkMenu(_ string: String, messageId: Int, recognizer: TapLongTapOrDoubleTapGestureRecognizer) {
+        guard !self.isPreview, let url = URL(string: string) else {
+            return
+        }
+        self.controllerNode.inputPanelNode.deactivateInput()
+        let strings = self.theme.presentationStrings
+        let icon: (String) -> (PresentationTheme) -> UIImage? = { name in
+            return { theme in generateTintedImage(image: UIImage(bundleImageName: name), color: theme.contextMenu.primaryColor) }
+        }
+        let isMail = url.scheme?.lowercased() == "mailto"
+        let isWeb = ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+        // What it reads as: an address without its mailto:.
+        let shown = isMail ? String(string.dropFirst("mailto:".count)) : string
+        var items: [ContextMenuItem] = []
+        items.append(.action(ContextMenuActionItem(text: strings.Conversation_LinkDialogOpen, icon: icon(isWeb ? "Chat/Context Menu/Browser" : "Chat/Context Menu/Globe"), action: { [weak self] _, f in
+            f(.default)
+            self?.openLink(string)
+        })))
+        if isWeb {
+            items.append(.action(ContextMenuActionItem(text: strings.Chat_ContextMenu_OpenInBrowser, icon: icon("Chat/Context Menu/Globe"), action: { _, f in
+                f(.default)
+                UIApplication.shared.open(url)
+            })))
+        }
+        items.append(.action(ContextMenuActionItem(text: isMail ? strings.Conversation_ContextMenuCopyEmail : strings.Conversation_ContextMenuCopyLink, icon: icon("Chat/Context Menu/Copy"), action: { [weak self] _, f in
+            f(.default)
+            guard let self else {
+                return
+            }
+            UIPasteboard.general.string = shown
+            self.controllerNode.presentToast?(isMail ? .copy(text: strings.Conversation_EmailCopied) : .linkCopied(title: nil, text: strings.Conversation_LinkCopied))
+        })))
+        if isWeb {
+            items.append(.action(ContextMenuActionItem(text: strings.Conversation_AddToReadingList, icon: icon("Chat/Context Menu/ReadingList"), action: { _, f in
+                f(.default)
+                try? SSReadingList.default()?.addItem(with: url, title: nil, previewText: nil)
+            })))
+        }
+        let source = ChatMessageContextExtractedContentSource(chatNode: self.controllerNode, messageId: messageId)
+        let controller = makeContextController(presentationData: self.theme.presentationData, source: .extracted(source), items: .single(ContextController.Items(content: .list(items))), recognizer: recognizer, gesture: nil)
+        self.presentInGlobalOverlay(controller)
     }
 
     @objc private func previewTapGesture() {
