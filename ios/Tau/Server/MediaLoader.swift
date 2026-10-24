@@ -2,9 +2,9 @@ import UIKit
 import ImageIO
 import SwiftSignalKit
 
-/// An image an entry has on its server, sent as a reference (server/src/media.ts, docs/media.md): a photo the user
-/// sent, or one a tool returned (the read tool's). The chat lays it out from its declared size and shows it once
-/// fetched.
+/// An image on the server: a photo the user or the agent sent, which is a file (docs/files.md), or an image an entry
+/// has only as a reference (server/src/media.ts, docs/media.md), one a tool returned. The chat lays it out from its
+/// declared size and shows it once fetched.
 final class RemoteImage {
     /// The server's own conversation ID, the one `media.get` takes.
     let conversationId: Int
@@ -15,10 +15,12 @@ final class RemoteImage {
     let bytes: Int
     /// As its header declares it, in pixels; nil when the server could not read it.
     let pixelSize: CGSize?
-    /// The file it was sent from, kept by the server (docs/files.md): an edit sends that again, not the image.
-    var fileId: String?
-    /// Only a file, not an entry's image (one the agent sent): fetched from `/files/<id>`.
-    let isFile: Bool
+    /// The file it is, kept by the server (docs/files.md): fetched from `/files/<id>`, and what an edit sends again.
+    /// Nil for an entry's own image, fetched with `media.get`: a tool's, or an old message's.
+    let fileId: String?
+    var isFile: Bool {
+        return self.fileId != nil
+    }
     fileprivate let loader: MediaLoader
 
     fileprivate init(conversationId: Int, entryId: Int, index: Int, mimeType: String, bytes: Int, pixelSize: CGSize?, loader: MediaLoader, fileId: String? = nil) {
@@ -30,7 +32,6 @@ final class RemoteImage {
         self.pixelSize = pixelSize
         self.loader = loader
         self.fileId = fileId
-        self.isFile = fileId != nil
     }
 
     var key: String {
@@ -110,9 +111,9 @@ final class MediaLoader {
         return self.directory.appendingPathComponent(key)
     }
 
-    /// An image this phone sent: it has it already, so it is never fetched back.
-    func seed(conversationId: Int, entryId: Int, index: Int, data: Data) {
-        let url = self.file("\(conversationId)-\(entryId)-\(index)")
+    /// A photo this phone sent: it has it already, so it is never fetched back.
+    func seed(fileId: String, data: Data) {
+        let url = self.file("file-\(fileId)")
         self.queue.async {
             if !FileManager.default.fileExists(atPath: url.path) {
                 try? data.write(to: url, options: .atomic)

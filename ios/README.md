@@ -35,11 +35,11 @@ conversations (`Model/MockStore.swift`).
 
 | File | Role |
 |---|---|
-| `TauConnection.swift` | One WebSocket: requests by id, pushes, `hello`, reconnect with backoff, a ping that finds a dead socket, a response timeout; the chat list and chat titles show Telegram's "Connecting…" / "Updating…" meanwhile |
+| `TauConnection.swift` | One WebSocket: requests by id, pushes, `hello` with the first requests behind it, reconnect with backoff, a ping that finds a dead socket, waking that replaces one the server closed, a response timeout (`../docs/network.md`); the chat list and chat titles show Telegram's "Connecting…" / "Updating…" meanwhile |
 | `MultiStore.swift` | Every configured server at once, one ServerStore each: their chats in one list, conversation IDs that carry the server's slot, Telegram's title status across them; the saved server list |
 | `Outbox.swift` | Messages on their way, on disk until the server has them: one request per conversation at a time, in order, idempotent retries, safe withdraws (`../docs/sending.md`) |
 | `ConversationReplica.swift` | A conversation's cached entries, docs kept current with ops, and `TranscriptBuilder`, which turns entries and `pi.live` into rows |
-| `ServerStore.swift` | The store: dialog list, subscriptions while a chat is open, drafts, sending through the outbox, steer and follow-up, Stop that returns queued messages to the field, fork-based edits, the entry cache in Caches |
+| `ServerStore.swift` | The store: dialog list (by version, on disk), subscriptions while a chat is open, drafts, sending through the outbox, steer and follow-up, Stop that returns queued messages to the field, fork-based edits, the entry cache in Caches |
 | `JSONValue.swift` | The protocol's ops applied to JSON |
 
 Rows keep their IDs from streaming to committed: an assistant row is keyed by the generation task that writes it

@@ -1,8 +1,9 @@
 # tau wire protocol (v1)
 
-One WebSocket per client, JSON text frames. The server hosts one pi-durable Harness; the client keeps its own cache
-and syncs against it. Files go over HTTP on the same port, behind the same token: `POST /files?name=<name>` uploads one,
-`GET /files/<id>` fetches one (docs/files.md).
+One WebSocket per client, JSON text frames, compressed (permessage-deflate, every frame of 64 bytes or more). The
+server hosts one pi-durable Harness; the client keeps its own cache and syncs against it. Files go over HTTP on the
+same port, behind the same token: `POST /files?name=<name>` uploads one, `GET /files/<id>` fetches one (docs/files.md).
+What the client does with the connection, and why, is in docs/network.md.
 
 ## Sync model
 
@@ -14,6 +15,11 @@ Durable keeps two kinds of state per conversation, and they sync differently:
 | **Docs** | Small mutable JSON: `pi.live` (streaming answer, running tools), `pi.inbox` (queued input), `pi.agent`, `pi.usage`, `pi.provider` | Snapshot on subscribe, then ops. Never cached across connections. |
 
 Compare Telegram: entries are messages (cached, gap-filled by ID), docs are ephemeral state such as typing indicators.
+
+Entries and docs come as clients show them (`server/src/outgoing.ts`), not as the model has them: without the
+provider's replay data (`thinkingSignature`, `textSignature`, `thoughtSignature`: opaque, and in a reasoning model's
+transcript nearly half of what it weighs), a `pi.system` entry without its `model` (the prompt and tools; no client
+shows them), images by reference.
 
 Reconnect is therefore cheap: `conversation.subscribe { after: <newest cached ID> }` returns only the missing entries
 plus a fresh docs snapshot. When too many entries are missing, the server returns the newest `limit` and a `gap`: the
@@ -36,6 +42,10 @@ Requests may run concurrently; responses carry the request's `id`. Those that ch
 `submission.withdraw`, `submission.abort`, `conversation.abort`, `reset`, `compact`, `configure`) run one at a time
 per conversation, in the order they arrived, across connections; creates run one at a time.
 
+A socket nothing comes in on for 45 seconds (no frame, ping or pong) is closed: the server pings every 15 seconds, and
+a client that answers pings, or pings itself, stays. A phone that lost its network, or an app suspended in the
+background, so stops counting as a client in the foreground (`client.presence`) and stops being sent to.
+
 Error codes: `bad_request`, `not_found`, `busy`, `unauthorized`, `too_large`, `unsupported`, `withdrawn`,
 `file_missing`, `internal`.
 Only `internal` may pass on a retry; the others are final for that request. A frame larger than 96 MB closes the
@@ -51,7 +61,9 @@ socket, so a client must not send one (content limits below are far under it).
 `apns`: the server has the account's APNs key and sends Apple's pushes (docs/notifications.md). `maxFileBytes`: the
 largest file it keeps (docs/files.md).
 
-Must be the first request. A different `protocol` is rejected.
+Must be the first request. A different `protocol` is rejected. It is answered before the server reads the next frame,
+so its answer comes before any other: a client may send its first requests right behind it, in the same flight, and
+ignore their answers if `serverId` is not the database it sent them for.
 
 ### `models.list`
 `{}` -> `{ models: { provider, id, name, reasoning, thinkingLevels: string[], contextWindow, input: ("text"|"image")[] }[] }`
@@ -156,11 +168,20 @@ type Totals = { cost: number; input: number; output: number; cacheRead: number; 
 ```
 
 ### `media.get`
-`{ conversationId, entryId, index }` -> `{ mimeType, data }`: an image of an entry, for a client that asked for images by
-reference in `hello` (docs/media.md). `not_found` when the entry has no such image.
+`{ conversationId, entryId, index }` -> `{ mimeType, data }`: an image of an entry, which entries carry by reference
+(docs/media.md). `not_found` when the entry has no such image. A photo the user sent is a file too, named in its
+message's attachments block: fetch that with `GET /files/<id>` instead, beside the socket.
 
 ### `dialogs.subscribe`
-`{}` -> `{ dialogs: Dialog[] }`, then `dialog` events.
+`{ since?: string }` -> `{ dialogs: Dialog[], version: string, full: boolean }`, then `{ event: "dialog", dialog, version }`
+events.
+
+Every change to a Dialog gets the next `version`. With `since`, a version a response or event gave, only the Dialogs
+changed after it come (`full: false`); without one, or with one from before the server restarted (versions are per
+process), all of them (`full: true`), which replace what the client had. Nothing is ever removed (Hide is a flag), so a
+client merges a partial list by conversation ID. A client keeps the newest version it has applied with its list, and
+the next connection asks for what changed since; the response comes after what was committed before the request, and
+every later change as an event after it.
 
 ```ts
 type Dialog = {
@@ -237,7 +258,7 @@ by a title being written when the rename arrives.
 `{ conversationId, at: EntryId }` -> `{}`
 
 The user has seen the conversation up to `at`: moves `read` forward (never back) and clears `markedUnread`. A client
-sends it while the chat is on screen, as entries arrive.
+sends it while the chat is on screen, as entries arrive: at most every two seconds, the newest.
 
 ### `conversation.mark`
 `{ conversationId, unread?: boolean, archived?: boolean, hidden?: boolean, pinned?: number | false }` -> `{}`

@@ -55,7 +55,7 @@ export class TauClient {
 		);
 	}
 
-	/** `media`: entries come with image references, fetched with `media.get` (src/media.ts). */
+	/** Connected and greeted. Images in entries come by reference, fetched with `media.get` (src/media.ts). */
 	static async connect(url: string, token?: string): Promise<TauClient> {
 		const socket = new WebSocket(url, token === undefined ? {} : { headers: { authorization: `Bearer ${token}` } });
 		await new Promise<void>((resolve, reject) => {

@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Message } from "@earendil-works/pi-ai";
+import type { ConversationId } from "@earendil-works/pi-durable";
 import { ConversationReplica, type Entry, TauClient } from "../src/client.ts";
 import { answered, type CompactionUsage, compactionPolicy, DEFAULT_COMPACTION_THRESHOLD } from "../src/compaction.ts";
 import { type Host, openHost } from "../src/host.ts";
@@ -112,16 +114,22 @@ describe("skills", () => {
 			const { dialog } = await client.request("conversation.create", { cwd: project });
 			const replica = new ConversationReplica(dialog.conversation.id);
 			await replica.sync(client);
+			// What the model was given, from the server's own entries: clients get a pi.system entry without it.
+			const prompts = async () => {
+				const conversation = await host.harness.conversation(replica.id as ConversationId, BACKGROUND_CONTEXT);
+				return (await conversation!.entries({ order: "ascending" }, 500, undefined, BACKGROUND_CONTEXT)).items.filter((entry) => entry.kind === "pi.system") as unknown as Entry[];
+			};
 			await chat(client, replica, "one", "s1");
 			const first = ofKind(replica, "pi.system");
-			assert.ok(first.some((entry) => text(entry).includes("<name>beta</name>")), "the skills are in the prompt");
+			assert.ok(first.length > 0 && first.every((entry) => entry.model === undefined), "clients get the entries, not the prompt");
+			assert.ok((await prompts()).some((entry) => text(entry).includes("<name>beta</name>")), "the skills are in the prompt");
 			await chat(client, replica, "two", "s2");
 			assert.equal(ofKind(replica, "pi.system").length, first.length, "the same skills add nothing");
 			skill(join(project, ".agents", "skills", "gamma"), "gamma", "Added between two messages.");
 			await chat(client, replica, "three", "s3");
 			const after = ofKind(replica, "pi.system");
 			assert.equal(after.length, first.length + 1, "one delta");
-			assert.match(text(after.at(-1)!), /<name>gamma<\/name>/);
+			assert.match(text((await prompts()).at(-1)!), /<name>gamma<\/name>/);
 			await chat(client, replica, "four", "s4");
 			assert.equal(ofKind(replica, "pi.system").length, after.length);
 			await client.close();

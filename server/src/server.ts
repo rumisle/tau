@@ -21,7 +21,17 @@ export type ServerOptions = {
 	apns?: PushSender;
 	/** For tests: how long an activity whose chats are all done stays (half an hour). */
 	activityDoneLifetimeMs?: number;
+	/** For tests: how long a socket may stay silent (IDLE_TIMEOUT_MS). */
+	idleTimeoutMs?: number;
 };
+
+/**
+ * A socket nothing came in on for this long is gone: a phone that lost its network without a word, or one suspended
+ * in the background. It is closed, so its connection stops counting as an app in the foreground (which holds every
+ * push back) and stops being sent to. The app pings every 15 seconds; the server pings as often, so a client that only
+ * answers pings (ws does by itself) is heard too. Bytes of a frame still arriving count, however long the frame.
+ */
+const IDLE_TIMEOUT_MS = 45_000;
 
 export type Server = {
 	readonly url: string;
@@ -57,21 +67,34 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 	http.timeout = 5 * 60 * 1000;
 	const wss = new WebSocketServer({
 		server: http,
-		perMessageDeflate: { threshold: 1024 },
+		// Streamed chunks are a few hundred bytes, most of it the same path each time, which the context the socket
+		// keeps compresses to a few bytes: compress them too (docs/network.md).
+		perMessageDeflate: { threshold: 64 },
 		// Above the content limits of conversation.submit, so too much content is refused with `too_large` instead
 		// of closing the socket, which the client would take for a network failure and retry forever.
 		maxPayload: 96 * 1024 * 1024,
 		verifyClient: ({ req }: { req: IncomingMessage }) => authorized(req, options.token),
 	});
-	wss.on("connection", (socket) => {
+	wss.on("connection", (socket, request) => {
 		const connection = new Connection(host, dialogs, socket, notifier, search);
 		connections.add(connection);
+		const idle = options.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
+		let heard = Date.now();
+		request.socket.on("data", () => {
+			heard = Date.now();
+		});
+		const watchdog = setInterval(() => {
+			if (Date.now() - heard > idle) socket.terminate();
+			else socket.ping();
+		}, idle / 3);
+		watchdog.unref();
 		// Frames are handled concurrently; responses carry request IDs.
 		socket.on("message", (data, isBinary) => {
 			if (isBinary) socket.close(1003, "text frames only");
 			else void connection.receive(data.toString());
 		});
 		socket.on("close", () => {
+			clearInterval(watchdog);
 			connections.delete(connection);
 			void connection.close();
 		});

@@ -25,7 +25,9 @@ off.
 `server/src/notifier.ts` sees every run end in the commit stream. It pushes, with the account's APNs key, when no client is in
 the foreground: each client reports `client.presence { active }` on connect and whenever the app becomes active or
 resigns, and a closed connection counts as inactive. So a phone with tau open gets the banner and no push, and one
-with tau closed (its socket gone) gets the push.
+with tau closed (its socket gone) gets the push. A socket the server hears nothing on for 45 seconds is closed
+(docs/protocol.md): without that, a phone that lost its network while tau was open would hold every push back until
+its dead TCP connection timed out, which, with nothing to send on it, is never.
 
 ### Apple's push
 

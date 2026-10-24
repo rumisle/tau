@@ -195,6 +195,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             finish()
         }
         self.withChat(serverId: serverId, local: local) { id, context in
+            // Woken in the background: a socket the server has closed meanwhile is replaced now, not after a ping.
+            (context.store.server(of: id) as? ServerStore)?.wake()
             context.store.send(text, to: id)
             context.store.markSeen(id)
             // The outbox keeps it on disk and sends it once connected; until then, tau stays.

@@ -253,17 +253,18 @@ enum TranscriptBuilder {
                     turnStart = date
                 }
                 let (text, imageBlocks) = self.userContent(message["content"])
-                var attachments = imageBlocks.enumerated().compactMap { index, block in
-                    attachment(entryId: id, index: index, block: block)
-                }
-                // Its files: each photo's, for an edit to send again, and the ones only named.
                 let lines = self.attachmentLines(message["content"])
                 let photoLines = lines.filter { $0.kind == .image }
-                for (index, attachment) in attachments.enumerated() where index < photoLines.count {
-                    if case let .remote(remote) = attachment.kind {
-                        remote.fileId = photoLines[index].fileId
+                var attachments = imageBlocks.enumerated().compactMap { index, block -> MessageAttachment? in
+                    // A photo the user sent is a file the server keeps: fetched over HTTP, beside the socket, as an
+                    // edit sends it again (docs/media.md). The entry's own copy only without one.
+                    if index < photoLines.count, let fileId = photoLines[index].fileId, let media {
+                        let line = photoLines[index]
+                        return MessageAttachment(id: id * 64 + index, kind: .remote(media.fileImage(id: fileId, mimeType: line.mimeType, bytes: Int(line.bytes), pixelSize: line.pixelSize ?? media.image(conversationId: replica.id, entryId: id, index: index, block: block)?.pixelSize)))
                     }
+                    return attachment(entryId: id, index: index, block: block)
                 }
+                // And the files only named.
                 attachments += lines.filter { $0.kind == .file }.enumerated().map { index, line in
                     MessageAttachment(id: id * 64 + 32 + index, kind: .file(line.file))
                 }

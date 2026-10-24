@@ -25,7 +25,8 @@ import { homedir, hostname } from "node:os";
 import { CACHE_WARMING_MODES, type CacheWarmingMode } from "./cache.ts";
 import { type CompactionThreshold, MAX_COMPACTION_RATIO, MIN_COMPACTION_RATIO, MIN_COMPACTION_TOKENS } from "./compaction.ts";
 import type { Dialogs } from "./dialogs.ts";
-import { entryImages, withMediaRefs } from "./media.ts";
+import { entryImages } from "./media.ts";
+import { clientDocs, clientEntry, clientOp } from "./outgoing.ts";
 import type { KindName } from "./search/index.ts";
 import type { Search } from "./search/service.ts";
 import { directory, listDirectory } from "./fs.ts";
@@ -152,6 +153,22 @@ export class Connection {
 		}
 		try {
 			const params = request.params ?? {};
+			if (request.method === "hello") {
+				// Answered before the next frame is read, so its answer comes before any other: a client may send its
+				// subscriptions right behind it, for the database it expects, and check the hello's serverId first.
+				this.#push({ id: request.id, result: this.#helloRequest(params) });
+				return;
+			}
+			if (request.method === "dialogs.subscribe") {
+				if (!this.#hello) throw new ProtocolError("bad_request", "Send hello first");
+				const since = str(params, "since", true);
+				await this.#dialogs.ready();
+				await this.#dialogs.settled();
+				// The listener and the list in one step: every later change comes as an event after the response.
+				this.#stopDialogs ??= this.#dialogs.onDialog((dialog, version) => this.#push({ event: "dialog", dialog, version }));
+				this.#push({ id: request.id, result: this.#dialogs.list(since) });
+				return;
+			}
 			if (request.method === "conversation.subscribe") {
 				if (!this.#hello) throw new ProtocolError("bad_request", "Send hello first");
 				const { id, subscription, result } = await this.#subscribe(params);
@@ -189,7 +206,6 @@ export class Connection {
 	}
 
 	async #dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
-		if (method === "hello") return this.#helloRequest(params);
 		if (!this.#hello) throw new ProtocolError("bad_request", "Send hello first");
 		const context = this.#context;
 		const { harness } = this.#host;
@@ -297,9 +313,6 @@ export class Connection {
 				if (this.#search === undefined) throw new ProtocolError("bad_request", "Usage is not available");
 				return this.#search.report(Math.max(0, int(params, "days", true) ?? 30), int(params, "tzOffset", true) ?? 0);
 			}
-			case "dialogs.subscribe":
-				this.#stopDialogs ??= this.#dialogs.onDialog((dialog) => this.#push({ event: "dialog", dialog }));
-				return { dialogs: await this.#dialogs.list(context) };
 			case "conversation.create": {
 				const requestId = str(params, "requestId", true);
 				if (requestId !== undefined) {
@@ -457,7 +470,7 @@ export class Connection {
 		}
 	}
 
-	async #helloRequest(params: Record<string, unknown>): Promise<unknown> {
+	#helloRequest(params: Record<string, unknown>): unknown {
 		const protocol = int(params, "protocol");
 		if (protocol !== PROTOCOL_VERSION) {
 			throw new ProtocolError("bad_request", `Unsupported protocol ${protocol}; server speaks ${PROTOCOL_VERSION}`);
@@ -579,7 +592,7 @@ export class Connection {
 			);
 			const result = {
 				conversation: record,
-				docs: view.docs,
+				docs: clientDocs(view.docs),
 				entries: this.#outgoing(entries),
 				...(head === undefined ? {} : { head }),
 				hasOlder,
@@ -608,7 +621,7 @@ export class Connection {
 				this.#push({
 					event: "conv.commit",
 					conversationId: id,
-					docs: value.docs,
+					docs: clientDocs(value.docs),
 					...(entries.length === 0 ? {} : { entries: this.#outgoing(entries) }),
 					...(head === undefined ? {} : { head }),
 				});
@@ -620,7 +633,10 @@ export class Connection {
 			for (const op of ops) {
 				if (op[0] === "r") continue;
 				const path = op[1];
-				if (path[0] === "docs") docOps.push(relative(op));
+				if (path[0] === "docs") {
+					const shown = clientOp(relative(op));
+					if (shown !== undefined) docOps.push(shown);
+				}
 				else if (path[0] === "entries" && op[0] === "p") {
 					for (const item of op[4] as unknown as EntryRecord[]) {
 						if (item.id > subscription.maxSent) entries.push(item);
@@ -679,9 +695,9 @@ export class Connection {
 		return { entries: this.#outgoing([...page.items].reverse()), hasOlder: page.next !== undefined };
 	}
 
-	/** Entries as clients take them: images by reference, fetched with media.get (src/media.ts). */
+	/** Entries as clients take them (src/outgoing.ts): images by reference, no replay data. */
 	#outgoing(entries: readonly EntryRecord[]): EntryRecord[] {
-		return entries.map(withMediaRefs);
+		return entries.map(clientEntry);
 	}
 
 	async #submit(params: Record<string, unknown>): Promise<unknown> {

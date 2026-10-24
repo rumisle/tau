@@ -271,14 +271,17 @@ final class Outbox {
 
     /// The photos of a message, decoded once.
     /// The photos of a message as they were sent, in order.
-    func imageData(_ requestId: String) -> [Data] {
+    /// A message's photos this device has, by the server's file of each.
+    func photoData(_ requestId: String) -> [(fileId: String, data: Data)] {
         guard let item = self.item(requestId) else {
             return []
         }
-        // Only when this device has each: the entry's images are these, in order.
-        let photos = item.uploads.filter { $0.kind == .photo }
-        let data = photos.compactMap { upload in upload.localName.flatMap { try? Data(contentsOf: self.directory.appendingPathComponent($0)) } }
-        return data.count == photos.count ? data : []
+        return item.uploads.filter { $0.kind == .photo }.compactMap { upload in
+            guard let fileId = upload.serverId, let data = upload.localName.flatMap({ try? Data(contentsOf: self.directory.appendingPathComponent($0)) }) else {
+                return nil
+            }
+            return (fileId, data)
+        }
     }
 
     /// The device's copy of an upload.

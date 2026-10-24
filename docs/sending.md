@@ -72,7 +72,9 @@ Rules that keep it predictable:
 3. **Idempotent retries.** A submit that may have arrived is sent again with the same request ID; the server answers
    with the existing submission. A conversation create carries a request ID too.
 4. **No timeouts on messages.** A request with no answer in 45 s (longer for big frames) means the socket is dead:
-   the client reconnects and sends again. A ping every 15 s finds a socket that died quietly.
+   the client reconnects and sends again. A ping every 15 s finds a socket that died quietly, and waking (the app
+   back in the foreground, or woken for a notification's reply) replaces one the server has closed meanwhile at once
+   (docs/network.md).
 5. **Cancelling is safe at every step.** A message never written to a socket is dropped locally. Otherwise
    `submission.withdraw` names it by request ID: queued, it leaves the inbox; placed, the client says so and keeps it;
    not arrived yet, the server remembers the ID and refuses the submit if it comes later. Without that last case a

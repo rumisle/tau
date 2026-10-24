@@ -27,7 +27,8 @@ struct RequestError: Error, CustomStringConvertible {
 }
 
 /// One WebSocket to a tau server (docs/protocol.md): JSON requests answered by id, pushes without one. Reconnects with
-/// backoff; every (re)connection starts with `hello` and then calls `onConnected`, where stores resubscribe.
+/// backoff; every (re)connection starts with `hello`, with what `onOpen` sends right behind it in the same flight, and
+/// calls `onConnected` once it is answered.
 final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     struct Hello {
         let serverId: String
@@ -63,12 +64,22 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     private var pingTimer: SwiftSignalKit.Timer?
     /// Requests with a big frame, not answered yet.
     private var largeRequests: Set<Int> = []
+    /// `onOpen` is running: its requests go out behind the hello, before it is answered.
+    private var isOpening = false
+    /// When this socket last brought anything (a frame, a pong), and when it was opened.
+    private var lastHeard: CFAbsoluteTime = 0.0
+    private var openedAt: CFAbsoluteTime = 0.0
 
     /// No answer this long after a request is out means the socket is dead without knowing it (a half-open TCP
     /// connection after a network change): reconnect, and callers resend idempotently.
     private static let responseTimeout: Double = 45.0
     private static let pingInterval: Double = 15.0
     private static let pongTimeout: Double = 10.0
+    /// The server closes a socket it heard nothing on for 45 seconds (server/src/server.ts): one silent this long,
+    /// as after a while in the background, is replaced without asking.
+    private static let staleAfter: Double = 40.0
+    /// A ping on waking, when a dead socket must be found out at once: the link is fresh, not loaded.
+    private static let wakePongTimeout: Double = 3.0
 
     /// Connected and greeted: requests go out now.
     var isReady: Bool {
@@ -91,6 +102,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
 
     /// Pushes, on the main queue.
     var onPush: ((JSONObject) -> Void)?
+    /// Right after the hello is sent, on a new socket: requests made here go out behind it (the server takes a
+    /// socket's requests in order), a round trip sooner than after `onConnected`.
+    var onOpen: (() -> Void)?
     /// After `hello` succeeded on a new socket.
     var onConnected: ((Hello) -> Void)?
 
@@ -172,6 +186,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         // Long tool outputs and history pages exceed the 1 MB default.
         task.maximumMessageSize = 64 * 1024 * 1024
         self.task = task
+        self.openedAt = CFAbsoluteTimeGetCurrent()
+        self.lastHeard = self.openedAt
         self.setStatus(self.isRefused ? .refused : .connecting)
         task.resume()
         self.receive(task: task, generation: generation)
@@ -207,6 +223,9 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                 self.reconnect(generation: generation)
             }
         }
+        self.isOpening = true
+        self.onOpen?()
+        self.isOpening = false
     }
 
     /// URLSession does not notice a connection that died quietly; a ping that gets no pong in time does.
@@ -219,14 +238,28 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         timer.start()
     }
 
-    /// Check the socket now, as when the app comes back to the foreground.
-    func checkAlive() {
+    /// Back in the foreground, or woken in the background for a notification's reply: a socket the server has closed
+    /// by now (silent past `staleAfter`) is replaced at once, a newer one is checked with a quick ping, and one still
+    /// connecting, or waiting out a backoff, is tried now.
+    func wake() {
+        guard !self.isClosed else {
+            return
+        }
+        let now = CFAbsoluteTimeGetCurrent()
         if self.isReady {
-            self.ping(generation: self.generation)
+            if now - self.lastHeard > TauConnection.staleAfter {
+                self.retryDelay = 0.5
+                self.reconnect(generation: self.generation, delay: 0.0)
+            } else {
+                self.ping(generation: self.generation, timeout: TauConnection.wakePongTimeout)
+            }
+        } else if self.task == nil || now - self.openedAt > TauConnection.wakePongTimeout {
+            self.retryDelay = 0.5
+            self.reconnect(generation: self.generation, delay: 0.0)
         }
     }
 
-    private func ping(generation: Int) {
+    private func ping(generation: Int, timeout: Double = TauConnection.pongTimeout) {
         guard generation == self.generation, let task = self.task else {
             return
         }
@@ -239,15 +272,16 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         task.sendPing { [weak self] error in
             Queue.mainQueue().async {
                 answered = true
-                if error == nil {
-                    self?.latency = CFAbsoluteTimeGetCurrent() - sent
+                if error == nil, let self, generation == self.generation {
+                    self.latency = CFAbsoluteTimeGetCurrent() - sent
+                    self.lastHeard = CFAbsoluteTimeGetCurrent()
                 }
                 if error != nil {
                     self?.reconnect(generation: generation)
                 }
             }
         }
-        Queue.mainQueue().after(TauConnection.pongTimeout) { [weak self] in
+        Queue.mainQueue().after(timeout) { [weak self] in
             if !answered {
                 self?.reconnect(generation: generation)
             }
@@ -298,6 +332,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
             }
             switch result {
             case let .success(message):
+                self.lastHeard = CFAbsoluteTimeGetCurrent()
                 let data: Data?
                 switch message {
                 case let .string(text):
@@ -337,7 +372,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
     /// Sends a request on the current socket. Fails immediately while disconnected; callers that must not lose the
     /// request (a submit) retry on reconnect with the same `requestId`.
     func request(_ method: String, _ params: JSONObject = [:], completion: @escaping (Result<JSONObject, RequestError>) -> Void) {
-        guard let task = self.task, self.hello != nil || method == "hello" else {
+        guard let task = self.task, self.hello != nil || method == "hello" || self.isOpening else {
             completion(.failure(.disconnected))
             return
         }

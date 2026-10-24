@@ -12,6 +12,17 @@ final class ServerStore: ConversationStore, TauServer {
     let media: MediaLoader
 
     private var dialogs: [Int: DialogModel] = [:]
+    /// The chat list as the server last said it, each Dialog as it came, and the version it is at: the next connection
+    /// asks only for what changed since (`dialogs.subscribe { since }`). Kept on disk with it.
+    private var serverDialogs: [Int: JSONObject] = [:]
+    private var dialogsVersion: String?
+    private var dialogsSaveTimer: SwiftSignalKit.Timer?
+    /// The conversation each fork was made from, and the entry it was made at.
+    private var forkParents: [Int: (conversationId: Int, at: Int)] = [:]
+    /// The database the requests sent behind the hello were for (`opened`), and the chats they subscribed: nil when
+    /// none were sent.
+    private var speculatedServerId: String?
+    private var speculatedChats: Set<Int> = []
     private var dialogOrder: [Int: Int] = [:]
     private let dialogsPromise = ValuePromise<[DialogModel]>([], ignoreRepeated: true)
     /// Hides and shows this device asked for that the server has not taken yet, by conversation: kept on disk and
@@ -101,14 +112,27 @@ final class ServerStore: ConversationStore, TauServer {
             }
         }
         self.pendingHides = pendingHides
-        for var dialog in self.cache.loadDialogs() {
-            dialog.hidden = self.pendingHides[dialog.id] ?? dialog.hidden
-            self.dialogs[dialog.id] = dialog
+        let saved = self.cache.loadDialogs()
+        self.dialogsVersion = saved.version
+        for raw in saved.dialogs {
+            if let id = raw.object("conversation")?.int("id") {
+                self.serverDialogs[id] = raw
+            }
+        }
+        for raw in self.serverDialogs.values {
+            // None shows as working before the server says so.
+            if var dialog = self.dialogModel(raw) {
+                dialog.busy = false
+                self.dialogs[dialog.id] = dialog
+            }
         }
         self.publishDialogs()
 
         self.connection.onPush = { [weak self] push in
             self?.handlePush(push)
+        }
+        self.connection.onOpen = { [weak self] in
+            self?.opened()
         }
         self.connection.onConnected = { [weak self] hello in
             self?.connected(hello)
@@ -205,13 +229,22 @@ final class ServerStore: ConversationStore, TauServer {
 
     /// Back in the foreground: a socket that died while suspended is found out at once, not at the next ping.
     @objc private func didBecomeActive() {
-        self.connection.checkAlive()
-        self.outbox.pump()
+        self.wake()
         self.sendPresence()
+    }
+
+    /// Back in the foreground, or woken in the background for a notification's reply: the socket is checked, or
+    /// replaced when the server has closed it by now, and what waits to be sent goes.
+    func wake() {
+        self.connection.wake()
+        self.outbox.pump()
     }
 
     @objc private func willResignActive() {
         self.sendPresence(active: false)
+        for id in Array(self.readTimers.keys) {
+            self.sendRead(id)
+        }
     }
 
     /// The server pushes nothing while an app is in the foreground showing its own banners.
@@ -285,8 +318,8 @@ final class ServerStore: ConversationStore, TauServer {
             map[entryId] = item.rowId
             self.rowIdForUserEntry[id] = map
             // Its photos are here already: the entry's references need no fetch.
-            for (index, data) in outbox.imageData(requestId).enumerated() {
-                self.media.seed(conversationId: id, entryId: entryId, index: index, data: data)
+            for photo in outbox.photoData(requestId) {
+                self.media.seed(fileId: photo.fileId, data: photo.data)
             }
         }
         outbox.restored = { [weak self] id, text in
@@ -296,7 +329,7 @@ final class ServerStore: ConversationStore, TauServer {
             self?.emit(id, .notice(text))
         }
         outbox.created = { [weak self] create, raw in
-            guard let self, let dialog = self.dialogModel(raw) else {
+            guard let self, let dialog = self.takeDialog(raw) else {
                 return
             }
             self.dialogs[dialog.id] = dialog
@@ -497,6 +530,9 @@ final class ServerStore: ConversationStore, TauServer {
             for replica in self.replicas.values {
                 replica.upsertReset()
             }
+            self.serverDialogs = [:]
+            self.dialogsVersion = nil
+            self.forkParents = [:]
         }
         self.connection.setStatus(.updating)
         // The usage row reads each model's context window from the list.
@@ -506,30 +542,100 @@ final class ServerStore: ConversationStore, TauServer {
         for (id, hidden) in self.pendingHides {
             self.sendHidden(id, hidden)
         }
-        self.connection.request("dialogs.subscribe") { [weak self] result in
-            guard let self, case let .success(value) = result else {
+        // Asked for behind the hello already, for this database; else now. A chat opened since is subscribed now.
+        let speculated = self.speculatedServerId == hello.serverId
+        if !speculated {
+            self.syncDialogs(serverId: hello.serverId)
+        }
+        for id in self.replicas.keys where (self.watchers[id] ?? 0) > 0 && !(speculated && self.speculatedChats.contains(id)) {
+            self.subscribe(id, serverId: hello.serverId)
+        }
+        self.speculatedServerId = nil
+        self.speculatedChats = []
+        self.outbox.connected(serverId: hello.serverId)
+    }
+
+    /// The socket is open and its hello on its way: the chat list's changes and the open chats' new entries are asked
+    /// for in the same flight, for the database this device has cached. The server answers the hello first; if it says
+    /// another database, `connected` drops the cache and asks again, and these answers are ignored.
+    private func opened() {
+        self.speculatedServerId = self.cache.serverId
+        self.speculatedChats = []
+        guard let serverId = self.cache.serverId else {
+            return
+        }
+        self.syncDialogs(serverId: serverId)
+        for id in self.replicas.keys where (self.watchers[id] ?? 0) > 0 {
+            self.subscribe(id, serverId: serverId)
+            self.speculatedChats.insert(id)
+        }
+    }
+
+    /// The chat list: what changed since the version this device has, or all of it (docs/protocol.md).
+    private func syncDialogs(serverId: String) {
+        var params: JSONObject = [:]
+        if let version = self.dialogsVersion {
+            params["since"] = version
+        }
+        self.connection.request("dialogs.subscribe", params) { [weak self] result in
+            guard let self, case let .success(value) = result, self.connection.hello?.serverId == serverId else {
                 return
             }
-            var updated: [Int: DialogModel] = [:]
+            if value.bool("full") ?? true {
+                self.serverDialogs = [:]
+            }
             for raw in value.objects("dialogs") {
+                if let id = raw.object("conversation")?.int("id") {
+                    self.serverDialogs[id] = raw
+                }
+            }
+            self.dialogsVersion = value.string("version")
+            var updated: [Int: DialogModel] = [:]
+            for raw in self.serverDialogs.values {
                 if let dialog = self.dialogModel(raw) {
                     updated[dialog.id] = dialog
                 }
             }
             self.dialogs = updated
+            self.saveDialogsSoon()
             self.publishDialogs()
             self.connection.setStatus(.online)
         }
-        for id in self.replicas.keys where (self.watchers[id] ?? 0) > 0 {
-            self.subscribe(id)
+    }
+
+    /// A Dialog from the server (a push, a create's or fork's answer): kept as it came, then as the app shows it.
+    private func takeDialog(_ raw: JSONObject, version: String? = nil) -> DialogModel? {
+        guard let id = raw.object("conversation")?.int("id") else {
+            return nil
         }
-        self.outbox.connected(serverId: hello.serverId)
+        self.serverDialogs[id] = raw
+        if let version {
+            self.dialogsVersion = version
+        }
+        self.saveDialogsSoon()
+        return self.dialogModel(raw)
+    }
+
+    /// The chat list on disk a moment after it last changed, with its version.
+    private func saveDialogsSoon() {
+        guard self.dialogsSaveTimer == nil else {
+            return
+        }
+        let timer = SwiftSignalKit.Timer(timeout: 1.0, repeat: false, completion: { [weak self] in
+            guard let self else {
+                return
+            }
+            self.dialogsSaveTimer = nil
+            self.cache.saveDialogs(Array(self.serverDialogs.values), version: self.dialogsVersion)
+        }, queue: Queue.mainQueue())
+        self.dialogsSaveTimer = timer
+        timer.start()
     }
 
     private func handlePush(_ push: JSONObject) {
         switch push.string("event") {
         case "dialog":
-            if let raw = push.object("dialog"), var dialog = self.dialogModel(raw) {
+            if let raw = push.object("dialog"), var dialog = self.takeDialog(raw, version: push.string("version")) {
                 // A run that ended with a new answer of a top-level chat: its banner.
                 let previous = self.dialogs[dialog.id]
                 if let last = dialog.last, last.role == .assistant, !dialog.busy, dialog.parentConversationId == nil, dialog.unreadCount > 0, last.id > (previous?.last?.id ?? 0), previous?.busy == true || previous == nil {
@@ -596,6 +702,9 @@ final class ServerStore: ConversationStore, TauServer {
             return nil
         }
         let agent = raw.object("agent") ?? [:]
+        if let parent = conversation.object("parent"), let parentId = parent.int("conversationId"), let at = parent.int("at") {
+            self.forkParents[id] = (parentId, at)
+        }
         if let cache = raw.object("cache") {
             // The entry comes only while it is the conversation's model's; the refresh counters always.
             let entry = cache.double("at").flatMap { at in cache.double("ttl").map { (at: at, ttl: $0) } }
@@ -703,7 +812,6 @@ final class ServerStore: ConversationStore, TauServer {
             return l > r
         }
         self.dialogsPromise.set(sorted)
-        self.cache.saveDialogs(Array(self.dialogs.values))
         self.schedulePreload()
     }
 
@@ -953,16 +1061,18 @@ final class ServerStore: ConversationStore, TauServer {
         }
     }
 
-    /// `conversation.subscribe` for entries after the newest cached one, then live commits.
-    private func subscribe(_ id: Int) {
+    /// `conversation.subscribe` for entries after the newest cached one, then live commits. `serverId`: the database it
+    /// is for, when it may go before the hello says which (`opened`).
+    private func subscribe(_ id: Int, serverId: String? = nil) {
         let replica = self.replica(id)
         replica.isSynced = false
+        self.seedFork(replica)
         var params: JSONObject = ["conversationId": id, "limit": 100]
         if let after = replica.maxId {
             params["after"] = after
         }
         self.connection.request("conversation.subscribe", params) { [weak self] result in
-            guard let self, case let .success(value) = result else {
+            guard let self, case let .success(value) = result, serverId == nil || self.connection.hello?.serverId == serverId else {
                 return
             }
             if let gap = value.object("gap"), gap.int("after") != nil {
@@ -989,6 +1099,30 @@ final class ServerStore: ConversationStore, TauServer {
             self.publish(id)
             self.cache.scheduleSave(replica)
         }
+    }
+
+    /// A fork with nothing cached starts from what this device has of the conversation it was made from: the entries up
+    /// to the fork's point are the same ones, by the same IDs (entries are global and never change). Its subscribe then
+    /// brings only what comes after them, as an edit's fork brings little more than the edited message.
+    private func seedFork(_ replica: ConversationReplica) {
+        guard replica.entries.isEmpty, let fork = self.forkParents[replica.id] else {
+            return
+        }
+        let parent: (entries: [JSONObject], hasOlder: Bool)?
+        if let loaded = self.replicas[fork.conversationId], !loaded.entries.isEmpty {
+            parent = (loaded.ordered(), loaded.hasOlder)
+        } else {
+            parent = self.cache.load(fork.conversationId)
+        }
+        guard let parent else {
+            return
+        }
+        let inherited = parent.entries.filter { ($0.int("id") ?? Int.max) <= fork.at }
+        guard !inherited.isEmpty else {
+            return
+        }
+        replica.upsert(inherited)
+        replica.hasOlder = parent.hasOlder
     }
 
     private func publish(_ realId: Int) {
@@ -1393,7 +1527,7 @@ final class ServerStore: ConversationStore, TauServer {
             return
         }
         self.connection.request("conversation.fork", ["conversationId": realId, "at": at, "title": "\(dialog.title) (copy)"]) { [weak self] result in
-            guard let self, case let .success(value) = result, let raw = value.object("dialog"), let dialog = self.dialogModel(raw) else {
+            guard let self, case let .success(value) = result, let raw = value.object("dialog"), let dialog = self.takeDialog(raw) else {
                 return
             }
             self.dialogs[dialog.id] = dialog
@@ -1404,6 +1538,12 @@ final class ServerStore: ConversationStore, TauServer {
 
     /// The last entry each conversation was marked read at from here, so a repeat is not sent.
     private var readSent: [Int: Int] = [:]
+    /// Reads go at most every `readInterval` per chat, the first at once: a chat on screen while an answer comes reads
+    /// each entry, and one read of the newest a moment later says the same. The newest waiting, and when one went.
+    private var readPending: [Int: Int] = [:]
+    private var readTimers: [Int: SwiftSignalKit.Timer] = [:]
+    private var readSentAt: [Int: CFAbsoluteTime] = [:]
+    private static let readInterval: Double = 2.0
 
     func markSeen(_ id: Int) {
         guard let realId = self.resolve(id) else {
@@ -1420,7 +1560,29 @@ final class ServerStore: ConversationStore, TauServer {
             self.dialogs[realId]?.markedUnread = false
             self.publishDialogs()
         }
-        self.connection.request("conversation.read", ["conversationId": realId, "at": latest]) { _ in }
+        self.readPending[realId] = latest
+        if self.readTimers[realId] == nil {
+            let wait = (self.readSentAt[realId] ?? 0.0) + ServerStore.readInterval - CFAbsoluteTimeGetCurrent()
+            if wait <= 0.0 {
+                self.sendRead(realId)
+            } else {
+                let timer = SwiftSignalKit.Timer(timeout: wait, repeat: false, completion: { [weak self] in
+                    self?.sendRead(realId)
+                }, queue: Queue.mainQueue())
+                self.readTimers[realId] = timer
+                timer.start()
+            }
+        }
+    }
+
+    /// The newest read waiting for a chat, now.
+    private func sendRead(_ id: Int) {
+        self.readTimers.removeValue(forKey: id)?.invalidate()
+        guard let at = self.readPending.removeValue(forKey: id) else {
+            return
+        }
+        self.readSentAt[id] = CFAbsoluteTimeGetCurrent()
+        self.connection.request("conversation.read", ["conversationId": id, "at": at]) { _ in }
     }
 
     func setUnread(_ id: Int, _ unread: Bool) {
@@ -1915,44 +2077,25 @@ final class EntryCache {
         timer.start()
     }
 
-    func saveDialogs(_ dialogs: [DialogModel]) {
-        let rows: [JSONObject] = dialogs.map { dialog in
-            var row: JSONObject = ["id": dialog.id, "title": dialog.title, "cwd": dialog.cwd, "model": dialog.model, "busy": false, "unread": dialog.unreadCount, "markedUnread": dialog.markedUnread, "archived": dialog.archived, "hidden": dialog.hidden]
-            if let parent = dialog.parentConversationId {
-                row["parent"] = parent
-            }
-            if let pinned = dialog.pinned {
-                row["pinned"] = pinned
-            }
-            if let last = dialog.last {
-                row["last"] = ["id": last.id, "text": last.text, "date": last.date.timeIntervalSince1970, "user": last.role == .user]
-            }
-            return row
+    /// The chat list as the server gave it, each Dialog as it came, with the version it is at.
+    func saveDialogs(_ dialogs: [JSONObject], version: String?) {
+        var object: JSONObject = ["dialogs": dialogs]
+        if let version {
+            object["version"] = version
         }
-        let url = self.directory.appendingPathComponent("dialogs.json")
-        DispatchQueue.global(qos: .utility).async {
-            if let data = try? JSONSerialization.data(withJSONObject: rows) {
-                try? data.write(to: url, options: .atomic)
+        self.io.async {
+            if let data = try? JSONSerialization.data(withJSONObject: object) {
+                try? data.write(to: self.directory.appendingPathComponent("dialogs.json"), options: .atomic)
             }
         }
     }
 
-    func loadDialogs() -> [DialogModel] {
-        guard let data = try? Data(contentsOf: self.directory.appendingPathComponent("dialogs.json")), let rows = (try? JSONSerialization.jsonObject(with: data)) as? [JSONObject] else {
-            return []
-        }
-        return rows.compactMap { row in
-            guard let id = row.int("id") else {
-                return nil
+    func loadDialogs() -> (dialogs: [JSONObject], version: String?) {
+        return self.io.sync {
+            guard let data = try? Data(contentsOf: self.directory.appendingPathComponent("dialogs.json")), let object = (try? JSONSerialization.jsonObject(with: data)) as? JSONObject else {
+                return ([], nil)
             }
-            var last: DialogModel.EntrySummary?
-            if let summary = row.object("last"), let entryId = summary.int("id") {
-                last = DialogModel.EntrySummary(id: entryId, role: (summary.bool("user") ?? false) ? .user : .assistant, text: summary.string("text") ?? "", date: Date(timeIntervalSince1970: summary.double("date") ?? 0))
-            }
-            var dialog = DialogModel(id: id, title: row.string("title") ?? "", parentConversationId: row.int("parent"), cwd: row.string("cwd") ?? "~", model: row.string("model") ?? "", last: last, busy: false, unreadCount: row.int("unread") ?? 0, markedUnread: row.bool("markedUnread") ?? false, archived: row.bool("archived") ?? false)
-            dialog.pinned = row.double("pinned")
-            dialog.hidden = row.bool("hidden") ?? false
-            return dialog
+            return (object.objects("dialogs"), object.string("version"))
         }
     }
 }

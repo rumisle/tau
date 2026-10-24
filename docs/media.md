@@ -2,6 +2,7 @@
 
 Images live in entries, as the model has them: a photo the user sent is an image block of its `pi.user` message, an
 image a tool returned (the read tool's, for an image file) one of its `pi.tool-result`. Both are base64, up to 4.5 MB.
+A photo the user sent is also a file the server keeps (docs/files.md), named in the message's attachments block.
 
 ## By reference
 
@@ -12,8 +13,13 @@ Clients get every entry with its images replaced by references (`server/src/medi
 ```
 
 `index` counts the entry's images in order; `width` and `height` come from the image's header, read without decoding
-it. `media.get { conversationId, entryId, index }` -> `{ mimeType, data }` returns one. A transcript then syncs in
-kilobytes however many photos it has, and the phone decodes only what it shows.
+it. A transcript then syncs in kilobytes however many photos it has, and the phone decodes only what it shows.
+
+The app fetches a user's photo as its file, `GET /files/<id>` (the ID is the directory in the attachments block's path),
+and the others with `media.get { conversationId, entryId, index }` -> `{ mimeType, data }`: a tool's images, and photos
+of messages older than files. Over HTTP a photo goes beside the socket, on its own connection: a few megabytes of base64
+in one frame would hold back everything behind it on the socket, the streamed answer and the pong that tells the socket
+is alive (at 0.5 Mbps, two photos delayed a pong 5.5 seconds; past 10 the app takes the socket for dead).
 
 ## In the app
 
@@ -28,7 +34,7 @@ kilobytes however many photos it has, and the phone decodes only what it shows.
   images in its card, under what the tool said, as an album too. A tap opens either in the media viewer, which pages
   through the chat's photos and tools' images and loads the one it shows at full size.
 - **Loading** (`Tau/Server/MediaLoader.swift`): each image once, then from Caches; entries never change, so neither do
-  their images. A photo this phone sent is cached from its own copy when its entry arrives, so it is never fetched back.
+  their images. A photo this phone sent is cached from its own copy, by its file, when its entry arrives, so it is never fetched back.
   Another database behind the same address (its `serverId` changed) clears the cache, since its entries reuse the IDs.
 - **Decoding**: off the main thread with ImageIO, downsampled to 1280 pixels for the chat and 4096 for the viewer. What
   is decoded is checked first: PNG, JPEG, GIF or WebP only, at most 80 megapixels; anything else shows a photo glyph.

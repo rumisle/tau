@@ -5,7 +5,10 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { ConversationReplica, type Entry, type Push, RequestError, TauClient } from "../src/client.ts";
+import { Dialogs } from "../src/dialogs.ts";
 import { type Host, openHost } from "../src/host.ts";
+import { clientEntry, clientOp } from "../src/outgoing.ts";
+import { WebSocket } from "ws";
 import { type Server, serve } from "../src/server.ts";
 
 const MAIN = join(import.meta.dirname, "..", "src", "main.ts");
@@ -83,6 +86,49 @@ describe("tau server", () => {
 		const code = await new Promise((resolve) => child.on("exit", resolve));
 		assert.equal(code, 1);
 		assert.match(output, /not loopback/);
+	});
+
+	test("closes a socket nothing comes in on, and keeps one that answers its pings", async () => {
+		const quick = await serve(host, { idleTimeoutMs: 300 });
+		try {
+			// A client gone quiet: it answers no ping (a phone that lost its network, or a suspended app).
+			const silent = new WebSocket(quick.url, { autoPong: false });
+			await new Promise((resolve) => silent.once("open", resolve));
+			const closed = new Promise((resolve) => silent.once("close", resolve));
+			const answering = await TauClient.connect(quick.url);
+			let answeringClosed = false;
+			const started = Date.now();
+			await closed;
+			assert.ok(Date.now() - started < 1_500, "closed within the timeout");
+			await new Promise((resolve) => setTimeout(resolve, 700));
+			await answering.request("client.presence", { active: false }).catch(() => {
+				answeringClosed = true;
+			});
+			assert.equal(answeringClosed, false, "a client that answers pings stays");
+			await answering.close();
+		} finally {
+			await quick.close();
+		}
+	});
+
+	test("clients get no provider replay data, and pi.system entries without the prompt", () => {
+		const entry = {
+			id: 7,
+			kind: "pi.assistant",
+			conversationId: 1,
+			model: [{ role: "assistant", content: [{ type: "thinking", thinking: "hm", thinkingSignature: "x".repeat(100) }, { type: "text", text: "hi", textSignature: "s" }, { type: "toolCall", id: "c", name: "bash", arguments: {}, thoughtSignature: "t" }] }],
+		};
+		const shown = clientEntry(entry as never) as unknown as typeof entry;
+		assert.deepEqual(shown.model[0]!.content, [{ type: "thinking", thinking: "hm" }, { type: "text", text: "hi" }, { type: "toolCall", id: "c", name: "bash", arguments: {} }]);
+		assert.equal(entry.model[0]!.content[0]!.thinkingSignature?.length, 100, "the stored entry is left as it is");
+		const plain = { id: 8, kind: "pi.user", conversationId: 1, model: [{ role: "user", content: "hello" }] };
+		assert.equal(clientEntry(plain as never), plain, "nothing to leave out: the same object");
+		assert.deepEqual(clientEntry({ id: 9, kind: "pi.system", conversationId: 1, model: [{ role: "system", toolsAdded: [] }] } as never), { id: 9, kind: "pi.system", conversationId: 1 });
+		// Streaming: an op that writes a signature goes; one that carries one in its value loses it.
+		assert.equal(clientOp(["s", ["pi.live", "generation", "message", "content", 0, "thinkingSignature"], "sig"]), undefined);
+		assert.equal(clientOp(["a", ["pi.live", "generation", "message", "content", 0, "thinkingSignature"], "more"]), undefined);
+		assert.deepEqual(clientOp(["s", ["pi.live", "generation", "message"], { content: [{ type: "thinking", thinking: "a", thinkingSignature: "sig" }] }] as never), ["s", ["pi.live", "generation", "message"], { content: [{ type: "thinking", thinking: "a" }] }]);
+		assert.deepEqual(clientOp(["a", ["pi.live", "generation", "message", "content", 0, "text"], "x"]), ["a", ["pi.live", "generation", "message", "content", 0, "text"], "x"]);
 	});
 
 	test("requires hello with the right protocol", async () => {
@@ -235,6 +281,52 @@ describe("tau server", () => {
 		assert.equal(dialogs[0].conversation.id, id, "most recent first");
 		assert.equal(dialogs[0].title, "list me");
 		await client.close();
+	});
+
+	test("dialogs kept up to date read as they would from scratch, and a version gives only what changed since", async () => {
+		const client = await TauClient.connect(server.url);
+		// One that will not change.
+		await client.request("conversation.create", { title: "Unchanged" });
+		const first = await client.request("dialogs.subscribe");
+		assert.equal(first.full, true);
+		const { dialog } = await client.request("conversation.create", {});
+		const id = dialog.conversation.id;
+		const replica = new ConversationReplica(id);
+		await replica.sync(client);
+		await chat(client, replica, "one", "k1");
+		await chat(client, replica, "$ echo two", "k2");
+		const answers = replica.ordered().filter((entry) => entry.kind === "pi.assistant");
+		await client.request("conversation.read", { conversationId: id, at: answers[0]!.id });
+		await chat(client, replica, "three", "k3");
+		await client.request("conversation.rename", { conversationId: id, title: "Kept" });
+
+		const changed = await client.request("dialogs.subscribe", { since: first.version });
+		assert.equal(changed.full, false);
+		const kept = changed.dialogs.find((each: { conversation: { id: number } }) => each.conversation.id === id);
+		assert.ok(kept, "the changed chat is in the changes");
+		assert.ok(changed.dialogs.length < (await client.request("dialogs.subscribe")).dialogs.length, "only what changed");
+		// From scratch: a new chat list, as after a restart.
+		const fresh = new Dialogs(host);
+		await fresh.ready();
+		const scratch = fresh.list().dialogs.find((each) => each.conversation.id === id);
+		fresh.close();
+		assert.deepEqual(kept, scratch);
+		assert.equal(kept!.title, "Kept");
+		assert.ok(kept!.unreadCount >= 2, "the answers after the read mark");
+
+		const none = await client.request("dialogs.subscribe", { since: changed.version });
+		assert.deepEqual(none.dialogs, [], "nothing since");
+		assert.equal((await client.request("dialogs.subscribe", { since: "another:3" })).full, true, "a version from another process: all of them");
+		await client.close();
+		// Another process (a restart): the old version gives the whole list.
+		const restarted = await serve(host);
+		try {
+			const again = await TauClient.connect(restarted.url);
+			assert.equal((await again.request("dialogs.subscribe", { since: changed.version })).full, true);
+			await again.close();
+		} finally {
+			await restarted.close();
+		}
 	});
 
 	test("keeps an idle chat's big prompt warm in idle mode, and stops when the setting says so", async () => {
