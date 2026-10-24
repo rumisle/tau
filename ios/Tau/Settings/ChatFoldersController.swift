@@ -192,7 +192,7 @@ final class ChatFolderEditController: SettingsListController {
         let plus = PresentationResourcesItemList.plusIconImage(theme.presentationTheme).map { centeredIcon($0) }
         var items: [ListViewItem] = []
         if self.isNew {
-            items.append(SettingsAnimationHeaderItem(theme: theme, animation: "ChatListNewFolder", text: "Choose the chats this folder shows: whole servers, projects, or single chats."))
+            items.append(SettingsAnimationHeaderItem(theme: theme, animation: "ChatListNewFolder", text: "Choose the chats this folder shows: whole servers or single chats."))
         }
         items.append(SettingsTextItem(theme: theme, text: "Folder Name", kind: .header))
         items.append(SettingsInputItem(theme: theme, text: self.folder.title, placeholder: "Folder Name", maxLength: 24, changed: { [weak self] text in

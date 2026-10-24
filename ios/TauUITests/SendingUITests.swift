@@ -1527,55 +1527,57 @@ final class SendingUITests: XCTestCase {
         self.app.activate()
     }
 
-    /// Folders: seeded on first launch (the biggest project), the tabs under the search field, a tab's list, a swipe
-    /// back to All, a tab's menu, Settings > Chat Folders, a new folder and its chat picker.
+    /// Folders: none seeded with one server; Settings > Chat Folders, a new folder and its chat picker, twice; the tabs
+    /// under the search field, a tab's list, a swipe back to All, a tab's menu.
     func testFolders() {
-        // Two chats in one project, so the seed makes its folder: the server may be new.
-        for text in ["folder one", "folder two"] {
-            self.launch(["-newChat", "YES"])
-            self.focusInput()
-            self.type(text)
-            self.send()
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("folder one")
+        self.send()
+        sleep(2)
+        self.launch(["-tab", "1", "-folders", "YES"])
+        sleep(2)
+        XCTAssertFalse(self.app.descendants(matching: .any)["All"].firstMatch.exists, "no folders seeded for one server")
+        self.app.descendants(matching: .any)["Chat Folders"].firstMatch.tap()
+        sleep(2)
+        self.shot("fold-4-settings")
+        for (index, kind) in ["Working", "Unread"].enumerated() {
+            self.app.descendants(matching: .any)["Create a New Folder"].firstMatch.tap()
+            sleep(2)
+            if index == 0 {
+                self.shot("fold-5-new")
+            }
+            self.app.descendants(matching: .any)["Add Chats"].firstMatch.tap()
+            sleep(2)
+            if index == 0 {
+                self.shot("fold-6-picker")
+            }
+            self.app.descendants(matching: .any)[kind].firstMatch.tap()
+            sleep(1)
+            self.point(0.9, 0.08).tap()
+            sleep(2)
+            if index == 0 {
+                self.shot("fold-7-named")
+            }
+            self.point(0.88, 0.08).tap()
             sleep(2)
         }
-        self.launch(["-folders", "YES"])
+        self.app.terminate()
+        self.launch(["-folders", "keep"])
         sleep(3)
         self.shot("fold-0-tabs")
-        let tabs = self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'tmp'"))
-        print("TABS", tabs.count, self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'All'")).count)
-        self.point(0.72, 0.226).tap()
+        // The tabs, All, Working and Unread, are not elements of their own: by where they are.
+        self.point(0.5, 0.226).tap()
         sleep(2)
         self.shot("fold-1-folder")
         self.app.swipeRight()
         sleep(2)
         self.shot("fold-2-swiped")
-        self.point(0.72, 0.226).press(forDuration: 1.0)
+        self.point(0.5, 0.226).press(forDuration: 1.0)
         sleep(2)
         self.shot("fold-3-menu")
         self.point(0.5, 0.95).tap()
         sleep(1)
-        self.app.terminate()
-        self.launch(["-tab", "1", "-folders", "keep"])
-        sleep(2)
-        self.app.descendants(matching: .any)["Chat Folders"].firstMatch.tap()
-        sleep(2)
-        self.shot("fold-4-settings")
-        self.app.descendants(matching: .any)["Create a New Folder"].firstMatch.tap()
-        sleep(2)
-        self.shot("fold-5-new")
-        self.app.descendants(matching: .any)["Add Chats"].firstMatch.tap()
-        sleep(2)
-        self.shot("fold-6-picker")
-        self.app.descendants(matching: .any)["Working"].firstMatch.tap()
-        sleep(1)
-        self.point(0.9, 0.08).tap()
-        sleep(2)
-        self.shot("fold-7-named")
-        self.point(0.88, 0.08).tap()
-        sleep(2)
-        self.app.terminate()
-        self.launch(["-folders", "keep"])
-        sleep(3)
         self.point(0.83, 0.226).tap()
         sleep(2)
         self.shot("fold-8-empty")

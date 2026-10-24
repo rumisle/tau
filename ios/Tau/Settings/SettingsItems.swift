@@ -34,7 +34,6 @@ enum SettingsIcon {
     static let usage = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorPurple])
     /// PresentationResourcesSettings.chatFolders.
     static let chatFolders = renderSettingsIcon(name: "Item List/Icons/Folder", backgroundColors: [colorLightBlue])
-    static let projects = renderSettingsIcon(name: "Item List/Icons/Folder", backgroundColors: [colorLightBlue])
     static let appearance = renderSettingsIcon(name: "Item List/Icons/Appearance", backgroundColors: [colorLightBlue])
     static let notifications = renderSettingsIcon(name: "Item List/Icons/Notifications", backgroundColors: [colorRed])
     static let data = renderSettingsIcon(name: "Item List/Icons/Data", backgroundColors: [colorGreen])
