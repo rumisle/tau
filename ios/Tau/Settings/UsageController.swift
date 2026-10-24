@@ -123,7 +123,7 @@ final class UsageController: SettingsListController {
             for (index, entry) in report.models.enumerated() {
                 let share = self.effectiveMetric == .cost ? entry.totals.cost / total : Double(entry.totals.tokens) / totalTokens
                 let value = self.effectiveMetric == .cost ? formatCost(entry.totals.cost) : formatTokens(entry.totals.tokens)
-                items.append(SettingsRowItem(theme: theme, icon: seriesIcon(colors[entry.model] ?? seriesColors[0]), title: shortModelName(entry.model), subtitle: "\(formatTokens(entry.totals.tokens)) tokens · \(entry.model == cacheWarmingModel ? refreshesText(entry.totals.replies) : entry.model == compactionModel ? compactionsText(entry.totals.replies) : answersText(entry.totals.replies))", accessory: .value("\(value) · \(percentText(share))"), position: SettingsRowPosition(isFirst: index == 0, isLast: index == report.models.count - 1), action: nil))
+                items.append(SettingsRowItem(theme: theme, icon: seriesIcon(colors[entry.model] ?? seriesColors[0]), title: shortModelName(entry.model), subtitle: "\(formatTokens(entry.totals.tokens)) tokens, \(entry.model == cacheWarmingModel ? refreshesText(entry.totals.replies) : entry.model == compactionModel ? compactionsText(entry.totals.replies) : answersText(entry.totals.replies))", accessory: .value("\(value) (\(percentText(share)))"), position: SettingsRowPosition(isFirst: index == 0, isLast: index == report.models.count - 1), action: nil))
             }
             items.append(SettingsTextItem(theme: theme, text: "Input \(formatTokens(report.total.input)), output \(formatTokens(report.total.output)), cache read \(formatTokens(report.total.cacheRead)), cache write \(formatTokens(report.total.cacheWrite)).", kind: .footer))
         }
@@ -133,7 +133,7 @@ final class UsageController: SettingsListController {
             items.append(SettingsTextItem(theme: theme, text: "Top Chats", kind: .header))
             for (index, (dialog, totals)) in chats.enumerated() {
                 let value = self.effectiveMetric == .cost ? formatCost(totals.cost) : formatTokens(totals.tokens)
-                items.append(SettingsRowItem(theme: theme, icon: Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: 30.0), title: dialog.title, subtitle: "\(dialog.projectLabel) · \(answersText(totals.replies))", accessory: .disclosure(label: value), position: SettingsRowPosition(isFirst: index == 0, isLast: index == chats.count - 1), action: { [weak self] in
+                items.append(SettingsRowItem(theme: theme, icon: Avatar.image(letters: Avatar.letters(dialog.title), colorIndex: dialog.id, diameter: 30.0), title: dialog.title, subtitle: answersText(totals.replies), accessory: .disclosure(label: value), position: SettingsRowPosition(isFirst: index == 0, isLast: index == chats.count - 1), action: { [weak self] in
                     guard let self else {
                         return
                     }
@@ -507,7 +507,7 @@ private final class UsageChartItemNode: ListViewItemNode {
         // Header: the selected day, or the span's total; the metric to switch to.
         let header: String
         if let selected = item.selectedDay, selected < days.count {
-            header = "\(dayTitle(days[selected].day)) · \(self.format(self.value(days[selected].total, metric: metric), metric: metric))"
+            header = "\(dayTitle(days[selected].day)): \(self.format(self.value(days[selected].total, metric: metric), metric: metric))"
         } else {
             let total = self.value(item.report.total, metric: metric)
             header = "\(self.format(total, metric: metric)) in \(days.count) days"

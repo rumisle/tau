@@ -282,7 +282,7 @@ final class LiveActivityController {
                 // Its server's update carries the alert while tau is away: not twice.
                 if let finished, finishedHere, !active, !pushes {
                     let worked = finished.finishedAt.map { workedText($0.timeIntervalSince(finished.since)) } ?? ""
-                    alert = AlertConfiguration(title: "\(finished.title)", body: "Done · worked \(worked)\(finished.detail.map { " · \($0)" } ?? "")", sound: .default)
+                    alert = AlertConfiguration(title: "\(finished.title)", body: "done in \(worked)\(finished.detail.map { "\n\($0)" } ?? "")", sound: .default)
                 }
                 Task {
                     await activity.update(content, alertConfiguration: alert)

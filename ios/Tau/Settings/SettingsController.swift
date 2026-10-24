@@ -169,9 +169,9 @@ final class SettingsController: SettingsListController {
         if store.isDemo {
             subtitle = "Demo data"
         } else if servers.count == 1 {
-            subtitle = "\(servers[0].name) · \(statusText)"
+            subtitle = "\(servers[0].name), \(statusText.lowercased())"
         } else {
-            subtitle = "\(servers.count) servers · \(statusText)"
+            subtitle = "\(servers.count) servers, \(statusText.lowercased())"
         }
         return [
             SettingsProfileItem(theme: theme, title: "tau", subtitle: subtitle),

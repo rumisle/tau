@@ -27,7 +27,7 @@ enum ModelErrorText {
             return text
         }
         let prefix = text[..<brace].trimmingCharacters(in: .whitespacesAndNewlines)
-        return prefix.isEmpty ? found : "\(prefix) · \(found)"
+        return prefix.isEmpty ? found : "\(prefix): \(found)"
     }
 
     private static let kinds: [(pattern: String, reason: String)] = [

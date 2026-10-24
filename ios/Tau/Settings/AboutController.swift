@@ -40,7 +40,7 @@ final class AboutController: SettingsListController {
                     continue
                 }
                 let revision = String(info.piRevision.prefix(7))
-                items.append(SettingsRowItem(theme: theme, icon: nil, title: server.name, subtitle: "\(info.hostname) · pi \(revision.isEmpty ? "—" : revision)", accessory: .disclosure(label: ""), position: SettingsRowPosition(isFirst: index == 0, isLast: index == servers.count - 1), action: revision.isEmpty ? nil : open("https://github.com/earendil-works/pi/tree/\(info.piRevision)")))
+                items.append(SettingsRowItem(theme: theme, icon: nil, title: server.name, subtitle: "\(info.hostname), pi \(revision.isEmpty ? "—" : revision)", accessory: .disclosure(label: ""), position: SettingsRowPosition(isFirst: index == 0, isLast: index == servers.count - 1), action: revision.isEmpty ? nil : open("https://github.com/earendil-works/pi/tree/\(info.piRevision)")))
             }
             items.append(SettingsTextItem(theme: theme, text: "Servers run pi-durable from pi's main branch at these commits.", kind: .footer))
         }

@@ -247,10 +247,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             if busy {
                 // How long this run has worked, as it goes.
                 let elapsed = self.lastState?.runStartedAt.map { Date().timeIntervalSince($0) } ?? 0.0
-                status = .working(elapsed >= 1.0 ? "working · \(formatElapsed(elapsed))" : "working")
+                status = .working(elapsed >= 1.0 ? "working for \(formatElapsed(elapsed))" : "working")
             } else if let since = self.compactingSince {
                 let elapsed = Date().timeIntervalSince(since)
-                status = .working(elapsed >= 1.0 ? "compacting · \(formatElapsed(elapsed))" : "compacting")
+                status = .working(elapsed >= 1.0 ? "compacting for \(formatElapsed(elapsed))" : "compacting")
             } else if let activity = dialog.subagentActivity {
                 // Its background subagents, as Telegram's title says who is typing.
                 status = .working(activity)
@@ -989,7 +989,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             let working = subagents.filter(\.busy).count
             let summary = NSMutableAttributedString(string: subagents.count == 1 ? "1 subagent" : "\(subagents.count) subagents")
             if working > 0 {
-                summary.insert(NSAttributedString(string: " · "), at: 0)
+                summary.insert(NSAttributedString(string: ", "), at: 0)
                 summary.insert(NSAttributedString(string: "\(working) working", attributes: [.foregroundColor: self.theme.presentationData.theme.list.itemAccentColor]), at: 0)
             }
             items.append(.action(ContextMenuActionItem(text: "Subagents", textLayout: .secondLineWithAttributedValue(summary), icon: { _ in nil }, iconSource: centeredIcon("Chat/Context Menu/Bots"), action: { [weak self] controller, _ in
@@ -1064,9 +1064,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 }
                 let status: NSAttributedString
                 if busy {
-                    status = NSAttributedString(string: call?.startedAt.map { "working · \(formatElapsed(Date().timeIntervalSince($0)))" } ?? "working", attributes: [.foregroundColor: accent])
+                    status = NSAttributedString(string: call?.startedAt.map { "working for \(formatElapsed(Date().timeIntervalSince($0)))" } ?? "working", attributes: [.foregroundColor: accent])
                 } else if let duration = call?.duration {
-                    status = NSAttributedString(string: "worked \(formatDuration(duration))")
+                    status = NSAttributedString(string: "worked for \(formatDuration(duration))")
                 } else {
                     status = NSAttributedString(string: "idle")
                 }
@@ -1102,21 +1102,21 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 }), false))
             }
             if cache.warms > 0 {
-                var kept = "\(cache.warms)× · \(formatCost(cache.cost))"
+                var kept = "\(cache.warms)×, \(formatCost(cache.cost))"
                 if cache.saved > 0.0 {
-                    kept += " · saved \(formatCost(cache.saved))"
+                    kept += ", saved \(formatCost(cache.saved))"
                 }
                 row("Kept Warm", kept)
             }
         }
         let total = usage.total
         items.append(.separator)
-        row("Tokens", "\(formatTokens(total.input)) in · \(formatTokens(total.output)) out")
-        row("Cached", "\(formatTokens(total.cacheRead)) read · \(formatTokens(total.cacheWrite)) written")
+        row("Tokens", "\(formatTokens(total.input)) in, \(formatTokens(total.output)) out")
+        row("Cached", "\(formatTokens(total.cacheRead)) read, \(formatTokens(total.cacheWrite)) written")
         if usage.models.count > 1 {
             items.append(.separator)
             for (model, value) in usage.models {
-                row(model.split(separator: "/").last.map(String.init) ?? model, "\(formatCost(value.cost)) · \(formatTokens(value.input + value.output + value.cacheRead + value.cacheWrite)) tokens")
+                row(model.split(separator: "/").last.map(String.init) ?? model, "\(formatCost(value.cost)), \(formatTokens(value.input + value.output + value.cacheRead + value.cacheWrite)) tokens")
             }
         }
         return items
@@ -1806,16 +1806,16 @@ private func contextDescription(_ usage: ConversationUsage) -> String {
     guard let window = usage.contextWindow, let percent = usage.contextPercent else {
         return "\(formatTokens(tokens)) tokens"
     }
-    return "\(percent)% · \(formatTokens(tokens)) of \(formatTokens(window))"
+    return "\(percent)%, \(formatTokens(tokens)) of \(formatTokens(window))"
 }
 
 /// The usage row's second line: how full the context is, the spend, and "warm" in the accent color while the prompt
 /// cache lasts. The numbers behind them are a level down.
 private func usageSummary(_ usage: ConversationUsage, accent: UIColor) -> NSAttributedString {
     let context = usage.contextPercent.map { "\($0)%" } ?? (usage.contextTokens == nil ? "Empty" : "\(formatTokens(usage.contextTokens ?? 0)) tokens")
-    let summary = NSMutableAttributedString(string: "\(context) · \(formatCost(usage.cost))")
+    let summary = NSMutableAttributedString(string: "\(context), \(formatCost(usage.cost))")
     if usage.cache?.isWarm() == true {
-        summary.append(NSAttributedString(string: " · "))
+        summary.append(NSAttributedString(string: ", "))
         summary.append(NSAttributedString(string: "warm", attributes: [.foregroundColor: accent]))
     }
     return summary
@@ -1826,7 +1826,7 @@ private func promptCacheStatus(expiresAt: Date, accent: UIColor, now: Date = Dat
     let left = expiresAt.timeIntervalSince(now)
     if left > 0.0 {
         let seconds = Int(left.rounded(.up))
-        return NSAttributedString(string: String(format: "Warm · %d:%02d left", seconds / 60, seconds % 60), attributes: [.foregroundColor: accent])
+        return NSAttributedString(string: String(format: "warm, %d:%02d left", seconds / 60, seconds % 60), attributes: [.foregroundColor: accent])
     }
     let ago = -left
     if ago < 60.0 {

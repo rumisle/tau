@@ -303,6 +303,8 @@ private func contentHeight(_ blocks: [LaidOutBlock], revealed: Int?) -> CGFloat 
 final class ChatMessageItemNode: ListViewItemNode {
     private let bubbleNode = GradientBubbleNode()
     private let dateNode = TextNode()
+    /// An answer's run, on the left of its footer: "worked for 38s", with the time on the right.
+    private let runNode = TextNode()
     /// Telegram's status after the time: the turning clock while on its way, two checks once the model has it.
     private let clockFrameNode = ASImageNode()
     private let clockMinNode = ASImageNode()
@@ -350,7 +352,12 @@ final class ChatMessageItemNode: ListViewItemNode {
     }
     private var selectionNode: ChatMessageSelectionNode?
 
-    private(set) var item: ChatMessageItem?
+    private(set) var item: ChatMessageItem? {
+        didSet {
+            // Only an answer's footer has it; that layout shows it again.
+            self.runNode.isHidden = true
+        }
+    }
     private var laidOutBlocks: [LaidOutBlock] = []
     private var revealController: TextRevealController?
     private var revealLink: SharedDisplayLinkDriver.Link?
@@ -392,6 +399,8 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.timerNode.displaysAsynchronously = false
         self.timerNode.isUserInteractionEnabled = false
         self.contentNode.addSubnode(self.dateNode)
+        self.runNode.isHidden = true
+        self.contentNode.addSubnode(self.runNode)
         for node in [self.clockFrameNode, self.clockMinNode, self.checkSentNode, self.checkReadNode] {
             node.isLayerBacked = true
             node.displaysAsynchronously = false
@@ -819,6 +828,7 @@ final class ChatMessageItemNode: ListViewItemNode {
 
     func asyncLayout() -> (_ item: ChatMessageItem, _ params: ListViewItemLayoutParams, _ neighbors: ListViewItemNeighbors) -> (ListViewItemNodeLayout, (ListViewItemUpdateAnimation) -> Void) {
         let makeDateLayout = TextNode.asyncLayout(self.dateNode)
+        let makeRunLayout = TextNode.asyncLayout(self.runNode)
         let makeToolTitleLayout = TextNode.asyncLayout(self.toolTitleNode)
         let makeToolTextLayout = TextNode.asyncLayout(self.toolTextNode)
         let makeSubagentTaskLayout = TextNode.asyncLayout(self.subagentTaskNode)
@@ -1060,16 +1070,17 @@ final class ChatMessageItemNode: ListViewItemNode {
                                 guard let label else {
                                     return
                                 }
+                                // "retrying in 5s (attempt 3): overloaded", lowercase as the chat's other statuses.
                                 var text: String
                                 if let at = retry.at, at.timeIntervalSinceNow > 0.5 {
-                                    text = "Retrying in \(formatElapsed(at.timeIntervalSinceNow.rounded(.up)))"
+                                    text = "retrying in \(formatElapsed(at.timeIntervalSinceNow.rounded(.up)))"
                                 } else {
-                                    text = "Retrying"
+                                    text = "retrying"
                                 }
                                 if retry.attempt > 2 {
-                                    text += " · attempt \(retry.attempt)"
+                                    text += " (attempt \(retry.attempt))"
                                 }
-                                text += " · " + retry.reason
+                                text += ": " + retry.reason
                                 label.attributedText = NSAttributedString(string: text, font: Font.regular(14.0), textColor: color)
                                 let labelSize = label.updateLayout(CGSize(width: maxWidth, height: 20.0))
                                 label.frame = CGRect(origin: CGPoint(x: labelX, y: node.frame.midY - labelSize.height / 2.0), size: labelSize)
@@ -1150,22 +1161,29 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let carriedReveal = currentRevealCount ?? (item.isStreaming ? item.interaction.revealProgress.with { $0[message.id] } : nil)
                 let revealed: Int? = (item.isStreaming || carriedReveal != nil) ? (carriedReveal ?? 0) : nil
                 let textHeight = contentHeight(laidOut, revealed: revealed)
-                // The end of a run: when the answer came and how long the run took, at the bottom right as Telegram
-                // dates a message.
+                // The end of a run: when the answer came at the bottom right, as Telegram dates a message, and how the
+                // run went at the bottom left, words apart from the time rather than a dot.
                 var footerLayout: TextNodeLayout?
                 var footerApply: (() -> TextNode)?
+                var runLayout: TextNodeLayout?
+                var runApply: (() -> TextNode)?
                 if let turn = message.turn, !item.isStreaming, revealed == nil {
-                    var text = messageTimeString(turn.finishedAt)
-                    if turn.retries > 0 {
-                        // The provider failed on the way, and the server asked again.
-                        text = (turn.retries == 1 ? "Retried once · " : "Retried \(turn.retries)× · ") + text
-                    }
-                    if let duration = turn.duration, duration >= 1.0 {
-                        text = "Worked for \(formatDuration(duration)) · " + text
-                    }
-                    let (layout, apply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: text, font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 40.0)))
+                    let (layout, apply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: messageTimeString(turn.finishedAt), font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 40.0)))
                     footerLayout = layout
                     footerApply = apply
+                    var parts: [String] = []
+                    if turn.retries > 0 {
+                        // The provider failed on the way, and the server asked again.
+                        parts.append(turn.retries == 1 ? "retried once" : "retried \(turn.retries) times")
+                    }
+                    if let duration = turn.duration, duration >= 1.0 {
+                        parts.append("worked for \(formatDuration(duration))")
+                    }
+                    if !parts.isEmpty {
+                        let (layout, apply) = makeRunLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: parts.joined(separator: ", "), font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth - layout.size.width - 12.0, height: 40.0)))
+                        runLayout = layout
+                        runApply = apply
+                    }
                 }
                 let footerSpacing: CGFloat = 5.0
                 let height = textHeight + (footerLayout.map { footerSpacing + $0.size.height } ?? 0.0)
@@ -1181,12 +1199,22 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.bubbleNode.isHidden = true
                     if let footerLayout, let footerApply {
                         let _ = footerApply()
-                        if self.dateNode.isHidden {
+                        // The footer comes when the run ends.
+                        let appearing = self.dateNode.isHidden
+                        if appearing {
                             self.dateNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.25)
                         }
                         self.dateNode.isHidden = false
                         let x = params.leftInset + freeTextInset + leftShift
                         self.dateNode.frame = CGRect(origin: CGPoint(x: x + maxTextWidth - footerLayout.size.width, y: textHeight + footerSpacing), size: footerLayout.size)
+                        if let runLayout, let runApply {
+                            let _ = runApply()
+                            if appearing {
+                                self.runNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.25)
+                            }
+                            self.runNode.isHidden = false
+                            self.runNode.frame = CGRect(origin: CGPoint(x: x, y: textHeight + footerSpacing), size: runLayout.size)
+                        }
                     } else {
                         self.dateNode.isHidden = true
                     }
@@ -1310,7 +1338,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                                 return
                             }
                             let elapsed = Date().timeIntervalSince(since)
-                            let time = elapsed >= 1.0 ? " · " + formatElapsed(elapsed) : nil
+                            let time = elapsed >= 1.0 ? "  " + formatElapsed(elapsed) : nil
                             var timeWidth: CGFloat = 0.0
                             if let time {
                                 self.timerNode.attributedText = NSAttributedString(string: time, font: Font.with(size: 13.0, weight: .medium, traits: .monospacedNumbers), textColor: serviceText)
@@ -1403,16 +1431,19 @@ final class ChatMessageItemNode: ListViewItemNode {
                     let innerWidth = cardWidth - cardInsets.left - cardInsets.right
                     let header = NSAttributedString(string: "Context compacted", font: Font.semibold(15.0), textColor: serviceText)
                     let (headerLayout, headerApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: header, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: 30.0)))
-                    let why: String
+                    // When, and why where it says something: on its own as the context filled, after a request too long
+                    // for the model.
+                    let time = messageTimeString(message.date)
+                    let when: String
                     switch reason {
                     case "threshold":
-                        why = "The context was filling up"
+                        when = "automatically at \(time)"
                     case "overflow":
-                        why = "The context overflowed"
+                        when = "after an overflow at \(time)"
                     default:
-                        why = "Compacted on request"
+                        when = "at \(time)"
                     }
-                    let subline = NSAttributedString(string: "\(why) · \(messageTimeString(message.date))", font: Font.regular(13.0), textColor: serviceText.withMultipliedAlpha(0.7))
+                    let subline = NSAttributedString(string: when, font: Font.regular(13.0), textColor: serviceText.withMultipliedAlpha(0.7))
                     let (sublineLayout, sublineApply) = makeSubagentTaskLayout(TextNodeLayoutArguments(attributedString: subline, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: 30.0)))
                     var style = MarkdownStyle(fontSize: 14.0, textColor: serviceText, linkColor: serviceText, accentColor: serviceText)
                     style.maxWidth = innerWidth
@@ -1603,7 +1634,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         suffix = "failed"
                     }
                     if !suffix.isEmpty {
-                        header.append(NSAttributedString(string: " · " + suffix, font: Font.regular(14.0), textColor: call.kind == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTextColor))
+                        header.append(NSAttributedString(string: "  " + suffix, font: Font.regular(14.0), textColor: call.kind == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTextColor))
                     }
                     let (headerLayout, headerApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: header, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: textWidth, height: .greatestFiniteMagnitude)))
                     let quoted: String
@@ -1644,7 +1675,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                             parts.append("forked from this chat")
                         }
                         if !parts.isEmpty {
-                            let (layout, apply) = makeSubagentMetaLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: parts.joined(separator: " · "), font: Font.regular(13.0), textColor: theme.toolCardTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: bodyWidth, height: .greatestFiniteMagnitude)))
+                            let (layout, apply) = makeSubagentMetaLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: parts.joined(separator: ", "), font: Font.regular(13.0), textColor: theme.toolCardTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: bodyWidth, height: .greatestFiniteMagnitude)))
                             metaLayout = layout
                             metaApply = apply
                         }

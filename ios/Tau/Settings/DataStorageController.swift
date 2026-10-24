@@ -69,7 +69,7 @@ final class StorageUsageController: SettingsListController {
         let unsent = usages.reduce(Int64(0)) { $0 + $1.1.unsentBytes }
         let drafts = usages.reduce(Int64(0)) { $0 + $1.1.draftBytes }
         var items: [ListViewItem] = [
-            SettingsTextItem(theme: theme, text: "This iPhone · \(formatBytes(cache + unsent + drafts))", kind: .header),
+            SettingsTextItem(theme: theme, text: "This iPhone (\(formatBytes(cache + unsent + drafts)))", kind: .header),
             SettingsRowItem(theme: theme, icon: nil, title: "Chat History", accessory: .value(formatBytes(cache)), position: SettingsRowPosition(isFirst: true, isLast: false), action: nil),
             SettingsRowItem(theme: theme, icon: nil, title: "Unsent Messages", accessory: .value(formatBytes(unsent)), position: SettingsRowPosition(isFirst: false, isLast: false), action: nil),
             SettingsRowItem(theme: theme, icon: nil, title: "Drafts", accessory: .value(formatBytes(drafts)), position: SettingsRowPosition(isFirst: false, isLast: true), action: nil),
@@ -84,7 +84,7 @@ final class StorageUsageController: SettingsListController {
             }
         }
         items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
-        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Clear Cache · \(formatBytes(cache))", titleColor: cache > 0 ? theme.list.itemDestructiveColor : theme.list.itemSecondaryTextColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: true), action: cache > 0 ? { [weak self] in
+        items.append(SettingsRowItem(theme: theme, icon: nil, title: "Clear Cache (\(formatBytes(cache)))", titleColor: cache > 0 ? theme.list.itemDestructiveColor : theme.list.itemSecondaryTextColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: true), action: cache > 0 ? { [weak self] in
             self?.confirmClear(bytes: cache)
         } : nil))
         items.append(SettingsTextItem(theme: theme, text: "Chats load again from their server when opened.", kind: .footer))
@@ -138,7 +138,7 @@ final class NetworkUsageController: SettingsListController {
                 let counters = NetworkUsage.shared.counters[server.address] ?? NetworkUsage.Counters()
                 let sent = cellular ? counters.cellularSent : counters.wifiSent
                 let received = cellular ? counters.cellularReceived : counters.wifiReceived
-                items.append(SettingsRowItem(theme: theme, icon: nil, title: server.name, subtitle: "Sent \(formatBytes(sent)) · Received \(formatBytes(received))", accessory: .value(formatBytes(sent + received)), position: SettingsRowPosition(isFirst: index == 0, isLast: index == servers.count - 1), action: nil))
+                items.append(SettingsRowItem(theme: theme, icon: nil, title: server.name, subtitle: "Sent \(formatBytes(sent)), received \(formatBytes(received))", accessory: .value(formatBytes(sent + received)), position: SettingsRowPosition(isFirst: index == 0, isLast: index == servers.count - 1), action: nil))
             }
         }
         let since = DateFormatter.localizedString(from: NetworkUsage.shared.since, dateStyle: .medium, timeStyle: .short)

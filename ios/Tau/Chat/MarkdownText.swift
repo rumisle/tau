@@ -98,7 +98,7 @@ enum MarkdownText {
                     let line = NSMutableAttributedString()
                     for (cellIndex, cell) in row.enumerated() {
                         if cellIndex > 0 {
-                            line.append(NSAttributedString(string: " · ", font: Font.regular(style.fontSize), textColor: style.textColor))
+                            line.append(NSAttributedString(string: " | ", font: Font.regular(style.fontSize), textColor: style.textColor))
                         }
                         line.append(cell)
                     }

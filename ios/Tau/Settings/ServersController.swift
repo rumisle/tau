@@ -208,7 +208,7 @@ final class ServerController: SettingsListController {
             }),
         ]
         if let info = server.serverInfo {
-            items.append(SettingsTextItem(theme: theme, text: "\(info.hostname) · pi \(info.piRevision.prefix(7))", kind: .footer))
+            items.append(SettingsTextItem(theme: theme, text: "\(info.hostname), pi \(info.piRevision.prefix(7))", kind: .footer))
         }
         let thinking = server.defaultThinkingLevel
         items.append(SettingsTextItem(theme: theme, text: "New Chats", kind: .header))

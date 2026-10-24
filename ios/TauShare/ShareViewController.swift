@@ -334,9 +334,9 @@ final class ShareViewController: UIViewController, UICollectionViewDataSource, U
                 parts.append(files.count == 1 ? files[0].lastPathComponent : "\(files.count) Files")
             }
             if preview.isEmpty {
-                preview = parts.joined(separator: " · ")
+                preview = parts.joined(separator: ", ")
             } else if !parts.isEmpty {
-                preview = parts.joined(separator: " · ") + " · " + preview
+                preview = parts.joined(separator: ", ") + ", " + preview
             }
             self.previewLabel.text = preview
             self.updateSendState()
