@@ -121,6 +121,9 @@ targets:
   TauWidgets:
     type: app-extension
     platform: iOS
+    # iOS 18 for the watch's layout (supplementalActivityFamilies), which WidgetBundleBuilder cannot leave out
+    # before it: on iOS 17 there is no Live Activity.
+    deploymentTarget: "18.0"
     sources:
       - path: TauWidgets
       - path: Tau/LiveActivity/TauActivityAttributes.swift

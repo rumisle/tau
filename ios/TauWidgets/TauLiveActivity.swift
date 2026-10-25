@@ -314,7 +314,7 @@ struct StateMark: View {
 struct TauLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: TauActivityAttributes.self) { context in
-            LockScreenView(context: context)
+            ActivityFamilyView(context: context)
         } dynamicIsland: { context in
             let accent = context.state.accentValue
             let tint = tauAccentTint(accent)
@@ -383,8 +383,85 @@ struct TauLiveActivity: Widget {
             .widgetURL(context.state.chats.count == 1 ? context.state.chats[0].url : nil)
             .keylineTint(tint)
         }
+        // The watch's Smart Stack shows the compact island without it (iOS 18: this extension's deployment target).
+        .supplementalActivityFamilies([.small])
     }
 }
+
+/// The lock screen, or the watch.
+struct ActivityFamilyView: View {
+    let context: ActivityViewContext<TauActivityAttributes>
+    @Environment(\.activityFamily) private var family
+
+    var body: some View {
+        switch self.family {
+        case .small:
+            WatchView(context: self.context)
+        default:
+            LockScreenView(context: self.context)
+        }
+    }
+}
+
+/// The watch (docs/live-activity.md, "Apple Watch"): the top line as the expanded island's, the τ and what is going
+/// on, the minutes or the check; under it the newest chat, its avatar and title, the step or the answer's first line.
+struct WatchView: View {
+    let context: ActivityViewContext<TauActivityAttributes>
+
+    var body: some View {
+        let state = self.context.state
+        let accent = state.accentValue
+        let tint = tauAccentTint(accent)
+        VStack(alignment: .leading, spacing: 4.0) {
+            HStack(spacing: 4.0) {
+                TauGlyph()
+                    .fill(tint)
+                    .frame(width: 14.0, height: 14.0)
+                Text(state.headline)
+                    .font(.system(size: 13.0, weight: .semibold))
+                    .foregroundStyle(state.working.isEmpty && state.hasFailed ? failedRed : tint)
+                    .lineLimit(1)
+                Spacer(minLength: 2.0)
+                // Several chats: how many more than the one shown; else its minutes, or the check.
+                if state.chats.count + state.more > 1 {
+                    Text("+\(state.chats.count + state.more - 1)")
+                        .font(.system(size: 12.0, weight: .medium))
+                        .foregroundStyle(.secondary)
+                } else if !state.working.isEmpty {
+                    CompactTrailing(state: state, isStale: self.context.isStale)
+                } else {
+                    StateMark(failed: state.hasFailed, size: 14.0)
+                }
+            }
+            if let chat = state.chats.first {
+                HStack(alignment: .center, spacing: 6.0) {
+                    ChatAvatar(chat: chat, diameter: 22.0, isStale: self.context.isStale)
+                    VStack(alignment: .leading, spacing: 0.0) {
+                        Text(chat.title)
+                            .font(.system(size: 13.0, weight: .semibold))
+                            .lineLimit(1)
+                        Text(self.detail(chat))
+                            .font(.system(size: 12.0))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+        .environment(\.colorScheme, .dark)
+        .foregroundStyle(.white)
+        .environment(\.tauAccent, accent)
+        .activityBackgroundTint(Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.82))
+    }
+
+    private func detail(_ chat: TauActivityAttributes.Chat) -> String {
+        if chat.state == .working {
+            return self.context.isStale ? "Open tau" : (chat.detail ?? minutesText(chat.minutes))
+        }
+        return chat.detail ?? (chat.state == .done ? "Answered" : "The model failed")
+    }
+}
+
 
 @main
 struct TauWidgetsBundle: WidgetBundle {
