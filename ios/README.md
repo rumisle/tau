@@ -99,7 +99,7 @@ Telegram's own script, and copies every image and Lottie file the copied sources
 | AsyncDisplayKit, SwiftSignalKit, Display | Nodes, signals, `ListViewImpl`, `NavigationController`, `Window1`, context gestures |
 | TelegramPresentationData, PresentationStrings | The Classic, Day, Night and Tinted Night themes, Telegram's strings |
 | ContextUI, ContextControllerImpl | The context menu: a message lifts out of the list; the chat list preview; the chat's menu |
-| CheckNode, ChatMessageSelectionNode, AnimatedTextComponent, ChatTitleActivityNode, AnimatedCountLabelNode | Selection mode, the rolling "N Selected" title, "working" with typing dots, the scroll-to-bottom badge |
+| CheckNode, ChatMessageSelectionNode, AnimatedTextComponent, AnimatedCountLabelNode | Selection mode, the rolling "N Selected" title, "working" (its typing dots are Telegram's drawn once and run by Core Animation, `Common/TypingDotsLayer.swift`), the scroll-to-bottom badge |
 | AttachmentUI, MediaPickerUI, LegacyComponents | The attachment menu: glass sheet, photo grid with the camera tile, album switcher, caption field |
 | NavigationBarImpl, GlassBackgroundComponent, EdgeEffect, TabBarComponent, LiquidLens | Liquid Glass bars, buttons and the tab bar |
 | GradientBackground, Svg | The wallpaper gradient and its pattern |

@@ -74,7 +74,6 @@ let package = Package(
         .library(name: "ChatMessageSelectionNode", targets: ["ChatMessageSelectionNode"]),
         .library(name: "LegacyImpl", targets: ["LegacyImpl"]),
         .library(name: "Svg", targets: ["Svg"]),
-        .library(name: "ChatTitleActivityNode", targets: ["ChatTitleActivityNode"]),
         .library(name: "AnimatedCountLabelNode", targets: ["AnimatedCountLabelNode"]),
         .library(name: "DirectionalPanGesture", targets: ["DirectionalPanGesture"]),
         .library(name: "SemanticStatusNode", targets: ["SemanticStatusNode"]),
@@ -1793,22 +1792,6 @@ let package = Package(
             exclude: ["LegacyImpl"],
             sources: [
                 "Sources/Svg.swift",
-            ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        .target(
-            name: "ChatTitleActivityNode",
-            dependencies: ["AsyncDisplayKit", "Display", "LegacyComponents"],
-            path: "submodules/ChatTitleActivityNode",
-            sources: [
-                "Sources/ChatChoosingStickerActivityContentNode.swift",
-                "Sources/ChatPlayingActivityContentNode.swift",
-                "Sources/ChatRecordingVideoActivityContentNode.swift",
-                "Sources/ChatRecordingVoiceActivityContentNode.swift",
-                "Sources/ChatTitleActivityContentNode.swift",
-                "Sources/ChatTitleActivityNode.swift",
-                "Sources/ChatTypingActivityContentNode.swift",
-                "Sources/ChatUploadingActivityContentNode.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

@@ -45,7 +45,6 @@ ROOTS = [
     "//submodules/TelegramUI/Components/Chat/ChatMessageSelectionNode",
     "//submodules/LegacyComponents",
     "//submodules/Svg",
-    "//submodules/ChatTitleActivityNode",
     "//submodules/TelegramUI/Components/AnimatedTextComponent",
     "//submodules/AnimatedCountLabelNode",
     "//submodules/AttachmentUI",

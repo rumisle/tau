@@ -64,7 +64,6 @@ targets:
           - LegacyComponents
           - Svg
           - AnimatedTextComponent
-          - ChatTitleActivityNode
           - AnimatedCountLabelNode
           - AttachmentUI
           - MediaPickerUI
