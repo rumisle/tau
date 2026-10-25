@@ -68,5 +68,6 @@ Shard 1's last run left 25 tests unrun; `testEditQueued` and `testMoveToSteer` a
 - Emoji showing as boxes on a Linux server.
 - Keep Cache: turning itself off.
 - Folders.
+- Titles from a small model: `Titler` (src/titles.ts) names a chat with the chat's own model, Opus as well.
 - Dynamic Type for tool cards.
 - Streaming text that may overlap: seen, not confirmed.
