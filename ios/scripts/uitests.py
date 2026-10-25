@@ -5,11 +5,13 @@
 
 One build (`build-for-testing`), then a shard of the tests per simulator (`test-without-building`), each with its own
 dev server, screenshot directory, and server requests (SendingUITests' stop, start and wipe), so a test that stops its
-server stops nobody else's. The tests mostly wait on the agent (`$ sleep N`) and on animations, not on the CPU: three
-simulators run them in about a third of the time.
+server stops nobody else's. The tests mostly wait on the agent (`$ sleep N`) and on animations, not on the CPU, so
+several simulators run them in a fraction of the time; but each simulator holds about 3 GB (some 220 processes of
+iOS), and a Mac that runs out of memory pages them in and out until tests time out: by default one simulator per 8 GB
+of memory beyond the first 8, at least 1, at most 3.
 
 Usage: uv run ios/scripts/uitests.py [-j N] [--keep] [Class/test | test ...]
-  default: every test of TauUITests and SendingUITests, on 3 simulators
+  default: every test of TauUITests and SendingUITests, on 2 simulators with 16 GB, 3 with 24 GB or more
   -j N      simulators: "iPhone 17 Pro", then clones of it named "Tau UI <k>" (made the first time)
   --keep    leave the clones booted (they boot in about half a minute)
 
@@ -157,7 +159,8 @@ def serve_requests(directory: Path, port: int, stop: threading.Event) -> None:
 def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)
     args = sys.argv[1:]
-    count, keep, names = 3, False, []
+    memory = int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True).stdout.strip() or 0) // 2**30
+    count, keep, names = max(1, min(3, (memory - 8) // 8 + 1)), False, []
     while args:
         arg = args.pop(0)
         if arg == "-j":

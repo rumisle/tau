@@ -19,7 +19,7 @@ case "$1" in
   start)
     nc -z 127.0.0.1 "$PORT" 2>/dev/null && exit 0
     [ -n "$S" ] || { S=pi-tauDev-$(openssl rand -hex 3); echo "$S" > "$STATE"; tmux new-session -d -s "$S" -c "$(cd "$(dirname "$0")/../../server" && pwd)"; }
-    tmux send-keys -t "$S" "env -u OPENAI_API_KEY node --no-warnings src/main.ts --db $DB --port $PORT --host 127.0.0.1 --dev-tps ${TPS:-20} --cwd /tmp" Enter
+    tmux send-keys -t "$S" "env -u OPENAI_API_KEY node --no-warnings src/main.ts --db $DB --port $PORT --host 127.0.0.1 --dev-tps ${TPS:-80} --cwd /tmp" Enter
     for i in $(seq 1 40); do nc -z 127.0.0.1 "$PORT" 2>/dev/null && break; sleep 0.25; done ;;
   wipe)
     rm -f "$DB"* "${DB%.db}.search.db"*

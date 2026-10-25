@@ -322,6 +322,7 @@ final class ChatControllerNode: ASDisplayNode {
     // MARK: - History
 
     func update(state: ConversationState) {
+        self.updateTestState(state)
         // Messages leaving the queue for the transcript rise from the panel.
         let left = (self.state?.queued ?? []).filter { old in old.mode != .newContext && !state.queued.contains(where: { $0.id == old.id }) }
         if !left.isEmpty, let source = self.inputPanelNode.accessoryFrameInWindow() {
@@ -543,6 +544,29 @@ final class ChatControllerNode: ASDisplayNode {
     private weak var inlineSelectionNode: ChatMessageItemNode?
 
     private let selectionTapDelegate = SimultaneousGestureDelegate()
+
+    /// For the UI tests (`-uiTesting`): what the chat is doing, as an element they wait on instead of sleeping:
+    /// "loading" until its transcript is known, "busy" while the agent works, streams, has messages queued or a message
+    /// is on its way, else "idle".
+    private lazy var testStateView: UIView? = {
+        guard UserDefaults.standard.bool(forKey: "uiTesting"), !self.isPreview else {
+            return nil
+        }
+        let view = UIView(frame: CGRect(x: 0.0, y: 0.0, width: 1.0, height: 1.0))
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = "chatState"
+        self.view.addSubview(view)
+        return view
+    }()
+
+    private func updateTestState(_ state: ConversationState) {
+        guard let view = self.testStateView else {
+            return
+        }
+        let busy = state.busy || state.streaming != nil || !state.queued.isEmpty || state.messages.contains(where: { $0.delivery == .sending })
+        view.accessibilityValue = !state.isLoaded ? "loading" : busy ? "busy" : "idle"
+    }
 
     @objc private func selectionTapped(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended, let node = self.inlineSelectionNode else {

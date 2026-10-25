@@ -12,8 +12,14 @@ ios/scripts/build.sh --device  # signed Release build on the connected iPhone (t
 ios/scripts/testflight.sh      # archive and upload to App Store Connect ("tau agent") for TestFlight
 ios/scripts/uitest.sh          # UI walkthroughs in the simulator; screenshots of each step in /tmp/tau-ui
 ios/scripts/sending-tests.sh   # the sending state machine against the dev server (scripts/devserver.sh, port 7979)
-uv run ios/scripts/uitests.py  # all of them on 3 simulators at once, a dev server each: about 14 min instead of 40
+uv run ios/scripts/uitests.py  # all of them on several simulators at once, a dev server each (2 with 16 GB: about 28 min)
 ```
+
+The UI tests wait on what the app does rather than for a guessed time (`TauUITests/UITestSupport.swift`): with
+`-uiTesting`, a chat has an element `chatState` that says "loading", "busy" (the agent works, streams, has messages
+queued, or one is on its way) or "idle", which `waitForChat`, `waitForBusy` and `waitForIdle` wait on; `settle()`
+(0.6 s) is for Telegram's display-link animations, which XCUITest's own wait does not see, before a screenshot. The
+dev server streams at 80 tokens a second; the streaming tests ask for a document long enough to stream through them.
 
 XcodeGen comes from nix when it is not installed (`nix shell nixpkgs#xcodegen`). `Tau.xcodeproj` is generated and
 ignored by git; edit `project.yml`.
