@@ -53,9 +53,10 @@ chat (with one chat, the whole card does).
 
 The activity shows in the watch's Smart Stack (watchOS 11), in a layout of its own (`.supplementalActivityFamilies([.small])`,
 `WatchView`); without one the watch shows the compact island, the τ and a check, which says nothing of which chat.
-The state is the avatar's alone (ring, check, mark), as in the list: no τ, no headline saying it again. The newest
-chat's avatar, its title with its minutes while it works, and the step or the answer's first two lines; with several
-chats, a line over it, "2 working" or "Done", and how many more. This needs iOS 18, so the widget extension's deployment target is 18 and iOS 17 has no activity.
+The state is the avatar's alone (ring, check, mark), as in the list: no τ, no headline saying it again. Each chat is
+its avatar, its title with its minutes while it works, and the step or the answer: one chat with up to three lines
+of it; several, the newest two with a line each, and "+1 more". The card's height is the system's, so the rows sit
+in its middle. This needs iOS 18, so the widget extension's deployment target is 18 and iOS 17 has no activity.
 
 ## Completion
 

@@ -403,59 +403,59 @@ struct ActivityFamilyView: View {
     }
 }
 
-/// The watch (docs/live-activity.md, "Apple Watch"): the newest chat, its avatar saying its state, its title with its
-/// minutes while it works, and the step or the start of the answer; with several chats, how many work over it.
+/// The watch (docs/live-activity.md, "Apple Watch"): each chat's avatar saying its state, its title with its minutes
+/// while it works, and the step or the start of the answer: one chat with up to three lines of it, else the newest two
+/// with one each and how many more. The card's height is the system's, so the rows sit in its middle.
 struct WatchView: View {
     let context: ActivityViewContext<TauActivityAttributes>
 
     var body: some View {
         let state = self.context.state
         let accent = state.accentValue
-        let others = state.chats.count + state.more - 1
-        VStack(alignment: .leading, spacing: 4.0) {
-            if others > 0 {
-                HStack(spacing: 4.0) {
-                    Text(state.headline)
-                        .font(.system(size: 12.0, weight: .semibold))
-                        .foregroundStyle(!state.working.isEmpty ? tauAccentTint(accent) : state.hasFailed ? failedRed : .secondary)
-                    Spacer(minLength: 2.0)
-                    Text("+\(others)")
-                        .font(.system(size: 12.0, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                .lineLimit(1)
+        let shown = Array(state.chats.prefix(2))
+        let others = state.chats.count + state.more - shown.count
+        VStack(alignment: .leading, spacing: 6.0) {
+            ForEach(shown, id: \.id) { chat in
+                self.row(chat, lines: shown.count == 1 ? 3 : 1)
             }
-            if let chat = state.chats.first {
-                HStack(alignment: .top, spacing: 7.0) {
-                    ChatAvatar(chat: chat, diameter: 24.0, isStale: self.context.isStale)
-                    VStack(alignment: .leading, spacing: 1.0) {
-                        HStack(alignment: .firstTextBaseline, spacing: 4.0) {
-                            Text(chat.title)
-                                .font(.system(size: 14.0, weight: .semibold))
-                                .lineLimit(1)
-                            Spacer(minLength: 0.0)
-                            if chat.state == .working && !self.context.isStale {
-                                Text(minutesText(chat.minutes, compact: true))
-                                    .font(.system(size: 12.0, weight: .semibold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundStyle(tauAccentTint(accent))
-                                    .layoutPriority(1)
-                            }
-                        }
-                        Text(self.detail(chat))
-                            .font(.system(size: 13.0))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(others > 0 ? 1 : 2)
-                    }
-                }
+            if others > 0 {
+                Text("+\(others) more")
+                    .font(.system(size: 12.0, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 31.0)
             }
         }
         .padding(8.0)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .environment(\.colorScheme, .dark)
         .foregroundStyle(.white)
         .environment(\.tauAccent, accent)
         .activityBackgroundTint(Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.82))
+    }
+
+    private func row(_ chat: TauActivityAttributes.Chat, lines: Int) -> some View {
+        HStack(alignment: .top, spacing: 7.0) {
+            ChatAvatar(chat: chat, diameter: 20.0, isStale: self.context.isStale)
+            VStack(alignment: .leading, spacing: 1.0) {
+                HStack(alignment: .firstTextBaseline, spacing: 4.0) {
+                    Text(chat.title)
+                        .font(.system(size: 14.0, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 0.0)
+                    if chat.state == .working && !self.context.isStale {
+                        Text(minutesText(chat.minutes, compact: true))
+                            .font(.system(size: 12.0, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(tauAccentTint(self.context.state.accentValue))
+                            .layoutPriority(1)
+                    }
+                }
+                Text(self.detail(chat))
+                    .font(.system(size: 13.0))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(lines)
+            }
+        }
     }
 
     private func detail(_ chat: TauActivityAttributes.Chat) -> String {
