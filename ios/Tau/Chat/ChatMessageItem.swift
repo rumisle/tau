@@ -371,7 +371,13 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
     }
     private var laidOutBlocks: [LaidOutBlock] = []
-    private var revealController: TextRevealController?
+    private var revealController: TextRevealController? {
+        didSet {
+            if (oldValue == nil) != (self.revealController == nil) {
+                self.updateSlotMask()
+            }
+        }
+    }
     private var revealLink: SharedDisplayLinkDriver.Link?
     /// The visible message content in node coordinates, for context menu previews.
     private(set) var contentFrame: CGRect = .zero
@@ -917,44 +923,62 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.insets = layout.insets
     }
 
-    /// The rows inserted at the bottom by one transaction, which rise together: the agent's thinking and answer may
-    /// come in the same update, from a provider that buffers them.
-    private static var risingRows: (timestamp: Double, nodes: [Weak<ChatMessageItemNode>]) = (0.0, [])
+    /// A row is drawn only in the room the list has made for it, while the list animates its height (coming in,
+    /// growing, going) and while its text is revealed, and its top stays with that room's top: it comes in from under
+    /// the row below (the input panel, at the end) as the rows above move up, and never over them. Otherwise a new row
+    /// was drawn whole at once over the rows still moving away, and a revealed line below the row's height until the
+    /// row was laid out again for it: a thinking row whose text went on while the answer had begun under it was drawn
+    /// over the answer. The list itself keeps a growing row's top in place this way (ListView's update of a rotated
+    /// node); this does it for a new one too. The sender's own messages rise from the input field, as Telegram's.
+    private var slotMask: CALayer?
 
-    /// As Telegram's ChatMessageItemView, a new row rises from below its place (1.6 times its height) while the list
-    /// makes room for it, so it never covers the rows above, which move up as its height grows in. Rows inserted
-    /// together rise as one block, each below the next: one at a time, the upper one would start inside the lower.
-    /// Only at the bottom: older history loading above is not new.
-    private func rise(_ currentTimestamp: Double, duration: Double) {
-        if ChatMessageItemNode.risingRows.timestamp != currentTimestamp {
-            ChatMessageItemNode.risingRows = (currentTimestamp, [])
+    private var clipsToSlot: Bool {
+        if case .user = self.item?.message.role {
+            return false
         }
-        ChatMessageItemNode.risingRows.nodes.append(Weak(self))
-        // Index 0 is the bottom row (the list is rotated); the block is the run of inserted rows from it.
-        var rows: [Int: ChatMessageItemNode] = [:]
-        for node in ChatMessageItemNode.risingRows.nodes.compactMap(\.value) {
-            if let index = node.index {
-                rows[index] = node
+        return true
+    }
+
+    override var apparentHeight: CGFloat {
+        didSet {
+            self.updateSlotMask()
+        }
+    }
+
+    private func updateSlotMask() {
+        let height = self.bounds.height
+        guard self.clipsToSlot, self.apparentHeight < height - 0.5 || self.revealController != nil, let superlayer = self.layer.superlayer else {
+            if self.slotMask != nil {
+                self.layer.mask = nil
+                self.slotMask = nil
             }
+            return
         }
-        var block: [ChatMessageItemNode] = []
-        while let node = rows[block.count] {
-            block.append(node)
+        let mask: CALayer
+        if let current = self.slotMask {
+            mask = current
+        } else {
+            mask = CALayer()
+            mask.backgroundColor = UIColor.black.cgColor
+            self.slotMask = mask
+            self.layer.mask = mask
         }
-        let height = block.reduce(0.0) { $0 + $1.bounds.height }
-        var below: CGFloat = 0.0
-        for node in block {
-            node.transitionOffset = below - height * 1.6
-            node.addTransitionOffsetAnimation(0.0, duration: duration, beginAt: currentTimestamp)
-            below += node.bounds.height
-        }
+        // The room is the apparent frame, in the list's coordinates; this row's own are rotated and offset.
+        let slot = self.layer.convert(self.apparentFrame, from: superlayer)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        mask.frame = CGRect(x: -1000.0, y: slot.minY, width: self.bounds.width + 2000.0, height: max(0.0, slot.height))
+        CATransaction.commit()
     }
 
     override func animateInsertion(_ currentTimestamp: Double, duration: Double, options: ListViewItemAnimationOptions) {
         super.animateInsertion(currentTimestamp, duration: duration, options: options)
         self.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
-        if let role = self.item?.message.role, role != .user, !options.short {
-            self.rise(currentTimestamp, duration: duration)
+        if self.clipsToSlot {
+            // Its top with the room's top, down from it by what the room still lacks, as the room grows in.
+            self.transitionOffset = self.apparentHeight - self.bounds.height
+            self.addTransitionOffsetAnimation(0.0, duration: duration, beginAt: currentTimestamp)
+            self.updateSlotMask()
         }
         if case .user = self.item?.message.role {
             if let source = self.item?.riseFrom, let superview = self.view.superview {
@@ -981,6 +1005,8 @@ final class ChatMessageItemNode: ListViewItemNode {
 
     override func updateAbsoluteRect(_ rect: CGRect, within containerSize: CGSize) {
         super.updateAbsoluteRect(rect, within: containerSize)
+        // The list moves a row here after each step of its animations, the offset included.
+        self.updateSlotMask()
         // The list is rotated, so this row's top on screen is the container height minus its maxY.
         let visualTop = containerSize.height - rect.maxY
         self.bubbleNode.updateAbsolutePosition(visualTop: visualTop, containerSize: containerSize)

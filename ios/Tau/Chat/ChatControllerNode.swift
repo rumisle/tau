@@ -352,8 +352,12 @@ final class ChatControllerNode: ASDisplayNode {
             // Working with nothing to show yet: the τ where the answer will start.
             messages.append(ChatMessage(id: ChatControllerNode.waitingRowId, role: .assistant, text: "", date: Date(timeIntervalSince1970: 0.0), isStreaming: true, isWaiting: true, retry: state.retry))
         }
+        // The answer's blocks come one after another: once the next has begun, the one before is written, and goes on
+        // to its end at once instead of at the reveal's pace for text still coming (a provider that buffers sends the
+        // whole thinking, then the answer, and the thinking took seconds to show while pushing the answer down).
+        let lastStreaming = messages.lastIndex(where: \.isStreaming)
         var entries = messages.enumerated().map { index, message in
-            ChatHistoryEntry(message: message, index: index, isStreaming: message.isStreaming, selection: message.isStreaming ? nil : selectedIds.map { $0.contains(message.id) }, isExpanded: expanded.contains(message.id))
+            ChatHistoryEntry(message: message, index: index, isStreaming: message.isStreaming && (index == lastStreaming || message.tool != nil), selection: message.isStreaming ? nil : selectedIds.map { $0.contains(message.id) }, isExpanded: expanded.contains(message.id))
         }
         entries.sort()
 

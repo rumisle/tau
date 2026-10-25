@@ -41,8 +41,13 @@ with the dev model's `!doc <sections>` (a long answer of headings, paragraphs, l
 - **How far each answer has been revealed** is kept per chat (`ChatMessageItemInteraction.revealProgress`), so a new
   node picks up where the last one stopped.
 - **Fence lines pass through the math scanner whole.**
-- **New rows rise from below their place**, as Telegram's new messages (`ChatMessageItemNode.rise`): 1.6 times their
-  height, while the list makes room. Before, a new row was drawn at its place at once and faded in, under the rows
-  above still moving up. A provider that buffers sends the thinking and the answer in one update, and the thinking was
-  drawn over the answer until the list had made room for both; rows inserted at the bottom together now rise as one
-  block. The dev model's `!burst <text>` answers that way.
+- **A row is drawn only in the room the list has made for it** (`ChatMessageItemNode.updateSlotMask`), while its
+  height animates and while its text is revealed, with its top at the room's top: a new row comes in from under the
+  row below as the rows above move up. Before, a new row was drawn whole at once over the rows still moving away, and
+  a revealed line was drawn below the row until the row was laid out again for it.
+- **Once the next block of an answer has begun, the one before is written**: it is no longer streaming, and its reveal
+  goes to the end at once (Telegram's finalize, 0.3 s) rather than at the pace for text still coming. A provider that
+  buffers sends the whole thinking, then the answer: the thinking was revealed at 40 characters a second, drawn over
+  the answer under it, which moved down a line at a time. The dev model's `!burst <text>` answers all at once,
+  `!burst+<ms>` with the answer that long after the thinking, `!burst*<ms>` with that long between events (`*5` is
+  what showed it).

@@ -4,7 +4,7 @@
 // `!read <path>` reads a file with the read tool (an image comes back as one); `!send <path> [<path>…]` sends files to
 // the user (src/send-file.ts). `!code <script>` runs a code mode script (docs/codemode.md), `!code @<path>` the one in a file. `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
 // streams. `!burst <text>` answers as the echo does but all at once, its thinking and text in one go, as a provider that
-// buffers. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
+// buffers; `!burst+<ms> <text>` sends the thinking, then the rest that long after, `!burst-<ms>` the end that long after, `!burst*<ms>` each event that long after the one before. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
 // that long after it was last used, to try cache warming (src/cache.ts) without paying for it.
 import { type Api, calculateCost, createAssistantMessageEventStream, type AssistantMessage, type Message, type Model, type Provider } from "@earendil-works/pi-ai";
 import { readFileSync } from "node:fs";
@@ -88,12 +88,18 @@ function buffering(base: Provider): Provider {
 		streamSimple(model, context, streamOptions) {
 			const inner = base.streamSimple(model, context, streamOptions);
 			const last = context.messages.findLast((message) => (message.role as string) !== "system");
-			if (last?.role !== "user" || !userText(last.content).startsWith("!burst")) return inner;
+			const burst = last?.role === "user" ? /^!burst(?:([+*-])(\d+))?/.exec(userText(last.content)) : null;
+			if (burst === null) return inner;
 			const outer = createAssistantMessageEventStream();
+			const gap = Number(burst[2] ?? 0);
 			void (async () => {
 				const events = [];
 				for await (const event of inner) events.push(event);
-				for (const event of events) outer.push(event);
+				for (const event of events) {
+					const before = burst[1] === "*" || (burst[1] === "+" ? event.type === "text_start" : burst[1] === "-" && event.type === "done");
+					if (before && gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
+					outer.push(event);
+				}
 				outer.end(await inner.result());
 			})();
 			return outer;
