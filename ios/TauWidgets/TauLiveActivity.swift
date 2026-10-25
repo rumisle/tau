@@ -403,51 +403,55 @@ struct ActivityFamilyView: View {
     }
 }
 
-/// The watch (docs/live-activity.md, "Apple Watch"): the top line as the expanded island's, the τ and what is going
-/// on, the minutes or the check; under it the newest chat, its avatar and title, the step or the answer's first line.
+/// The watch (docs/live-activity.md, "Apple Watch"): the newest chat, its avatar saying its state, its title with its
+/// minutes while it works, and the step or the start of the answer; with several chats, how many work over it.
 struct WatchView: View {
     let context: ActivityViewContext<TauActivityAttributes>
 
     var body: some View {
         let state = self.context.state
         let accent = state.accentValue
-        let tint = tauAccentTint(accent)
+        let others = state.chats.count + state.more - 1
         VStack(alignment: .leading, spacing: 4.0) {
-            HStack(spacing: 4.0) {
-                TauGlyph()
-                    .fill(tint)
-                    .frame(width: 14.0, height: 14.0)
-                Text(state.headline)
-                    .font(.system(size: 13.0, weight: .semibold))
-                    .foregroundStyle(state.working.isEmpty && state.hasFailed ? failedRed : tint)
-                    .lineLimit(1)
-                Spacer(minLength: 2.0)
-                // Several chats: how many more than the one shown; else its minutes, or the check.
-                if state.chats.count + state.more > 1 {
-                    Text("+\(state.chats.count + state.more - 1)")
+            if others > 0 {
+                HStack(spacing: 4.0) {
+                    Text(state.headline)
+                        .font(.system(size: 12.0, weight: .semibold))
+                        .foregroundStyle(!state.working.isEmpty ? tauAccentTint(accent) : state.hasFailed ? failedRed : .secondary)
+                    Spacer(minLength: 2.0)
+                    Text("+\(others)")
                         .font(.system(size: 12.0, weight: .medium))
                         .foregroundStyle(.secondary)
-                } else if !state.working.isEmpty {
-                    CompactTrailing(state: state, isStale: self.context.isStale)
-                } else {
-                    StateMark(failed: state.hasFailed, size: 14.0)
                 }
+                .lineLimit(1)
             }
             if let chat = state.chats.first {
-                HStack(alignment: .center, spacing: 6.0) {
-                    ChatAvatar(chat: chat, diameter: 22.0, isStale: self.context.isStale)
-                    VStack(alignment: .leading, spacing: 0.0) {
-                        Text(chat.title)
-                            .font(.system(size: 13.0, weight: .semibold))
-                            .lineLimit(1)
+                HStack(alignment: .top, spacing: 7.0) {
+                    ChatAvatar(chat: chat, diameter: 24.0, isStale: self.context.isStale)
+                    VStack(alignment: .leading, spacing: 1.0) {
+                        HStack(alignment: .firstTextBaseline, spacing: 4.0) {
+                            Text(chat.title)
+                                .font(.system(size: 14.0, weight: .semibold))
+                                .lineLimit(1)
+                            Spacer(minLength: 0.0)
+                            if chat.state == .working && !self.context.isStale {
+                                Text(minutesText(chat.minutes, compact: true))
+                                    .font(.system(size: 12.0, weight: .semibold, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundStyle(tauAccentTint(accent))
+                                    .layoutPriority(1)
+                            }
+                        }
                         Text(self.detail(chat))
-                            .font(.system(size: 12.0))
+                            .font(.system(size: 13.0))
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(others > 0 ? 1 : 2)
                     }
                 }
             }
         }
+        .padding(8.0)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .environment(\.colorScheme, .dark)
         .foregroundStyle(.white)
         .environment(\.tauAccent, accent)
@@ -456,12 +460,11 @@ struct WatchView: View {
 
     private func detail(_ chat: TauActivityAttributes.Chat) -> String {
         if chat.state == .working {
-            return self.context.isStale ? "Open tau" : (chat.detail ?? minutesText(chat.minutes))
+            return self.context.isStale ? "Open tau for the latest" : (chat.detail ?? "Working")
         }
         return chat.detail ?? (chat.state == .done ? "Answered" : "The model failed")
     }
 }
-
 
 @main
 struct TauWidgetsBundle: WidgetBundle {
