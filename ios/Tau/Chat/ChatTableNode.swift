@@ -59,6 +59,14 @@ final class ChatTableNode: ASDisplayNode {
 
     private var applied: Applied?
 
+    /// The table as text, for a selection that takes it in: a row a line, cells a tab apart, as a spreadsheet pastes.
+    var plainText: String? {
+        guard let table = self.applied?.table else {
+            return nil
+        }
+        return ([table.header] + table.rows).map { row in row.map { MarkdownText.copiedText($0) }.joined(separator: "\t") }.joined(separator: "\n")
+    }
+
     /// Measures `table` within `maxWidth`; the returned apply lays the cells out (main thread). Call it on the main
     /// thread, as Telegram's asyncLayout: it takes the cells there are now, and the returned closure may run anywhere.
     /// A table laid out again unchanged (as every streaming step of the answer around it does) keeps its cells, drawn;

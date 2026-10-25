@@ -791,7 +791,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private func perform(_ action: ChatMessageAction, on message: ChatMessage) {
         switch action {
         case .copy:
-            UIPasteboard.general.string = message.text
+            // Quotes as Markdown's, as elsewhere they would be (docs/quotes.md).
+            UIPasteboard.general.string = TauQuote.markdown(message.text)
             self.presentToast(.copy(text: self.theme.presentationStrings.Conversation_TextCopied))
         case .edit:
             self.beginEditing(message, text: message.text, focus: true)
@@ -1473,7 +1474,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         let selected = messages.filter { ids.contains($0.id) }
         switch action {
         case .copy:
-            UIPasteboard.general.string = selected.map(\.text).joined(separator: "\n\n")
+            UIPasteboard.general.string = selected.map { TauQuote.markdown($0.text) }.joined(separator: "\n\n")
             self.controllerNode.setSelection(nil)
             self.presentToast(.copy(text: selected.count == 1 ? self.theme.presentationStrings.Conversation_TextCopied : "\(selected.count) messages copied to clipboard"))
         case .share:

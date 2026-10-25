@@ -100,13 +100,14 @@ Telegram's own script, and copies every image and Lottie file the copied sources
 | RLottieBinding, LottieComponent, ManagedAnimationNode | Telegram's animated icons, the swipe actions' icons |
 | ItemListUI (rows only), ChatListBadgeNode (in `Tau/ChatList`) | The chat list's swipe actions (Read / Unread, Archive, Delete) and unread badges |
 | GalleryUI (its frame: pager, zoom, swipe to dismiss, transitions) | The media viewer for sent photos (`Chat/ImageGalleryController.swift`, after InstantPageGalleryController) |
-| TextSelectionNode, ContextMenuScreen | Selecting text in a message lifted into its context menu or, after a double tap, in place (docs/typography.md), and the menu over the selection |
+| TextSelectionNode, ContextMenuScreen | Selecting text in a message lifted into its context menu or, after a double tap, in place, over the whole message (docs/typography.md), and the menu over the selection, Quote included (docs/quotes.md) |
 | SearchBarNode, SearchUI | The model picker's search (`Settings/ModelPickerController.swift`, after LanguageSelectionScreen) |
 | ChatListTitleView | The chat list's "Connecting..." / "Updating..." title with its spinner |
 | AlertComponent, AlertInputFieldComponent | Telegram's alerts with fields: Rename Chat, Add Server, a server's name and address |
 | UndoUI (no account-bound toasts, patch 0010) | Telegram's toasts: "Text copied to clipboard", model changes, notices |
 | libprisma (Prism's grammars in C++) | Syntax highlighting of code blocks and of the files tool cards show |
 | InteractiveTextComponent, StreamingTextReveal | Message text and the streaming reveal |
+| MessageInlineBlockBackgroundView | A quote in the field, as Telegram's field draws one (docs/quotes.md) |
 
 **Shimmed** (`ThirdParty/telegram-shims/`, 41 modules): stand-ins with a Telegram module's name and only the API the
 copied code uses, for modules bound to Telegram's account, network and database (`TelegramCore`, `Postbox`,

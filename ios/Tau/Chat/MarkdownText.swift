@@ -136,6 +136,7 @@ enum MarkdownText {
     /// either side reads: while an answer streams only its last chunk is new, so each step parses and lays out one
     /// chunk, not the whole answer, and the finished chunks keep their cached parse and layout.
     static func blocks(_ text: String, style: MarkdownStyle, wrapCode: Bool = true) -> [MarkdownBlock] {
+        let text = self.preparingQuotes(text)
         let chunks = self.chunks(text)
         let blocks = chunks.count == 1 ? self.chunkBlocks(text, style: style) : chunks.flatMap { self.chunkBlocks($0, style: style) }
         return wrapCode ? blocks : blocks.flatMap(self.separateCode)
@@ -242,7 +243,7 @@ enum MarkdownText {
             return cached
         }
         self.cacheLock.unlock()
-        let result = self.parseBlocks(text, style: style).map { self.linkified($0, style: style) }
+        let result = self.parseBlocks(text, style: style).map { self.inlineQuoted(self.linkified($0, style: style)) }
         self.cacheLock.lock()
         self.cache[key] = result
         self.cacheOrder.append(key)
@@ -250,6 +251,84 @@ enum MarkdownText {
             self.cache.removeValue(forKey: self.cacheOrder.removeFirst())
         }
         self.cacheLock.unlock()
+        return result
+    }
+
+    // MARK: - Quotes
+
+    /// A few quoted words (TauQuote's inline quote), on their text: the row marks them, as the field does. The value
+    /// tells one quote from the next.
+    static let inlineQuoteKey = NSAttributedString.Key("tau.inlineQuote")
+    private static let inlineQuoteStart: unichar = 0xE010
+    private static let inlineQuoteEnd: unichar = 0xE011
+
+    /// The message's quotes (docs/quotes.md) for the parser: a block as Markdown's block quote, a paragraph of its own
+    /// (blank lines around it, so the text after it is not taken in); a few words between two private characters that
+    /// `inlineQuoted` turns into their mark.
+    private static func preparingQuotes(_ text: String) -> String {
+        guard TauQuote.mayContain(text) else {
+            return text
+        }
+        var result = ""
+        for piece in TauQuote.parse(text) {
+            switch piece {
+            case let .text(value):
+                result += value
+            case let .block(value):
+                if !result.isEmpty {
+                    while !result.hasSuffix("\n\n") {
+                        result += "\n"
+                    }
+                }
+                result += value.components(separatedBy: "\n").map { $0.isEmpty ? ">" : "> " + $0 }.joined(separator: "\n") + "\n\n"
+            case let .inline(value):
+                result += String(utf16CodeUnits: [self.inlineQuoteStart], count: 1) + value + String(utf16CodeUnits: [self.inlineQuoteEnd], count: 1)
+            }
+        }
+        return result
+    }
+
+    private static func inlineQuoted(_ block: MarkdownBlock) -> MarkdownBlock {
+        switch block {
+        case let .text(string):
+            return .text(self.inlineQuoted(string, marking: true))
+        case let .code(string):
+            return .code(self.inlineQuoted(string, marking: false))
+        case var .table(table):
+            table.header = table.header.map { self.inlineQuoted($0, marking: false) }
+            table.rows = table.rows.map { $0.map { self.inlineQuoted($0, marking: false) } }
+            return .table(table)
+        }
+    }
+
+    /// The text without the private characters, what was between two of them marked.
+    private static func inlineQuoted(_ string: NSAttributedString, marking: Bool) -> NSAttributedString {
+        let text = string.string as NSString
+        guard text.rangeOfCharacter(from: CharacterSet(charactersIn: "\u{E010}\u{E011}")).location != NSNotFound else {
+            return string
+        }
+        let result = NSMutableAttributedString(attributedString: string)
+        var quote = 0
+        var start: Int?
+        var index = 0
+        while index < result.length {
+            let character = (result.string as NSString).character(at: index)
+            if character == self.inlineQuoteStart {
+                result.deleteCharacters(in: NSRange(location: index, length: 1))
+                start = index
+                continue
+            }
+            if character == self.inlineQuoteEnd {
+                result.deleteCharacters(in: NSRange(location: index, length: 1))
+                if let begin = start, index > begin, marking {
+                    quote += 1
+                    result.addAttribute(self.inlineQuoteKey, value: quote, range: NSRange(location: begin, length: index - begin))
+                }
+                start = nil
+                continue
+            }
+            index += 1
+        }
         return result
     }
 

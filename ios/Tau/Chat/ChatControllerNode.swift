@@ -144,8 +144,12 @@ final class ChatControllerNode: ASDisplayNode {
         // Dragging the history away puts the keyboard down, as in Telegram.
         self.historyNode.beganInteractiveDragging = { [weak self] _ in
             self?.inputPanelNode.deactivateInput()
-            // Its menu would stay where the text was.
-            self?.endInlineSelection()
+            // A selection stays as the text scrolls with it; its menu, which would stay where the text was, steps
+            // aside until the list stops.
+            self?.inlineSelectionNode?.setInlineSelectionMenuHidden(true)
+        }
+        self.historyNode.didEndScrolling = { [weak self] _ in
+            self?.inlineSelectionNode?.setInlineSelectionMenuHidden(false)
         }
         // The list is inverted, so its top offset is the distance from the end of the chat.
         self.historyNode.visibleContentOffsetChanged = { [weak self] offset, _ in
@@ -191,6 +195,12 @@ final class ChatControllerNode: ASDisplayNode {
         guard !self.isPreview else {
             return
         }
+        // A tap anywhere else ends a selection made in place; a drag scrolls under it.
+        let selectionTap = UITapGestureRecognizer(target: self, action: #selector(self.selectionTapped(_:)))
+        selectionTap.cancelsTouchesInView = false
+        selectionTap.delaysTouchesEnded = false
+        selectionTap.delegate = self.selectionTapDelegate
+        self.view.addGestureRecognizer(selectionTap)
         self.bottomEdgeEffectView.isUserInteractionEnabled = false
         self.view.insertSubview(self.bottomEdgeEffectView, belowSubview: self.inputPanelNode.view)
         self.selectionPanel.alpha = 0.0
@@ -512,6 +522,8 @@ final class ChatControllerNode: ASDisplayNode {
         guard let self, let message = self.entries.first(where: { $0.message.id == id })?.message else {
             return
         }
+        // One selection at a time: the lifted message's own.
+        self.endInlineSelection()
         self.openContextMenu?(message, node, gesture)
     }, openTool: { [weak self] message in
         self?.openTool?(message)
@@ -530,9 +542,97 @@ final class ChatControllerNode: ASDisplayNode {
     /// The row whose text a double tap selected, in place (ChatMessageItemNode.beginInlineSelection): one at a time.
     private weak var inlineSelectionNode: ChatMessageItemNode?
 
+    private let selectionTapDelegate = SimultaneousGestureDelegate()
+
+    @objc private func selectionTapped(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended, let node = self.inlineSelectionNode else {
+            return
+        }
+        if node.inlineSelectionContains(recognizer.location(in: node.view)) {
+            return
+        }
+        self.endInlineSelection()
+    }
+
     func endInlineSelection() {
         self.inlineSelectionNode?.endInlineSelection(animated: true)
         self.inlineSelectionNode = nil
+        self.stopSelectionScrolling()
+    }
+
+    // MARK: - Scrolling under a selection's knob
+
+    /// As ChatHistoryListNode scrolls while a finger selects messages: a knob held within 50 pt of the list's ends
+    /// scrolls it on after 0.45 s, faster the nearer the end, and the knob follows what passes under the finger.
+    private var selectionScrollActivationTimer: SwiftSignalKit.Timer?
+    private var selectionScrollDisplayLink: ConstantDisplayLinkAnimator?
+    private var selectionScrollDelta: CGFloat?
+    private var selectionScrollSkipUpdate = false
+
+    private func selectionKnobMoved(_ node: ChatMessageItemNode, _ windowPoint: CGPoint?) {
+        guard let windowPoint, node === self.inlineSelectionNode else {
+            self.stopSelectionScrolling()
+            return
+        }
+        // The list is inverted: its y runs up from the field.
+        let location = self.historyNode.view.convert(windowPoint, from: nil)
+        let insets = self.historyNode.insets
+        let height = self.historyNode.bounds.height
+        let scrollingAreaHeight: CGFloat = 50.0
+        var delta: CGFloat?
+        if location.y < scrollingAreaHeight + insets.top {
+            delta = (scrollingAreaHeight - (location.y - insets.top)) / scrollingAreaHeight
+        } else if location.y > height - scrollingAreaHeight - insets.bottom {
+            delta = -(scrollingAreaHeight - min(scrollingAreaHeight, max(0.0, height - insets.bottom - location.y))) / scrollingAreaHeight
+        }
+        // Only toward more of the message: past its end there is nothing to select.
+        if let value = delta, let frame = node.selectableFrameInWindow() {
+            let visible = self.historyNode.view.convert(CGRect(x: 0.0, y: insets.top, width: self.historyNode.bounds.width, height: height - insets.top - insets.bottom), to: nil)
+            if value > 0.0 ? frame.maxY <= visible.maxY : frame.minY >= visible.minY {
+                delta = nil
+            }
+        }
+        self.selectionScrollDelta = delta
+        guard delta != nil else {
+            self.selectionScrollDisplayLink?.isPaused = true
+            self.selectionScrollActivationTimer?.invalidate()
+            self.selectionScrollActivationTimer = nil
+            return
+        }
+        if let displayLink = self.selectionScrollDisplayLink {
+            displayLink.isPaused = false
+        } else if self.selectionScrollActivationTimer == nil {
+            let timer = SwiftSignalKit.Timer(timeout: 0.45, repeat: false, completion: { [weak self] in
+                self?.setupSelectionScrolling()
+            }, queue: .mainQueue())
+            timer.start()
+            self.selectionScrollActivationTimer = timer
+        }
+    }
+
+    private func setupSelectionScrolling() {
+        self.selectionScrollActivationTimer = nil
+        self.selectionScrollDisplayLink = ConstantDisplayLinkAnimator(update: { [weak self] in
+            guard let self, let delta = self.selectionScrollDelta, let node = self.inlineSelectionNode else {
+                self?.stopSelectionScrolling()
+                return
+            }
+            let distance: CGFloat = 15.0 * min(1.0, 0.15 + abs(delta * delta))
+            let _ = self.historyNode.scrollWithDirection(delta > 0.0 ? .up : .down, distance: distance)
+            if !self.selectionScrollSkipUpdate {
+                node.updateInlineSelectionKnob()
+            }
+            self.selectionScrollSkipUpdate = !self.selectionScrollSkipUpdate
+        })
+        self.selectionScrollDisplayLink?.isPaused = false
+    }
+
+    private func stopSelectionScrolling() {
+        self.selectionScrollActivationTimer?.invalidate()
+        self.selectionScrollActivationTimer = nil
+        self.selectionScrollDisplayLink?.invalidate()
+        self.selectionScrollDisplayLink = nil
+        self.selectionScrollDelta = nil
     }
 
     /// Set by the controller: where a file of the chat is, and a tap on its row (docs/files.md).
@@ -559,6 +659,19 @@ final class ChatControllerNode: ASDisplayNode {
                     current.endInlineSelection(animated: true)
                 }
                 self.inlineSelectionNode = node
+            }
+            self.interaction.selectionKnobMoved = { [weak self] node, point in
+                self?.selectionKnobMoved(node, point)
+            }
+            self.interaction.selectionMenuArea = { [weak self] in
+                guard let self, let (_, navigationHeight) = self.validLayout else {
+                    return nil
+                }
+                let bottom = self.isPreview ? self.bounds.height : self.inputPanelNode.frame.minY
+                return CGRect(x: 0.0, y: navigationHeight, width: self.bounds.width, height: max(0.0, bottom - navigationHeight))
+            }
+            self.interaction.quote = { [weak self] text in
+                self?.inputPanelNode.insertQuote(text)
             }
             self.interaction.copied = { [weak self] _ in
                 guard let self else {
@@ -1026,5 +1139,13 @@ private final class SelectionGlassButtonView: UIView {
         transition.setFrame(view: self.button, frame: CGRect(origin: CGPoint(), size: size))
         transition.setFrame(view: self.backgroundView, frame: CGRect(origin: CGPoint(), size: size))
         self.backgroundView.update(size: size, cornerRadius: size.height * 0.5, isDark: theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, transition: transition)
+    }
+}
+
+
+/// A recognizer that watches alongside the others, taking nothing from them.
+private final class SimultaneousGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return true
     }
 }

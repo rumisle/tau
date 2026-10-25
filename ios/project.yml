@@ -88,6 +88,7 @@ targets:
           - libprisma
           - ItemListUI
           - SemanticStatusNode
+          - MessageInlineBlockBackgroundView
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID)

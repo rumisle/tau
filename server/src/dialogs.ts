@@ -18,6 +18,7 @@ import { CacheDoc, type CacheState, cacheModel } from "./cache.ts";
 import { attachedFiles, ownText } from "./attachments.ts";
 import type { SentFile } from "./send-file.ts";
 import { FilesEntry, SubagentEntry } from "./shown.ts";
+import { withoutQuotes } from "./quotes.ts";
 import { type Host, MetaDoc, type MetaState } from "./host.ts";
 import type { Dialog, EntrySummary } from "./protocol.ts";
 
@@ -372,10 +373,10 @@ function previewText(entry: EntryRecord, message: Message | undefined): string {
 	if (message === undefined) return typeof entry.data === "string" ? entry.data : entry.kind;
 	switch (message.role) {
 		case "user": {
-			if (typeof message.content === "string") return message.content;
+			if (typeof message.content === "string") return withoutQuotes(message.content);
 			// A caption stands for its photos and files, as in Telegram's chat list; photos alone read "Photo", a file
 			// its name.
-			const text = ownText(message.content).replace(/\n/g, " ");
+			const text = withoutQuotes(ownText(message.content)).replace(/\n/g, " ");
 			if (text.trim() !== "") return text;
 			const files = attachedFiles(message.content).filter((file) => file.kind === "file");
 			if (files.length > 0) return files.length > 1 ? `${files.length} Files` : (files[0]!.path.split("/").at(-1) ?? "File");
@@ -383,10 +384,12 @@ function previewText(entry: EntryRecord, message: Message | undefined): string {
 			return images > 1 ? `${images} Photos` : "Photo";
 		}
 		case "assistant": {
-			const text = message.content
-				.filter((part) => part.type === "text")
-				.map((part) => part.text)
-				.join(" ");
+			const text = withoutQuotes(
+				message.content
+					.filter((part) => part.type === "text")
+					.map((part) => part.text)
+					.join(" "),
+			);
 			if (text.trim() !== "") return text;
 			const calls = message.content.filter((part) => part.type === "toolCall").map((part) => part.name);
 			if (calls.length > 0) return `→ ${calls.join(", ")}`;

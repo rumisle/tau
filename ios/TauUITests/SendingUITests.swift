@@ -700,6 +700,81 @@ final class SendingUITests: XCTestCase {
         XCTAssertTrue(answer.exists, "back in the chat it came from")
     }
 
+    /// Quote on selected text (docs/quotes.md): a word quoted into the empty field is a block, one quoted in the middle
+    /// of a line a few words in it; what is sent has them in `<tau:quote>` (the echo says it back as written); a
+    /// backspace after a quote takes it whole.
+    func testQuote() {
+        self.launch(["-newChat", "YES", "-send", "Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa."])
+        let answer = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage' AND label BEGINSWITH 'You said: Alpha'")).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 10))
+        sleep(3)
+        let origin = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+        func word(_ dx: CGFloat) -> XCUICoordinate {
+            // On the answer's second line: "golf hotel india juliet kilo lima mike november".
+            let frame = answer.frame
+            return origin.withOffset(CGVector(dx: frame.minX + dx, dy: frame.minY + 41.0))
+        }
+        let quote = self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Quote'")).firstMatch
+        word(246.0).doubleTap()
+        XCTAssertTrue(quote.waitForExistence(timeout: 3), "Quote in the selection's menu")
+        self.shot("quote-0-menu")
+        quote.tap()
+        sleep(1)
+        // A backspace on the line after it takes it whole: the field is empty again.
+        self.app.keys["delete"].tap()
+        sleep(1)
+        self.shot("quote-1-deleted")
+        XCTAssertFalse(self.app.descendants(matching: .any)["send"].firstMatch.exists, "nothing left to send")
+        word(246.0).doubleTap()
+        XCTAssertTrue(quote.waitForExistence(timeout: 3))
+        quote.tap()
+        sleep(1)
+        self.type("huh cool")
+        word(302.0).doubleTap()
+        XCTAssertTrue(quote.waitForExistence(timeout: 3))
+        quote.tap()
+        sleep(1)
+        self.shot("quote-2-field")
+        self.type("what")
+        self.send()
+        let echo = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage' AND label CONTAINS '<tau:quote>november</tau:quote> what'")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "sent with its quotes in tags")
+        XCTAssertTrue(echo.label.contains("You said: <tau:quote>\nmike\n</tau:quote>\nhuh cool"), echo.label)
+        sleep(2)
+        self.shot("quote-3-sent")
+    }
+
+    /// A selection over a long answer: from a word, its knob held at the top scrolls the chat and the selection runs
+    /// on through chunks, a table and code; a scroll by hand keeps it, its menu back once the list stops.
+    func testSelectionScroll() {
+        self.launch(["-newChat", "YES", "-send", "!doc 8"])
+        sleep(4)
+        let stop = self.app.descendants(matching: .any)["stop"].firstMatch
+        let deadline = Date().addingTimeInterval(120)
+        while stop.exists && Date() < deadline {
+            sleep(1)
+        }
+        sleep(2)
+        let origin = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+        func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { origin.withOffset(CGVector(dx: x, dy: y)) }
+        let copy = self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy'")).firstMatch
+        // "commits" in Paragraph 8.1, the left knob above it, held under the bar.
+        at(227, 372).doubleTap()
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        self.shot("selscroll-0-word")
+        at(205, 358).press(forDuration: 0.2, thenDragTo: at(100, 125), withVelocity: .default, thenHoldForDuration: 2.5)
+        sleep(1)
+        self.shot("selscroll-1-scrolled")
+        XCTAssertTrue(copy.waitForExistence(timeout: 3), "the menu after the knob")
+        self.app.swipeDown()
+        sleep(3)
+        self.shot("selscroll-2-by-hand")
+        XCTAssertTrue(copy.waitForExistence(timeout: 3), "still selected after a scroll, its menu back")
+        at(200, 450).tap()
+        sleep(1)
+        XCTAssertFalse(copy.exists, "a tap ends it")
+    }
+
     func testDoubleTapSelect() {
         self.launch(["-newChat", "YES"])
         self.focusInput()

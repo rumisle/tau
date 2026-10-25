@@ -685,6 +685,7 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
 
 /// Message text without Markdown syntax, for one-line previews.
 func plainPreview(_ text: String) -> String {
+    let text = TauQuote.withoutQuotes(text)
     let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace, failurePolicy: .returnPartiallyParsedIfPossible)
     guard let parsed = try? AttributedString(markdown: text, options: options) else {
         return text

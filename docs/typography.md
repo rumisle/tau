@@ -64,16 +64,33 @@ written. Copy on a message copies its text.
 
 ## Selecting text
 
-Two ways, both Telegram's `TextSelectionNode` with its knobs and its Copy / Look Up / Select All menu:
+Two ways, both Telegram's `TextSelectionNode` with its knobs and its Copy / Quote / Look Up / Select All menu:
 
 - **A double tap on a message's text** (an answer's or the user's) selects the word there, in place, as a text view
   does (`ChatMessageItemNode.beginInlineSelection`). The row takes taps with Telegram's message recognizer
   (`TapLongTapOrDoubleTapGestureRecognizer`): on code, a photo or a file a tap acts at once, as before; only on text,
-  where a single tap does nothing, does it wait for a second. The knobs extend it across the text (not across a
-  table); Copy copies it and says so. A tap elsewhere, dragging the chat, another selection, or the text changing
-  ends it. Not in a streaming answer, a tool's card, or while selecting messages; over a selection, a long press
-  selects a word instead of opening the menu.
+  where a single tap does nothing, does it wait for a second. Not in a streaming answer, a tool's card, or while
+  selecting messages; over a selection, a long press selects a word instead of opening the menu.
 - **In the message's menu** (a long press lifts it out): a long press on its text, as in Telegram.
+
+Either way the selection is over the whole message: TextSelectionNode selects in one text node, and a long answer is
+several (its chunks, code that scrolls, tables between), so `MessageTextSurface` (`Chat/MessageTextSelection.swift`)
+is one text for it made of them all, in order, a paragraph's break between two; a table counts as its cells' text
+(tab-separated rows) and is taken whole. Select All selects the message; Copy copies what is selected and says so;
+Quote puts it in the field (docs/quotes.md).
+
+- **Knobs** go where a text view's caret would (`InteractiveTextNodeLayout.caretIndex`, tau's patch): the nearest
+  boundary between two characters on the nearest line with text, so a knob is never on a paragraph gap's blank
+  line; a line's end is where its text ends, before the spaces a wrap leaves there, for the knob and the highlight
+  (an indented line's end was off by its indent). The knobs never meet: a selection keeps a character.
+- **Held at the chat's top or bottom** (50 pt from the bar or the field), a knob scrolls the chat after 0.45 s,
+  faster the nearer the edge, as Telegram scrolls while a finger selects messages (`ChatHistoryListNode`); the knob
+  follows what passes under the finger, and the scrolling stops at the message's end.
+- **Scrolling by hand** keeps the selection, which moves with its text; its menu steps aside and comes back where it
+  is once the chat stops. The menu is over the part of the selection on screen, between the bar and the field.
+- **A tap** anywhere else ends it, as do another selection, the message's menu, and its text changing.
+
+Code in a selection is selected but hardly shows it: its block's dark background is drawn over the highlight.
 
 ## Text size
 

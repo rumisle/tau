@@ -9,6 +9,7 @@ import { type ConversationId, type EntryRecord, LiveDoc } from "@earendil-works/
 import { type Apns, type ApnsPush, type ApnsResult, activityDate, isGone } from "./apns.ts";
 import { type ActivityRecord, type ActivityRow, type DeviceRecord, DevicesDoc, VISIBLE_ROWS } from "./devices.ts";
 import { type Host, MetaDoc } from "./host.ts";
+import { withoutQuotes } from "./quotes.ts";
 
 /** What sends to Apple: the APNs client, or a stand-in in tests. */
 export type PushSender = Pick<Apns, "send">;
@@ -225,7 +226,7 @@ export class Notifier {
 		const title = meta?.title ?? "tau";
 		const failed = message.stopReason === "error" || message.stopReason === "aborted";
 		const text = failed ? `Failed: ${message.errorMessage ?? "the model stopped"}` : textOf(message);
-		const body = text.replace(/\s+/g, " ").trim().slice(0, 400) || "Answered.";
+		const body = withoutQuotes(text).replace(/\s+/g, " ").trim().slice(0, 400) || "Answered.";
 		// The chat's link, as the app copies one (docs/links.md): the server by the start of its ID.
 		const url = `tau://${this.#host.serverId.slice(0, 8).toLowerCase()}/${id}`;
 		if (this.#apns === undefined) return;

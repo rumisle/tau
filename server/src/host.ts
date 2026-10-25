@@ -160,7 +160,8 @@ pick one, so go where the work is (absolute paths, or \`cd\` in a command). In a
 and look for its own skills in .agents/skills.
 Files the user attaches are named at the start of their message, in <attachments>, each at its path: an <image> is also
 shown to you, a <file> only named. They are kept with the chat, read-only: use them where they are, and copy one to
-change it. send_file sends files to the user.`;
+change it. send_file sends files to the user.
+Words the user quotes from this chat are in <tau:quote>, their reply after each.`;
 
 export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const context = BACKGROUND_CONTEXT;

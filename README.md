@@ -33,6 +33,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/search.md` | Search: the index each server keeps as entries are written (`server/src/search`), matching and ranking, and the benchmark |
 | `docs/live-activity.md` | The Live Activity and Dynamic Island (`ios/TauWidgets`): which chats, what they show, and what waits for APNs |
 | `docs/folders.md` | Chat folders: tabs by server or chat over the list, and Settings > Chat Folders |
+| `docs/quotes.md` | Quoting selected text into the field: `<tau:quote>`, how the field and the chat show it |
 | `docs/links.md` | tau's links to chats and messages: copying, opening, the cards they show |
 | `docs/share.md` | The share extension (`ios/TauShare`): sending to chats or a new one from any app |
 | `server/` | The server: `src/host.ts` (Harness setup), `src/connection.ts` (protocol), `src/dialogs.ts` (chat list), `src/subagent.ts` (the subagent tool), `src/titles.ts` (automatic titles) |

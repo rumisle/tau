@@ -28,6 +28,8 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
     private let attachIconView: UIImageView
     private let fieldBackgroundView: GlassBackgroundView
     private let textView: UITextView
+    /// Its quotes (docs/quotes.md).
+    private let quotes: InputQuotes
     private let placeholderLabel: UILabel
     private let accessoryView: InputAccessoryPanelView
     private let micButton = UIView()
@@ -138,7 +140,8 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.attachIconView.contentMode = .center
         self.accessoryView = InputAccessoryPanelView()
 
-        self.textView = UITextView()
+        // TextKit 1, as Telegram's field: its quotes are drawn from the layout manager's lines.
+        self.textView = UITextView(usingTextLayoutManager: false)
         self.textView.backgroundColor = .clear
         self.textView.font = Font.regular(theme.fontSize)
         self.textView.textContainerInset = ChatInputPanelNode.textInsets
@@ -146,6 +149,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.textView.isScrollEnabled = false
         self.textView.scrollsToTop = false
 
+        self.quotes = InputQuotes(textView: self.textView, font: Font.regular(theme.fontSize), textColor: theme.chat.inputTextColor, accentColor: theme.accentColor)
         self.placeholderLabel = UILabel()
         self.placeholderLabel.font = Font.regular(theme.fontSize)
         self.placeholderLabel.text = "Message"
@@ -301,13 +305,18 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         self.blobView?.setColor(chat.actionControlFillColor)
         self.textView.textColor = chat.inputTextColor
         self.textView.tintColor = self.theme.accentColor
+        self.quotes.font = self.font
+        self.quotes.textColor = chat.inputTextColor
+        self.quotes.accentColor = self.theme.accentColor
+        self.textView.typingAttributes = self.quotes.typingAttributes(at: self.textView.selectedRange.location)
         self.textView.keyboardAppearance = self.theme.overallDarkAppearance ? .dark : .default
         self.placeholderLabel.textColor = chat.inputPlaceholderColor
         self.updateAccessoryContent(animated: false)
     }
 
+    /// The message the field's text makes: its quotes in their tags.
     var text: String {
-        return self.textView.text ?? ""
+        return InputQuotes.text(of: self.textView.textStorage)
     }
 
     func activateInput() {
@@ -320,8 +329,20 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
 
     func setText(_ text: String) {
         self.cancelDictation()
-        self.textView.text = text
+        self.textView.attributedText = self.quotes.attributed(text)
+        self.textView.typingAttributes = self.quotes.typingAttributes(at: self.textView.selectedRange.location)
         self.textViewDidChange(self.textView)
+    }
+
+    /// Quote on selected text (docs/quotes.md): it goes in where the cursor is, the keyboard up for the reply.
+    func insertQuote(_ text: String) {
+        self.cancelDictation()
+        if !self.textView.isFirstResponder {
+            self.textView.becomeFirstResponder()
+        }
+        self.quotes.insert(text)
+        self.textViewDidChange(self.textView)
+        self.textView.scrollRangeToVisible(self.textView.selectedRange)
     }
 
     /// Show Telegram's "Edit Message" panel for `original`, or hide it with nil.
@@ -622,7 +643,8 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             return
         }
         self.sendMessage?(text)
-        self.textView.text = ""
+        self.textView.attributedText = NSAttributedString()
+        self.textView.typingAttributes = self.quotes.baseAttributes
         self.textViewDidChange(self.textView)
     }
 
@@ -635,7 +657,30 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         }
     }
 
+    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        // A backspace takes a quote whole from just after it.
+        if let whole = self.quotes.deletion(for: range, replacement: text) {
+            textView.textStorage.deleteCharacters(in: whole)
+            textView.selectedRange = NSRange(location: whole.location, length: 0)
+            self.textViewDidChange(textView)
+            return false
+        }
+        return true
+    }
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        guard textView.markedTextRange == nil else {
+            return
+        }
+        textView.typingAttributes = self.quotes.typingAttributes(at: textView.selectedRange.location)
+    }
+
     func textViewDidChange(_ textView: UITextView) {
+        // Not while a character is being composed (Chinese, Japanese): restyling would end it.
+        if textView.markedTextRange == nil {
+            InputQuotes.restyle(textView.textStorage)
+        }
+        self.quotes.updateDecorations()
         self.placeholderLabel.isHidden = !textView.text.isEmpty
         self.textChanged?(self.text)
         guard let width = self.validWidth else {
@@ -673,8 +718,12 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         let insets = ChatInputPanelNode.textInsets
         let textWidth = self.fieldWidth(width) - insets.left - insets.right - self.fieldTrailing(action: self.currentAction())
         let maxHeight = ceil(self.font.lineHeight * ChatInputPanelNode.fieldMaxLines)
-        let text = self.text.isEmpty ? " " : self.text
-        let bounds = (text as NSString).boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], attributes: [.font: self.font], context: nil)
+        // As the field lays it out, quotes' indents and spacing in; a last line that is empty counts.
+        let text = NSMutableAttributedString(attributedString: self.textView.textStorage)
+        if text.length == 0 || text.string.hasSuffix("\n") {
+            text.append(NSAttributedString(string: " ", attributes: self.quotes.baseAttributes))
+        }
+        let bounds = text.boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], context: nil)
         return min(maxHeight, ceil(bounds.height))
     }
 
@@ -743,6 +792,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         componentTransition.setFrame(view: self.fieldBackgroundView, frame: fieldFrame)
         self.fieldBackgroundView.update(size: fieldFrame.size, cornerRadius: size / 2.0, isDark: isDark, tintColor: .init(kind: .panel), isInteractive: true, transition: componentTransition)
         componentTransition.setFrame(view: self.textView, frame: CGRect(origin: CGPoint(x: 0.0, y: accessoryHeight), size: CGSize(width: fieldFrame.width - self.fieldTrailing(action: action), height: textAreaHeight)))
+        self.quotes.updateDecorations()
         componentTransition.setFrame(view: self.placeholderLabel, frame: CGRect(origin: CGPoint(x: insets.left, y: accessoryHeight + insets.top), size: CGSize(width: fieldFrame.width - insets.left - self.fieldTrailing(action: action), height: ceil(self.font.lineHeight))))
 
         // The microphone at the field's end, moved aside by the action button as Telegram's accessory buttons are by

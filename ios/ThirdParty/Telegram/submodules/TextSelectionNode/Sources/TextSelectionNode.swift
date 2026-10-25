@@ -86,6 +86,11 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
     fileprivate var knobAtPoint: ((CGPoint) -> (Knob, CGPoint)?)?
     fileprivate var moveKnob: ((Knob, CGPoint) -> Void)?
     public var finishedMovingKnob: (() -> Void)?
+    // tau: a knob's drag, for scrolling the list under it: where the finger is in the window as it moves, nil when it
+    // lifts.
+    fileprivate var beganMovingKnob: (() -> Void)?
+    public var movedKnob: ((CGPoint?) -> Void)?
+    private var windowLocation: CGPoint?
     public var clearSelection: (() -> Void)?
     public private(set) var didRecognizeTap: Bool = false
     fileprivate var isSelecting: Bool = false
@@ -104,6 +109,18 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
         
         self.movingKnob = nil
         self.currentLocation = nil
+        self.windowLocation = nil
+    }
+
+    /// tau: the knob follows the finger again where it is now in the view, after what is under it moved (a list
+    /// scrolled while the finger held still).
+    public func refreshMovingKnob() {
+        guard let (knob, initialKnobPosition, initialGesturePosition) = self.movingKnob, let view = self.view, let windowLocation = self.windowLocation else {
+            return
+        }
+        let currentLocation = view.convert(windowLocation, from: nil)
+        self.currentLocation = currentLocation
+        self.moveKnob?(knob, CGPoint(x: initialKnobPosition.x + currentLocation.x - initialGesturePosition.x, y: initialKnobPosition.y + currentLocation.y - initialGesturePosition.y))
     }
     
     override public func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -115,8 +132,10 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
         if let currentLocation = currentLocation {
             if let (knob, knobPosition) = self.knobAtPoint?(currentLocation) {
                 self.movingKnob = (knob, knobPosition, currentLocation)
+                self.windowLocation = touches.first?.location(in: nil)
                 cancelScrollViewGestures(view: self.view?.superview)
                 self.state = .began
+                self.beganMovingKnob?()
             } else if self.canBeginSelection?(currentLocation) ?? true {
                 if self.longTapTimer == nil {
                     final class TimerTarget: NSObject {
@@ -149,7 +168,9 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
         self.currentLocation = currentLocation
         
         if let (knob, initialKnobPosition, initialGesturePosition) = self.movingKnob, let currentLocation = currentLocation {
+            self.windowLocation = touches.first?.location(in: nil)
             self.moveKnob?(knob, CGPoint(x: initialKnobPosition.x + currentLocation.x - initialGesturePosition.x, y: initialKnobPosition.y + currentLocation.y - initialGesturePosition.y))
+            self.movedKnob?(self.windowLocation)
         }
     }
     
@@ -170,6 +191,7 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
             self.clearSelection?()
         } else {
             if let _ = self.currentLocation, let _ = self.movingKnob {
+                self.movedKnob?(nil)
                 self.finishedMovingKnob?()
             }
         }
@@ -179,6 +201,10 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
     override public func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesCancelled(touches, with: event)
         
+        if self.movingKnob != nil {
+            self.movedKnob?(nil)
+            self.finishedMovingKnob?()
+        }
         self.state = .cancelled
     }
     
@@ -287,6 +313,11 @@ public final class TextSelectionNode: ASDisplayNode {
     public var enableShare: Bool = true
     public var enableAutomaticScrolling: Bool = true
     public var cancelSelectionOnOutsideTap: Bool = false
+    /// tau: where the menu may point, in the root view: the part of the selection inside it, so a selection taller
+    /// than the screen has its menu on screen.
+    public var menuVisibleRect: (() -> CGRect?)?
+    /// tau: a knob's drag, in window coordinates; nil when it ends.
+    public var knobMoved: ((CGPoint?) -> Void)?
     
     public var menuSkipCoordnateConversion: Bool = false
     
@@ -360,6 +391,10 @@ public final class TextSelectionNode: ASDisplayNode {
                 case .right:
                     updatedRight = stringIndex
                 }
+                // tau: knobs never meet; a selection keeps a character at least.
+                if updatedLeft == updatedRight {
+                    return
+                }
                 if strongSelf.currentRange?.0 != updatedLeft || strongSelf.currentRange?.1 != updatedRight {
                     strongSelf.currentRange = (updatedLeft, updatedRight)
                     let updatedRange = NSRange(location: min(updatedLeft, updatedRight), length: max(updatedLeft, updatedRight) - min(updatedLeft, updatedRight))
@@ -377,6 +412,13 @@ public final class TextSelectionNode: ASDisplayNode {
                 return
             }
             strongSelf.displayMenu()
+        }
+        // tau: the menu steps aside while a knob moves, as UIKit's does.
+        recognizer.beganMovingKnob = { [weak self] in
+            self?.hideMenu()
+        }
+        recognizer.movedKnob = { [weak self] point in
+            self?.knobMoved?(point)
         }
         recognizer.beginSelection = { [weak self] point in
             guard let strongSelf = self, let attributedString = strongSelf.textNodeOrView.currentText else {
@@ -731,6 +773,24 @@ public final class TextSelectionNode: ASDisplayNode {
         self.dismissSelection()
         self.updateIsActive(false)
     }
+
+    /// tau: the menu goes, the selection stays (while the list under it scrolls).
+    public func hideMenu() {
+        self.contextMenu?.dismiss()
+        self.contextMenu = nil
+    }
+
+    /// tau: the menu again, where the selection is now.
+    public func showMenu() {
+        if self.currentRange != nil {
+            self.displayMenu()
+        }
+    }
+
+    /// tau: the dragged knob follows the finger again, after the list scrolled under it.
+    public func updateMovingKnob() {
+        self.recognizer?.refreshMovingKnob()
+    }
     
     private func displayMenu() {
         guard let currentRects = self.currentRects, !currentRects.isEmpty, let currentRange = self.currentRange, let attributedString = self.textNodeOrView.currentText else {
@@ -840,10 +900,19 @@ public final class TextSelectionNode: ASDisplayNode {
                 return nil
             }
             
+            var completeRect = completeRect
+            var bounds = rootView.bounds
+            if let visible = strongSelf.menuVisibleRect?() {
+                let shown = strongSelf.view.convert(completeRect, to: rootView).intersection(visible)
+                if !shown.isNull, shown.height > 0.0 {
+                    completeRect = rootView.convert(shown, to: strongSelf.view)
+                    bounds = visible
+                }
+            }
             if strongSelf.menuSkipCoordnateConversion {
-                return (strongSelf.view, strongSelf.view.convert(completeRect, to: rootView), rootView, rootView.bounds)
+                return (strongSelf.view, strongSelf.view.convert(completeRect, to: rootView), rootView, bounds)
             } else {
-                return (strongSelf.view, completeRect, rootView, rootView.bounds)
+                return (strongSelf.view, completeRect, rootView, bounds)
             }
         }, bounce: false))
     }

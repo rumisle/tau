@@ -1,0 +1,104 @@
+diff --git a/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift b/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
+index 4ca6071..5f8ecf3 100644
+--- a/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
++++ b/submodules/TelegramUI/Components/InteractiveTextComponent/Sources/InteractiveTextComponent.swift
+@@ -984,6 +984,66 @@ public final class InteractiveTextNodeLayout: NSObject {
+         return nil
+     }
+     
++    /// tau: where a selection's knob dragged to `point` goes, as a text view's: the nearest line with text in it (not
++    /// the blank line of a paragraph's gap), and on it the boundary between two characters nearest the point, before
++    /// the line's trailing spaces and break.
++    public func caretIndex(at point: CGPoint) -> Int? {
++        guard let attributedString = self.attributedString else {
++            return nil
++        }
++        let string = attributedString.string as NSString
++        let transformedPoint = CGPoint(x: point.x - self.insets.left, y: point.y - self.insets.top)
++        var closest: (line: InteractiveTextNodeLine, frame: CGRect, range: NSRange, end: Int, isBlank: Bool, distance: CGFloat)?
++        for segment in self.segments {
++            for line in segment.lines.prefix(segment.visibleLineCount) {
++                guard let range = line.range, range.length > 0 else {
++                    continue
++                }
++                var end = min(range.upperBound, string.length)
++                while end > range.location, let scalar = UnicodeScalar(string.character(at: end - 1)), CharacterSet.whitespacesAndNewlines.contains(scalar) {
++                    end -= 1
++                }
++                let isBlank = end == range.location
++                var lineFrame = line.frame
++                switch self.resolvedAlignment {
++                case .center:
++                    lineFrame.origin.x = floor((self.size.width - lineFrame.size.width) / 2.0)
++                case .natural, .left:
++                    lineFrame = displayLineFrame(frame: lineFrame, isRTL: line.isRTL, boundingRect: CGRect(origin: CGPoint(), size: self.size), cutout: self.cutout)
++                case .right:
++                    lineFrame.origin.x = self.size.width - lineFrame.size.width
++                default:
++                    break
++                }
++                let distance = max(0.0, lineFrame.minY - transformedPoint.y, transformedPoint.y - lineFrame.maxY)
++                if let current = closest {
++                    // A line with text wins over a blank one, then the nearer one.
++                    if current.isBlank == isBlank ? distance >= current.distance : isBlank {
++                        continue
++                    }
++                }
++                closest = (line, lineFrame, range, end, isBlank, distance)
++            }
++        }
++        guard let (line, lineFrame, range, end, _, _) = closest else {
++            return nil
++        }
++        let x = transformedPoint.x - lineFrame.minX
++        if !line.isRTL {
++            if x <= 0.0 {
++                return range.location
++            }
++            if x >= CTLineGetOffsetForStringIndex(line.line, end, nil) {
++                return end
++            }
++        }
++        let index = CTLineGetStringIndexForPosition(line.line, CGPoint(x: x, y: 0.0))
++        if index == kCFNotFound {
++            return range.location
++        }
++        return max(range.location, min(end, index))
++    }
++
+     public func rangeRects(in range: NSRange) -> (rects: [CGRect], start: TextRangeRectEdge, end: TextRangeRectEdge)? {
+         guard let _ = self.attributedString, range.length != 0 else {
+             return nil
+@@ -1002,7 +1062,9 @@ public final class InteractiveTextNodeLayout: NSObject {
+                     if lineRange.location != rangeValue.location || line.isRTL {
+                         leftOffset = floor(CTLineGetOffsetForStringIndex(line.line, lineRange.location, nil))
+                     }
+-                    var rightOffset: CGFloat = line.frame.width
++                    // tau: a line's end is where its text ends, before the spaces a wrap left at it.
++                    let textWidth = line.isRTL ? line.frame.width : max(0.0, min(line.frame.width, CGFloat(CTLineGetTypographicBounds(line.line, nil, nil, nil) - CTLineGetTrailingWhitespaceWidth(line.line))))
++                    var rightOffset: CGFloat = textWidth
+                     if lineRange.location + lineRange.length != rangeValue.upperBound || line.isRTL {
+                         var secondaryOffset: CGFloat = 0.0
+                         let rawOffset = CTLineGetOffsetForStringIndex(line.line, lineRange.location + lineRange.length, &secondaryOffset)
+@@ -1023,7 +1085,8 @@ public final class InteractiveTextNodeLayout: NSObject {
+                     if rangeValue.contains(range.upperBound - 1) {
+                         let offsetX: CGFloat
+                         if rangeValue.upperBound == range.upperBound {
+-                            offsetX = lineFrame.maxX
++                            // tau: from the line's start, as below (lineFrame.maxX counted an indented line's indent twice).
++                            offsetX = textWidth
+                         } else {
+                             var secondaryOffset: CGFloat = 0.0
+                             let primaryOffset = floor(CTLineGetOffsetForStringIndex(line.line, range.upperBound - 1, &secondaryOffset))
+@@ -1418,6 +1481,11 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
+     public func textRangeRects(in range: NSRange) -> (rects: [CGRect], start: TextRangeRectEdge, end: TextRangeRectEdge)? {
+         return self.cachedLayout?.rangeRects(in: range)
+     }
++
++    /// tau: InteractiveTextNodeLayout.caretIndex.
++    public func caretIndex(at point: CGPoint) -> Int? {
++        return self.cachedLayout?.caretIndex(at: point)
++    }
+         
+     override public init() {
+         super.init()
