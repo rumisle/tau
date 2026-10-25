@@ -77,7 +77,7 @@ servers (`ios/Config/Local.example.env`), and pass them to the tests.
 Model credentials come from pi's `~/.pi/agent/auth.json` (the same logins as the `pi` CLI, safe to share) and the
 usual provider environment variables. The `dev/echo` model is free: it echoes, runs `$ <command>` through bash, starts a subagent for
 `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`, fails as an overloaded provider
-`!overloaded <times> <text>` or for good `!fatal <text>`, streams a long Markdown answer for `!doc <sections>`, reads a file for `!read <path>`, runs a code mode script for `!code <script>` or `!code @<path>`, and writes a
+`!overloaded <times> <text>` or for good `!fatal <text>`, streams a long Markdown answer for `!doc <sections>`, answers all at once as a buffering provider for `!burst <text>`, reads a file for `!read <path>`, runs a code mode script for `!code <script>` or `!code @<path>`, and writes a
 short summary when asked to compact. `--dev-cache-ttl <seconds>` gives it a prompt cache and prices, to try cache warming.
 
 ## License

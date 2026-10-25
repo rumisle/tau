@@ -41,3 +41,8 @@ with the dev model's `!doc <sections>` (a long answer of headings, paragraphs, l
 - **How far each answer has been revealed** is kept per chat (`ChatMessageItemInteraction.revealProgress`), so a new
   node picks up where the last one stopped.
 - **Fence lines pass through the math scanner whole.**
+- **New rows rise from below their place**, as Telegram's new messages (`ChatMessageItemNode.rise`): 1.6 times their
+  height, while the list makes room. Before, a new row was drawn at its place at once and faded in, under the rows
+  above still moving up. A provider that buffers sends the thinking and the answer in one update, and the thinking was
+  drawn over the answer until the list had made room for both; rows inserted at the bottom together now rise as one
+  block. The dev model's `!burst <text>` answers that way.
