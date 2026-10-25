@@ -917,9 +917,45 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.insets = layout.insets
     }
 
+    /// The rows inserted at the bottom by one transaction, which rise together: the agent's thinking and answer may
+    /// come in the same update, from a provider that buffers them.
+    private static var risingRows: (timestamp: Double, nodes: [Weak<ChatMessageItemNode>]) = (0.0, [])
+
+    /// As Telegram's ChatMessageItemView, a new row rises from below its place (1.6 times its height) while the list
+    /// makes room for it, so it never covers the rows above, which move up as its height grows in. Rows inserted
+    /// together rise as one block, each below the next: one at a time, the upper one would start inside the lower.
+    /// Only at the bottom: older history loading above is not new.
+    private func rise(_ currentTimestamp: Double, duration: Double) {
+        if ChatMessageItemNode.risingRows.timestamp != currentTimestamp {
+            ChatMessageItemNode.risingRows = (currentTimestamp, [])
+        }
+        ChatMessageItemNode.risingRows.nodes.append(Weak(self))
+        // Index 0 is the bottom row (the list is rotated); the block is the run of inserted rows from it.
+        var rows: [Int: ChatMessageItemNode] = [:]
+        for node in ChatMessageItemNode.risingRows.nodes.compactMap(\.value) {
+            if let index = node.index {
+                rows[index] = node
+            }
+        }
+        var block: [ChatMessageItemNode] = []
+        while let node = rows[block.count] {
+            block.append(node)
+        }
+        let height = block.reduce(0.0) { $0 + $1.bounds.height }
+        var below: CGFloat = 0.0
+        for node in block {
+            node.transitionOffset = below - height * 1.6
+            node.addTransitionOffsetAnimation(0.0, duration: duration, beginAt: currentTimestamp)
+            below += node.bounds.height
+        }
+    }
+
     override func animateInsertion(_ currentTimestamp: Double, duration: Double, options: ListViewItemAnimationOptions) {
         super.animateInsertion(currentTimestamp, duration: duration, options: options)
         self.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
+        if let role = self.item?.message.role, role != .user, !options.short {
+            self.rise(currentTimestamp, duration: duration)
+        }
         if case .user = self.item?.message.role {
             if let source = self.item?.riseFrom, let superview = self.view.superview {
                 // From the queue panel to its place in the transcript.
