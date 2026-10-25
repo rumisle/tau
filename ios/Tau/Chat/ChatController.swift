@@ -1610,6 +1610,7 @@ final class ChatTitleView: UIView {
     private var titleItems: [AnimatedTextComponent.Item] = []
     private var status: Status?
     private var hasLayout = false
+    private var showsDots = false
 
     init(theme: TauTheme) {
         self.theme = theme
@@ -1617,8 +1618,6 @@ final class ChatTitleView: UIView {
         super.init(frame: CGRect(x: 0.0, y: 0.0, width: 240.0, height: 44.0))
         self.addSubview(self.backgroundView)
         self.backgroundView.alpha = 0.0
-        // Layer-backed, as Telegram's activity indicators are.
-        self.backgroundView.contentView.layer.addSublayer(self.dotsNode.layer)
         // Information, not a button: it takes no taps.
         self.isUserInteractionEnabled = false
     }
@@ -1745,8 +1744,22 @@ final class ChatTitleView: UIView {
         let contentWidth = dotsWidth + statusSize.width
         let statusOrigin = CGPoint(x: floor((backgroundSize.width - contentWidth) / 2.0), y: floor((backgroundSize.height - statusSize.height) / 2.0))
         let dotsFrame = CGRect(origin: CGPoint(x: statusOrigin.x, y: floor((backgroundSize.height - 16.0) / 2.0)), size: CGSize(width: 24.0, height: 16.0))
+        // The dots animate (Telegram's, drawn again every frame) for as long as they are in the hierarchy, seen or not:
+        // in only while there is a status. Faded out at alpha 0, they went on drawing in every chat.
+        self.showsDots = hasDots
+        if hasDots && self.dotsNode.layer.superlayer == nil {
+            // Layer-backed, as Telegram's activity indicators are.
+            self.backgroundView.contentView.layer.addSublayer(self.dotsNode.layer)
+            self.dotsNode.layer.frame = dotsFrame
+            self.dotsNode.layer.opacity = 0.0
+        }
         transition.setFrame(layer: self.dotsNode.layer, frame: dotsFrame)
-        transition.setAlpha(layer: self.dotsNode.layer, alpha: hasDots ? 1.0 : 0.0)
+        transition.setAlpha(layer: self.dotsNode.layer, alpha: hasDots ? 1.0 : 0.0, completion: { [weak self] _ in
+            guard let self, !self.showsDots else {
+                return
+            }
+            self.dotsNode.layer.removeFromSuperlayer()
+        })
         if let statusView = self.statusText.view {
             let statusFrame = CGRect(origin: CGPoint(x: statusOrigin.x + dotsWidth, y: statusOrigin.y), size: statusSize)
             if statusView.superview == nil {
