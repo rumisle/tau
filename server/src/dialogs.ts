@@ -27,6 +27,13 @@ const PREVIEW_CHARS = 200;
 const MAX_UNREAD = 99;
 /** Entries a recount reads back from the newest at most. */
 const MAX_UNREAD_SCAN = 400;
+/** Entries a recount reads at a time. */
+const PAGE = 32;
+/**
+ * Entries read first: in a chat read up to its end, as most are, the newest few give the last message and show nothing
+ * unread, so a start reading every chat reads a few entries of each instead of a page.
+ */
+const FIRST_PAGE = 4;
 /** Kinds a chat list never shows as the last message. */
 const HIDDEN_KINDS: ReadonlySet<string> = new Set(["pi.system"]);
 
@@ -148,12 +155,20 @@ export class Dialogs {
 	 * give. Synchronous, after `ready()`: a listener added just before misses no change and repeats none.
 	 */
 	list(since?: string): { dialogs: Dialog[]; version: string; full: boolean } {
+		return JSON.parse(this.serializedList(since)) as { dialogs: Dialog[]; version: string; full: boolean };
+	}
+
+	/**
+	 * `list(since)` as JSON, made of the Dialogs kept serialized: the same text as `JSON.stringify(list(since))`, without
+	 * reading every Dialog back (a full list of thousands of chats is megabytes, and every client that connects asks).
+	 */
+	serializedList(since?: string): string {
 		if (!this.#loaded) throw new Error("The chat list is not loaded yet");
 		const [epoch, number] = since?.split(":") ?? [];
 		const after = epoch === this.#epoch && number !== undefined && /^\d+$/.test(number) && Number(number) <= this.#version ? Number(number) : undefined;
 		const kept = [...this.#kept.values()].filter((each) => after === undefined || each.version > after);
 		kept.sort((a, b) => (b.state.last?.id ?? 0) - (a.state.last?.id ?? 0));
-		return { dialogs: kept.map((each) => JSON.parse(each.serialized) as Dialog), version: this.version, full: after === undefined };
+		return `{"dialogs":[${kept.map((each) => each.serialized).join(",")}],"version":${JSON.stringify(this.version)},"full":${after === undefined}}`;
 	}
 
 	/** A conversation's Dialog read now, as a create or fork returns it. */
@@ -261,7 +276,13 @@ export class Dialogs {
 		if (handle !== undefined) {
 			// Newest first: the last message, and the assistant messages after the read mark.
 			const read = meta?.read ?? 0;
-			let page = await handle.entries({}, 32, undefined, context);
+			let page = await handle.entries({}, FIRST_PAGE, undefined, context);
+			// Only when they show no message, or the read mark is further back, the rest of the page as before.
+			const shownFirst = page.items.some((entry) => !HIDDEN_KINDS.has(entry.kind));
+			if (page.next !== undefined && (!shownFirst || page.items.every((entry) => entry.id > read))) {
+				const rest = await handle.entries({}, PAGE - FIRST_PAGE, page.next, context);
+				page = { items: [...page.items, ...rest.items], ...(rest.next === undefined ? {} : { next: rest.next }) };
+			}
 			state.through = page.items[0]?.id ?? 0;
 			const shown = page.items.find((entry) => !HIDDEN_KINDS.has(entry.kind));
 			const last = shown ?? page.items[0];
@@ -277,7 +298,7 @@ export class Dialogs {
 				}
 				scanned += page.items.length;
 				if (page.next === undefined || scanned >= MAX_UNREAD_SCAN) break;
-				page = await handle.entries({}, 32, page.next, context);
+				page = await handle.entries({}, PAGE, page.next, context);
 			}
 		}
 		return state;

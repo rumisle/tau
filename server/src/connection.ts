@@ -165,7 +165,8 @@ export class Connection {
 				await this.#dialogs.settled();
 				// The listener and the list in one step: every later change comes as an event after the response.
 				this.#stopDialogs ??= this.#dialogs.onDialog((dialog, version) => this.#push({ event: "dialog", dialog, version }));
-				this.#push({ id: request.id, result: this.#dialogs.list(since) });
+				// The list as the Dialogs keep it serialized: the same frame as `#push({ id, result: list(since) })`.
+				this.#send(`{${request.id === undefined ? "" : `"id":${JSON.stringify(request.id)},`}"result":${this.#dialogs.serializedList(since)}}`);
 				return;
 			}
 			if (request.method === "conversation.subscribe") {
@@ -794,8 +795,12 @@ export class Connection {
 	}
 
 	#push(message: unknown): void {
+		this.#send(JSON.stringify(message));
+	}
+
+	#send(frame: string): void {
 		if (this.#closed) return;
-		this.#socket.send(JSON.stringify(message));
+		this.#socket.send(frame);
 	}
 
 	async #drained(): Promise<void> {

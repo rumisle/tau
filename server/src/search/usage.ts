@@ -58,6 +58,9 @@ export class UsageLedger {
 		db.exec(`CREATE TABLE IF NOT EXISTS compaction (
 			conv INTEGER NOT NULL, time INTEGER NOT NULL,
 			input INTEGER NOT NULL, output INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL, cost REAL NOT NULL)`);
+		// A report sums a span of time at a time, from each table's time index.
+		db.exec("CREATE INDEX IF NOT EXISTS warm_time ON warm (time)");
+		db.exec("CREATE INDEX IF NOT EXISTS compaction_time ON compaction (time)");
 		// Answers, refreshes and compactions as one; \`answer\` tells them apart. Made again at each start, so an older
 		// database gets the tables added since.
 		db.exec("DROP VIEW IF EXISTS spend");
@@ -93,39 +96,93 @@ export class UsageLedger {
 
 	/**
 	 * The last `days` days up to now (0: all), days cut at the client's midnight: `tzOffset` is its minutes east of
-	 * UTC, as JavaScript's `-getTimezoneOffset()`.
+	 * UTC, as JavaScript's `-getTimezoneOffset()`. Summed a span of answers at a time, letting requests in between: all
+	 * of a long history is hundreds of thousands of rows, too many to sum in one go on the server's only thread.
 	 */
-	report(days: number, tzOffset: number, now = Date.now()): UsageReport {
+	async report(days: number, tzOffset: number, now = Date.now()): Promise<UsageReport> {
 		const shift = tzOffset * 60_000;
 		const today = Math.floor((now + shift) / DAY);
-		const first = days > 0 ? today - days + 1 : Math.floor((((this.#db.prepare("SELECT min(time) AS t FROM spend").get() as { t: number | null }).t ?? now) + shift) / DAY);
+		const first = days > 0 ? today - days + 1 : Math.floor(((this.#earliest() ?? now) + shift) / DAY);
 		const since = first * DAY - shift;
 		const span = (today - first + 1) * DAY;
-		const sums = "sum(cost) AS cost, sum(input) AS input, sum(output) AS output, sum(cache_read) AS cacheRead, sum(cache_write) AS cacheWrite, sum(answer) AS replies";
-		const byDay = this.#db
-			.prepare(`SELECT CAST((time + ?) / ${DAY} AS INTEGER) AS day, model, ${sums} FROM spend WHERE time >= ? GROUP BY day, model`)
-			.all(shift, since) as ({ day: number; model: string } & UsageTotals)[];
 		const daysOut: UsageReport["days"] = [];
 		for (let day = first; day <= today; day++) daysOut.push({ day: new Date(day * DAY).toISOString().slice(0, 10), models: {} });
-		for (const row of byDay) {
-			const slot = daysOut[row.day - first];
-			if (slot !== undefined) slot.models[row.model] = totals(row);
-		}
-		// A model's replies; the refreshes' row counts the refreshes.
-		const models = (this.#db.prepare(`SELECT model, ${sums.replace("sum(answer)", "count(*)")} FROM spend WHERE time >= ? GROUP BY model ORDER BY cost DESC`).all(since) as ({ model: string } & UsageTotals)[]).map(
-			(row) => ({ model: row.model, ...totals(row) }),
+		const models = new Map<string, UsageTotals>();
+		const conversations = new Map<number, UsageTotals>();
+		const total = zero();
+		// By day, model and conversation; a model's replies count its rows (the refreshes' row counts the refreshes),
+		// the others' only the answers.
+		const grouped = this.#db.prepare(
+			`SELECT CAST((time + ?) / ${DAY} AS INTEGER) AS day, model, conv, ${SUMS}, count(*) AS rows FROM spend WHERE time >= ? AND time < ? GROUP BY day, model, conv`,
 		);
-		const conversations = (
-			this.#db.prepare(`SELECT conv AS conversationId, ${sums} FROM spend WHERE time >= ? GROUP BY conv ORDER BY cost DESC LIMIT 20`).all(since) as ({
-				conversationId: number;
-			} & UsageTotals)[]
-		).map((row) => ({ conversationId: row.conversationId, ...totals(row) }));
-		const all = this.#db.prepare(`SELECT ${sums}, count(DISTINCT conv) AS conversations FROM spend WHERE time >= ?`).get(since) as UsageTotals & { conversations: number };
-		const previous = this.#db.prepare(`SELECT ${sums} FROM spend WHERE time >= ? AND time < ?`).get(since - span, since) as UsageTotals;
-		return { days: daysOut, models, conversations, total: { ...totals(all), conversations: all.conversations ?? 0 }, previous: totals(previous) };
+		for await (const [from, to] of this.#spans(since, Number.MAX_SAFE_INTEGER)) {
+			for (const row of grouped.all(shift, from, to) as ({ day: number; model: string; conv: number; rows: number } & UsageTotals)[]) {
+				const slot = daysOut[row.day - first];
+				if (slot !== undefined) add((slot.models[row.model] ??= zero()), row, row.replies);
+				add(models.get(row.model) ?? models.set(row.model, zero()).get(row.model)!, row, row.rows);
+				add(conversations.get(row.conv) ?? conversations.set(row.conv, zero()).get(row.conv)!, row, row.replies);
+				add(total, row, row.replies);
+			}
+		}
+		const previous = zero();
+		const summed = this.#db.prepare(`SELECT ${SUMS} FROM spend WHERE time >= ? AND time < ?`);
+		for await (const [from, to] of this.#spans(since - span, since)) {
+			const row = summed.get(from, to) as Partial<UsageTotals>;
+			add(previous, row, row.replies ?? 0);
+		}
+		return {
+			days: daysOut,
+			// Costliest first; equal ones by name and ID, the same in every report.
+			models: [...models].map(([model, totals]) => ({ model, ...totals })).sort((a, b) => b.cost - a.cost || (a.model < b.model ? -1 : a.model > b.model ? 1 : 0)),
+			conversations: [...conversations]
+				.map(([conversationId, totals]) => ({ conversationId, ...totals }))
+				.sort((a, b) => b.cost - a.cost || a.conversationId - b.conversationId)
+				.slice(0, 20),
+			total: { ...total, conversations: conversations.size },
+			previous,
+		};
+	}
+
+	/** The time of the first spend, if any: each table's own, by its time index. */
+	#earliest(): number | undefined {
+		const times = ["usage", "warm", "compaction"].map((table) => (this.#db.prepare(`SELECT min(time) AS t FROM ${table}`).get() as { t: number | null }).t);
+		const found = times.filter((time): time is number => time !== null);
+		return found.length === 0 ? undefined : Math.min(...found);
+	}
+
+	/**
+	 * [from, to) cut into spans of about SPAN_ROWS answers, each after the one before has been summed and requests have
+	 * had their turn.
+	 */
+	async *#spans(from: number, to: number): AsyncGenerator<[number, number]> {
+		const next = this.#db.prepare("SELECT time FROM usage WHERE time >= ? AND time < ? ORDER BY time LIMIT 1 OFFSET ?");
+		let start = from;
+		while (start < to) {
+			const found = (next.get(start, to, SPAN_ROWS) as { time: number } | undefined)?.time;
+			// Rows of one instant stay in one span.
+			const end = found === undefined ? to : Math.max(found, start + 1);
+			yield [start, end];
+			start = end;
+			if (start < to) await new Promise((resolve) => setImmediate(resolve));
+		}
 	}
 }
 
-function totals(row: Partial<UsageTotals>): UsageTotals {
-	return { cost: row.cost ?? 0, input: row.input ?? 0, output: row.output ?? 0, cacheRead: row.cacheRead ?? 0, cacheWrite: row.cacheWrite ?? 0, replies: row.replies ?? 0 };
+/** Answers summed at a time by `report`. */
+const SPAN_ROWS = 20_000;
+
+const SUMS = "sum(cost) AS cost, sum(input) AS input, sum(output) AS output, sum(cache_read) AS cacheRead, sum(cache_write) AS cacheWrite, sum(answer) AS replies";
+
+function zero(): UsageTotals {
+	return { cost: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, replies: 0 };
+}
+
+/** Adds a row's sums, with `replies` as counted for the total it goes to. */
+function add(to: UsageTotals, row: Partial<UsageTotals>, replies: number): void {
+	to.cost += row.cost ?? 0;
+	to.input += row.input ?? 0;
+	to.output += row.output ?? 0;
+	to.cacheRead += row.cacheRead ?? 0;
+	to.cacheWrite += row.cacheWrite ?? 0;
+	to.replies += replies;
 }

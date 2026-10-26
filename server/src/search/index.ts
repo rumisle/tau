@@ -9,7 +9,7 @@ import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { type Compiled, compile, excerpt, ftsExpression, highlight, parseQuery, type Range, type Vocabulary } from "./match.ts";
 import { tokenize } from "./tokenize.ts";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const Kind = { user: 0, assistant: 1, reasoning: 2, title: 3 } as const;
 export type KindName = keyof typeof Kind;
@@ -84,7 +84,8 @@ export type SearchResponse = {
 	ms: number;
 };
 
-type ConvRow = { id: number; counter: number; cursor: number; updated: number; parent: number | null; parent_at: number | null; archived: number };
+/** `title`: the one indexed, so a start that offers it again writes nothing; null before version 4 kept it. */
+type ConvRow = { id: number; counter: number; cursor: number; updated: number; parent: number | null; parent_at: number | null; archived: number; title: string | null };
 
 type Candidate = {
 	conversation: number;
@@ -128,13 +129,21 @@ export class SearchIndex {
 		this.db = new DatabaseSync(path);
 		this.db.exec("PRAGMA journal_mode = WAL");
 		this.db.exec("PRAGMA synchronous = NORMAL");
-		this.db.exec("PRAGMA cache_size = -65536");
+		this.db.exec("PRAGMA cache_size = -8192");
 		this.db.exec("PRAGMA temp_store = MEMORY");
 		this.#migrate();
+		this.reload();
+	}
+
+	/** Reads the conversations' rows again: at the start, and after another connection wrote them (a backfill's). */
+	reload(): void {
+		this.#conversations.clear();
+		this.#forked.clear();
 		for (const row of this.db.prepare("SELECT * FROM conv").all() as ConvRow[]) {
 			this.#conversations.set(row.id, { ...row });
 			if (row.parent !== null) this.#forked.add(row.parent);
 		}
+		this.#countsAt = 0;
 	}
 
 	close(): void {
@@ -144,13 +153,21 @@ export class SearchIndex {
 	#migrate(): void {
 		const version = (this.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
 		if (version === SCHEMA_VERSION) return;
+		if (version === 3) {
+			// Version 4 keeps each conversation's indexed title; the next start writes each title once more.
+			this.db.exec("BEGIN");
+			this.db.exec("ALTER TABLE conv ADD COLUMN title TEXT");
+			this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+			this.db.exec("COMMIT");
+			return;
+		}
 		this.db.exec("BEGIN");
 		for (const table of ["conv", "part", "vocab", "fts", "usage", "file_ref"]) this.db.exec(`DROP TABLE IF EXISTS ${table}`);
 		// The files each entry names.
 		this.db.exec("CREATE TABLE file_ref (file TEXT NOT NULL, entry INTEGER NOT NULL, PRIMARY KEY (file, entry)) WITHOUT ROWID");
 		this.db.exec(`CREATE TABLE conv (
 			id INTEGER PRIMARY KEY, counter INTEGER NOT NULL, cursor INTEGER NOT NULL, updated INTEGER NOT NULL,
-			parent INTEGER, parent_at INTEGER, archived INTEGER NOT NULL DEFAULT 0)`);
+			parent INTEGER, parent_at INTEGER, archived INTEGER NOT NULL DEFAULT 0, title TEXT)`);
 		this.db.exec("CREATE INDEX conv_parent ON conv (parent)");
 		// Where each document came from: its entry and content block, and when.
 		this.db.exec("CREATE TABLE part (rowid INTEGER PRIMARY KEY, entry INTEGER NOT NULL, idx INTEGER NOT NULL, time INTEGER NOT NULL)");
@@ -176,7 +193,7 @@ export class SearchIndex {
 	#conversation(id: number): ConvRow {
 		let row = this.#conversations.get(id);
 		if (row === undefined) {
-			row = { id, counter: 0, cursor: 0, updated: 0, parent: null, parent_at: null, archived: 0 };
+			row = { id, counter: 0, cursor: 0, updated: 0, parent: null, parent_at: null, archived: 0, title: null };
 			this.#statement("INSERT OR IGNORE INTO conv (id, counter, cursor, updated) VALUES (?, 0, 0, 0)").run(id);
 			this.#conversations.set(id, row);
 		}
@@ -241,18 +258,32 @@ export class SearchIndex {
 		}
 	}
 
-	/** A conversation's title, replacing the one indexed before. */
+	/**
+	 * A conversation's title, replacing the one indexed before. The same title again writes nothing: every start offers
+	 * every title, and rewriting a full-text row costs a delete in a large index.
+	 */
 	setTitle(conversationId: number, title: string): void {
 		const conv = this.#conversation(conversationId);
+		if (conv.title === title) return;
 		const rowid = conv.id * CONV_SHIFT + Kind.title;
-		this.#statement("DELETE FROM fts WHERE rowid = ?").run(rowid);
 		const tokens = tokenize(title);
-		if (tokens.length === 0) return;
-		this.#statement("INSERT INTO fts (rowid, body, parts) VALUES (?, ?, ?)").run(
-			rowid,
-			tokens.filter((token) => token.part !== true).map((token) => token.text).join(" "),
-			tokens.filter((token) => token.part === true).map((token) => token.text).join(" "),
-		);
+		this.db.exec("BEGIN");
+		try {
+			this.#statement("DELETE FROM fts WHERE rowid = ?").run(rowid);
+			if (tokens.length > 0) {
+				this.#statement("INSERT INTO fts (rowid, body, parts) VALUES (?, ?, ?)").run(
+					rowid,
+					tokens.filter((token) => token.part !== true).map((token) => token.text).join(" "),
+					tokens.filter((token) => token.part === true).map((token) => token.text).join(" "),
+				);
+			}
+			this.#statement("UPDATE conv SET title = ? WHERE id = ?").run(title, conv.id);
+			this.db.exec("COMMIT");
+		} catch (error) {
+			this.db.exec("ROLLBACK");
+			throw error;
+		}
+		conv.title = title;
 	}
 
 	/** Whether an entry names the kept file. */

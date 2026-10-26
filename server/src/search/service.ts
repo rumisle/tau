@@ -9,6 +9,7 @@ import { FilesEntry } from "../shown.ts";
 import { type Host, MetaDoc } from "../host.ts";
 import { type IndexEntry, type IndexPart, Kind, type KindName, SearchIndex, type SearchResponse } from "./index.ts";
 import { type UsageReport, UsageLedger, type UsageRow } from "./usage.ts";
+import { type IndexWriter, localWriter, WorkerWriter } from "./writer.ts";
 
 /** A conversation's searchable parts: what the user and the model said, and the model's reasoning; no tool calls or output. */
 export function searchParts(entry: EntryRecord): IndexPart[] {
@@ -103,6 +104,10 @@ export class Search {
 	#pending: IndexEntry[] = [];
 	#flushScheduled = false;
 	#backfilling = true;
+	/** Where index writes go: this thread's index, or the backfill's worker while it runs. */
+	#writer: IndexWriter;
+	#worker: WorkerWriter | undefined;
+	#closed = false;
 	readonly ready: Promise<void>;
 
 	/** `path`: the index file; ":memory:" for one that lives as long as the process. */
@@ -110,11 +115,14 @@ export class Search {
 		this.#host = host;
 		this.index = new SearchIndex(path);
 		this.usage = new UsageLedger(this.index.db);
+		this.#writer = localWriter(this.index, this.usage);
+		// A file is backfilled from a worker thread; one in memory has no other connection, and nothing to catch up on.
+		if (path !== ":memory:") this.#writer = this.#worker = new WorkerWriter(path);
 		this.#unsubscribeWarm = host.cache.onWarm(({ conversationId, time, usage }) =>
-			this.usage.addWarm({ conversationId, time, input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost.total }),
+			this.#writer.addWarm({ conversationId, time, input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost.total }),
 		);
 		this.#unsubscribeCompaction = host.compaction.onUsage(({ conversationId, time, usage }) =>
-			this.usage.addCompaction({ conversationId, time, input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost.total }),
+			this.#writer.addCompaction({ conversationId, time, input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost.total }),
 		);
 		this.#unsubscribe = host.harness.subscribeCommits((publication) => {
 			for (const change of publication.changes) {
@@ -138,11 +146,13 @@ export class Search {
 		this.#unsubscribe();
 		this.#unsubscribeWarm();
 		this.#unsubscribeCompaction();
+		this.#closed = true;
+		void this.#worker?.terminate();
 		this.index.close();
 	}
 
 	#conversation(record: ConversationRecord): void {
-		this.index.setConversation(record.id, record.parent === undefined ? {} : { parent: { conversationId: record.parent.conversationId, at: record.parent.at } });
+		this.#writer.setConversation(record.id, record.parent === undefined ? {} : { parent: { conversationId: record.parent.conversationId, at: record.parent.at } });
 	}
 
 	#titles = new Map<number, string>();
@@ -156,12 +166,12 @@ export class Search {
 		const title = meta.title ?? "";
 		if (this.#titles.get(conversationId) !== title) {
 			this.#titles.set(conversationId, title);
-			this.index.setTitle(conversationId, title);
+			this.#writer.setTitle(conversationId, title);
 		}
 		const archived = meta.archived === true;
 		if (this.#archived.get(conversationId) !== archived) {
 			this.#archived.set(conversationId, archived);
-			this.index.setArchived(conversationId, archived);
+			this.#writer.setArchived(conversationId, archived);
 		}
 	}
 
@@ -183,35 +193,54 @@ export class Search {
 		});
 	}
 
-	/** Every conversation's entries past what the index has, oldest first, a page at a time. */
+	/**
+	 * Every conversation's entries past what the index has, oldest first, a page at a time. Into a file the writes go to
+	 * a worker thread: a first start over a large database indexes for minutes, and the server answers meanwhile.
+	 */
 	async #backfill(): Promise<void> {
 		const { storage, harness } = this.#host;
 		const context = BACKGROUND_CONTEXT;
 		const started = performance.now();
 		let indexed = 0;
 		let cursor: Cursor | undefined;
-		do {
-			const page = await storage.scanConversations({}, 200, cursor, context);
-			for (const conversation of page.items) {
-				this.#conversation(conversation);
-				const meta = await harness.snapshot(MetaDoc, conversation.id, context);
-				this.#meta(conversation.id, meta ?? {});
-				let entries: Cursor | undefined;
-				const after = this.index.cursor(conversation.id);
-				do {
-					const batch = await storage.scanEntries({ conversationId: conversation.id, minEntryId: (after + 1) as EntryId, order: "ascending" }, 256, entries, context);
-					// A fork sees its origin's entries too; each is indexed once, as its own conversation's.
-					const own = batch.items.filter((entry) => entry.conversationId === conversation.id);
-					this.index.add(own.map(indexEntry));
-					this.usage.add(own.flatMap((entry) => usageRow(entry) ?? []));
-					indexed += own.length;
-					entries = batch.next;
-					// Let requests in between pages.
-					await new Promise((resolve) => setImmediate(resolve));
-				} while (entries !== undefined);
+		try {
+			do {
+				const page = await storage.scanConversations({}, 200, cursor, context);
+				for (const conversation of page.items) {
+					this.#conversation(conversation);
+					const meta = await harness.snapshot(MetaDoc, conversation.id, context);
+					this.#meta(conversation.id, meta ?? {});
+					let entries: Cursor | undefined;
+					const after = this.index.cursor(conversation.id);
+					do {
+						const batch = await storage.scanEntries({ conversationId: conversation.id, minEntryId: (after + 1) as EntryId, order: "ascending" }, 256, entries, context);
+						// A fork sees its origin's entries too; each is indexed once, as its own conversation's.
+						const own = batch.items.filter((entry) => entry.conversationId === conversation.id);
+						this.#writer.add(own.map(indexEntry), own.flatMap((entry) => usageRow(entry) ?? []));
+						indexed += own.length;
+						entries = batch.next;
+						await this.#worker?.room();
+						// Let requests in between pages.
+						await new Promise((resolve) => setImmediate(resolve));
+					} while (entries !== undefined);
+				}
+				cursor = page.next;
+			} while (cursor !== undefined);
+			if (this.#worker !== undefined) {
+				await this.#worker.finish();
+				if (this.#closed) return;
+				// The worker moved the conversations' cursors; from now on this thread writes.
+				this.index.reload();
 			}
-			cursor = page.next;
-		} while (cursor !== undefined);
+		} catch (error) {
+			await this.#worker?.terminate();
+			// Closed while it ran: nothing failed.
+			if (this.#closed) return;
+			throw error;
+		} finally {
+			this.#worker = undefined;
+			this.#writer = localWriter(this.index, this.usage);
+		}
 		this.#backfilling = false;
 		this.#scheduleFlush();
 		if (indexed > 0) console.log(`[search] indexed ${indexed} entries in ${((performance.now() - started) / 1000).toFixed(1)} s`);
