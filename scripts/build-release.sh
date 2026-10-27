@@ -18,7 +18,7 @@ esbuild="$pi/node_modules/.bin/esbuild"
 # CommonJS dependencies call require: the bundle gets one.
 banner='import { createRequire as __tauRequire } from "node:module"; const require = __tauRequire(import.meta.url);'
 common=(--bundle --platform=node --format=esm --target=node22 --log-level=warning --legal-comments=none "--banner:js=$banner")
-"$esbuild" server/src/main.ts "${common[@]}" --outfile="$out/tau-server.js" \
+"$esbuild" server/src/release.ts "${common[@]}" --outfile="$out/tau-server.js" \
 	--define:TAU_VERSION="\"$version\"" --define:TAU_PI_REVISION="\"$revision\""
 # durable starts its image worker from beside itself (new URL("./node-worker.js", import.meta.url)).
 "$esbuild" "$pi/packages/durable/dist/images/node-worker.js" "${common[@]}" --outfile="$out/node-worker.js"
