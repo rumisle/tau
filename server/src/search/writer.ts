@@ -1,5 +1,5 @@
 // Where the search index's writes go. In the server's thread, at once; during a backfill into a file, to a worker
-// thread with its own connection to it (./backfill-worker.ts), so the minutes a large database takes to index the first
+// thread with its own connection to it (./backfill-worker.ts; a release's bundle has it as backfill-worker.js beside it), so the minutes a large database takes to index the first
 // time (full-text inserts, all synchronous SQLite work) leave the server's thread free to answer.
 import { Worker } from "node:worker_threads";
 import type { ConversationInfo, IndexEntry, SearchIndex } from "./index.ts";
@@ -51,7 +51,7 @@ export class WorkerWriter implements IndexWriter {
 	readonly #exited: Promise<void>;
 
 	constructor(path: string) {
-		this.#worker = new Worker(new URL("./backfill-worker.ts", import.meta.url), { workerData: { path } });
+		this.#worker = new Worker(new URL(import.meta.url.endsWith(".ts") ? "./backfill-worker.ts" : "./backfill-worker.js", import.meta.url), { workerData: { path } });
 		this.#worker.on("message", () => {
 			this.#inFlight -= 1;
 			this.#wake();

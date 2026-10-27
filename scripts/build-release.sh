@@ -20,8 +20,11 @@ banner='import { createRequire as __tauRequire } from "node:module"; const requi
 common=(--bundle --platform=node --format=esm --target=node22 --log-level=warning --legal-comments=none "--banner:js=$banner")
 "$esbuild" server/src/release.ts "${common[@]}" --outfile="$out/tau-server.js" \
 	--define:TAU_VERSION="\"$version\"" --define:TAU_PI_REVISION="\"$revision\""
-# durable starts its image worker from beside itself (new URL("./node-worker.js", import.meta.url)).
+# Workers start from files beside the bundle (new URL("./<name>.js", import.meta.url)): durable's image worker, code
+# mode's QuickJS worker, and the search index's.
 "$esbuild" "$pi/packages/durable/dist/images/node-worker.js" "${common[@]}" --outfile="$out/node-worker.js"
+"$esbuild" "$pi/packages/codemode/dist/runtime/worker.js" "${common[@]}" --outfile="$out/worker.js"
+"$esbuild" server/src/search/backfill-worker.ts "${common[@]}" --outfile="$out/backfill-worker.js"
 
 # Resolved with createRequire from the bundle: node_modules beside it.
 for package in quickjs-wasi @silvia-odwyer/photon; do
@@ -38,7 +41,8 @@ cat > "$out/package.json" <<JSON
 { "name": "tau-server", "version": "$version", "type": "module", "engines": { "node": ">=22.18" }, "piRevision": "$revision" }
 JSON
 
-# It starts: answers --version, and listens with throwaway storage.
+# It works: says its version, and on a database of its own runs a command, code mode and search (scripts/check-release.ts).
 [ "$(node "$out/tau-server.js" --version)" = "$version" ] || { echo "the bundle does not say its version" >&2; exit 1; }
+(cd server && node --no-warnings ../scripts/check-release.ts "$out") || { echo "the release does not work: not packed" >&2; exit 1; }
 tar -C "$root/dist" -czf "$root/dist/$name.tar.gz" "$name"
 echo "$root/dist/$name.tar.gz ($(du -h "$root/dist/$name.tar.gz" | cut -f1))"
