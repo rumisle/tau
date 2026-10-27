@@ -60,6 +60,26 @@ enum ShareGroup {
         return items.compactMap { $0[kSecAttrAccount as String] as? String }.filter { $0.hasPrefix("pending-") }
     }
 
+    /// The key servers seal an answer's push with (docs/notifications.md "Sealed"), which the notification service
+    /// extension opens: 32 random bytes, made once per install, given to every server in `devices.register`.
+    static func pushKey() -> Data {
+        if let key = self.read(account: "push-key"), key.count == 32 {
+            return key
+        }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            fatalError("no random bytes for the push key")
+        }
+        let key = Data(bytes)
+        self.write(key, account: "push-key")
+        return key
+    }
+
+    /// The extension's side: the key the app made, if it made one.
+    static var existingPushKey: Data? {
+        return self.read(account: "push-key").flatMap { $0.count == 32 ? $0 : nil }
+    }
+
     static var snapshot: ShareSnapshot? {
         get {
             return self.read(account: "snapshot").flatMap { try? JSONDecoder().decode(ShareSnapshot.self, from: $0) }

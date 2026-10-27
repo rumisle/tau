@@ -39,6 +39,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `server/` | The server: `src/host.ts` (Harness setup), `src/connection.ts` (protocol), `src/dialogs.ts` (chat list), `src/subagent.ts` (the subagent tool), `src/titles.ts` (automatic titles) |
 | `server/src/client.ts` | Reference client in TypeScript: the state machine the iOS app implements (cache, holes, ops) |
 | `vendor/pi` | pi at the commit in `PI_REVISION` (gitignored); the server links durable, pi-ai, and chord from it |
+| `relay/` | The push relay, a Cloudflare Worker that holds the APNs key, for servers without it (docs/notifications.md) |
 | `scripts/setup-pi.sh` | Clones and builds `vendor/pi`; `--latest` moves `PI_REVISION` to pi's main |
 
 ## Run

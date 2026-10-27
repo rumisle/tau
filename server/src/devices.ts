@@ -41,6 +41,8 @@ export type DeviceRecord = {
 	alerts: boolean;
 	/** The token that starts a Live Activity, from iOS 17.2. */
 	pushToStart?: string;
+	/** The app's key for what an answer's push says (src/seal.ts): 32 bytes, base64. */
+	pushKey?: string;
 	activity?: ActivityRecord;
 	/** Epoch ms of the last registration. */
 	at: number;

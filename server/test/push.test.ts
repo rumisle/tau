@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { createDecipheriv, createPublicKey, generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:http2";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -11,6 +12,7 @@ import { Apns, type ApnsPush, type ApnsResult, activityDate } from "../src/apns.
 import { ConversationReplica, TauClient } from "../src/client.ts";
 import { DevicesDoc } from "../src/devices.ts";
 import { type Host, openHost } from "../src/host.ts";
+import { PushRelay } from "../src/relay.ts";
 import { type Server, serve } from "../src/server.ts";
 
 function until(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
@@ -166,6 +168,34 @@ describe("pushes", () => {
 		await client.close();
 	});
 
+	test("an answer to a device with a push key is sealed: only the app can read it", async () => {
+		const client = await TauClient.connect(server.url);
+		const key = randomBytes(32).toString("base64");
+		await assert.rejects(client.request("devices.register", { deviceId: "sealed", environment: "production", topic: "com.example.tau", token: "t-sealed", pushKey: "short" }));
+		await client.request("devices.register", { deviceId: "sealed", environment: "production", topic: "com.example.tau", token: "t-sealed", pushKey: key });
+		const { dialog } = await client.request("conversation.create", { title: "Secret chat" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		const before = pushes.length;
+		await chat(client, replica, "the password is swordfish", "s1");
+		await until(() => pushes.some((each, i) => i >= before && each.device.token === "t-sealed"));
+		const push = pushes.slice(before).find((each) => each.device.token === "t-sealed")!.push;
+		const raw = JSON.stringify(push.payload);
+		assert.ok(!raw.includes("swordfish") && !raw.includes("Secret chat"), "neither the answer nor the title in the clear");
+		assert.deepEqual(aps(push).alert, { title: "tau", body: "New message" });
+		const tau = (push.payload as { tau: { server: string; id: number; sealed: string } }).tau;
+		assert.equal(tau.id, replica.id);
+		const bytes = Buffer.from(tau.sealed, "base64");
+		const decipher = createDecipheriv("aes-256-gcm", Buffer.from(key, "base64"), bytes.subarray(0, 12));
+		decipher.setAuthTag(bytes.subarray(bytes.length - 16));
+		const opened = JSON.parse(Buffer.concat([decipher.update(bytes.subarray(12, bytes.length - 16)), decipher.final()]).toString("utf8"));
+		assert.equal(opened.title, "Secret chat");
+		assert.match(opened.body, /swordfish/);
+		assert.match(opened.url, /^tau:\/\//);
+		await client.request("devices.unregister", { deviceId: "sealed" });
+		await client.close();
+	});
+
 	test("forgets a device token Apple says is gone", async () => {
 		const client = await TauClient.connect(server.url);
 		await client.request("devices.register", { deviceId: "old", environment: "development", topic: "com.example.tau", token: "t-old" });
@@ -247,5 +277,34 @@ describe("pushes", () => {
 		assert.deepEqual(aps(push.push).alert, { title: "Replied", body: "Working" });
 		await client.request("devices.unregister", { deviceId: "start" });
 		await client.close();
+	});
+});
+
+describe("push relay", () => {
+	test("sends the push with its token and reads Apple's answer; a refusal of its own rejects", async () => {
+		const requests: { authorization?: string; body: Record<string, unknown> }[] = [];
+		const relay = createHttpServer((request, response) => {
+			let text = "";
+			request.on("data", (chunk) => (text += chunk));
+			request.on("end", () => {
+				requests.push({ authorization: request.headers.authorization, body: JSON.parse(text) });
+				if (request.headers.authorization !== "Bearer secret") {
+					response.writeHead(401).end(JSON.stringify({ error: "unauthorized" }));
+					return;
+				}
+				response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ status: 410, reason: "Unregistered", id: "x" }));
+			});
+		});
+		await new Promise<void>((resolve) => relay.listen(0, "127.0.0.1", resolve));
+		const url = `http://127.0.0.1:${(relay.address() as AddressInfo).port}/`;
+		try {
+			const push: ApnsPush = { type: "alert", topic: "com.example.tau", priority: 10, payload: { aps: { alert: "hi" } } };
+			const result = await new PushRelay(url, "secret").send({ token: "abc", environment: "production" }, push);
+			assert.deepEqual(result, { status: 410, reason: "Unregistered", id: "x" });
+			assert.deepEqual(requests[0]!.body, { token: "abc", environment: "production", ...push });
+			await assert.rejects(new PushRelay(url, "wrong").send({ token: "abc", environment: "production" }, push), /relay 401/);
+		} finally {
+			await new Promise<void>((resolve) => relay.close(() => resolve()));
+		}
 	});
 });

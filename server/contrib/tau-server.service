@@ -5,7 +5,8 @@
 # Clients need the token in ~/.config/tau/token (only the owner may read it; the server will not start beyond loopback
 # without one):
 #   umask 077 && mkdir -p ~/.config/tau && openssl rand -hex 32 > ~/.config/tau/token
-# and Apple's pushes the account's APNs key beside it (AuthKey_<key id>.p8, chmod 600), with the team's ID.
+# and Apple's pushes the account's APNs key beside it (AuthKey_<key id>.p8, chmod 600), with the team's ID; or, without
+# the key, a push relay that holds it (../relay): --push-relay <url> --push-relay-token-file %h/.config/tau/relay-token.
 # The code is ~/tau (rsync'd, replaceable); the data, which only its owner may enter, ~/.local/share/tau.
 # Through a login, interactive zsh, so the server, and every command its agents and their skills run, has a fresh
 # terminal's environment (API keys set in ~/.zshrc), less systemd's own variables. OPENAI_API_KEY is unset so pi-ai

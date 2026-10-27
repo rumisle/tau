@@ -3,11 +3,13 @@
 //   [--dev-tps n] [--dev-cache-ttl s]` (speed of the dev/echo model, tokens per second; a prompt cache lifetime that makes it
 //   charge as a costly model, to try cache warming)
 //   [--token-file path] [--no-auth] [--apns-key path --apns-team id [--apns-key-id id]]
+//   [--push-relay url --push-relay-token-file path]
 // Clients must give the server's token (`Authorization: Bearer <token>`) when it has one: TAU_TOKEN, or else the
 // --token-file's (by convention ~/.config/tau/token), which must be readable by its owner only. Without one the server
 // listens on loopback only, unless --no-auth: anyone who reaches it can run commands as this user.
 // With the account's APNs key (a .p8, owner-only; the key ID from its name AuthKey_<id>.p8), it sends Apple's pushes:
-// notifications, and Live Activity updates (docs/notifications.md).
+// notifications, and Live Activity updates (docs/notifications.md). Or, with --push-relay, it sends them through a
+// relay that holds the key (../relay), with the relay's token from --push-relay-token-file (owner-only).
 // Its data (the database, the search index beside it) is in --data, by default $XDG_DATA_HOME/tau or
 // ~/.local/share/tau, which only its owner may enter; --db names a database file instead, as the tests do.
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
@@ -19,6 +21,7 @@ import { DEV_MODEL } from "./dev-model.ts";
 import { directory } from "./fs.ts";
 import { openHost } from "./host.ts";
 import { Apns } from "./apns.ts";
+import { PushRelay } from "./relay.ts";
 import { serve } from "./server.ts";
 
 const { values } = parseArgs({
@@ -37,6 +40,8 @@ const { values } = parseArgs({
 		"apns-key": { type: "string" },
 		"apns-key-id": { type: "string" },
 		"apns-team": { type: "string" },
+		"push-relay": { type: "string" },
+		"push-relay-token-file": { type: "string" },
 	},
 });
 
@@ -63,7 +68,7 @@ if (host.models.getModel(model.provider, model.modelId) === undefined) {
 	console.error(`Unknown model ${model.provider}/${model.modelId}`);
 	process.exit(1);
 }
-const apns = openApns();
+const apns = openApns() ?? openRelay();
 const server = await serve(host, {
 	...(apns === undefined ? {} : { apns }),
 	host: values.host,
@@ -75,7 +80,7 @@ console.log(`  storage  ${database ?? "memory"}`);
 console.log(`  model    ${model.provider}/${model.modelId}`);
 console.log(`  cwd      ${host.cwd}`);
 console.log(`  server   ${host.serverId}`);
-console.log(`  apns     ${apns === undefined ? "none" : `key ${apns.keyId}, team ${apns.teamId}`}`);
+console.log(`  apns     ${apns === undefined ? "none" : apns instanceof PushRelay ? `relay ${apns.url}` : `key ${apns.keyId}, team ${apns.teamId}`}`);
 console.log(`  auth     ${token === undefined ? "none" : process.env.TAU_TOKEN ? "token (TAU_TOKEN)" : `token (${values["token-file"]})`} (credentials: ${credentials.path})`);
 
 let stopping = false;
@@ -160,6 +165,25 @@ function openApns(): Apns | undefined {
 		});
 	} catch (error) {
 		console.error(`APNs key: ${(error as Error).message}`);
+		process.exit(1);
+	}
+}
+
+/** A push relay that holds the APNs key, when --push-relay gives it (and no --apns-key). */
+function openRelay(): PushRelay | undefined {
+	const url = values["push-relay"];
+	if (url === undefined) return undefined;
+	const given = values["push-relay-token-file"];
+	if (given === undefined) {
+		console.error("--push-relay needs --push-relay-token-file, the relay's token for this server");
+		process.exit(1);
+	}
+	const path = given.startsWith("~/") ? join(homedir(), given.slice(2)) : resolve(given);
+	try {
+		if ((statSync(path).mode & 0o077) !== 0) throw new Error(`${path} is readable by others: chmod 600 ${path}`);
+		return new PushRelay(url, readFileSync(path, "utf8").trim());
+	} catch (error) {
+		console.error(`Push relay token: ${(error as Error).message}`);
 		process.exit(1);
 	}
 }

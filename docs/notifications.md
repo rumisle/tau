@@ -38,7 +38,7 @@ renewed every 50 minutes), one HTTP/2 connection per environment, opened again w
 
 - **Registration.** The app asks for permission at launch (not under the UI tests), registers for remote notifications,
   and tells every server with `apns` its device token in `devices.register { deviceId, environment, topic, token,
-  alerts, pushToStart }` (`Notifications/PushRegistration.swift`), on each connection and when a token changes. The
+  alerts, pushToStart, pushKey }` (`Notifications/PushRegistration.swift`), on each connection and when a token changes. The
   device ID is per install; the environment is the signing profile's `aps-environment` (Xcode's builds: the sandbox);
   the topic is the bundle ID. The server keeps them in `tau.devices` (`server/src/devices.ts`), drops a token Apple
   answers 410 or BadDeviceToken for, and gives a token to one device only (a reinstall's new ID replaces the old).
@@ -57,6 +57,25 @@ renewed every 50 minutes), one HTTP/2 connection per environment, opened again w
   Settings when iOS's permission is off.
 - **A chat in the Live Activity** (docs/live-activity.md) does not ring twice: when its finish is the activity's update,
   with its alert, the device gets no notification for it.
+
+### Through a relay
+
+The APNs key works for every app of the account's team, so it stays with its owner. A server of anyone else's that the
+app connects to sends its pushes through a relay instead (`--push-relay <url> --push-relay-token-file <path>`,
+`server/src/relay.ts`): `POST /push { token, environment, type, topic, priority, payload, collapseId?, expiration? }`
+with `Authorization: Bearer <the server's relay token>`, answered with Apple's `{ status, reason?, id? }` as
+`Apns.send` resolves. The relay (`relay/`, a Cloudflare Worker) holds the key, signs the provider token, takes only
+tokens it was given (one per server, named for its log), and only the app's topic and its Live Activities'.
+
+### Sealed
+
+The app makes a key once per install (32 random bytes in the shared keychain, `ShareGroup.pushKey`) and gives it to every
+server as `pushKey`. To a device with one, an answer's push says only "tau / New message" in the clear, with
+`tau { server, id, sealed }`: `sealed` is `{ title, body, url, failed }` in AES-256-GCM (`server/src/seal.ts`; the
+12-byte nonce, the ciphertext, the 16-byte tag, base64, which CryptoKit's `AES.GCM.SealedBox(combined:)` reads). The
+notification service extension opens it and shows the chat's title and answer; when it cannot, the clear text shows.
+A relay, and Apple, see the chat's number and ciphertext. Live Activity pushes are not sealed: ActivityKit reads their
+content state itself, with no extension in between, so a chat's title and step go to the relay as they are.
 
 The push's tap opens the chat's link too, `tau://<serverId's first eight>/<conversation>` (docs/links.md), which the
 app routes to the chat on the server with that database ID.

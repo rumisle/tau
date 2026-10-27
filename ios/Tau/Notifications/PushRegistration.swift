@@ -109,6 +109,8 @@ final class PushRegistration {
             "environment": self.environment,
             "topic": self.topic,
             "alerts": PushRegistration.alerts(serverId: serverId) && !denied,
+            // What an answer says comes sealed with it: a relay and Apple carry ciphertext.
+            "pushKey": ShareGroup.pushKey().base64EncodedString(),
         ]
         if let token = self.deviceToken {
             params["token"] = token

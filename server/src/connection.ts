@@ -32,6 +32,7 @@ import type { Search } from "./search/service.ts";
 import { CreatesDoc, type Host, MetaDoc } from "./host.ts";
 import type { ActivityRow } from "./devices.ts";
 import type { Notifier } from "./notifier.ts";
+import { isPushKey } from "./seal.ts";
 import {
 	type AgentPatch,
 	type ErrorCode,
@@ -218,6 +219,10 @@ export class Connection {
 				const environment = str(params, "environment");
 				if (environment !== "development" && environment !== "production") throw new ProtocolError("bad_request", "environment must be development or production");
 				const nullable = (key: string): string | null | undefined => (params[key] === null ? null : str(params, key, true));
+				const pushKey = (key: string | null | undefined) => {
+					if (typeof key === "string" && key !== "" && !isPushKey(key)) throw new ProtocolError("bad_request", "pushKey must be 32 bytes, base64");
+					return key;
+				};
 				const alerts = params.alerts;
 				if (alerts !== undefined && typeof alerts !== "boolean") throw new ProtocolError("bad_request", "alerts must be a boolean");
 				await this.#requireNotifier().register(str(params, "deviceId"), {
@@ -226,6 +231,7 @@ export class Connection {
 					...(alerts === undefined ? {} : { alerts }),
 					...(params.token === undefined ? {} : { token: nullable("token") }),
 					...(params.pushToStart === undefined ? {} : { pushToStart: nullable("pushToStart") }),
+					...(params.pushKey === undefined ? {} : { pushKey: pushKey(nullable("pushKey")) }),
 				});
 				return {};
 			}

@@ -78,11 +78,12 @@ Whether this client's app is in the foreground, showing its own banners: while a
 nothing (docs/notifications.md). A closed connection counts as inactive.
 
 ### `devices.register`
-`{ deviceId, environment: "development" | "production", topic, token?: string | null, alerts?: boolean, pushToStart?: string | null }` -> `{}`
+`{ deviceId, environment: "development" | "production", topic, token?: string | null, alerts?: boolean, pushToStart?: string | null, pushKey?: string | null }` -> `{}`
 
 A phone's registration for Apple's pushes: its APNs device token (hex), its bundle ID, whether it wants answers as
-notifications, and its Live Activity push-to-start token. Given fields replace the stored ones; null clears a token.
-`devices.unregister { deviceId }` forgets it. `bad_request` on a server without the APNs key.
+notifications, its Live Activity push-to-start token, and the key an answer's push is sealed with (32 bytes, base64;
+docs/notifications.md "Sealed"). Given fields replace the stored ones; null clears a token.
+`devices.unregister { deviceId }` forgets it. `bad_request` on a server without the APNs key or a relay.
 
 ### `liveActivity.update`
 `{ deviceId, activity: { id?, token?, rows: ActivityRow[], accent? } | null }` -> `{}`

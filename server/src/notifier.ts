@@ -6,6 +6,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { type ConversationId, type EntryRecord, LiveDoc } from "@earendil-works/pi-durable";
+import { seal } from "./seal.ts";
 import { type Apns, type ApnsPush, type ApnsResult, activityDate, isGone } from "./apns.ts";
 import { type ActivityRecord, type ActivityRow, type DeviceRecord, DevicesDoc, VISIBLE_ROWS } from "./devices.ts";
 import { type Host, MetaDoc } from "./host.ts";
@@ -13,6 +14,7 @@ import { withoutQuotes } from "./quotes.ts";
 
 /** What sends to Apple: the APNs client, or a stand-in in tests. */
 export type PushSender = Pick<Apns, "send">;
+
 
 /** Done rows stay this long after the last chat finished, then the activity goes (as the app's doneLifetime). */
 const DONE_LIFETIME_MS = 30 * 60_000;
@@ -132,20 +134,20 @@ export class Notifier {
 	/** A phone's registration: its device token, whether it wants answers, its push-to-start token. */
 	async register(
 		deviceId: string,
-		update: { environment: DeviceRecord["environment"]; topic: string; alerts?: boolean; token?: string | null; pushToStart?: string | null },
+		update: { environment: DeviceRecord["environment"]; topic: string; alerts?: boolean; token?: string | null; pushToStart?: string | null; pushKey?: string | null },
 	): Promise<void> {
 		await this.#change((devices) => {
 			const current = devices[deviceId];
 			const next: DeviceRecord = { alerts: true, ...current, environment: update.environment, topic: update.topic, at: Date.now() };
 			if (update.alerts !== undefined) next.alerts = update.alerts;
 			// Given: set, or with null cleared; not given: as it was.
-			for (const key of ["token", "pushToStart"] as const) {
+			for (const key of ["token", "pushToStart", "pushKey"] as const) {
 				const value = update[key];
 				if (value === null || value === "") delete next[key];
 				else if (value !== undefined) next[key] = value;
 			}
 			devices[deviceId] = next;
-			console.log(`[tau] device ${deviceId.slice(0, 8)}: ${next.token === undefined ? "no token" : "token"}, ${next.alerts ? "answers" : "no answers"}, ${next.pushToStart === undefined ? "no push-to-start" : "push-to-start"} (${next.environment})`);
+			console.log(`[tau] device ${deviceId.slice(0, 8)}: ${next.token === undefined ? "no token" : "token"}, ${next.alerts ? "answers" : "no answers"}, ${next.pushToStart === undefined ? "no push-to-start" : "push-to-start"}, ${next.pushKey === undefined ? "plain" : "sealed"} (${next.environment})`);
 			// Another device's old registration of the same token (a reinstall makes a new device ID): only one gets it.
 			for (const [other, record] of Object.entries(devices)) if (other !== deviceId && record.token !== undefined && record.token === next.token) delete devices[other];
 		});
@@ -246,14 +248,18 @@ export class Notifier {
 					priority: 10,
 					payload: {
 						aps: {
-							alert: { title, body },
+							// Sealed, the text is in `tau.sealed`, which the extension opens; this shows when it cannot.
+							alert: device.pushKey === undefined ? { title, body } : { title: "tau", body: "New message" },
 							sound: "default",
 							// One thread per chat; the app's notification service extension shows it as the chat's message.
 							"thread-id": `${this.#host.serverId}:${id}`,
 							"mutable-content": 1,
 							category: "chat",
 						},
-						tau: { server: this.#host.serverId, id, url, title, failed },
+						tau:
+							device.pushKey === undefined
+								? { server: this.#host.serverId, id, url, title, failed }
+								: { server: this.#host.serverId, id, sealed: seal(device.pushKey, { title, body, url, failed }) },
 					},
 				});
 			}),

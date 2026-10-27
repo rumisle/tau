@@ -1,0 +1,8 @@
+name = "tau-push"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[vars]
+# Only pushes to this app (and its Live Activities) go through: the key could push to the team's other apps.
+TOPIC = "com.rumisle.tau"
