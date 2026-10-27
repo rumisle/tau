@@ -73,6 +73,11 @@ export class Notifier {
 	readonly #activityAlerts = new Map<string, number>();
 	/** Activities whose chats are all done: each ends when its last row would have in the app. */
 	readonly #endTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	/**
+	 * Each device's activity changes one at a time (read, push, store): two chats finishing together, or a subagent and
+	 * its parent, would otherwise each push from the same rows, the second undoing the first's or saying a finish twice.
+	 */
+	readonly #activityQueues = new Map<string, Promise<void>>();
 	/** For tests: what went to Apple. */
 	readonly pushed: { deviceId: string; push: ApnsPush; result?: ApnsResult }[] = [];
 
@@ -109,6 +114,11 @@ export class Notifier {
 				}
 			}
 		});
+		// Chats that finished while the server was down: their rows still say working.
+		setTimeout(() => {
+			if (this.#closed) return;
+			this.#reconcile().catch((error) => console.error("[tau] live activity reconcile failed:", error));
+		}, 0);
 	}
 
 	/** A connection's app came to the foreground (+1) or left it (-1). */
@@ -164,19 +174,25 @@ export class Notifier {
 
 	/** The app's activity for this server's chats as it shows it; null: it ended. */
 	async updateActivity(deviceId: string, activity: Omit<ActivityRecord, "pushedAt"> | null): Promise<void> {
-		await this.#change((devices) => {
-			const device = devices[deviceId];
-			if (device === undefined) return;
-			if (activity === null) delete device.activity;
-			else device.activity = { ...activity, ...(device.activity?.pushedAt === undefined ? {} : { pushedAt: device.activity.pushedAt }) };
-		});
+		await this.#serially(deviceId, () =>
+			this.#change((devices) => {
+				const device = devices[deviceId];
+				if (device === undefined) return;
+				if (activity === null) delete device.activity;
+				else device.activity = { ...activity, ...(device.activity?.pushedAt === undefined ? {} : { pushedAt: device.activity.pushedAt }) };
+			}),
+		);
 	}
 
 	/**
 	 * The app, away, sent a message (a notification's reply) and cannot start an activity itself: the server updates
 	 * the one it has, or starts one with the device's push-to-start token.
 	 */
-	async startActivity(deviceId: string, rows: ActivityRow[], accent: number | undefined): Promise<"updated" | "started" | "none"> {
+	startActivity(deviceId: string, rows: ActivityRow[], accent: number | undefined): Promise<"updated" | "started" | "none"> {
+		return this.#serially(deviceId, () => this.#startActivity(deviceId, rows, accent));
+	}
+
+	async #startActivity(deviceId: string, rows: ActivityRow[], accent: number | undefined): Promise<"updated" | "started" | "none"> {
 		const devices = (await this.#host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices ?? {};
 		const device = devices[deviceId];
 		if (device === undefined || this.#apns === undefined) return "none";
@@ -296,39 +312,76 @@ export class Notifier {
 		const chat = parent ?? id;
 		if (this.#activeClients > 0 || this.#apns === undefined) return;
 		const devices = (await this.#host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices ?? {};
+		await Promise.all(
+			Object.entries(devices)
+				.filter(([, device]) => device.activity?.token !== undefined && device.activity.rows.some((row) => row.conversationId === chat))
+				.map(([deviceId]) => this.#serially(deviceId, () => this.#updateRow(deviceId, chat))),
+		);
+	}
+
+	/** Brings a chat's row in a device's activity up to date with its runs, from the activity as it is now. */
+	async #updateRow(deviceId: string, chat: ConversationId): Promise<void> {
+		if (this.#closed || this.#activeClients > 0) return;
+		const device = (await this.#host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices[deviceId];
+		const record = device?.activity;
+		if (device === undefined || record?.token === undefined) return;
+		const rows = record.rows.map((row) => ({ ...row }));
+		const row = rows.find((each) => each.conversationId === chat);
+		if (row === undefined) return;
 		const now = Date.now();
-		const working = this.#busy.get(chat) === true || this.#workingChildren(chat).length > 0;
 		const children = this.#workingChildren(chat).length;
-		let last: { failed: boolean; text: string } | undefined;
-		for (const [deviceId, device] of Object.entries(devices)) {
-			const record = device.activity;
-			if (record?.token === undefined) continue;
-			const rows = record.rows.map((row) => ({ ...row }));
-			const row = rows.find((each) => each.conversationId === chat);
-			if (row === undefined) continue;
-			let finished: ActivityRow | undefined;
-			if (working) {
-				const detail = children > 0 ? `${children} subagent${children === 1 ? "" : "s"} working` : "Working";
-				if (row.state === "working" && row.detail === detail) continue;
-				row.state = "working";
-				delete row.finishedAt;
-				row.detail = detail;
-			} else {
-				if (row.state !== "working") continue;
-				last ??= await this.#lastAnswer(chat);
-				row.state = last?.failed === true ? "failed" : "done";
-				row.finishedAt = now;
-				const detail = last === undefined ? undefined : firstLine(last.text);
-				if (detail === undefined || detail === "") delete row.detail;
-				else row.detail = detail;
-				finished = row;
-			}
-			const next: ActivityRecord = { ...record, rows };
-			if (finished !== undefined) this.#activityAlerts.set(`${deviceId}:${chat}`, now);
-			const pushedAt = await this.#pushActivity(deviceId, device, next, "update", now, finished);
-			// Nothing left working: the activity goes when the last done row would have in the app.
-			if (pushedAt !== undefined && !rows.some((each) => each.state === "working")) this.#scheduleEnd(deviceId, record.token, now + this.#doneLifetime);
+		let finished: ActivityRow | undefined;
+		if (this.#busy.get(chat) === true || children > 0) {
+			const detail = children > 0 ? `${children} subagent${children === 1 ? "" : "s"} working` : "Working";
+			if (row.state === "working" && row.detail === detail) return;
+			row.state = "working";
+			delete row.finishedAt;
+			row.detail = detail;
+		} else {
+			// Done already, by an earlier change: said once.
+			if (row.state !== "working") return;
+			const last = await this.#lastAnswer(chat);
+			row.state = last?.failed === true ? "failed" : "done";
+			row.finishedAt = now;
+			const detail = last === undefined ? undefined : firstLine(last.text);
+			if (detail === undefined || detail === "") delete row.detail;
+			else row.detail = detail;
+			finished = row;
 		}
+		const next: ActivityRecord = { ...record, rows };
+		if (finished !== undefined) this.#activityAlerts.set(`${deviceId}:${chat}`, now);
+		const pushedAt = await this.#pushActivity(deviceId, device, next, "update", now, finished);
+		// Nothing left working: the activity goes when the last done row would have in the app.
+		if (pushedAt !== undefined && !rows.some((each) => each.state === "working")) this.#scheduleEnd(deviceId, record.token, now + this.#doneLifetime);
+	}
+
+	/**
+	 * At start: the chats activities show working, as they are now. One that finished while the server was down is
+	 * marked done; one that still works, or whose subagents do, is followed from here.
+	 */
+	async #reconcile(): Promise<void> {
+		if (this.#apns === undefined) return;
+		const devices = (await this.#host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices ?? {};
+		const chats = new Set<ConversationId>();
+		for (const device of Object.values(devices)) {
+			if (device.activity?.token === undefined) continue;
+			for (const row of device.activity.rows) if (row.state === "working") chats.add(row.conversationId as ConversationId);
+		}
+		for (const chat of chats) {
+			if (this.#closed) return;
+			// A change seen since is newer than what is read here.
+			if (!this.#busy.has(chat)) this.#busy.set(chat, await this.#running(chat));
+			const page = await this.#host.storage.scanConversations({ ownerConversationId: chat }, 1_000, undefined, BACKGROUND_CONTEXT);
+			for (const child of page.items) {
+				await this.#parent(child.id);
+				if (!this.#busy.has(child.id)) this.#busy.set(child.id, await this.#running(child.id));
+			}
+			await this.#runChanged(chat);
+		}
+	}
+
+	async #running(id: ConversationId): Promise<boolean> {
+		return (await this.#host.harness.snapshot(LiveDoc, id, BACKGROUND_CONTEXT))?.run !== undefined;
 	}
 
 	/** Ends a device's activity at `at`, unless it changed by then: a chat working again, or another activity. */
@@ -336,12 +389,13 @@ export class Notifier {
 		clearTimeout(this.#endTimers.get(deviceId));
 		const timer = setTimeout(() => {
 			this.#endTimers.delete(deviceId);
-			void (async () => {
+			this.#serially(deviceId, async () => {
+				if (this.#closed) return;
 				const device = (await this.#host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices[deviceId];
 				const record = device?.activity;
 				if (device === undefined || record?.token !== token || record.rows.some((row) => row.state === "working")) return;
 				await this.#pushActivity(deviceId, device, record, "end", Date.now());
-			})().catch((error) => console.error("[tau] live activity end failed:", error));
+			}).catch((error) => console.error("[tau] live activity end failed:", error));
 		}, Math.max(0, at - Date.now()));
 		timer.unref?.();
 		this.#endTimers.set(deviceId, timer);
@@ -415,6 +469,20 @@ export class Notifier {
 				if (devices[deviceId]?.token === device.token) delete devices[deviceId]!.token;
 			});
 		}
+		return result;
+	}
+
+	/** Runs `task` after the device's activity changes before it. */
+	#serially<T>(deviceId: string, task: () => Promise<T>): Promise<T> {
+		const result = (this.#activityQueues.get(deviceId) ?? Promise.resolve()).then(task);
+		const tail = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		this.#activityQueues.set(deviceId, tail);
+		void tail.then(() => {
+			if (this.#activityQueues.get(deviceId) === tail) this.#activityQueues.delete(deviceId);
+		});
 		return result;
 	}
 

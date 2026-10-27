@@ -12,18 +12,19 @@ import { Apns, type ApnsPush, type ApnsResult, activityDate } from "../src/apns.
 import { ConversationReplica, TauClient } from "../src/client.ts";
 import { DevicesDoc } from "../src/devices.ts";
 import { type Host, openHost } from "../src/host.ts";
+import { Notifier } from "../src/notifier.ts";
 import { PushRelay } from "../src/relay.ts";
 import { type Server, serve } from "../src/server.ts";
 
-function until(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
+function until(predicate: () => boolean | Promise<boolean>, timeoutMs = 10_000): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const started = Date.now();
-		const check = () => {
-			if (predicate()) resolve();
+		const check = async () => {
+			if (await predicate()) resolve();
 			else if (Date.now() - started > timeoutMs) reject(new Error("timed out"));
 			else setTimeout(check, 20);
 		};
-		check();
+		check().catch(reject);
 	});
 }
 
@@ -118,6 +119,8 @@ describe("pushes", () => {
 	let server: Server;
 	const pushes: { device: { token: string }; push: ApnsPush }[] = [];
 	let refuse: ((token: string) => ApnsResult | undefined) | undefined;
+	/** How long Apple takes to answer, from when the push is sent. */
+	let latencyMs = 0;
 	before(async () => {
 		host = await openHost({ devTokensPerSecond: 2_000, cwd: tmpdir() });
 		server = await serve(host, {
@@ -125,6 +128,7 @@ describe("pushes", () => {
 			apns: {
 				send: async (device, push) => {
 					pushes.push({ device, push });
+					if (latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, latencyMs));
 					return refuse?.(device.token) ?? { status: 200 };
 				},
 			},
@@ -260,6 +264,128 @@ describe("pushes", () => {
 		const devices = (await host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))!.devices;
 		assert.equal(devices.la?.activity, undefined, "ended");
 		await client.request("devices.unregister", { deviceId: "la" });
+		await client.close();
+	});
+
+	test("two chats in one activity finishing together: each said once, neither undoing the other", async () => {
+		const client = await TauClient.connect(server.url);
+		await client.request("devices.register", { deviceId: "two", environment: "development", topic: "com.example.tau" });
+		const replicas: ConversationReplica[] = [];
+		for (const title of ["First", "Second"]) {
+			const { dialog } = await client.request("conversation.create", { title });
+			const replica = new ConversationReplica(dialog.conversation.id);
+			await replica.sync(client);
+			replicas.push(replica);
+		}
+		const since = Date.now();
+		await client.request("liveActivity.update", {
+			deviceId: "two",
+			activity: {
+				id: "activity-2",
+				token: "t-two",
+				rows: replicas.map((replica, i) => ({ appId: replica.id, conversationId: replica.id, title: `Chat ${i}`, state: "working", since, detail: "Working", watchedAt: since + i })),
+			},
+		});
+		// Each push takes a while: the second finish comes while the first one's is on its way.
+		latencyMs = 100;
+		const before = pushes.length;
+		const sent = () => pushes.slice(before).filter((each) => each.device.token === "t-two");
+		try {
+			await Promise.all(replicas.map((replica, i) => chat(client, replica, `hello ${i}`, `two-${i}`)));
+			await until(() => sent().length >= 2);
+			// Once both are done it ends, half a second later here; or it says one still works, and stays.
+			const ended = async () => (await host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices.two?.activity === undefined;
+			await until(ended, 2_000).catch(() => {});
+		} finally {
+			latencyMs = 0;
+		}
+		const events = sent().map((each) => [aps(each.push).event, (aps(each.push).alert as { title?: string } | undefined)?.title ?? null]);
+		assert.deepEqual(events.map(([event]) => event), ["update", "update", "end"], "one update for each finish, then the end");
+		assert.deepEqual(new Set(events.slice(0, 2).map(([, title]) => title)), new Set(["Chat 0", "Chat 1"]), "each finish's alert once");
+		const states = (aps(sent()[1]!.push)["content-state"] as { chats: { state: string }[] }).chats.map((each) => each.state);
+		assert.deepEqual(states, ["done", "done"], "the second update keeps the first's finish");
+		await client.request("devices.unregister", { deviceId: "two" });
+		await client.close();
+	});
+
+	test("a chat whose subagent finishes as it does: its finish said once, after the subagent's report", async () => {
+		const client = await TauClient.connect(server.url);
+		await client.request("devices.register", { deviceId: "sub", environment: "development", topic: "com.example.tau" });
+		const { dialog } = await client.request("conversation.create", { title: "Parent" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		const since = Date.now();
+		await client.request("liveActivity.update", {
+			deviceId: "sub",
+			activity: { id: "activity-3", token: "t-sub", rows: [{ appId: replica.id, conversationId: replica.id, title: "Parent", state: "working", since, detail: "Working", watchedAt: since }] },
+		});
+		const before = pushes.length;
+		const sent = () => pushes.slice(before).filter((each) => each.device.token === "t-sub");
+		const reported = () => replica.ordered().some((entry) => entry.kind === "pi.user" && JSON.stringify(entry.model).includes('<subagent name=\\"reader\\"'));
+		latencyMs = 100;
+		try {
+			await client.request("conversation.submit", { conversationId: replica.id, requestId: "sub-1", content: "& reader: $ echo found it" });
+			await until(() => reported() && idle(replica));
+			await until(async () => (await host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices.sub?.activity === undefined, 3_000).catch(() => {});
+		} finally {
+			latencyMs = 0;
+		}
+		const events = sent().map((each) => {
+			const state = aps(each.push)["content-state"] as { chats: { state: string; detail?: string }[] };
+			return [aps(each.push).event, state.chats[0]?.state, state.chats[0]?.detail ?? null, aps(each.push).alert === undefined ? "" : "alert"];
+		});
+		assert.deepEqual(events.at(-1)?.slice(0, 2), ["end", "done"]);
+		const updates = events.slice(0, -1);
+		assert.deepEqual(updates.map(([, state]) => state).filter((state) => state !== "working"), ["done"], "done once, at the last update");
+		assert.equal(updates.at(-1)?.[1], "done");
+		assert.match(String(updates.at(-1)?.[2]), /subagent name="reader"/, "after the report");
+		assert.deepEqual(events.filter(([, , , alert]) => alert === "alert").length, 1, "one alert");
+		updates.forEach((each, i) => assert.notDeepEqual(each, updates[i - 1], "no push says what the one before did"));
+		await client.request("devices.unregister", { deviceId: "sub" });
+		await client.close();
+	});
+
+	test("at start, a chat that finished while the server was down is marked done; one that works is not", async () => {
+		const client = await TauClient.connect(server.url);
+		await client.request("devices.register", { deviceId: "restart", environment: "development", topic: "com.example.tau" });
+		const replicas: ConversationReplica[] = [];
+		for (const title of ["Finished", "Running"]) {
+			const { dialog } = await client.request("conversation.create", { title });
+			const replica = new ConversationReplica(dialog.conversation.id);
+			await replica.sync(client);
+			replicas.push(replica);
+		}
+		const [finished, running] = replicas as [ConversationReplica, ConversationReplica];
+		await chat(client, finished, "hello", "restart-1");
+		await client.request("conversation.submit", { conversationId: running.id, requestId: "restart-2", content: "$ sleep 1" });
+		await until(() => !idle(running));
+		// What the app gave the server before it went down: both working.
+		const since = Date.now();
+		await client.request("liveActivity.update", {
+			deviceId: "restart",
+			activity: {
+				id: "activity-4",
+				token: "t-restart",
+				rows: replicas.map((replica, i) => ({ appId: replica.id, conversationId: replica.id, title: `Chat ${i}`, state: "working", since, detail: "Working", watchedAt: since + i })),
+			},
+		});
+		const sent: ApnsPush[] = [];
+		const notifier = new Notifier(host, { apns: { send: async (_device, push) => (sent.push(push), { status: 200 }) }, doneLifetimeMs: 60_000 });
+		try {
+			await until(() => sent.length >= 1, 3_000);
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			assert.equal(sent.length, 1);
+			assert.deepEqual(aps(sent[0]!).alert && (aps(sent[0]!).alert as { title: string }).title, "Chat 0");
+			const states = (aps(sent[0]!)["content-state"] as { chats: { localId: number; state: string }[] }).chats.map((each) => [each.localId, each.state]);
+			assert.deepEqual(states, [
+				[running.id, "working"],
+				[finished.id, "done"],
+			]);
+		} finally {
+			notifier.close();
+		}
+		await until(() => idle(running));
+		await client.request("devices.unregister", { deviceId: "restart" });
 		await client.close();
 	});
 

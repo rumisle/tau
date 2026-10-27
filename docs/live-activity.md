@@ -76,7 +76,9 @@ foreground:
   gets an update at priority 5; one whose run ends with nothing left working is marked done (or failed) with the answer's
   first line, in an update at priority 10 with the alert, "Done · worked 12 min · …", which replaces that chat's
   notification on the device. When none is left working, the server ends the activity half an hour later, as the app
-  would, unless it changed by then. Each push's `timestamp` is later than the last.
+  would, unless it changed by then. Each push's `timestamp` is later than the last. A device's activity changes one
+  change at a time (two chats finishing together each get their update, neither undoing the other), and at start the
+  server marks done the chats that finished while it was down.
 - An activity the server keeps up to date is not stale while it works, and the app gives no alert of its own for it.
 - A notification's reply sends from the background, where an activity cannot start: the app asks its server
   (`liveActivity.start`), which updates the activity it has, or starts one with the device's push-to-start token
