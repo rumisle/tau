@@ -56,6 +56,20 @@ in.
 
 Shard 1's last run left 25 tests unrun; `testEditQueued` and `testMoveToSteer` are to run again too.
 
+## Seal the Live Activity's pushes
+
+An answer's push is sealed for the phone (docs/notifications.md "Sealed"), but a Live Activity's are not: ActivityKit
+decodes their content state itself, with no notification service extension in between, so the chats' titles and steps
+go to the push relay, and Apple, in the clear. This covers the Lock Screen, the Dynamic Island and the watch, which all
+show the same content state.
+
+The widget extension draws the activity from that state, so the server can put ciphertext in it (as a string field
+`sealed` beside a placeholder `chats`) and the extension open it while drawing, with the key from the shared keychain
+(`ShareGroup.existingPushKey`). For that, TauWidgets needs the keychain group (an entitlements file, new profiles). The
+`alert` of an update or a push-to-start is shown by the system and cannot be sealed: a fixed text instead ("tau",
+"Answered"). To check: drawing on the Lock Screen while locked (the key is AfterFirstUnlock), and on the watch, which
+the phone draws for.
+
 ## Maybe
 
 - A second server for someone else, from the template unit `tau-server@.service`.
