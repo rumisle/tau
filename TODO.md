@@ -70,6 +70,12 @@ The widget extension draws the activity from that state, so the server can put c
 "Answered"). To check: drawing on the Lock Screen while locked (the key is AfterFirstUnlock), and on the watch, which
 the phone draws for.
 
+## A flaky Live Activity test
+
+`test/push.test.ts` "a chat in a Live Activity: its finish updates the activity…" fails about one run in three to
+seven, from before the push relay too: "the done row stays a while", a second `liveactivity` push within 100 ms of the
+first, where the done row should stay 500 ms (`activityDoneLifetimeMs`). Not looked into: which push the second is.
+
 ## Maybe
 
 - A second server for someone else, from the template unit `tau-server@.service`.
