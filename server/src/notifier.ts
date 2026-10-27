@@ -97,8 +97,11 @@ export class Notifier {
 				} else if (change.type === "document" && change.conversationId !== undefined && change.record.kind === LiveDoc.definition.kind) {
 					const id = change.conversationId;
 					const busy = change.value !== null && (change.value as { run?: unknown }).run !== undefined;
-					if (this.#busy.get(id) === busy) continue;
+					const was = this.#busy.get(id);
+					if (was === busy) continue;
 					this.#busy.set(id, busy);
+					// A chat first seen idle (its live document written before its first run) finished nothing.
+					if (was === undefined && !busy) continue;
 					setTimeout(() => {
 						if (this.#closed) return;
 						this.#runChanged(id).catch((error) => console.error("[tau] live activity push failed:", error));
