@@ -208,7 +208,7 @@ StartLimitBurst=10
 
 [Service]
 Type=simple
-ExecStart=$shell -lic 'unset INVOCATION_ID JOURNAL_STREAM MANAGERPID MANAGERPIDFDID SYSTEMD_EXEC_PID MEMORY_PRESSURE_WATCH MEMORY_PRESSURE_WRITE; exec $bin/tau serve'
+ExecStart=$shell -lic 'unset INVOCATION_ID JOURNAL_STREAM MANAGERPID MANAGERPIDFDID SYSTEMD_EXEC_PID MEMORY_PRESSURE_WATCH MEMORY_PRESSURE_WRITE; exec env TAU_LIB=$lib TAU_CONFIG=$config TAU_UNIT=$unit $bin/tau serve'
 StandardInput=null
 Restart=always
 RestartSec=2

@@ -31,5 +31,5 @@ else
 	curl -fsSL "https://github.com/$repo/releases/download/$tag/tau-server-$version.tar.gz" | tar -xz -C "$work"
 fi
 "$work/tau-server-$version/bin/tau" upgrade "$version"
-"$HOME/.local/bin/tau" setup
+"${TAU_BIN:-$HOME/.local/bin}/tau" setup
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "Add ~/.local/bin to your PATH to run tau." ;; esac
