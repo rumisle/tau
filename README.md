@@ -30,6 +30,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/typography.md` | How answers are set: clreq's and Butterick's rules, what Core Text does and what tau adds (spacing, hanging lists, no lone characters, the Chinese ellipsis, curly quotes), and iOS's text size |
 | `docs/cache.md` | Prompt cache warming: refreshing a working run's cache before it expires, when that pays |
 | `docs/streaming.md` | Reading while an answer streams: what moved, overlapped and blanked, and why it no longer does |
+| `docs/deploy.md` | Releases and deploying them: one bundle with pi in it, `install.sh` on Linux, `tau upgrade` and `tau rollback` |
 | `docs/search.md` | Search: the index each server keeps as entries are written (`server/src/search`), matching and ranking, and the benchmark |
 | `docs/live-activity.md` | The Live Activity and Dynamic Island (`ios/TauWidgets`): which chats, what they show, and what waits for APNs |
 | `docs/folders.md` | Chat folders: tabs by server or chat over the list, and Settings > Chat Folders |
@@ -43,6 +44,8 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `scripts/setup-pi.sh` | Clones and builds `vendor/pi`; `--latest` moves `PI_REVISION` to pi's main |
 
 ## Run
+
+On a server, from a release (docs/deploy.md): `curl -fsSL https://github.com/rumisle/tau/releases/latest/download/install.sh | sh`, then `tau upgrade`. From the source:
 
 Requires Node 22.18+ (runs TypeScript directly). tau tracks durable on pi's main branch, not the npm release.
 

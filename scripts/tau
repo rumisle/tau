@@ -107,8 +107,9 @@ inside_service() { grep -q "/$unit.service" /proc/self/cgroup 2>/dev/null; }
 
 # Switches to a version: the links, then a restart; back to the one before if the service does not stay up.
 switch() { # version
-	local version="$1" before
+	local version="$1" before before_previous
 	before="$(current_version)"
+	before_previous="$(previous_version)"
 	[ -d "$lib/versions/$version" ] || die "$version is not installed"
 	if [ "$before" != "$version" ]; then
 		relink current "$version"
@@ -121,7 +122,8 @@ switch() { # version
 	fi
 	local restarts
 	restarts="$(systemctl --user show -p NRestarts --value "$unit")"
-	systemctl --user restart "$unit"
+	systemctl --user reset-failed "$unit" 2>/dev/null || true
+	systemctl --user restart "$unit" || true
 	# Up, and not restarting over and over, for 10 seconds.
 	sleep 10
 	if [ "$(systemctl --user show -p ActiveState --value "$unit")" = active ] \
@@ -134,6 +136,9 @@ switch() { # version
 	if [ -n "$before" ] && [ "$before" != "$version" ]; then
 		say "$version did not stay up: back to $before"
 		relink current "$before"
+		if [ -n "$before_previous" ]; then relink previous "$before_previous"; else rm -f "$lib/previous"; fi
+		# Restarting over and over may have hit systemd's start limit, which refuses a start until reset.
+		systemctl --user reset-failed "$unit" 2>/dev/null || true
 		systemctl --user restart "$unit"
 	fi
 	die "$version did not stay up"
@@ -142,7 +147,9 @@ switch() { # version
 # The switch, from outside the service when this runs in it, so the restart does not stop it halfway.
 activate() { # version
 	if has_unit && inside_service; then
-		systemd-run --user --collect --quiet --unit="tau-switch-$(date +%s)" "$self" _switch "$1"
+		systemd-run --user --collect --quiet --unit="tau-switch-$(date +%s)" \
+			--setenv=TAU_LIB="$lib" --setenv=TAU_CONFIG="$config" --setenv=TAU_UNIT="$unit" --setenv=TAU_BIN="$bin" --setenv=TAU_REPO="$repo" \
+			"$self" _switch "$1"
 		say "switching to $1 outside the service, which restarts now (journalctl --user -u 'tau-switch-*')"
 	else
 		switch "$1"
