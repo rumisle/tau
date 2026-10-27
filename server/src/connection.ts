@@ -94,8 +94,9 @@ type Subscription = {
 };
 
 
-/** The pi commit the server links (PI_REVISION at the repository root), reported in `hello`. */
+/** The pi commit the server links (PI_REVISION at the repository root), reported in `hello`; a release has it built in. */
 const PI_REVISION = (() => {
+	if (typeof TAU_PI_REVISION === "string") return TAU_PI_REVISION;
 	try {
 		return readFileSync(new URL("../../PI_REVISION", import.meta.url), "utf-8").trim();
 	} catch {

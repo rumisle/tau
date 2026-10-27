@@ -42,8 +42,14 @@ const { values } = parseArgs({
 		"apns-team": { type: "string" },
 		"push-relay": { type: "string" },
 		"push-relay-token-file": { type: "string" },
+		version: { type: "boolean", default: false },
 	},
 });
+if (values.version) {
+	// A release's version (scripts/build-release.sh); from the source, "dev".
+	console.log(typeof TAU_VERSION === "string" ? TAU_VERSION : "dev");
+	process.exit(0);
+}
 
 const token = readToken();
 if (token === undefined && !isLoopback(values.host) && !values["no-auth"]) {
