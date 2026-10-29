@@ -242,7 +242,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	);
 	cache.attach(harness, async (id) => (await storage.conversation(id, context))?.owner !== undefined);
 	compaction.attach(harness);
-	const compactions = new CompactionLog(harness, compaction);
+	const compactions = new CompactionLog(harness, storage, compaction);
 	const serverId = await harness.commit(async (tx) => {
 		const doc = await tx.doc(ServerDoc);
 		if (doc.id === "") doc.id = randomUUID();

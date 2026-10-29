@@ -5,7 +5,7 @@
 // so a chat can say it from the moment it starts to after it is placed or was not used, and still say it later.
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type ConversationId, defineDoc, type EntryRecord, type Harness, LiveDoc } from "@earendil-works/pi-durable";
+import { type ConversationId, defineDoc, type EntryRecord, type Harness, LiveDoc, type Storage, type SubmissionId, type TaskId } from "@earendil-works/pi-durable";
 import type { FollowUpCompaction } from "./compaction.ts";
 
 export type CompactionRecord = {
@@ -41,6 +41,16 @@ export const CompactionsDoc = defineDoc<{ items: CompactionRecord[] }>({
 	initial: () => ({ items: [] }),
 });
 
+/** The conversations with a record still running or waiting: what to check at start (`reconcile`). */
+export const OpenCompactionsDoc = defineDoc<{ conversations: number[] }>({
+	kind: "tau.compactions-open",
+	version: 1,
+	scope: "session",
+	initial: () => ({ conversations: [] }),
+});
+
+const isOpen = (item: CompactionRecord) => item.state === "running" || item.state === "waiting";
+
 /** The newest this many a conversation keeps. */
 const KEPT = 50;
 
@@ -55,6 +65,7 @@ type Seen = {
 
 export class CompactionLog {
 	readonly #harness: Harness;
+	readonly #storage: Storage;
 	/** Each conversation's compaction tasks and failure as last seen in `pi.live`: it changes on every token. */
 	readonly #lastLive = new Map<ConversationId, string>();
 	readonly #writes = new Map<ConversationId, Promise<void>>();
@@ -63,8 +74,9 @@ export class CompactionLog {
 	readonly #listeners = new Set<(id: ConversationId, items: CompactionRecord[]) => void>();
 	#closed = false;
 
-	constructor(harness: Harness, followUp: FollowUpCompaction) {
+	constructor(harness: Harness, storage: Storage, followUp: FollowUpCompaction) {
 		this.#harness = harness;
+		this.#storage = storage;
 		this.#unsubscribe = harness.subscribeCommits((publication) => {
 			const seen = new Map<ConversationId, Seen>();
 			const of = (id: ConversationId) => {
@@ -101,10 +113,13 @@ export class CompactionLog {
 		});
 		this.#unsubscribeUsage = followUp.onUsage((record) => {
 			this.#write(record.conversationId, (items) => {
-				const running = items.findLast((item) => item.state === "running");
-				if (running !== undefined) running.cost = (running.cost ?? 0) + record.usage.cost.total;
+				// The task that asked, of two at once; a follow-up from before tasks were named, the newest running.
+				const item = record.taskId === undefined ? items.findLast((each) => each.state === "running") : items.find((each) => each.taskId === record.taskId);
+				if (item !== undefined) item.cost = (item.cost ?? 0) + record.usage.cost.total;
 			});
 		});
+		// A record is written after the commit that changed what it says: a crash between the two left it running.
+		void this.#reconcileOpen();
 	}
 
 	/** A conversation's records changed, after the commit: all of them. */
@@ -113,9 +128,68 @@ export class CompactionLog {
 		return () => this.#listeners.delete(listener);
 	}
 
-	/** A conversation's records as kept. */
+	/** A conversation's records as kept, those still open settled first by what durable says became of their tasks. */
 	async records(id: ConversationId): Promise<CompactionRecord[]> {
-		return [...((await this.#harness.snapshot(CompactionsDoc, id, BACKGROUND_CONTEXT))?.items ?? [])];
+		const items = (await this.#harness.snapshot(CompactionsDoc, id, BACKGROUND_CONTEXT))?.items ?? [];
+		if (items.some(isOpen)) {
+			this.#write(id, (each) => this.#reconcile(id, each));
+			await this.#writes.get(id);
+			return [...((await this.#harness.snapshot(CompactionsDoc, id, BACKGROUND_CONTEXT))?.items ?? [])];
+		}
+		return [...items];
+	}
+
+	/** At start: every conversation with an open record. */
+	async #reconcileOpen(): Promise<void> {
+		try {
+			const open = (await this.#harness.snapshot(OpenCompactionsDoc, BACKGROUND_CONTEXT))?.conversations ?? [];
+			for (const id of open) this.#write(id as ConversationId, (items) => this.#reconcile(id as ConversationId, items));
+		} catch (error) {
+			console.error("[compaction] records not reconciled:", error);
+		}
+	}
+
+	/**
+	 * Settles each running or waiting record by its task: still at work, it stays; done, as durable decided (its own
+	 * summary entry, or its write submission placed or settled), failed or aborted, or with nothing to compact.
+	 */
+	async #reconcile(id: ConversationId, items: CompactionRecord[]): Promise<void> {
+		const now = Date.now();
+		for (const item of items) {
+			if (!isOpen(item)) continue;
+			const task = await this.#storage.task(item.taskId as TaskId, BACKGROUND_CONTEXT);
+			if (task === undefined) {
+				this.#unused(item, "failed", now, await this.#newestEntry(id), "lost");
+				continue;
+			}
+			if (task.state.status !== "terminal" && task.state.status !== "completing") continue;
+			const outcome = task.state.outcome as { status: string; result?: { entryId?: number; submissionId?: number }; error?: { message?: string } };
+			if (outcome.status !== "completed") {
+				this.#unused(item, "failed", now, await this.#newestEntry(id), outcome.status === "aborted" ? "stopped" : (outcome.error?.message ?? outcome.status));
+				continue;
+			}
+			if (outcome.result?.entryId !== undefined) {
+				await this.#placed(id, item, outcome.result.entryId, now);
+				continue;
+			}
+			if (outcome.result?.submissionId === undefined) {
+				this.#unused(item, "empty", now, await this.#newestEntry(id));
+				continue;
+			}
+			const submission = await this.#harness.submission(outcome.result.submissionId as SubmissionId, BACKGROUND_CONTEXT);
+			const record = (await submission?.status(BACKGROUND_CONTEXT)) as { status: string; entry?: number; reason?: string } | undefined;
+			if (record === undefined) continue;
+			if ((record.status === "placed" || record.status === "done") && record.entry !== undefined) await this.#placed(id, item, record.entry, now);
+			else if (record.status === "queued") item.state = "waiting";
+			else if (record.status === "unanswered") this.#unused(item, record.reason === "stale" ? "stale" : "failed", now, await this.#newestEntry(id), record.reason === "stale" ? undefined : record.reason);
+		}
+	}
+
+	#unused(item: CompactionRecord, state: "stale" | "failed" | "empty", now: number, after: number | undefined, error?: string): void {
+		item.state = state;
+		item.endedAt = now;
+		if (after !== undefined) item.after = after;
+		if (error !== undefined) item.error = error;
 	}
 
 	close(): void {
@@ -226,6 +300,10 @@ export class CompactionLog {
 				if (JSON.stringify(items) === before) return;
 				await this.#harness.commit(async (tx) => {
 					(await tx.doc(CompactionsDoc, id)).items = items;
+					const index = await tx.doc(OpenCompactionsDoc);
+					const listed = index.conversations.includes(id);
+					if (items.some(isOpen) && !listed) index.conversations.push(id);
+					else if (!items.some(isOpen) && listed) index.conversations = index.conversations.filter((each) => each !== id);
 					return undefined;
 				}, BACKGROUND_CONTEXT);
 				for (const listener of this.#listeners) listener(id, items);

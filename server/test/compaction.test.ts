@@ -8,6 +8,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import { ConversationReplica, type Entry, TauClient } from "../src/client.ts";
 import { answered, type CompactionUsage, compactionPolicy, DEFAULT_COMPACTION_THRESHOLD } from "../src/compaction.ts";
+import { CompactionLog, CompactionsDoc, OpenCompactionsDoc } from "../src/compactions.ts";
 import { type Host, openHost } from "../src/host.ts";
 import { type Server, serve } from "../src/server.ts";
 import { formatSkills, loadSkills, parseSkill } from "../src/skills.ts";
@@ -194,6 +195,67 @@ describe("follow-up compaction", () => {
 		assert.ok(record!.tokensBefore! > 10_000, `before: ${record!.tokensBefore}`);
 		assert.ok(record!.tokensAfter! < record!.tokensBefore!, `after: ${record!.tokensAfter} of ${record!.tokensBefore}`);
 		assert.ok(record!.cost! > 0, "the summary's cost");
+		await client.close();
+	});
+
+	test("a record left running by a crash is settled at start by what became of its task", async () => {
+		const client = await TauClient.connect(server.url);
+		const replica = await conversation(client);
+		for (const word of ["one", "two", "three"]) await chat(client, replica, `!quiet ${word} ${"lorem ipsum dolor sit amet ".repeat(500)}`, `r-${word}`);
+		await client.request("conversation.compact", { conversationId: replica.id });
+		await until(replica, () => records(replica)[0]?.state === "placed");
+		const placed = records(replica)[0]!;
+		// One not used: asked for mid-run, behind a reset queued for the same boundary, which leaves its cut behind.
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "r-run", content: "$ sleep 4 && echo done" });
+		await until(replica, () => !idle(replica));
+		await client.request("conversation.compact", { conversationId: replica.id });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		await client.request("conversation.reset", { conversationId: replica.id });
+		await until(replica, () => records(replica)[1]?.state === "stale", 20_000);
+		const stale = records(replica)[1]!;
+		assert.ok(stale.after !== undefined, "where the chat says it was not used");
+		const id = replica.id as ConversationId;
+		// As a crash would leave them: the done tasks' records still running or waiting, and one whose task is gone.
+		await host.harness.commit(async (tx) => {
+			(await tx.doc(CompactionsDoc, id)).items = [
+				{ taskId: placed.taskId, reason: "manual", blocking: false, startedAt: 1, state: "running" },
+				{ taskId: stale.taskId, reason: "manual", blocking: false, startedAt: 2, state: "waiting" },
+				{ taskId: 999_999, reason: "manual", blocking: false, startedAt: 3, state: "running" },
+			];
+			(await tx.doc(OpenCompactionsDoc)).conversations = [id];
+			return undefined;
+		}, BACKGROUND_CONTEXT);
+		const log = new CompactionLog(host.harness, host.storage, host.compaction);
+		try {
+			const deadline = Date.now() + 5_000;
+			let items: { taskId: number; state: string; entryId?: number }[] = [];
+			while (Date.now() < deadline) {
+				await log.settled();
+				items = (await host.harness.snapshot(CompactionsDoc, id, BACKGROUND_CONTEXT))?.items ?? [];
+				if (items.every((item) => item.state !== "running" && item.state !== "waiting")) break;
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			assert.equal(items[0]!.state, "placed");
+			assert.equal(items[0]!.entryId, placed.entryId);
+			assert.equal(items[1]!.state, "stale");
+			assert.equal(items[2]!.state, "failed");
+			assert.deepEqual((await host.harness.snapshot(OpenCompactionsDoc, BACKGROUND_CONTEXT))?.conversations ?? [], []);
+		} finally {
+			log.close();
+		}
+		await client.close();
+	});
+
+	test("two compactions at once each have the cost of their own summary", async () => {
+		const client = await TauClient.connect(server.url);
+		const replica = await conversation(client);
+		for (const word of ["one", "two", "three"]) await chat(client, replica, `!quiet ${word} ${"lorem ipsum dolor sit amet ".repeat(500)}`, `c-${word}`);
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "c-run", content: "$ sleep 3 && echo done" });
+		await until(replica, () => !idle(replica));
+		await client.request("conversation.compact", { conversationId: replica.id });
+		await client.request("conversation.compact", { conversationId: replica.id });
+		await until(replica, () => records(replica).length === 2 && records(replica).every((record) => !["running", "waiting"].includes(record.state)), 30_000);
+		for (const record of records(replica)) assert.ok(record.cost! > 0, `task ${record.taskId}: ${record.cost}`);
 		await client.close();
 	});
 
