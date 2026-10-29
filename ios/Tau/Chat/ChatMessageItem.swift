@@ -1809,7 +1809,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     let suffix: String
                     switch call.kind {
                     case .spawn:
-                        suffix = working ? "working" : (call.duration.map { "worked \(formatDuration($0))" } ?? "")
+                        suffix = working ? "working" : status == .stopped ? "stopped" : (call.duration.map { "worked \(formatDuration($0))" } ?? "")
                     case .send:
                         suffix = "message"
                     case .stop:
@@ -1966,7 +1966,9 @@ final class ChatMessageItemNode: ListViewItemNode {
                 // Its time at the right of the title: ticking while it runs past a second, then how long it took.
                 let runningSince = status == .running ? tool?.startedAt : nil
                 var finalTime: String?
-                if !isActive, let duration = tool?.duration, duration >= 1.0 {
+                if status == .stopped {
+                    finalTime = "stopped"
+                } else if !isActive, let duration = tool?.duration, duration >= 1.0 {
                     finalTime = formatDuration(duration)
                 }
                 var timerReserve: CGFloat = 0.0
@@ -2024,6 +2026,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.isAccessibilityElement = toolPhotos.isEmpty
                     self.accessibilityIdentifier = "toolCard"
                     self.accessibilityLabel = [title.string, body.string].filter { !$0.isEmpty }.joined(separator: "\n")
+                    self.accessibilityValue = status == .stopped ? "stopped" : isActive ? "working" : status == .failed ? "failed" : "done"
 
                     self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
                     let cardFrame = CGRect(origin: CGPoint(x: params.leftInset + freeTextInset - 4.0 + leftShift, y: 0.0), size: cardSize)

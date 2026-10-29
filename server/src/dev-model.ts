@@ -177,6 +177,12 @@ function reply(messages: readonly Message[]) {
 	if (text.startsWith("$ ")) {
 		return fauxAssistantMessage([fauxToolCall("bash", { command: text.slice(2) })], { stopReason: "toolUse" });
 	}
+	// `!longcall N`: a bash call of N lines, long enough to stop while the model still writes it.
+	const longCall = /^!longcall (\d+)/.exec(text);
+	if (longCall !== null) {
+		const lines = Array.from({ length: Number(longCall[1]) }, (_, index) => `echo line ${index + 1}`);
+		return fauxAssistantMessage([fauxToolCall("bash", { command: lines.join("\n") })], { stopReason: "toolUse" });
+	}
 	if (text.startsWith("!read ")) {
 		return fauxAssistantMessage([fauxToolCall("read", { path: text.slice(6).trim() })], { stopReason: "toolUse" });
 	}

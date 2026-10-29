@@ -113,6 +113,8 @@ struct ToolCallInfo: Equatable {
         case running
         case done
         case failed
+        /// Cut off with its run (Stop while the model wrote it): it never ran, and will not.
+        case stopped
     }
 
     var callId: String

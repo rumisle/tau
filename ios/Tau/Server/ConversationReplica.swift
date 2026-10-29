@@ -379,7 +379,14 @@ enum TranscriptBuilder {
                     }
                     // Its calls start once it is written.
                     let written = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
+                    let firstRow = rows.count
                     addAssistant(content: message.objects("content"), base: base, date: date, entryId: id, streaming: false, toolStart: written)
+                    // Stopped while the model wrote them: its calls never run (a result, if one came, says otherwise).
+                    if message.string("stopReason") == "aborted" {
+                        for index in firstRow ..< rows.count where rows[index].tool != nil {
+                            rows[index].tool?.status = .stopped
+                        }
+                    }
                     // The end of a run: its answer says when it came and how long the run took, from the first message.
                     if message.string("stopReason") != "toolUse" {
                         let finished = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)

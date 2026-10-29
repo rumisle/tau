@@ -2004,4 +2004,24 @@ final class SendingUITests: XCTestCase {
         self.shot("linkref-2-preview")
         XCTAssertEqual(self.app.state, .runningForeground, "previewed")
     }
+
+    /// Stop while the model still writes a tool call: the call never runs, and its card says it stopped instead of
+    /// spinning (and a subagent's ticking) for good.
+    func testStopDuringToolCall() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!longcall 300")
+        self.send()
+        let card = self.app.descendants(matching: .any).matching(identifier: "toolCard").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "the call being written")
+        sleep(1)
+        self.shot("stopcall-0-writing")
+        self.app.buttons["stop"].firstMatch.tap()
+        XCTAssertTrue(self.app.waitForIdle())
+        settle()
+        self.shot("stopcall-1-stopped")
+        XCTAssertEqual(card.value as? String, "stopped")
+        sleep(3)
+        XCTAssertEqual(card.value as? String, "stopped", "still")
+    }
 }
