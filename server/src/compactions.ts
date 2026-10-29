@@ -139,13 +139,13 @@ export class CompactionLog {
 		for (const entry of seen.entries) {
 			if (entry.kind !== "pi.compaction" || entry.byTaskId === undefined) continue;
 			const item = find(entry.byTaskId);
-			if (item !== undefined) this.#placed(item, entry.id, now);
+			if (item !== undefined) await this.#placed(id, item, entry.id, now);
 		}
 		for (const submission of seen.submissions) {
 			const item = find(submission.taskId);
 			if (item === undefined) continue;
 			if ((submission.status === "placed" || submission.status === "done") && submission.entry !== undefined) {
-				this.#placed(item, submission.entry, now);
+				await this.#placed(id, item, submission.entry, now);
 			} else if (submission.status === "queued" && item.state === "running") {
 				item.state = "waiting";
 			} else if (submission.status === "unanswered" && item.state !== "placed") {
@@ -181,17 +181,22 @@ export class CompactionLog {
 		if (items.length > KEPT) items.splice(0, items.length - KEPT);
 	}
 
-	#placed(item: CompactionRecord, entryId: number, now: number): void {
+	async #placed(id: ConversationId, item: CompactionRecord, entryId: number, now: number): Promise<void> {
 		if (item.state === "placed") return;
 		item.state = "placed";
 		item.entryId = entryId;
 		item.endedAt = now;
+		// The size before: at the last answer before the summary, which a compaction started mid-run may follow.
+		item.tokensBefore = (await this.#contextBefore(id, entryId)) ?? item.tokensBefore;
 	}
 
-	/** The context at the end of the last answer: what it read, and what it wrote, which the next request reads. */
-	async #contextBefore(id: ConversationId): Promise<number | undefined> {
+	/**
+	 * The context at the end of the last answer (before `entryId`): what it read, and what it wrote, which the next
+	 * request reads.
+	 */
+	async #contextBefore(id: ConversationId, entryId?: number): Promise<number | undefined> {
 		const conversation = await this.#harness.conversation(id, BACKGROUND_CONTEXT);
-		const page = await conversation?.entries({}, 64, undefined, BACKGROUND_CONTEXT);
+		const page = await conversation?.entries(entryId === undefined ? {} : { maxEntryId: (entryId - 1) as never }, 64, undefined, BACKGROUND_CONTEXT);
 		for (const entry of page?.items ?? []) {
 			if (entry.kind !== "pi.assistant") continue;
 			const message = entry.model?.[0] as AssistantMessage | undefined;
