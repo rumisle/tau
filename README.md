@@ -7,8 +7,8 @@ is built from Telegram's components.
 
 - Linux with systemd, Node 22.18+
 - A model login or API key
-- A route from the phone to the server: the app allows `*.ts.net` ([Tailscale](https://tailscale.com)) and the
-  local network
+- A route from the phone to the server: plain `ws://` over [Tailscale](https://tailscale.com) (`*.ts.net`) or the
+  local network, or `wss://` anywhere behind a TLS reverse proxy
 
 ## Server
 
