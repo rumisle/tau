@@ -7,7 +7,7 @@ A Cloudflare Worker that holds the APNs key and forwards tau servers' pushes to 
 npm install
 npx wrangler deploy
 npx wrangler secret put APNS_KEY        # the .p8's contents
-npx wrangler secret put APNS_KEY_ID     # e.g. F878SZRDN4
+npx wrangler secret put APNS_KEY_ID     # the 10 characters after AuthKey_ in the .p8 file name
 npx wrangler secret put APNS_TEAM       # the team ID
 npx wrangler secret put RELAY_TOKENS    # name:token per server, by line or comma (openssl rand -hex 32)
 ```
