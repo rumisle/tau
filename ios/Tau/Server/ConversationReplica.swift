@@ -628,7 +628,11 @@ enum TranscriptBuilder {
         // Its row from the start, at the end until its summary is placed (or it ends unused): running, then waiting
         // for a run's next step. From the server's record (when it began); from the live document until that comes.
         var shown = Set<Int>()
-        for record in compactions where !replica.docsAreStale && (record.state == "running" || record.state == "waiting") {
+        let liveTasks = Set(live.objects("compactions").compactMap { $0.int("taskId") })
+        // A running one only while the live document lists its task: a record the server could not settle yet (it
+        // writes it after the commit that ended the task, and a crash between the two left it running) must not tick
+        // on for good. A waiting one is no longer listed there, rightly.
+        for record in compactions where !replica.docsAreStale && ((record.state == "running" && liveTasks.contains(record.taskId)) || record.state == "waiting") {
             shown.insert(record.taskId)
             rows.append(ChatMessage(id: self.rowId(base: record.taskId, block: 62), role: .service, text: "", date: Date(timeIntervalSince1970: 0.0), service: .compacting(since: record.startedAt, waiting: record.state == "waiting")))
         }
