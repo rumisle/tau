@@ -42,7 +42,9 @@ lock screen card is dark, as the island, so both read the same.
 - **Minimal** (another app's activity shares the island): the τ, or the check or the mark.
 - **Expanded** (long press): a top line either side of the camera, the τ and "Working" or "2 working" on the left, the
   minutes (one chat), "+1 more", or the check on the right; under it up to two chats, avatar, title, state, and the
-  step or the answer's first line, the avatars under the τ. No buttons: to stop an agent, open the app.
+  step or the answer's first line, the avatars under the τ. No buttons: to stop an agent, open the app. A row's title
+  line ends with its minutes while it works and "Failed" after a failure; a done one says nothing there, its avatar's
+  check says it.
 
 ## Lock screen
 

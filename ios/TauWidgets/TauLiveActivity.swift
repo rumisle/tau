@@ -152,8 +152,8 @@ struct ChatAvatar: View {
     }
 }
 
-/// The end of a chat's title line: its minutes while it works (when it began, once updates have stopped), Done or
-/// Failed after.
+/// The end of a chat's title line: its minutes while it works (when it began, once updates have stopped), Failed
+/// after a failure; nothing once done, which the avatar's check says.
 struct ChatStateLabel: View {
     let chat: TauActivityAttributes.Chat
     let isStale: Bool
@@ -165,9 +165,10 @@ struct ChatStateLabel: View {
             Text(self.isStale ? "since \(self.chat.since.formatted(date: .omitted, time: .shortened))" : minutesText(self.chat.minutes))
                 .foregroundStyle(tauAccentTint(self.accent))
         case .done:
-            Text("Done")
-                .foregroundStyle(tauAccentTint(self.accent))
+            // The avatar's check says it.
+            EmptyView()
         case .failed:
+            // Said as well as marked: it needs the user.
             Text("Failed")
                 .foregroundStyle(failedRed)
         }
