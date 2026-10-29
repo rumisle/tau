@@ -313,8 +313,11 @@ struct QueuedMessage: Equatable {
 }
 
 /// What a chat screen renders: committed entries plus the answer still streaming (`pi.live.generation`).
+/// Equatable by the synthesized ==, so no property can be left out of it; only the rows compare their own way
+/// (`Transcript`).
 struct ConversationState: Equatable {
-    var messages: [ChatMessage]
+    /// The rows with their stable prefix.
+    var transcript: Transcript
     /// The partial assistant message while the model streams; replaced by an entry when it finishes.
     var streaming: ChatMessage?
     var busy: Bool
@@ -334,16 +337,47 @@ struct ConversationState: Equatable {
     var compactionFailure: CompactionFailure?
     /// While the server retries after a model error.
     var retry: RetryState?
-    /// The first `count` messages are the same in every state with this token: the chat compares and lays out only
-    /// what comes after them.
-    var stablePrefix: StablePrefix?
     /// The run waits for a compaction (past the blocking threshold): the title says compacting, not working.
     var compactionBlocksRun = false
 
-    /// As the synthesized one (every property; keep it so), but the messages of two states with one stable prefix are
-    /// compared after it only.
-    static func == (lhs: ConversationState, rhs: ConversationState) -> Bool {
-        guard lhs.stablePrefix == rhs.stablePrefix, lhs.messages.count == rhs.messages.count, lhs.streaming == rhs.streaming, lhs.busy == rhs.busy, lhs.queued == rhs.queued, lhs.hasOlder == rhs.hasOlder, lhs.isLoaded == rhs.isLoaded, lhs.agent == rhs.agent, lhs.title == rhs.title, lhs.runStartedAt == rhs.runStartedAt, lhs.compactionFailure == rhs.compactionFailure, lhs.retry == rhs.retry, lhs.compactionBlocksRun == rhs.compactionBlocksRun else {
+    init(messages: [ChatMessage], streaming: ChatMessage?, busy: Bool, queued: [QueuedMessage] = [], hasOlder: Bool = false, isLoaded: Bool = true) {
+        self.transcript = Transcript(messages: messages)
+        self.streaming = streaming
+        self.busy = busy
+        self.queued = queued
+        self.hasOlder = hasOlder
+        self.isLoaded = isLoaded
+    }
+
+    var messages: [ChatMessage] {
+        get {
+            return self.transcript.messages
+        }
+        // In place: a row changed through it does not copy the others.
+        _modify {
+            yield &self.transcript.messages
+        }
+    }
+
+    /// The first `count` messages are the same in every state with this token: the chat compares and lays out only
+    /// what comes after them.
+    var stablePrefix: StablePrefix? {
+        get {
+            return self.transcript.stablePrefix
+        }
+        _modify {
+            yield &self.transcript.stablePrefix
+        }
+    }
+}
+
+/// A state's rows: two with one stable prefix are compared after it only.
+struct Transcript: Equatable {
+    var messages: [ChatMessage]
+    var stablePrefix: StablePrefix?
+
+    static func == (lhs: Transcript, rhs: Transcript) -> Bool {
+        guard lhs.stablePrefix == rhs.stablePrefix, lhs.messages.count == rhs.messages.count else {
             return false
         }
         let start = min(lhs.stablePrefix?.count ?? 0, lhs.messages.count)
