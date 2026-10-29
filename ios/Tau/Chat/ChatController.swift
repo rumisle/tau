@@ -23,6 +23,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private var themeDisposable: Disposable?
     private var settingsDisposable: Disposable?
     private let titleView: ChatTitleView
+    /// The tool card whose Show All was tapped last, and when: that tap also selects the card's row.
+    private var toolTextOpened: (id: Int, at: Double)?
     /// New Chat and ⋯, on the bar's right; none in a preview.
     private var headerButtons: ChatHeaderButtonsNode?
     private var modelsDisposable: Disposable?
@@ -401,8 +403,21 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 // A subagent's own conversation, live, as any chat.
                 (self.navigationController as? NavigationController)?.pushViewController(ChatController(context: self.context, conversationId: child))
             } else {
-                self.controllerNode.toggleExpanded(message.id)
+                // After the tap's own handlers: one on Show All opens the viewer, and leaves the card as it is.
+                DispatchQueue.main.async {
+                    if let shown = self.toolTextOpened, shown.id == message.id, CACurrentMediaTime() - shown.at < 0.5 {
+                        return
+                    }
+                    self.controllerNode.toggleExpanded(message.id)
+                }
             }
+        }
+        node.setToolTextHandler { [weak self] message in
+            guard let self else {
+                return
+            }
+            self.toolTextOpened = (message.id, CACurrentMediaTime())
+            (self.navigationController as? NavigationController)?.pushViewController(ToolTextController(context: self.context, message: message))
         }
         node.presentInGlobalOverlay = { [weak self] controller, arguments in
             self?.presentInGlobalOverlay(controller, with: arguments)

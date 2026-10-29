@@ -595,6 +595,11 @@ final class ChatControllerNode: ASDisplayNode {
         self.interaction.openLinkMenu = menu
     }
 
+    /// Set by the controller: a tool card's Show All.
+    func setToolTextHandler(_ open: @escaping (ChatMessage) -> Void) {
+        self.interaction.openToolText = open
+    }
+
     /// The row whose text a double tap selected, in place (ChatMessageItemNode.beginInlineSelection): one at a time.
     private weak var inlineSelectionNode: ChatMessageItemNode?
 

@@ -25,7 +25,7 @@ final class SendingUITests: XCTestCase {
 
     private func launch(_ arguments: [String], server: String = devServer) {
         self.app = XCUIApplication()
-        self.app.launchArguments = ["-server.url", server, "-wrapCode", "YES", "-theme", "dark", "-uiTesting", "YES"] + (server.hasSuffix(":7878") ? mainServerToken : []) + arguments
+        self.app.launchArguments = ["-server.url", server, "-wrapCode", "YES", "-uiTesting", "YES"] + (arguments.contains("-theme") ? [] : ["-theme", "dark"]) + (server.hasSuffix(":7878") ? mainServerToken : []) + arguments
         self.app.launch()
         self.waitForLaunch(arguments)
     }
@@ -2036,5 +2036,55 @@ final class SendingUITests: XCTestCase {
         settle()
         self.shot("subdots-0-list")
         XCTAssertTrue(self.app.descendants(matching: .any)["chatWorking"].firstMatch.exists, "the dots while only the subagent works")
+    }
+
+    /// A command's long output: the expanded card shows its last lines and Show All, which opens the whole of it in a
+    /// screen of its own that scrolls and selects; back is the chat.
+    func testToolShowAll() {
+        for theme in ["dark", "day"] {
+            self.launch(["-newChat", "YES", "-theme", theme])
+            self.focusInput()
+            self.type("$ seq 1 450")
+            self.send()
+            let idle = self.app.waitForIdle(timeout: 90)
+            self.shot("showall-\(theme)-sent")
+            XCTAssertTrue(idle)
+            settle()
+            let card = self.app.descendants(matching: .any).matching(identifier: "toolCard").firstMatch
+            let height = self.app.frame.height
+            // Above the answer, which says the output again: its title in view, then a tap expands it.
+            for _ in 0 ..< 40 where !card.exists || card.frame.minY < 120.0 {
+                self.app.swipeDown()
+            }
+            XCTAssertTrue(card.exists)
+            self.app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: card.frame.minX + 40.0, dy: card.frame.minY + 14.0)).tap()
+            settle()
+            settle()
+            self.shot("showall-\(theme)-0-expanded")
+            // Its end in view: Show All.
+            for _ in 0 ..< 40 where card.frame.maxY > height - 160.0 {
+                self.app.swipeUp(velocity: .slow)
+            }
+            settle()
+            self.shot("showall-\(theme)-1-end")
+            self.app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: card.frame.minX + 40.0, dy: card.frame.maxY - 14.0)).tap()
+            settle()
+            let text = self.app.textViews["toolText"].firstMatch
+            XCTAssertTrue(text.waitForExistence(timeout: 5), "the viewer")
+            XCTAssertTrue((text.value as? String ?? "").contains("\n450"), "all of the output")
+            XCTAssertTrue((text.value as? String ?? "").contains("$ seq 1 450\n1\n"), "from its first line")
+            self.shot("showall-\(theme)-2-viewer")
+            for _ in 0 ..< 3 {
+                text.swipeUp()
+            }
+            settle()
+            self.shot("showall-\(theme)-3-scrolled")
+            // Back, with a swipe from the edge.
+            self.point(0.0, 0.5).press(forDuration: 0.05, thenDragTo: self.point(0.8, 0.5))
+            settle()
+            XCTAssertTrue(self.inChat, "back in the chat")
+            XCTAssertFalse(text.exists)
+            self.shot("showall-\(theme)-4-back")
+        }
     }
 }

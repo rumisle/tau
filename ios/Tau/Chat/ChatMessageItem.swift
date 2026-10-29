@@ -35,6 +35,8 @@ final class ChatMessageItemInteraction {
     var openURL: (String) -> Void = { _ in }
     /// A long press on a link: Telegram's link menu over the message, which the press goes on driving.
     var openLinkMenu: (String, Int, TapLongTapOrDoubleTapGestureRecognizer) -> Void = { _, _, _ in }
+    /// A tool card's Show All: its whole text, in a viewer.
+    var openToolText: (ChatMessage) -> Void = { _ in }
     /// A file's row: where the file is, as its circle shows; a tap fetches, stops fetching, or opens it.
     var fileStatus: (FileAttachment) -> Signal<FileTransferStatus, NoError> = { file in .single(file.localURL.map { .local($0) } ?? .remote) }
     var openFile: (FileAttachment, FileTransferStatus) -> Void = { _, _ in }
@@ -338,6 +340,9 @@ final class ChatMessageItemNode: ListViewItemNode {
     private let toolBackgroundNode = ASDisplayNode()
     private let toolTitleNode = TextNode()
     private let toolTextNode = TextNode()
+    /// Under an expanded card whose text was cut: its whole text, in a viewer.
+    private let toolShowAllNode = TextNode()
+    private var toolShowAllFrame: CGRect?
     /// A subagent's card: its name and task as the quote over a Telegram reply, then what it said.
     private let subagentQuoteNode = ASDisplayNode()
     private let subagentBarNode = ASDisplayNode()
@@ -403,6 +408,8 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.contentNode.addSubnode(self.toolBackgroundNode)
         self.contentNode.addSubnode(self.toolTitleNode)
         self.contentNode.addSubnode(self.toolTextNode)
+        self.toolShowAllNode.isHidden = true
+        self.contentNode.addSubnode(self.toolShowAllNode)
         self.subagentQuoteNode.isLayerBacked = true
         self.subagentQuoteNode.cornerRadius = 8.0
         self.subagentQuoteNode.clipsToBounds = true
@@ -563,6 +570,10 @@ final class ChatMessageItemNode: ListViewItemNode {
             return
         }
         let point = self.view.convert(location, to: self.contentNode.view)
+        if let frame = self.toolShowAllFrame, frame.contains(point) {
+            item.interaction.openToolText(item.message)
+            return
+        }
         if let frame = self.retryButtonFrame, frame.contains(point) {
             item.interaction.openTool(item.message)
             return
@@ -1017,6 +1028,7 @@ final class ChatMessageItemNode: ListViewItemNode {
         let makeRunLayout = TextNode.asyncLayout(self.runNode)
         let makeToolTitleLayout = TextNode.asyncLayout(self.toolTitleNode)
         let makeToolTextLayout = TextNode.asyncLayout(self.toolTextNode)
+        let makeToolShowAllLayout = TextNode.asyncLayout(self.toolShowAllNode)
         let makeSubagentTaskLayout = TextNode.asyncLayout(self.subagentTaskNode)
         let makeSubagentMetaLayout = TextNode.asyncLayout(self.subagentMetaNode)
         let makeSubagentAnswerLayout = InteractiveTextNode.asyncLayout(self.subagentAnswerNode)
@@ -1504,6 +1516,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.setToolVisible(true)
                         self.setSubagentVisible(false)
                         self.toolTextNode.isHidden = true
+                        self.toolShowAllNode.isHidden = true
+                        self.toolShowAllFrame = nil
                         for node in self.imageNodes {
                             node.isHidden = true
                         }
@@ -1579,6 +1593,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.setToolVisible(true)
                         self.setSubagentVisible(false)
                         self.toolTextNode.isHidden = true
+                        self.toolShowAllNode.isHidden = true
+                        self.toolShowAllFrame = nil
                         for node in self.imageNodes {
                             node.isHidden = true
                         }
@@ -1663,6 +1679,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.setToolVisible(true)
                         self.setSubagentVisible(false)
                         self.toolTextNode.isHidden = true
+                        self.toolShowAllNode.isHidden = true
+                        self.toolShowAllFrame = nil
                         for node in self.imageNodes {
                             node.isHidden = true
                         }
@@ -1830,7 +1848,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     case .answer, .failed, .stop:
                         quoted = call.task ?? "Subagent"
                     }
-                    let quoteLines = call.kind == .spawn ? (item.isExpanded ? 12 : 3) : (call.kind == .send ? 2 : 1)
+                    let quoteLines = call.kind == .spawn ? (item.isExpanded ? 0 : 3) : (call.kind == .send ? 2 : 1)
                     let taskString = NSAttributedString(string: quoted.replacingOccurrences(of: "\n", with: quoteLines == 1 ? " " : "\n"), font: Font.regular(14.0), textColor: theme.toolCardTitleColor)
                     let (taskLayout, taskApply) = makeSubagentTaskLayout(TextNodeLayoutArguments(attributedString: taskString, maximumNumberOfLines: quoteLines, truncationType: .end, constrainedSize: CGSize(width: textWidth, height: .greatestFiniteMagnitude)))
                     let quoteHeight = quoteText.top + headerLayout.size.height + 1.0 + taskLayout.size.height + quoteText.bottom
@@ -1891,6 +1909,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.setTableNodes([])
                         self.setToolVisible(true)
                         self.toolTextNode.isHidden = true
+                        self.toolShowAllNode.isHidden = true
+                        self.toolShowAllFrame = nil
                         self.setSubagentVisible(true)
 
                         self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
@@ -1957,7 +1977,12 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let status = tool?.status ?? .done
                 let isActive = status == .preparing || status == .pending || status == .running
                 let isDark = item.theme.presentationTheme.overallDarkAppearance
-                let (titleText, summaryText, body) = toolCardContent(name: name, tool: tool, fallbackText: message.text, isExpanded: item.isExpanded, isActive: isActive, isDark: isDark, textColor: theme.toolCardTextColor, titleColor: theme.toolCardTitleColor, accentColor: item.theme.accentColor, maxWidth: maxWidth)
+                let cuts = ClipTracker()
+                let (titleText, summaryText, body) = toolCardContent(name: name, tool: tool, fallbackText: message.text, isExpanded: item.isExpanded, isActive: isActive, isDark: isDark, textColor: theme.toolCardTextColor, titleColor: theme.toolCardTitleColor, accentColor: item.theme.accentColor, maxWidth: maxWidth, cuts: cuts)
+                // Expanded and cut: Show All, under the text.
+                let showsAll = item.isExpanded && cuts.clipped
+                let (showAllLayout, showAllApply) = makeToolShowAllLayout(TextNodeLayoutArguments(attributedString: showsAll ? NSAttributedString(string: "Show All", font: Font.medium(14.0), textColor: item.theme.accentColor) : nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude)))
+                let showAllHeight: CGFloat = showsAll ? showAllLayout.size.height + 8.0 : 0.0
                 // Title: the tool, then what it works on, as a terminal agent prints a call.
                 let title = NSMutableAttributedString(string: titleText, font: toolTitleFont, textColor: status == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTitleColor)
                 if !summaryText.isEmpty {
@@ -1989,7 +2014,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                 if case .code = tool?.detail {
                     isCode = true
                 }
-                let (textLayout, textApply) = makeToolTextLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? (isCode ? 400 : 120) : (isCode ? 16 : 10), truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), lineSpacing: 0.1))
+                // Expanded, each part is cut at its lines already (expandedToolLines): all of them, however they wrap.
+                let (textLayout, textApply) = makeToolTextLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? 0 : (isCode ? 16 : 10), truncationType: .end, constrainedSize: CGSize(width: maxWidth, height: .greatestFiniteMagnitude), lineSpacing: 0.1))
 
                 let cardInsets = UIEdgeInsets(top: 9.0, left: 12.0, bottom: 10.0, right: 12.0)
                 let bodyHeight = body.length > 0 ? textLayout.size.height + 3.0 : 0.0
@@ -1999,7 +2025,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let photosHeight: CGFloat = toolPhotos.isEmpty ? 0.0 : toolMosaic.size.height + 8.0
                 let cardSize = CGSize(
                     width: max(max(titleLayout.size.width + (isActive ? 22.0 : 0.0) + timerReserve, body.length > 0 ? textLayout.size.width : 0.0), toolMosaic.size.width) + cardInsets.left + cardInsets.right,
-                    height: titleLayout.size.height + bodyHeight + photosHeight + cardInsets.top + cardInsets.bottom
+                    height: titleLayout.size.height + bodyHeight + showAllHeight + photosHeight + cardInsets.top + cardInsets.bottom
                 )
                 let mergedTop = above == .tool
                 let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: cardSize.height), insets: UIEdgeInsets(top: mergedTop ? 3.0 : 6.0, left: 0.0, bottom: 3.0, right: 0.0))
@@ -2026,6 +2052,14 @@ final class ChatMessageItemNode: ListViewItemNode {
                     self.isAccessibilityElement = toolPhotos.isEmpty
                     self.accessibilityIdentifier = "toolCard"
                     self.accessibilityLabel = [title.string, body.string].filter { !$0.isEmpty }.joined(separator: "\n")
+                    if showsAll {
+                        self.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Show All", actionHandler: { _ in
+                            item.interaction.openToolText(item.message)
+                            return true
+                        })]
+                    } else {
+                        self.accessibilityCustomActions = nil
+                    }
                     self.accessibilityValue = status == .stopped ? "stopped" : isActive ? "working" : status == .failed ? "failed" : "done"
 
                     self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
@@ -2037,9 +2071,19 @@ final class ChatMessageItemNode: ListViewItemNode {
                     animation.animator.updateFrame(layer: self.toolTitleNode.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top), size: titleLayout.size), completion: nil)
                     let _ = textApply()
                     animation.animator.updateFrame(layer: self.toolTextNode.layer, frame: CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top + titleLayout.size.height + 3.0), size: textLayout.size), completion: nil)
+                    let _ = showAllApply()
+                    self.toolShowAllNode.isHidden = !showsAll
+                    if showsAll {
+                        let frame = CGRect(origin: CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top + titleLayout.size.height + bodyHeight + 6.0), size: showAllLayout.size)
+                        animation.animator.updateFrame(layer: self.toolShowAllNode.layer, frame: frame, completion: nil)
+                        // The tap's room: the card's width, the line's height and a little.
+                        self.toolShowAllFrame = CGRect(x: cardFrame.minX, y: frame.minY - 6.0, width: cardFrame.width, height: frame.height + 6.0 + cardInsets.bottom)
+                    } else {
+                        self.toolShowAllFrame = nil
+                    }
                     self.ensureImageNodes(toolPhotos.count)
                     self.imageAttachmentIds = []
-                    let photosOrigin = CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top + titleLayout.size.height + bodyHeight + 8.0)
+                    let photosOrigin = CGPoint(x: cardFrame.minX + cardInsets.left, y: cardFrame.minY + cardInsets.top + titleLayout.size.height + bodyHeight + showAllHeight + 8.0)
                     for (index, attachment) in toolPhotos.enumerated() {
                         let imageNode = self.imageNodes[index]
                         let (frame, position) = toolMosaic.frames[index]
@@ -2168,6 +2212,10 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.toolBackgroundNode.isHidden = !visible
         self.toolTitleNode.isHidden = !visible
         self.toolTextNode.isHidden = !visible
+        if !visible {
+            self.toolShowAllNode.isHidden = true
+            self.toolShowAllFrame = nil
+        }
     }
 
     /// ChatMessageTextBubbleContentNode.updateSearchTextHighlightState: the matched words' rects, behind the text.
@@ -2842,11 +2890,20 @@ private func shortPath(_ path: String, isExpanded: Bool) -> String {
 }
 
 /// The first or last `count` lines, with an ellipsis line where the rest was cut.
-private func clippedLines(_ text: String, count: Int, fromStart: Bool) -> String {
+/// Notes whether a card's body was cut: an expanded card that was offers Show All, the whole of it in a viewer.
+final class ClipTracker {
+    var clipped = false
+}
+
+/// An expanded card's lines of each part (a command, an output, a file, a diff, a script); the rest is in its viewer.
+let expandedToolLines = 200
+
+private func clippedLines(_ text: String, count: Int, fromStart: Bool, cuts: ClipTracker? = nil) -> String {
     let lines = text.components(separatedBy: "\n")
     guard lines.count > count else {
         return text
     }
+    cuts?.clipped = true
     if fromStart {
         var head = Array(lines.prefix(count))
         while let last = head.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -2859,7 +2916,8 @@ private func clippedLines(_ text: String, count: Int, fromStart: Bool) -> String
 
 /// What a tool card says: the tool, what it works on, and a body made for the tool: a command with the end of its
 /// output, a file's first lines highlighted by its language, a diff in red and green.
-private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, isExpanded: Bool, isActive: Bool, isDark: Bool, textColor: UIColor, titleColor: UIColor, accentColor: UIColor, maxWidth: CGFloat) -> (String, String, NSMutableAttributedString) {
+/// Expanded, each part shows `limit` lines (`Int.max`: the viewer's whole text), and `cuts` notes whether one was cut.
+func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, isExpanded: Bool, isActive: Bool, isDark: Bool, textColor: UIColor, titleColor: UIColor, accentColor: UIColor, maxWidth: CGFloat, limit: Int = expandedToolLines, cuts: ClipTracker? = nil) -> (String, String, NSMutableAttributedString) {
     let body = NSMutableAttributedString()
     var output = (tool?.output ?? fallbackText).trimmingCharacters(in: .whitespacesAndNewlines)
     let codeFont = Font.monospace(12.0)
@@ -2868,17 +2926,17 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
         output = output.replacingOccurrences(of: "<harness>", with: "").replacingOccurrences(of: "</harness>", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
     if case let .code(script, error) = tool?.detail {
-        return ("Code", codeCallCount(tool?.nested.count ?? 0), codeCardBody(script: script, calls: tool?.nested ?? [], output: output, error: error, isExpanded: isExpanded, isActive: isActive, errorColor: isDark ? diffRemovedDark : diffRemovedLight, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
+        return ("Code", codeCallCount(tool?.nested.count ?? 0), codeCardBody(script: script, calls: tool?.nested ?? [], output: output, error: error, isExpanded: isExpanded, isActive: isActive, errorColor: isDark ? diffRemovedDark : diffRemovedLight, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth, limit: limit, cuts: cuts))
     }
     if tool?.status == .failed, !output.isEmpty {
         let errorColor = isDark ? diffRemovedDark : diffRemovedLight
         switch tool?.detail ?? .none {
         case let .read(path):
-            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 40 : 4, fromStart: true), font: codeFont, textColor: errorColor))
+            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? limit : 4, fromStart: true, cuts: isExpanded ? cuts : nil), font: codeFont, textColor: errorColor))
             return ("Read", shortPath(tool?.summary ?? path, isExpanded: isExpanded), body)
         case let .bash(command):
-            body.append(MarkdownText.code("$ " + clippedLines(command, count: isExpanded ? 40 : 3, fromStart: true), language: "bash", font: codeFont, textColor: titleColor))
-            body.append(NSAttributedString(string: "\n" + clippedLines(output, count: isExpanded ? 80 : 6, fromStart: false), font: codeFont, textColor: errorColor))
+            body.append(MarkdownText.code("$ " + clippedLines(command, count: isExpanded ? limit : 3, fromStart: true, cuts: isExpanded ? cuts : nil), language: "bash", font: codeFont, textColor: titleColor))
+            body.append(NSAttributedString(string: "\n" + clippedLines(output, count: isExpanded ? limit : 6, fromStart: false, cuts: isExpanded ? cuts : nil), font: codeFont, textColor: errorColor))
             return ("Bash", "", body)
         default:
             break
@@ -2886,31 +2944,31 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
     }
     switch tool?.detail ?? .none {
     case let .bash(command):
-        let shownCommand = clippedLines(command.trimmingCharacters(in: .whitespacesAndNewlines), count: isExpanded ? 40 : 3, fromStart: true)
+        let shownCommand = clippedLines(command.trimmingCharacters(in: .whitespacesAndNewlines), count: isExpanded ? limit : 3, fromStart: true, cuts: isExpanded ? cuts : nil)
         body.append(MarkdownText.code("$ " + shownCommand, language: "bash", font: codeFont, textColor: titleColor))
         if !output.isEmpty {
             body.append(NSAttributedString(string: "\n"))
             // A command says how it went at the end.
-            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 80 : (isActive ? 4 : 6), fromStart: false), font: codeFont, textColor: textColor))
+            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? limit : (isActive ? 4 : 6), fromStart: false, cuts: isExpanded ? cuts : nil), font: codeFont, textColor: textColor))
         }
         return ("Bash", "", body)
     case let .read(path):
         // An image read: the card shows it, and what pi said of it, as a note.
         if tool?.images.isEmpty == false {
             if !output.isEmpty {
-                body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 20 : 2, fromStart: true), font: Font.regular(13.0), textColor: textColor))
+                body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? limit : 2, fromStart: true, cuts: isExpanded ? cuts : nil), font: Font.regular(13.0), textColor: textColor))
             }
             return ("Read", shortPath(tool?.summary ?? path, isExpanded: isExpanded), body)
         }
         if !output.isEmpty {
             let lines = output.components(separatedBy: "\n").count
-            body.append(MarkdownText.code(clippedLines(output, count: isExpanded ? 100 : 5, fromStart: true), language: MarkdownText.language(forPath: path), font: codeFont, textColor: textColor))
+            body.append(MarkdownText.code(clippedLines(output, count: isExpanded ? limit : 5, fromStart: true, cuts: isExpanded ? cuts : nil), language: MarkdownText.language(forPath: path), font: codeFont, textColor: textColor))
             return ("Read", shortPath(tool?.summary ?? path, isExpanded: isExpanded) + (isExpanded ? "" : "  \(lines) lines"), body)
         }
         return ("Read", shortPath(tool?.summary ?? path, isExpanded: isExpanded), body)
     case let .write(path, content):
         let lines = content.isEmpty ? 0 : content.components(separatedBy: "\n").count
-        body.append(MarkdownText.code(clippedLines(content, count: isExpanded ? 100 : 6, fromStart: true), language: MarkdownText.language(forPath: path), font: codeFont, textColor: textColor))
+        body.append(MarkdownText.code(clippedLines(content, count: isExpanded ? limit : 6, fromStart: true, cuts: isExpanded ? cuts : nil), language: MarkdownText.language(forPath: path), font: codeFont, textColor: textColor))
         if tool?.status == .failed, !output.isEmpty {
             body.append(NSAttributedString(string: "\n" + output, font: codeFont, textColor: isDark ? diffRemovedDark : diffRemovedLight))
         }
@@ -2921,7 +2979,7 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
         let lines = diff.components(separatedBy: "\n")
         let addedCount = lines.filter { $0.hasPrefix("+") }.count
         let removedCount = lines.filter { $0.hasPrefix("-") }.count
-        let shown = isExpanded ? lines.prefix(160) : lines.prefix(10)
+        let shown = isExpanded ? lines.prefix(limit) : lines.prefix(10)
         for (index, line) in shown.enumerated() {
             if index > 0 {
                 body.append(NSAttributedString(string: "\n"))
@@ -2931,6 +2989,9 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
         }
         if shown.count < lines.count {
             body.append(NSAttributedString(string: "\n…", font: codeFont, textColor: textColor))
+            if isExpanded {
+                cuts?.clipped = true
+            }
         }
         if tool?.status == .failed, !output.isEmpty {
             body.append(NSAttributedString(string: "\n" + output, font: codeFont, textColor: removed))
@@ -2949,7 +3010,7 @@ private func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: St
         if !output.isEmpty {
             // Commands say how they went at the end; answers are read from the start.
             let fromStart = name == "subagent"
-            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 80 : (isActive ? 4 : 6), fromStart: fromStart), font: toolFont, textColor: textColor))
+            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? limit : (isActive ? 4 : 6), fromStart: fromStart, cuts: isExpanded ? cuts : nil), font: toolFont, textColor: textColor))
         }
         return (name == "subagent" ? "Subagent" : name, tool?.summary ?? "", body)
     }
@@ -2983,7 +3044,7 @@ private func toolTitle(_ name: String) -> String {
 /// A code mode script's card (docs/codemode.md): the script, highlighted; a line for each call it made, as the call's
 /// own card would title it, the one running bright and those done quieter; then what it wrote, or its error. Folded,
 /// the script's first lines, its last three calls (the one at work among them), and the start of its output.
-private func codeCardBody(script: String, calls: [NestedToolCall], output: String, error: String?, isExpanded: Bool, isActive: Bool, errorColor: UIColor, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat) -> NSMutableAttributedString {
+private func codeCardBody(script: String, calls: [NestedToolCall], output: String, error: String?, isExpanded: Bool, isActive: Bool, errorColor: UIColor, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat, limit: Int, cuts: ClipTracker?) -> NSMutableAttributedString {
     let body = NSMutableAttributedString()
     let codeFont = Font.monospace(12.0)
     let nameFont = Font.semibold(12.0)
@@ -3001,13 +3062,16 @@ private func codeCardBody(script: String, calls: [NestedToolCall], output: Strin
     }
     let source = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     if !source.isEmpty {
-        body.append(MarkdownText.code(clippedLines(source, count: isExpanded ? 80 : 3, fromStart: true), language: "javascript", font: codeFont, textColor: titleColor))
+        body.append(MarkdownText.code(clippedLines(source, count: isExpanded ? limit : 3, fromStart: true, cuts: isExpanded ? cuts : nil), language: "javascript", font: codeFont, textColor: titleColor))
     }
 
-    let shown = isExpanded ? calls.suffix(200) : calls.suffix(3)
+    let shown = isExpanded ? calls.suffix(limit) : calls.suffix(3)
     if !shown.isEmpty {
         section()
         if shown.count < calls.count {
+            if isExpanded {
+                cuts?.clipped = true
+            }
             let earlier = calls.count - shown.count
             body.append(NSAttributedString(string: earlier == 1 ? "1 earlier call\n" : "\(earlier) earlier calls\n", font: Font.regular(12.0), textColor: textColor))
         }
@@ -3036,7 +3100,7 @@ private func codeCardBody(script: String, calls: [NestedToolCall], output: Strin
                 body.append(NSAttributedString(string: "\n" + fittedText(last.trimmingCharacters(in: .whitespaces), font: codeFont, maxWidth: maxWidth), font: codeFont, textColor: textColor))
             }
             if call.status == .failed, let error = call.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
-                let text = isExpanded ? clippedLines(error, count: 4, fromStart: true) : fittedText(error.replacingOccurrences(of: "\n", with: " "), font: codeFont, maxWidth: maxWidth)
+                let text = isExpanded ? clippedLines(error, count: limit == Int.max ? limit : 4, fromStart: true) : fittedText(error.replacingOccurrences(of: "\n", with: " "), font: codeFont, maxWidth: maxWidth)
                 body.append(NSAttributedString(string: "\n" + text, font: codeFont, textColor: errorColor))
             }
         }
@@ -3044,11 +3108,11 @@ private func codeCardBody(script: String, calls: [NestedToolCall], output: Strin
 
     if !output.isEmpty {
         section()
-        body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? 80 : 3, fromStart: true), font: codeFont, textColor: textColor))
+        body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? limit : 3, fromStart: true, cuts: isExpanded ? cuts : nil), font: codeFont, textColor: textColor))
     }
     if let error, !error.isEmpty {
         section()
-        body.append(NSAttributedString(string: clippedLines(error, count: isExpanded ? 30 : 3, fromStart: true), font: codeFont, textColor: errorColor))
+        body.append(NSAttributedString(string: clippedLines(error, count: isExpanded ? limit : 3, fromStart: true, cuts: isExpanded ? cuts : nil), font: codeFont, textColor: errorColor))
     }
     return body
 }
