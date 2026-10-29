@@ -30,6 +30,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/typography.md` | How answers are set: clreq's and Butterick's rules, what Core Text does and what tau adds (spacing, hanging lists, no lone characters, the Chinese ellipsis, curly quotes), and iOS's text size |
 | `docs/cache.md` | Prompt cache warming: refreshing a working run's cache before it expires, when that pays |
 | `docs/streaming.md` | Reading while an answer streams: what moved, overlapped and blanked, and why it no longer does |
+| `docs/edits-and-forks.md` | Design notes, not built: edit as versions in one chat, fork as another chat, and what subagents do in each |
 | `docs/deploy.md` | Releases and deploying them: one bundle with pi in it, `install.sh` on Linux, `tau upgrade` and `tau rollback` |
 | `docs/search.md` | Search: the index each server keeps as entries are written (`server/src/search`), matching and ranking, and the benchmark |
 | `docs/live-activity.md` | The Live Activity and Dynamic Island (`ios/TauWidgets`): which chats, what they show, and what waits for APNs |
