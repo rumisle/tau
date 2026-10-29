@@ -200,10 +200,13 @@ final class SendingUITests: XCTestCase {
         self.send()
         usleep(800_000)
         self.tapAccessory()
-        usleep(800_000)
-        self.app.descendants(matching: .any)["urgent"].firstMatch.tap()
-        usleep(700_000)
-        self.app.descendants(matching: .any)["Send Now"].firstMatch.tap()
+        // The queue's menu and its items when they are there: on a loaded Mac, later than a guessed wait.
+        let urgent = self.app.descendants(matching: .any)["urgent"].firstMatch
+        XCTAssertTrue(urgent.waitForExistence(timeout: 5), "the queue's menu")
+        urgent.tap()
+        let sendNow = self.app.descendants(matching: .any)["Send Now"].firstMatch
+        XCTAssertTrue(sendNow.waitForExistence(timeout: 5), "its actions")
+        sendNow.tap()
         self.app.waitForIdle()
         settle()
         self.shot("sendnow-0")
@@ -987,7 +990,9 @@ final class SendingUITests: XCTestCase {
         self.shot("multi-2-server")
         self.point(0.1, 0.08).tap()
         settle()
-        self.app.descendants(matching: .any)["Add Server"].firstMatch.tap()
+        let addServer = self.app.descendants(matching: .any)["Add Server"].firstMatch
+        XCTAssertTrue(addServer.waitForExistence(timeout: 5), "Add Server")
+        addServer.tap()
         settle()
         self.shot("multi-3-add")
         self.point(0.32, 0.49).tap()
@@ -2125,8 +2130,9 @@ final class SendingUITests: XCTestCase {
         self.shot("cc-0-idle-running")
         let card = self.app.descendants(matching: .any).matching(identifier: "compactionCard").firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 15), "the card when the summary is in")
-        XCTAssertFalse(pill.exists, "the pill turned into it")
-        XCTAssertTrue(card.label.contains("The model reads this summary"), card.label)
+        // Gone, once the list's removal animation (slower on a loaded Mac) is over.
+        XCTAssertTrue(waitUntil(3.0) { !pill.exists }, "the pill turned into it")
+        XCTAssertTrue(card.label.hasPrefix("Context compacted. At "), card.label)
         settle()
         self.shot("cc-1-idle-placed")
         // While the agent works.
@@ -2141,7 +2147,7 @@ final class SendingUITests: XCTestCase {
         usleep(1_500_000)
         self.shot("cc-2-midrun-running")
         // Summarized while the command still runs: it waits for the run's next step.
-        let waiting = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'compactionPill' AND label BEGINSWITH 'Context summarized'")).firstMatch
+        let waiting = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'compactionPill' AND label BEGINSWITH 'Summary ready'")).firstMatch
         XCTAssertTrue(waiting.waitForExistence(timeout: 12), "waiting for the next step")
         settle()
         self.shot("cc-3-midrun-waiting")
@@ -2151,18 +2157,5 @@ final class SendingUITests: XCTestCase {
         let cards = self.app.descendants(matching: .any).matching(identifier: "compactionCard").count
         let notes = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'compactionPill' AND label BEGINSWITH 'Compaction not used'")).count
         XCTAssertTrue(cards >= 2 || notes >= 1, "placed, or a note that it was not used (\(cards) cards, \(notes) notes)")
-    }
-
-    /// For screenshots of a chat on another server: TAU_SHOT_SERVER, TAU_SHOT_CHAT.
-    func testShotChat() throws {
-        let env = ProcessInfo.processInfo.environment
-        try XCTSkipIf(env["TAU_SHOT_CHAT"] == nil, "a chat to shoot")
-        self.launch(["-openChat", env["TAU_SHOT_CHAT"]!] + (env["TAU_SHOT_THEME"].map { ["-theme", $0] } ?? []), server: env["TAU_SHOT_SERVER"] ?? devServer)
-        sleep(4)
-        for _ in 0 ..< (Int(env["TAU_SHOT_SWIPES"] ?? "0") ?? 0) {
-            self.point(0.5, 0.4).press(forDuration: 0.05, thenDragTo: self.point(0.5, 0.7))
-        }
-        settle()
-        self.shot("shot-chat")
     }
 }
