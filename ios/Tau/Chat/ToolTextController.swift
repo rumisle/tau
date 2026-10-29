@@ -2,6 +2,9 @@ import UIKit
 import AsyncDisplayKit
 import Display
 import SwiftSignalKit
+import EdgeEffect
+import ComponentFlow
+import ComponentDisplayAdapters
 
 /// A tool card's whole text, from its Show All: the command and all of its output, a whole file, a whole diff, a
 /// script with every call and all it wrote. A screen of its own, pushed as tau's others are (the bar, the theme, the
@@ -26,7 +29,7 @@ final class ToolTextController: ViewController {
         self.shareButton = BarActionButtonNode(image: { color in
             generateTintedImage(image: UIImage(bundleImageName: "Chat List/NavigationShare"), color: color)
         }, accessibilityLabel: "Share")
-        super.init(navigationBarPresentationData: context.theme.navigationBarPresentationData(edgeEffectColor: context.theme.list.plainBackgroundColor))
+        super.init(navigationBarPresentationData: context.theme.navigationBarPresentationData())
         self.statusBar.statusBarStyle = self.theme.statusBarStyleValue
         self.title = ToolTextController.title(message)
         self.shareButton.update(color: self.theme.navigationBar.primaryTextColor)
@@ -40,7 +43,7 @@ final class ToolTextController: ViewController {
             }
             self.theme = theme
             self.statusBar.statusBarStyle = theme.statusBarStyleValue
-            self.navigationBar?.updatePresentationData(theme.navigationBarPresentationData(edgeEffectColor: theme.list.plainBackgroundColor), transition: .immediate)
+            self.navigationBar?.updatePresentationData(theme.navigationBarPresentationData(), transition: .immediate)
             self.shareButton.update(color: theme.navigationBar.primaryTextColor)
             if self.isNodeLoaded {
                 self.textNode.update(theme: theme, text: self.text(theme: theme))
@@ -118,6 +121,9 @@ private final class ToolTextNode: ASDisplayNode {
     private var theme: TauTheme
     private var text: NSAttributedString
     private var textView: UITextView?
+    /// The text fading out under the bar, as the chat's rows fade under its input panel (ChatControllerNode's edge
+    /// effect): the bar's own blur alone left lines legible behind the clock and the back button.
+    private let topEdgeEffectView = EdgeEffectView()
     private var validLayout: (ContainerViewLayout, CGFloat)?
 
     var plainText: String {
@@ -145,6 +151,8 @@ private final class ToolTextNode: ASDisplayNode {
         textView.accessibilityIdentifier = "toolText"
         self.textView = textView
         self.view.addSubview(textView)
+        self.topEdgeEffectView.isUserInteractionEnabled = false
+        self.view.addSubview(self.topEdgeEffectView)
         self.apply()
         if let (layout, navigationHeight) = self.validLayout {
             self.update(layout: layout, navigationHeight: navigationHeight, transition: .immediate)
@@ -156,6 +164,9 @@ private final class ToolTextNode: ASDisplayNode {
         self.text = text
         self.backgroundColor = theme.list.plainBackgroundColor
         self.apply()
+        if let (layout, navigationHeight) = self.validLayout {
+            self.update(layout: layout, navigationHeight: navigationHeight, transition: .immediate)
+        }
     }
 
     private func apply() {
@@ -174,6 +185,9 @@ private final class ToolTextNode: ASDisplayNode {
         }
         let wasLaidOut = textView.frame.width > 0.0
         transition.updateFrame(view: textView, frame: CGRect(origin: CGPoint(), size: layout.size))
+        let edgeFrame = CGRect(x: 0.0, y: 0.0, width: layout.size.width, height: navigationHeight + 12.0)
+        transition.updateFrame(view: self.topEdgeEffectView, frame: edgeFrame)
+        self.topEdgeEffectView.update(content: self.theme.list.plainBackgroundColor, blur: true, alpha: 0.85, rect: edgeFrame, edge: .top, edgeSize: min(edgeFrame.height, 48.0), transition: ComponentTransition(transition))
         // Telegram's insets: under the bar, clear of the home indicator, 16 pt from the sides (and the safe area).
         let insets = UIEdgeInsets(top: navigationHeight + 12.0, left: layout.safeInsets.left + 16.0, bottom: max(layout.intrinsicInsets.bottom, 16.0) + 12.0, right: layout.safeInsets.right + 16.0)
         textView.textContainerInset = insets
