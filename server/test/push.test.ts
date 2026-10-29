@@ -345,7 +345,7 @@ describe("pushes", () => {
 		await client.close();
 	});
 
-	test("at start, a chat that finished while the server was down is marked done; one that works is not", async () => {
+	test("at start, a chat that finished while the server was down is marked done, quietly; one that works is not", async () => {
 		const client = await TauClient.connect(server.url);
 		await client.request("devices.register", { deviceId: "restart", environment: "development", topic: "com.example.tau" });
 		const replicas: ConversationReplica[] = [];
@@ -376,6 +376,7 @@ describe("pushes", () => {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 			assert.equal(sent.length, 1);
 			assert.deepEqual(aps(sent[0]!).alert && (aps(sent[0]!).alert as { title: string }).title, "Chat 0");
+			assert.equal((aps(sent[0]!).alert as { sound?: string }).sound, undefined, "a finish found at start rings no sound");
 			const states = (aps(sent[0]!)["content-state"] as { chats: { localId: number; state: string }[] }).chats.map((each) => [each.localId, each.state]);
 			assert.deepEqual(states, [
 				[running.id, "working"],

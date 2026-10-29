@@ -78,7 +78,8 @@ foreground:
   notification on the device. When none is left working, the server ends the activity half an hour later, as the app
   would, unless it changed by then. Each push's `timestamp` is later than the last. A device's activity changes one
   change at a time (two chats finishing together each get their update, neither undoing the other), and at start the
-  server marks done the chats that finished while it was down.
+  server marks done the chats that finished while it was down, with the alert but without its sound (a restart at
+  night does not ring for runs that ended hours ago).
 - An activity the server keeps up to date is not stale while it works, and the app gives no alert of its own for it.
 - A notification's reply sends from the background, where an activity cannot start: the app asks its server
   (`liveActivity.start`), which updates the activity it has, or starts one with the device's push-to-start token

@@ -307,7 +307,7 @@ export class Notifier {
 	}
 
 	/** A run started or ended in `id`: the rows of the chat it belongs to, in each device's activity, may change. */
-	async #runChanged(id: ConversationId): Promise<void> {
+	async #runChanged(id: ConversationId, quiet = false): Promise<void> {
 		const parent = await this.#parent(id);
 		const chat = parent ?? id;
 		if (this.#activeClients > 0 || this.#apns === undefined) return;
@@ -315,12 +315,15 @@ export class Notifier {
 		await Promise.all(
 			Object.entries(devices)
 				.filter(([, device]) => device.activity?.token !== undefined && device.activity.rows.some((row) => row.conversationId === chat))
-				.map(([deviceId]) => this.#serially(deviceId, () => this.#updateRow(deviceId, chat))),
+				.map(([deviceId]) => this.#serially(deviceId, () => this.#updateRow(deviceId, chat, quiet))),
 		);
 	}
 
-	/** Brings a chat's row in a device's activity up to date with its runs, from the activity as it is now. */
-	async #updateRow(deviceId: string, chat: ConversationId): Promise<void> {
+	/**
+	 * Brings a chat's row in a device's activity up to date with its runs, from the activity as it is now. `quiet`: a
+	 * finish says so without a sound.
+	 */
+	async #updateRow(deviceId: string, chat: ConversationId, quiet = false): Promise<void> {
 		if (this.#closed || this.#activeClients > 0) return;
 		const device = (await this.#host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices[deviceId];
 		const record = device?.activity;
@@ -350,7 +353,7 @@ export class Notifier {
 		}
 		const next: ActivityRecord = { ...record, rows };
 		if (finished !== undefined) this.#activityAlerts.set(`${deviceId}:${chat}`, now);
-		const pushedAt = await this.#pushActivity(deviceId, device, next, "update", now, finished);
+		const pushedAt = await this.#pushActivity(deviceId, device, next, "update", now, finished, quiet);
 		// Nothing left working: the activity goes when the last done row would have in the app.
 		if (pushedAt !== undefined && !rows.some((each) => each.state === "working")) this.#scheduleEnd(deviceId, record.token, now + this.#doneLifetime);
 	}
@@ -376,7 +379,8 @@ export class Notifier {
 				await this.#parent(child.id);
 				if (!this.#busy.has(child.id)) this.#busy.set(child.id, await this.#running(child.id));
 			}
-			await this.#runChanged(chat);
+			// Without a sound: a restart, at night say, must not ring for runs that ended hours ago.
+			await this.#runChanged(chat, true);
 		}
 	}
 
@@ -412,7 +416,7 @@ export class Notifier {
 	}
 
 	/** Pushes the activity's rows; the push's timestamp, unless it could not go. */
-	async #pushActivity(deviceId: string, device: DeviceRecord, record: ActivityRecord, event: "update" | "end", now: number, finished?: ActivityRow): Promise<number | undefined> {
+	async #pushActivity(deviceId: string, device: DeviceRecord, record: ActivityRecord, event: "update" | "end", now: number, finished?: ActivityRow, quiet = false): Promise<number | undefined> {
 		const token = record.token;
 		if (token === undefined) return undefined;
 		// Later than the last push, which ActivityKit keeps, even within one second.
@@ -424,7 +428,7 @@ export class Notifier {
 				: {
 						title: finished.title,
 						body: `${finished.state === "failed" ? "Failed" : "Done"} · worked ${workedText((finished.finishedAt ?? now) - finished.since)}${finished.detail === undefined ? "" : ` · ${finished.detail}`}`,
-						sound: "default",
+						...(quiet ? {} : { sound: "default" }),
 					};
 		const result = await this.#send(deviceId, { token, environment: device.environment }, {
 			type: "liveactivity",
