@@ -328,6 +328,24 @@ struct ConversationState: Equatable {
     var compactionFailure: CompactionFailure?
     /// While the server retries after a model error.
     var retry: RetryState?
+    /// The first `count` messages are the same in every state with this token: the chat compares and lays out only
+    /// what comes after them.
+    var stablePrefix: StablePrefix?
+
+    /// As the synthesized one (every property; keep it so), but the messages of two states with one stable prefix are
+    /// compared after it only.
+    static func == (lhs: ConversationState, rhs: ConversationState) -> Bool {
+        guard lhs.stablePrefix == rhs.stablePrefix, lhs.messages.count == rhs.messages.count, lhs.streaming == rhs.streaming, lhs.busy == rhs.busy, lhs.queued == rhs.queued, lhs.hasOlder == rhs.hasOlder, lhs.isLoaded == rhs.isLoaded, lhs.agent == rhs.agent, lhs.title == rhs.title, lhs.runStartedAt == rhs.runStartedAt, lhs.compactionFailure == rhs.compactionFailure, lhs.retry == rhs.retry else {
+            return false
+        }
+        let start = min(lhs.stablePrefix?.count ?? 0, lhs.messages.count)
+        return lhs.messages[start...] == rhs.messages[start...]
+    }
+}
+
+struct StablePrefix: Equatable {
+    var token: Int
+    var count: Int
 }
 
 struct CompactionFailure: Equatable {

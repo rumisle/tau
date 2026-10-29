@@ -352,38 +352,58 @@ final class ChatControllerNode: ASDisplayNode {
             // Working with nothing to show yet: the τ where the answer will start.
             messages.append(ChatMessage(id: ChatControllerNode.waitingRowId, role: .assistant, text: "", date: Date(timeIntervalSince1970: 0.0), isStreaming: true, isWaiting: true, retry: state.retry))
         }
+        // Rows the last update laid out unchanged, at the start of the transcript: a streamed token compared and laid
+        // out the whole chat again.
+        var keep = 0
+        if let prefix = state.stablePrefix, let laidOut = self.laidOutPrefix, laidOut.prefix.token == prefix.token, laidOut.selectedIds == selectedIds, laidOut.expandedIds == expanded {
+            keep = min(prefix.count, laidOut.prefix.count, messages.count, self.entries.count)
+        }
         // One row per ID: the list's diff pairs rows by it, and two with one ID gave two rows one item node, which
         // crashed the list laying out its rows (a stale live answer beside its committed message did).
-        var seenIds = Set<Int>()
-        messages = messages.filter { message in
-            if seenIds.insert(message.id).inserted {
-                return true
-            }
+        var seenIds = Set<Int>(minimumCapacity: messages.count)
+        var firstDuplicate: Int?
+        for (index, message) in messages.enumerated() where !seenIds.insert(message.id).inserted {
             assertionFailure("two rows with ID \(message.id)")
-            return false
+            firstDuplicate = firstDuplicate ?? index
+        }
+        if let firstDuplicate {
+            var seen = Set<Int>()
+            messages = messages.filter { seen.insert($0.id).inserted }
+            keep = min(keep, firstDuplicate)
         }
         // The answer's blocks come one after another: once the next has begun, the one before is written, and goes on
         // to its end at once instead of at the reveal's pace for text still coming (a provider that buffers sends the
         // whole thinking, then the answer, and the thinking took seconds to show while pushing the answer down).
         let lastStreaming = messages.lastIndex(where: \.isStreaming)
-        var entries = messages.enumerated().map { index, message in
-            ChatHistoryEntry(message: message, index: index, isStreaming: message.isStreaming && (index == lastStreaming || message.tool != nil), selection: message.isStreaming ? nil : selectedIds.map { $0.contains(message.id) }, isExpanded: expanded.contains(message.id))
+        // Newest first, as the inverted list has them: the kept rows are the last ones.
+        var tail = messages[keep...].enumerated().map { offset, message in
+            let index = keep + offset
+            return ChatHistoryEntry(message: message, index: index, isStreaming: message.isStreaming && (index == lastStreaming || message.tool != nil), selection: message.isStreaming ? nil : selectedIds.map { $0.contains(message.id) }, isExpanded: expanded.contains(message.id))
         }
-        entries.sort()
+        tail.sort()
 
         let previous = self.entries
+        let previousHead = Array(previous[..<(previous.count - keep)])
+        let entries = tail + previous[(previous.count - keep)...]
         self.entries = entries
+        self.laidOutPrefix = state.stablePrefix.map { (prefix: $0, selectedIds: selectedIds, expandedIds: expanded) }
+        if firstDuplicate != nil {
+            self.laidOutPrefix = nil
+        }
         self.isMakingRows = true
         if !self.isAtBottom && !previous.isEmpty {
-            // New rows below the screen: committed answers and messages, counted as Telegram counts unread ones.
-            let known = Set(previous.map(\.stableId))
-            let added = entries.filter { !known.contains($0.stableId) && !$0.isStreaming && $0.message.role != .thinking }.count
+            // New rows below the screen: committed answers and messages, counted as Telegram counts unread ones. Not
+            // older ones, which history brings above.
+            let known = Set(previousHead.map(\.stableId))
+            let newestKnown = max(keep - 1, tail.first(where: { known.contains($0.stableId) })?.index ?? -1)
+            let added = tail.filter { $0.index > newestKnown && !known.contains($0.stableId) && !$0.isStreaming && $0.message.role != .thinking }.count
             if added > 0 {
                 self.unseenCount += added
                 self.updateDownButton(animated: true)
             }
         }
-        let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: previous, rightList: entries)
+        // Only the rows after the kept ones: their indices are the list's, which has the kept rows after them.
+        let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: previousHead, rightList: tail)
 
         let deletions = deleteIndices.map { ListViewDeleteItem(index: $0, directionHint: nil) }
         let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: self.item(for: $0.1), directionHint: nil) }
@@ -534,6 +554,8 @@ final class ChatControllerNode: ASDisplayNode {
     /// so a reload asked for meanwhile (something an item reads answering at once) waits for the update's transaction;
     /// one between the two updated rows the list did not have, and crashed it.
     private var isMakingRows = false
+    /// What the last update laid out the rows with: the transcript's stable prefix and the selection and expansion.
+    private var laidOutPrefix: (prefix: StablePrefix, selectedIds: Set<Int>?, expandedIds: Set<Int>)?
     private var reloadAfterRows = false
 
     private func reloadItems() {

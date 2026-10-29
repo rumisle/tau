@@ -1023,8 +1023,11 @@ final class ServerStore: ConversationStore, TauServer {
         }
         // A background subagent works on after its call returned: its card follows its conversation.
         for index in state.messages.indices {
-            if let child = state.messages[index].tool?.childConversationId {
-                state.messages[index].tool?.childBusy = self.dialogs[child]?.busy ?? false
+            if let child = state.messages[index].tool?.childConversationId, let busy = self.dialogs[child]?.busy, busy != state.messages[index].tool?.childBusy {
+                state.messages[index].tool?.childBusy = busy
+                if let prefix = state.stablePrefix, index < prefix.count {
+                    state.stablePrefix?.count = index
+                }
             }
         }
         return state

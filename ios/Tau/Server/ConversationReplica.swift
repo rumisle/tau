@@ -25,16 +25,26 @@ final class ConversationReplica {
         return self.entries.keys.min()
     }
 
+    /// Changes with the entries: the transcript's rows made from them are kept until it does.
+    private(set) var entriesVersion = 0
+    /// The rows made from the entries, and what the rows after them need to know (TranscriptBuilder.build).
+    var committed: TranscriptBuilder.Committed?
+
     func upsert(_ entries: [JSONObject]) {
+        guard !entries.isEmpty else {
+            return
+        }
         for entry in entries {
             if let id = entry.int("id") {
                 self.entries[id] = entry
             }
         }
+        self.entriesVersion += 1
     }
 
     func removeAll() {
         self.entries.removeAll()
+        self.entriesVersion += 1
     }
 
     func ordered() -> [JSONObject] {
@@ -80,6 +90,35 @@ final class ConversationReplica {
 enum TranscriptBuilder {
     static func rowId(base: Int, block: Int) -> Int {
         return base * 64 + block
+    }
+
+    /// The rows the entries make, with what the rows after them need, for as long as the entries and what they were
+    /// made with stay the same: a streamed token changes only the live document, and the rows of thousands of entries
+    /// were made again for each one.
+    struct Committed {
+        struct Key: Equatable {
+            var entriesVersion: Int
+            var rowIdForUserEntry: [Int: Int]
+            var streamingTask: Int?
+            var hasMedia: Bool
+        }
+        let key: Key
+        /// Names these rows: two states with the same token have the same rows up to their `StablePrefix`.
+        let token: Int
+        let rows: [ChatMessage]
+        let toolRowIndex: [String: Int]
+        let subagentTasks: [String: String]
+        let turnStart: Date?
+        let subagentCallRows: [String: Int]
+        let pendingError: (entry: JSONObject, id: Int, base: Int, date: Date, error: String)?
+        let retriedErrors: Int
+        let committedTasks: Set<Int>
+
+        private static var nextToken = 0
+        static func newToken() -> Int {
+            self.nextToken += 1
+            return self.nextToken
+        }
     }
 
     /// A sent message as a chat row: with the clock while on its way, red once refused, with two checks once it is in
@@ -245,192 +284,211 @@ enum TranscriptBuilder {
             retriedErrors = 0
         }
 
-        let ordered = replica.ordered()
-        // Each generation task's last message, and the one streaming now: a generation cut off by a server restart is
-        // committed as an aborted message and asked again under the same task.
-        var lastOfTask: [Int: Int] = [:]
-        for entry in ordered where entry.string("kind") == "pi.assistant" {
-            if let taskId = entry.int("byTaskId"), let id = entry.int("id") {
-                lastOfTask[taskId] = max(lastOfTask[taskId] ?? id, id)
-            }
-        }
+        // The task streaming now: a generation cut off by a server restart is committed as an aborted message and
+        // asked again under the same task.
         let streamingTask = replica.live.object("generation") != nil ? replica.live.object("run")?.int("taskId") : nil
+        let key = Committed.Key(entriesVersion: replica.entriesVersion, rowIdForUserEntry: rowIdForUserEntry, streamingTask: streamingTask, hasMedia: media != nil)
+        let token: Int
+        if let cached = replica.committed, cached.key == key {
+            token = cached.token
+            rows = cached.rows
+            toolRowIndex = cached.toolRowIndex
+            subagentTasks = cached.subagentTasks
+            turnStart = cached.turnStart
+            subagentCallRows = cached.subagentCallRows
+            pendingError = cached.pendingError
+            retriedErrors = cached.retriedErrors
+            committedTasks = cached.committedTasks
+        } else {
+            let ordered = replica.ordered()
+            // Each generation task's last message.
+            var lastOfTask: [Int: Int] = [:]
+            for entry in ordered where entry.string("kind") == "pi.assistant" {
+                if let taskId = entry.int("byTaskId"), let id = entry.int("id") {
+                    lastOfTask[taskId] = max(lastOfTask[taskId] ?? id, id)
+                }
+            }
 
-        for entry in ordered {
-            guard let id = entry.int("id"), let kind = entry.string("kind") else {
-                continue
-            }
-            // A message after an error: the run had ended on it.
-            if kind == "pi.user" {
-                flushError()
-            }
-            let message = entry.objects("model").first ?? [:]
-            let date = message.double("timestamp").map { Date(timeIntervalSince1970: $0 / 1000.0) } ?? Date()
-            switch kind {
-            case "pi.user":
-                if turnStart == nil {
-                    turnStart = date
-                }
-                let (text, imageBlocks) = self.userContent(message["content"])
-                let lines = self.attachmentLines(message["content"])
-                let photoLines = lines.filter { $0.kind == .image }
-                var attachments = imageBlocks.enumerated().compactMap { index, block -> MessageAttachment? in
-                    // A photo the user sent is a file the server keeps: fetched over HTTP, beside the socket, as an
-                    // edit sends it again (docs/media.md). The entry's own copy only without one.
-                    if index < photoLines.count, let fileId = photoLines[index].fileId, let media {
-                        let line = photoLines[index]
-                        return MessageAttachment(id: id * 64 + index, kind: .remote(media.fileImage(id: fileId, mimeType: line.mimeType, bytes: Int(line.bytes), pixelSize: line.pixelSize ?? media.image(conversationId: replica.id, entryId: id, index: index, block: block)?.pixelSize)))
-                    }
-                    return attachment(entryId: id, index: index, block: block)
-                }
-                // And the files only named.
-                attachments += lines.filter { $0.kind == .file }.enumerated().map { index, line in
-                    MessageAttachment(id: id * 64 + 32 + index, kind: .file(line.file))
-                }
-                if let report = SubagentReport(text) {
-                    // A background subagent's answer, posted as a message: its card, not the user's bubble.
-                    var tool = ToolCallInfo(callId: "report-\(id)", name: "subagent", summary: report.status == "answered" ? "\(report.name) answered" : "\(report.name) stopped", status: report.status == "answered" ? .done : .failed, output: report.text, childConversationId: report.conversationId)
-                    var call = SubagentCall(kind: report.status == "answered" ? .answer : .failed, name: report.name, text: report.text, task: subagentTasks[report.name])
-                    // How long it worked: from the call that gave it the work, which shows the time too.
-                    if let callRow = subagentCallRows.removeValue(forKey: report.name), let started = rows[callRow].tool?.subagent?.startedAt {
-                        call.duration = max(0.0, date.timeIntervalSince(started))
-                        rows[callRow].tool?.subagent?.duration = call.duration
-                    }
-                    tool.subagent = call
-                    rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "subagent"), text: "", date: date, tool: tool, entryId: id))
+            for entry in ordered {
+                guard let id = entry.int("id"), let kind = entry.string("kind") else {
                     continue
                 }
-                rows.append(ChatMessage(id: rowIdForUserEntry[id] ?? self.rowId(base: id, block: 0), role: .user, text: text, date: date, attachments: attachments, entryId: id))
-            case "pi.assistant":
-                let base = entry.int("byTaskId") ?? id
-                // Cut off and asked again: the later attempt replaces it, as for the model, which does not read aborted
-                // messages either. One the user stopped ends its task, and stays.
-                if message.string("stopReason") == "aborted", let taskId = entry.int("byTaskId"), (lastOfTask[taskId] ?? id) > id || streamingTask == taskId {
-                    continue
+                // A message after an error: the run had ended on it.
+                if kind == "pi.user" {
+                    flushError()
                 }
-                if message.string("stopReason") == "error" {
-                    // Shown only if the run ends on it; a later attempt replaces it, as it does for the model, which
-                    // never reads failed responses.
+                let message = entry.objects("model").first ?? [:]
+                let date = message.double("timestamp").map { Date(timeIntervalSince1970: $0 / 1000.0) } ?? Date()
+                switch kind {
+                case "pi.user":
+                    if turnStart == nil {
+                        turnStart = date
+                    }
+                    let (text, imageBlocks) = self.userContent(message["content"])
+                    let lines = self.attachmentLines(message["content"])
+                    let photoLines = lines.filter { $0.kind == .image }
+                    var attachments = imageBlocks.enumerated().compactMap { index, block -> MessageAttachment? in
+                        // A photo the user sent is a file the server keeps: fetched over HTTP, beside the socket, as an
+                        // edit sends it again (docs/media.md). The entry's own copy only without one.
+                        if index < photoLines.count, let fileId = photoLines[index].fileId, let media {
+                            let line = photoLines[index]
+                            return MessageAttachment(id: id * 64 + index, kind: .remote(media.fileImage(id: fileId, mimeType: line.mimeType, bytes: Int(line.bytes), pixelSize: line.pixelSize ?? media.image(conversationId: replica.id, entryId: id, index: index, block: block)?.pixelSize)))
+                        }
+                        return attachment(entryId: id, index: index, block: block)
+                    }
+                    // And the files only named.
+                    attachments += lines.filter { $0.kind == .file }.enumerated().map { index, line in
+                        MessageAttachment(id: id * 64 + 32 + index, kind: .file(line.file))
+                    }
+                    if let report = SubagentReport(text) {
+                        // A background subagent's answer, posted as a message: its card, not the user's bubble.
+                        var tool = ToolCallInfo(callId: "report-\(id)", name: "subagent", summary: report.status == "answered" ? "\(report.name) answered" : "\(report.name) stopped", status: report.status == "answered" ? .done : .failed, output: report.text, childConversationId: report.conversationId)
+                        var call = SubagentCall(kind: report.status == "answered" ? .answer : .failed, name: report.name, text: report.text, task: subagentTasks[report.name])
+                        // How long it worked: from the call that gave it the work, which shows the time too.
+                        if let callRow = subagentCallRows.removeValue(forKey: report.name), let started = rows[callRow].tool?.subagent?.startedAt {
+                            call.duration = max(0.0, date.timeIntervalSince(started))
+                            rows[callRow].tool?.subagent?.duration = call.duration
+                        }
+                        tool.subagent = call
+                        rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "subagent"), text: "", date: date, tool: tool, entryId: id))
+                        continue
+                    }
+                    rows.append(ChatMessage(id: rowIdForUserEntry[id] ?? self.rowId(base: id, block: 0), role: .user, text: text, date: date, attachments: attachments, entryId: id))
+                case "pi.assistant":
+                    let base = entry.int("byTaskId") ?? id
+                    // Cut off and asked again: the later attempt replaces it, as for the model, which does not read aborted
+                    // messages either. One the user stopped ends its task, and stays.
+                    if message.string("stopReason") == "aborted", let taskId = entry.int("byTaskId"), (lastOfTask[taskId] ?? id) > id || streamingTask == taskId {
+                        continue
+                    }
+                    if message.string("stopReason") == "error" {
+                        // Shown only if the run ends on it; a later attempt replaces it, as it does for the model, which
+                        // never reads failed responses.
+                        if pendingError != nil {
+                            retriedErrors += 1
+                        }
+                        pendingError = (entry, id, base, date, message.string("errorMessage") ?? "The model returned an error")
+                        continue
+                    }
                     if pendingError != nil {
+                        pendingError = nil
                         retriedErrors += 1
                     }
-                    pendingError = (entry, id, base, date, message.string("errorMessage") ?? "The model returned an error")
-                    continue
-                }
-                if pendingError != nil {
-                    pendingError = nil
-                    retriedErrors += 1
-                }
-                if let taskId = entry.int("byTaskId"), message.string("stopReason") != "aborted" {
-                    committedTasks.insert(taskId)
-                }
-                // Its calls start once it is written.
-                let written = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
-                addAssistant(content: message.objects("content"), base: base, date: date, entryId: id, streaming: false, toolStart: written)
-                // The end of a run: its answer says when it came and how long the run took, from the first message.
-                if message.string("stopReason") != "toolUse" {
-                    let finished = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
-                    if let last = rows.indices.last, rows[last].role == .assistant, rows[last].entryId == id {
-                        rows[last].turn = TurnInfo(finishedAt: finished, duration: turnStart.map { finished.timeIntervalSince($0) }, retries: retriedErrors)
+                    if let taskId = entry.int("byTaskId"), message.string("stopReason") != "aborted" {
+                        committedTasks.insert(taskId)
                     }
-                    turnStart = nil
-                    retriedErrors = 0
-                }
-            case "pi.tool-result":
-                guard let callId = message.string("toolCallId"), let index = toolRowIndex[callId], var tool = rows[index].tool else {
-                    continue
-                }
-                tool.status = (message.bool("isError") ?? false) ? .failed : .done
-                tool.output = self.text(of: message["content"])
-                let imageBlocks = (message["content"] as? [Any])?.compactMap { $0 as? JSONObject }.filter { $0.string("type") == "image" } ?? []
-                tool.images = imageBlocks.enumerated().compactMap { index, block in
-                    attachment(entryId: id, index: index, block: block)
-                }
-                if !tool.images.isEmpty {
-                    // The card shows the images themselves, not their "[image]".
-                    tool.output = ((message["content"] as? [Any])?.compactMap { ($0 as? JSONObject)?.string("text") } ?? []).joined(separator: "\n")
-                }
-                if let milliseconds = message.double("durationMs") {
-                    tool.duration = milliseconds / 1000.0
-                }
-                if let details = message.object("details") {
-                    if let child = details.int("conversationId") {
-                        tool.childConversationId = child
+                    // Its calls start once it is written.
+                    let written = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
+                    addAssistant(content: message.objects("content"), base: base, date: date, entryId: id, streaming: false, toolStart: written)
+                    // The end of a run: its answer says when it came and how long the run took, from the first message.
+                    if message.string("stopReason") != "toolUse" {
+                        let finished = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
+                        if let last = rows.indices.last, rows[last].role == .assistant, rows[last].entryId == id {
+                            rows[last].turn = TurnInfo(finishedAt: finished, duration: turnStart.map { finished.timeIntervalSince($0) }, retries: retriedErrors)
+                        }
+                        turnStart = nil
+                        retriedErrors = 0
                     }
-                    // What the server made of the options: the model it found, the level it fitted.
-                    if var call = tool.subagent {
-                        call.model = details.string("model") ?? call.model
-                        call.thinking = details.string("thinking") ?? call.thinking
-                        tool.subagent = call
+                case "pi.tool-result":
+                    guard let callId = message.string("toolCallId"), let index = toolRowIndex[callId], var tool = rows[index].tool else {
+                        continue
                     }
-                }
-                // What send_file sent: shown as photos and files, not as a card (server/src/send-file.ts).
-                if tool.name == "send_file", let files = message.object("details")?.objects("files") {
-                    tool.sentFiles = sentFiles(files, entryId: id)
-                }
-                // A script: its calls, and its output without the header the model reads first.
-                if case let .code(script, _) = tool.detail {
-                    tool.nested = message.object("details")?.objects("calls").map(ToolSummary.nestedCall) ?? []
-                    let (output, error) = ToolSummary.scriptOutput(tool.output ?? "")
-                    tool.output = output
-                    tool.detail = .code(script: script, error: tool.status == .failed ? error : nil)
-                }
-                // The edit tool's result carries the diff with line numbers.
-                if case let .edit(path, _) = tool.detail, let diff = message.object("details")?.string("diff"), !diff.isEmpty {
-                    tool.detail = .edit(path: path, diff: diff)
-                }
-                rows[index].tool = tool
-            case "tau.files":
-                // What send_file sent from a script (server/src/shown.ts): as the model's own call shows it.
-                let data = entry.object("data") ?? [:]
-                var tool = ToolCallInfo(callId: data.string("callId") ?? "files-\(id)", name: "send_file", summary: "", status: .done, output: nil, childConversationId: nil)
-                tool.sentFiles = sentFiles(data.objects("files"), entryId: id)
-                rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "send_file"), text: "", date: rows.last?.date ?? Date(), tool: tool, entryId: id))
-            case "tau.subagent":
-                // A subagent a script started, sent to, or stopped: the card the model's own call has.
-                let data = entry.object("data") ?? [:]
-                guard let name = data.string("name") else {
-                    continue
-                }
-                let kind: SubagentCall.Kind
-                switch data.string("action") {
-                case "spawn":
-                    kind = .spawn
-                case "send":
-                    kind = .send
+                    tool.status = (message.bool("isError") ?? false) ? .failed : .done
+                    tool.output = self.text(of: message["content"])
+                    let imageBlocks = (message["content"] as? [Any])?.compactMap { $0 as? JSONObject }.filter { $0.string("type") == "image" } ?? []
+                    tool.images = imageBlocks.enumerated().compactMap { index, block in
+                        attachment(entryId: id, index: index, block: block)
+                    }
+                    if !tool.images.isEmpty {
+                        // The card shows the images themselves, not their "[image]".
+                        tool.output = ((message["content"] as? [Any])?.compactMap { ($0 as? JSONObject)?.string("text") } ?? []).joined(separator: "\n")
+                    }
+                    if let milliseconds = message.double("durationMs") {
+                        tool.duration = milliseconds / 1000.0
+                    }
+                    if let details = message.object("details") {
+                        if let child = details.int("conversationId") {
+                            tool.childConversationId = child
+                        }
+                        // What the server made of the options: the model it found, the level it fitted.
+                        if var call = tool.subagent {
+                            call.model = details.string("model") ?? call.model
+                            call.thinking = details.string("thinking") ?? call.thinking
+                            tool.subagent = call
+                        }
+                    }
+                    // What send_file sent: shown as photos and files, not as a card (server/src/send-file.ts).
+                    if tool.name == "send_file", let files = message.object("details")?.objects("files") {
+                        tool.sentFiles = sentFiles(files, entryId: id)
+                    }
+                    // A script: its calls, and its output without the header the model reads first.
+                    if case let .code(script, _) = tool.detail {
+                        tool.nested = message.object("details")?.objects("calls").map(ToolSummary.nestedCall) ?? []
+                        let (output, error) = ToolSummary.scriptOutput(tool.output ?? "")
+                        tool.output = output
+                        tool.detail = .code(script: script, error: tool.status == .failed ? error : nil)
+                    }
+                    // The edit tool's result carries the diff with line numbers.
+                    if case let .edit(path, _) = tool.detail, let diff = message.object("details")?.string("diff"), !diff.isEmpty {
+                        tool.detail = .edit(path: path, diff: diff)
+                    }
+                    rows[index].tool = tool
+                case "tau.files":
+                    // What send_file sent from a script (server/src/shown.ts): as the model's own call shows it.
+                    let data = entry.object("data") ?? [:]
+                    var tool = ToolCallInfo(callId: data.string("callId") ?? "files-\(id)", name: "send_file", summary: "", status: .done, output: nil, childConversationId: nil)
+                    tool.sentFiles = sentFiles(data.objects("files"), entryId: id)
+                    rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "send_file"), text: "", date: rows.last?.date ?? Date(), tool: tool, entryId: id))
+                case "tau.subagent":
+                    // A subagent a script started, sent to, or stopped: the card the model's own call has.
+                    let data = entry.object("data") ?? [:]
+                    guard let name = data.string("name") else {
+                        continue
+                    }
+                    let kind: SubagentCall.Kind
+                    switch data.string("action") {
+                    case "spawn":
+                        kind = .spawn
+                    case "send":
+                        kind = .send
+                    default:
+                        kind = .stop
+                    }
+                    let at = data.double("at").map { Date(timeIntervalSince1970: $0 / 1000.0) } ?? rows.last?.date ?? Date()
+                    var call = SubagentCall(kind: kind, name: name, text: data.string("message") ?? "", model: data.string("model"), thinking: data.string("thinking"), fork: data.bool("fork") ?? false)
+                    call.startedAt = at
+                    var arguments: JSONObject = ["action": data.string("action") ?? "stop", "name": name]
+                    arguments["message"] = data.string("message")
+                    var tool = ToolCallInfo(callId: data.string("callId") ?? "subagent-\(id)", name: "subagent", summary: ToolSummary.summary(name: "subagent", arguments: arguments), status: .done, output: nil, childConversationId: data.int("conversationId"))
+                    tool.startedAt = at
+                    tool.subagent = call
+                    if kind == .spawn {
+                        subagentTasks[name] = call.text
+                    }
+                    if kind == .spawn || kind == .send {
+                        subagentCallRows[name] = rows.count
+                    }
+                    rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "subagent"), text: "", date: at, tool: tool, entryId: id))
+                case "pi.compaction":
+                    // The summary the model now reads instead of what came before (durable's SUMMARY_PREFIX/SUFFIX).
+                    var summary = self.text(of: message["content"])
+                    if let start = summary.range(of: "<summary>\n") {
+                        summary = String(summary[start.upperBound...])
+                    }
+                    if summary.hasSuffix("\n</summary>") {
+                        summary = String(summary.dropLast("\n</summary>".count))
+                    }
+                    let reason = entry.object("data")?.string("reason") ?? "manual"
+                    rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .service, text: summary, date: date, entryId: id, service: .compacted(summary: summary.trimmingCharacters(in: .whitespacesAndNewlines), reason: reason)))
                 default:
-                    kind = .stop
+                    continue
                 }
-                let at = data.double("at").map { Date(timeIntervalSince1970: $0 / 1000.0) } ?? rows.last?.date ?? Date()
-                var call = SubagentCall(kind: kind, name: name, text: data.string("message") ?? "", model: data.string("model"), thinking: data.string("thinking"), fork: data.bool("fork") ?? false)
-                call.startedAt = at
-                var arguments: JSONObject = ["action": data.string("action") ?? "stop", "name": name]
-                arguments["message"] = data.string("message")
-                var tool = ToolCallInfo(callId: data.string("callId") ?? "subagent-\(id)", name: "subagent", summary: ToolSummary.summary(name: "subagent", arguments: arguments), status: .done, output: nil, childConversationId: data.int("conversationId"))
-                tool.startedAt = at
-                tool.subagent = call
-                if kind == .spawn {
-                    subagentTasks[name] = call.text
-                }
-                if kind == .spawn || kind == .send {
-                    subagentCallRows[name] = rows.count
-                }
-                rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "subagent"), text: "", date: at, tool: tool, entryId: id))
-            case "pi.compaction":
-                // The summary the model now reads instead of what came before (durable's SUMMARY_PREFIX/SUFFIX).
-                var summary = self.text(of: message["content"])
-                if let start = summary.range(of: "<summary>\n") {
-                    summary = String(summary[start.upperBound...])
-                }
-                if summary.hasSuffix("\n</summary>") {
-                    summary = String(summary.dropLast("\n</summary>".count))
-                }
-                let reason = entry.object("data")?.string("reason") ?? "manual"
-                rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .service, text: summary, date: date, entryId: id, service: .compacted(summary: summary.trimmingCharacters(in: .whitespacesAndNewlines), reason: reason)))
-            default:
-                continue
             }
+            token = Committed.newToken()
+            replica.committed = Committed(key: key, token: token, rows: rows, toolRowIndex: toolRowIndex, subagentTasks: subagentTasks, turnStart: turnStart, subagentCallRows: subagentCallRows, pendingError: pendingError, retriedErrors: retriedErrors, committedTasks: committedTasks)
         }
+        /// The rows from here on may differ from the committed ones.
+        var stableCount = rows.count
 
         // What is running now.
         let live = replica.live
@@ -465,7 +523,10 @@ enum TranscriptBuilder {
             if let child = slot.object("details")?.int("conversationId") {
                 tool.childConversationId = child
             }
-            rows[index].tool = tool
+            if rows[index].tool != tool {
+                rows[index].tool = tool
+                stableCount = min(stableCount, index)
+            }
         }
         // A running script's calls, until its result lists them.
         for slot in live.objects("nestedTools") {
@@ -484,6 +545,7 @@ enum TranscriptBuilder {
             }
             tool.nested.append(call)
             rows[index].tool = tool
+            stableCount = min(stableCount, index)
         }
 
         // Sent and not in the replica's transcript yet, in the order sent: on their way (not those the queue shows),
@@ -507,6 +569,7 @@ enum TranscriptBuilder {
         let queue = self.queue(replica: replica, items: items)
         // The agent works, or something waits for it: a message on its way is not that.
         var state = ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !queue.isEmpty, queued: queue, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
+        state.stablePrefix = StablePrefix(token: token, count: stableCount)
         state.runStartedAt = replica.isBusy ? turnStart : nil
         if let failure = live.object("compactionFailure"), let taskId = failure.int("taskId") {
             state.compactionFailure = CompactionFailure(taskId: taskId, error: failure.string("error") ?? "")
