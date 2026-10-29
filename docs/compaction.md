@@ -59,11 +59,11 @@ is answered at once, on the whole context, and the summary goes in at the run's 
 conversation moved past it (its write settles `stale`). The app says so instead of hiding it:
 
 - **From start to end, one row.** A compaction shows at the bottom of the chat from the moment it starts, Telegram's
-  service pill with the τ: "Compacting context… 1m 20s"; once summarized while a run goes on, "Context summarized ·
-  goes in at the next step". When the summary is placed the pill turns, in place, into the "Context compacted" card:
-  when and why (on request, automatically, after an overflow), that the model reads this summary instead of everything
-  above it, the context's size before and after it ("412k → 38k tokens", from the last answer before it and the first
-  after it) and what tau's summary request cost; the summary folded under it, a tap unfolds it. One that was not used
+  service pill with the τ: "Compacting context… 1m 20s"; once summarized while a run goes on, "Summary ready for
+  the next step". When the summary is placed the pill turns, in place, into the "Context compacted" card: its title,
+  then one quiet line with when and why (on request, automatically, after an overflow), the context's size before and
+  after it (from the last answer before it and the first after it) and what tau's summary request cost, as "At 20:22,
+  28k → 12k tokens, $0.73"; the summary folded under it, a tap unfolds it. One that was not used
   stays as a small note where the chat was then: "Compaction not used: the chat moved on", "Compaction failed: …",
   "Nothing to compact". Manual and automatic ones alike.
 - **The server keeps what became of each** (`server/src/compactions.ts`): from `pi.live.compactions`, the summary's

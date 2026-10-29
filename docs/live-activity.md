@@ -62,7 +62,7 @@ in its middle. This needs iOS 18, so the widget extension's deployment target is
 
 ## Completion
 
-The update that marks a chat done carries an alert: the island opens for a few seconds with "Done · worked 12 min" and
+The update that marks a chat done carries an alert: the island opens for a few seconds with "Done in 12 min" and
 the answer's first line, with the notification sound if notifications are on. It replaces that chat's push, so the phone
 does not ring twice. Done rows stay until seen, or 30 minutes; when none is left the activity ends.
 
@@ -76,7 +76,7 @@ foreground:
   (`liveActivity.update { deviceId, activity: { id, token, rows, accent } | null }`), each time they change.
 - The server (`server/src/notifier.ts`) watches those chats' runs and their subagents'. A chat that starts working again
   gets an update at priority 5; one whose run ends with nothing left working is marked done (or failed) with the answer's
-  first line, in an update at priority 10 with the alert, "Done · worked 12 min · …", which replaces that chat's
+  first line, in an update at priority 10 with the alert, "Done in 12 min" with the first line under it, which replaces that chat's
   notification on the device. When none is left working, the server ends the activity half an hour later, as the app
   would, unless it changed by then. Each push's `timestamp` is later than the last. A device's activity changes one
   change at a time (two chats finishing together each get their update, neither undoing the other), and at start the

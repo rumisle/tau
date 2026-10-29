@@ -257,7 +257,7 @@ describe("pushes", () => {
 		assert.equal(chat0.since, activityDate(since));
 		assert.ok(typeof chat0.finishedAt === "number");
 		assert.match(String(chat0.detail), /You said: hello/);
-		assert.match((aps(update).alert as { body: string }).body, /^Done · worked under a minute · You said: hello/);
+		assert.match((aps(update).alert as { body: string }).body, /^Done in under a minute\nYou said: hello/);
 		const end = sent[1]!.push;
 		assert.ok((end.payload as { aps: { timestamp: number } }).aps.timestamp - (aps(update).timestamp as number) >= 0, "after the update");
 		assert.ok((aps(end).timestamp as number) > (aps(update).timestamp as number), "each push later than the last");

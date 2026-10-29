@@ -36,6 +36,13 @@ function workedText(ms: number): string {
 	return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 
+/** "Done in 3 min", "Done in under a minute", "Failed after 1 h 5 min". */
+function doneText(failed: boolean, ms: number): string {
+	const worked = workedText(ms);
+	if (failed) return `Failed after ${worked}`;
+	return worked === "under a minute" ? "Done in under a minute" : `Done in ${worked}`;
+}
+
 /** The activity as ActivityKit decodes TauActivityAttributes.ContentState. */
 export function contentState(record: ActivityRecord, serverId: string, now: number): Record<string, unknown> {
 	const rows = [...record.rows].sort((a, b) => b.watchedAt - a.watchedAt);
@@ -427,7 +434,8 @@ export class Notifier {
 				? undefined
 				: {
 						title: finished.title,
-						body: `${finished.state === "failed" ? "Failed" : "Done"} · worked ${workedText((finished.finishedAt ?? now) - finished.since)}${finished.detail === undefined ? "" : ` · ${finished.detail}`}`,
+						// "Done in 3 min", or "Failed after 3 min", then the answer's first line on a line of its own.
+						body: `${doneText(finished.state === "failed", (finished.finishedAt ?? now) - finished.since)}${finished.detail === undefined ? "" : `\n${finished.detail}`}`,
 						...(quiet ? {} : { sound: "default" }),
 					};
 		const result = await this.#send(deviceId, { token, environment: device.environment }, {

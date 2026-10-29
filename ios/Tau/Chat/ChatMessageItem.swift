@@ -1502,7 +1502,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     switch message.service {
                     case let .compacting(start, waiting):
                         if waiting {
-                            titleText = "Context summarized · goes in at the next step"
+                            titleText = "Summary ready for the next step"
                         } else {
                             since = start
                         }
@@ -1686,18 +1686,15 @@ final class ChatMessageItemNode: ListViewItemNode {
                     default:
                         when = "at \(time)"
                     }
-                    // What it means for the model from here on, and what it made of the context and cost.
-                    var lines = [when.prefix(1).uppercased() + when.dropFirst(), "The model reads this summary instead of everything above it."]
-                    var figures: [String] = []
+                    // Quiet, as a service message's second line: when, and what it made of the context and cost.
+                    var parts = [when.prefix(1).uppercased() + when.dropFirst()]
                     if let tokensBefore, tokensBefore > 0 {
-                        figures.append("\(formatTokens(tokensBefore)) → \(tokensAfter.map(formatTokens) ?? "…") tokens")
+                        parts.append("\(formatTokens(tokensBefore)) → \(tokensAfter.map(formatTokens) ?? "…") tokens")
                     }
                     if let cost, cost > 0.0 {
-                        figures.append(formatCost(cost))
+                        parts.append(formatCost(cost))
                     }
-                    if !figures.isEmpty {
-                        lines.append(figures.joined(separator: " · "))
-                    }
+                    let lines = [parts.joined(separator: ", ")]
                     let paragraph = NSMutableParagraphStyle()
                     paragraph.alignment = .center
                     let subline = NSAttributedString(string: lines.joined(separator: "\n"), attributes: [.font: Font.regular(13.0), .foregroundColor: serviceText.withMultipliedAlpha(0.7), .paragraphStyle: paragraph])
