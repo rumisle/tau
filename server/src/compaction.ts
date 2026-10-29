@@ -118,7 +118,7 @@ Keep each section concise. Preserve exact file paths, function names, and error 
 }
 
 /** What one follow-up cost, for the usage ledger. */
-export type CompactionUsage = { conversationId: ConversationId; time: number; model: string; usage: Usage };
+export type CompactionUsage = { conversationId: ConversationId; time: number; model: string; usage: Usage; taskId?: number };
 
 export class FollowUpCompaction {
 	#harness?: Harness;
@@ -145,12 +145,14 @@ export class FollowUpCompaction {
 
 	readonly hook: HookRegistration = hook(CompactionTask, {
 		beforeCompact: async (compaction, api, context) => {
-			const summary = await this.#summarize(api.conversationId, api.models, compaction.firstKept, compaction.instructions, context);
+			// The compaction task asking: what its summary costs is its own (src/compactions.ts).
+			const taskId = (api as { taskId?: number }).taskId;
+			const summary = await this.#summarize(api.conversationId, api.models, compaction.firstKept, compaction.instructions, context, taskId);
 			return summary === undefined ? undefined : { summary };
 		},
 	});
 
-	async #summarize(id: ConversationId, models: Models, firstKept: EntryId, instructions: string | undefined, context: Context): Promise<string | undefined> {
+	async #summarize(id: ConversationId, models: Models, firstKept: EntryId, instructions: string | undefined, context: Context, taskId?: number): Promise<string | undefined> {
 		const harness = this.#harness;
 		const conversation = await harness?.conversation(id, context);
 		if (harness === undefined || conversation === undefined) return undefined;
@@ -184,7 +186,7 @@ export class FollowUpCompaction {
 				return undefined;
 			}
 			context.abortSignal?.throwIfAborted();
-			await this.#record(harness, id, message, context);
+			await this.#record(harness, id, message, context, taskId);
 			const summary = summaryText(message);
 			if (summary !== undefined) return summary;
 			if (attempt < MAX_ATTEMPTS && isRetryableAssistantError(message)) {
@@ -197,7 +199,7 @@ export class FollowUpCompaction {
 	}
 
 	/** Into the conversation's `pi.usage`, as durable records its summarization, and to the ledger. */
-	async #record(harness: Harness, id: ConversationId, message: AssistantMessage, context: Context): Promise<void> {
+	async #record(harness: Harness, id: ConversationId, message: AssistantMessage, context: Context, taskId?: number): Promise<void> {
 		const key = `${message.provider}/${message.model}`;
 		await harness
 			.commit(async (tx) => {
@@ -208,7 +210,7 @@ export class FollowUpCompaction {
 				return undefined;
 			}, context)
 			.catch((error: unknown) => console.error(`[compaction] conversation ${id}: usage not recorded:`, error));
-		for (const listener of this.#listeners) listener({ conversationId: id, time: this.#now(), model: key, usage: message.usage });
+		for (const listener of this.#listeners) listener({ conversationId: id, time: this.#now(), model: key, usage: message.usage, ...(taskId === undefined ? {} : { taskId }) });
 	}
 }
 
