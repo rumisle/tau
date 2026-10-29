@@ -12,8 +12,12 @@ theme replaces a light one while the phone is in dark mode.
 
 ## Accent colors
 
-As Telegram's `themeSpecificAccentColors`: each theme keeps its own accent, and the row of swatches under the themes
-sets the one of the theme on screen (the night theme, when Auto-Night shows it). The colors are Telegram's base colors
+One accent, the user's, in every theme: unlike Telegram's `themeSpecificAccentColors`, which keeps one per theme.
+With Auto-Night the theme follows the phone, so a theme never picked for showed tau's pink whenever the phone went
+dark (or iOS drew the app's snapshot in the other appearance), and the Live Activity took it too. A theme without
+the accent picked has its nearest: white for Night, black for Day, gray for the others. Settings from before, one per
+theme, become the one picked (not tau's). At launch the theme is the one for the phone's appearance then, not a light
+one until the window reports it. The colors are Telegram's base colors
 (PresentationThemeBaseColor): blue, cyan, green, pink, orange, purple, red, yellow and gray, with black only for Day,
 white only for Night, and no gray for Night (ThemePickerController). tau's default is Telegram's pink, `0xeb6ca4`.
 Telegram's presets (an accent with bubble gradients and a wallpaper) and custom colors are not offered.

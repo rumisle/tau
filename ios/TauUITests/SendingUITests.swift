@@ -2158,4 +2158,33 @@ final class SendingUITests: XCTestCase {
         let notes = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'compactionPill' AND label BEGINSWITH 'Compaction not used'")).count
         XCTAssertTrue(cards >= 2 || notes >= 1, "placed, or a note that it was not used (\(cards) cards, \(notes) notes)")
     }
+
+    /// The accent picked is the app's in every theme: with Auto-Night following the phone, the night theme of a
+    /// phone in dark mode has it too, not tau's pink (Raya's yellow that went pink for a while).
+    func testAccentFollowsNight() {
+        self.launch(["-theme", "classic", "-appearance", "YES"])
+        defer {
+            // The next tests have tau's.
+            self.app.terminate()
+            self.app.launchArguments = ["-server.url", devServer, "-uiTesting", "YES", "-accent", "pink"]
+            self.app.launch()
+            sleep(1)
+        }
+        self.app.descendants(matching: .any)["System"].firstMatch.tap()
+        let yellow = self.app.descendants(matching: .any)["accent-yellow"].firstMatch
+        XCTAssertTrue(yellow.waitForExistence(timeout: 5))
+        yellow.tap()
+        settle()
+        self.shot("accent-0-light")
+        XCTAssertTrue(yellow.isSelected, "yellow, picked")
+        // Again with the phone in dark mode (and without -theme, which turns Auto-Night off).
+        self.app.terminate()
+        self.app.launchArguments = ["-server.url", devServer, "-uiTesting", "YES", "-appearance", "YES", "-systemStyle", "dark"]
+        self.app.launch()
+        XCTAssertTrue(self.app.descendants(matching: .any)["accent-white"].firstMatch.waitForExistence(timeout: 10), "the night theme, which alone has white")
+        settle()
+        self.shot("accent-1-dark")
+        let selected = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'accent-' AND selected == true")).firstMatch
+        XCTAssertEqual(selected.identifier, "accent-yellow", "the night theme keeps the accent picked")
+    }
 }

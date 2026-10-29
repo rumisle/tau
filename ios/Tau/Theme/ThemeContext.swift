@@ -13,8 +13,11 @@ final class ThemeContext {
         var nightTheme: TauTheme.Builtin
         /// Long lines in code blocks wrap; otherwise a block scrolls sideways.
         var wrapCode: Bool
-        /// Each theme's accent, as Telegram's `themeSpecificAccentColors`; a theme without one has tau's.
-        var accents: [TauTheme.Builtin: TauTheme.Accent]
+        /// The accent the user picked, the app's in every theme (nil: tau's). Not one per theme, as Telegram's
+        /// `themeSpecificAccentColors`: with Auto-Night the theme follows the phone, and a theme never picked for had
+        /// tau's pink, so the app (and the Live Activity it colors) turned pink whenever the phone went dark, or iOS
+        /// drew tau's snapshot in the other appearance, and back when it went light.
+        var accent: TauTheme.Accent?
         /// Where a chat's server shows in the chat list, while there are several.
         var serverTags: ServerTags = .underMessage
 
@@ -25,11 +28,19 @@ final class ThemeContext {
             case underMessage
         }
 
-        static let `default` = Settings(theme: .classic, autoNight: true, nightTheme: .night, wrapCode: true, accents: [:])
+        static let `default` = Settings(theme: .classic, autoNight: true, nightTheme: .night, wrapCode: true, accent: nil)
 
+        /// The picked accent, or for a theme without it (black is Day's, white Night's, gray not Night's) its nearest.
         func accent(for builtin: TauTheme.Builtin) -> TauTheme.Accent {
-            let accent = self.accents[builtin] ?? .standard
-            return TauTheme.Accent.available(for: builtin).contains(accent) ? accent : .standard
+            let accent = self.accent ?? .standard
+            let available = TauTheme.Accent.available(for: builtin)
+            if available.contains(accent) {
+                return accent
+            }
+            for nearest: TauTheme.Accent in [.white, .black, .gray] where available.contains(nearest) {
+                return nearest
+            }
+            return .standard
         }
     }
 
@@ -64,14 +75,25 @@ final class ThemeContext {
             if let value = (stored["serverTags"] as? String).flatMap(Settings.ServerTags.init(rawValue:)) {
                 settings.serverTags = value
             }
-            for (key, value) in stored["accents"] as? [String: String] ?? [:] {
-                if let builtin = TauTheme.Builtin(rawValue: key), let accent = TauTheme.Accent(rawValue: value) {
-                    settings.accents[builtin] = accent
+            if let value = (stored["accent"] as? String).flatMap(TauTheme.Accent.init(rawValue:)) {
+                settings.accent = value
+            } else {
+                // Before, one per theme: the one picked, not tau's that a theme without one had.
+                var accents: [TauTheme.Builtin: TauTheme.Accent] = [:]
+                for (key, value) in stored["accents"] as? [String: String] ?? [:] {
+                    if let builtin = TauTheme.Builtin(rawValue: key), let accent = TauTheme.Accent(rawValue: value) {
+                        accents[builtin] = accent
+                    }
                 }
+                let picked = [accents[settings.theme], accents[settings.nightTheme]] + TauTheme.Builtin.allCases.map { accents[$0] }
+                settings.accent = picked.compactMap { $0 }.first { $0 != .standard } ?? picked.compactMap { $0 }.first
             }
         }
         self.settings = settings
-        let current = ThemeContext.resolve(settings, system: .light)
+        // The phone's appearance now, not light until the window says: a dark phone's first frame is its night theme.
+        let system: WindowUserInterfaceStyle = UIScreen.main.traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        self.systemStyle = system
+        let current = ThemeContext.resolve(settings, system: system)
         self.current = current
         self.themePromise = ValuePromise(ThemeBox(current), ignoreRepeated: true)
         self.settingsPromise = ValuePromise(settings, ignoreRepeated: true)
@@ -104,6 +126,12 @@ final class ThemeContext {
 
     /// Follow the window's light/dark appearance.
     func observeSystemStyle(_ style: Signal<WindowUserInterfaceStyle, NoError>) {
+        // -systemStyle dark|light: the phone's, for the UI tests (the simulator's dark mode does not reach the app).
+        if let value = UserDefaults.standard.string(forKey: "systemStyle") {
+            self.systemStyle = value == "dark" ? .dark : .light
+            self.apply()
+            return
+        }
         self.systemStyleDisposable = (style |> deliverOnMainQueue).start(next: { [weak self] style in
             guard let self else {
                 return
@@ -117,8 +145,11 @@ final class ThemeContext {
         var settings = self.settings
         f(&settings)
         self.settings = settings
-        let accents = Dictionary(uniqueKeysWithValues: settings.accents.map { ($0.key.rawValue, $0.value.rawValue) })
-        UserDefaults.standard.set(["version": ThemeContext.settingsVersion, "theme": settings.theme.rawValue, "autoNight": settings.autoNight, "nightTheme": settings.nightTheme.rawValue, "wrapCode": settings.wrapCode, "accents": accents, "serverTags": settings.serverTags.rawValue], forKey: ThemeContext.settingsKey)
+        var stored: [String: Any] = ["version": ThemeContext.settingsVersion, "theme": settings.theme.rawValue, "autoNight": settings.autoNight, "nightTheme": settings.nightTheme.rawValue, "wrapCode": settings.wrapCode, "serverTags": settings.serverTags.rawValue]
+        if let accent = settings.accent {
+            stored["accent"] = accent.rawValue
+        }
+        UserDefaults.standard.set(stored, forKey: ThemeContext.settingsKey)
         self.settingsPromise.set(settings)
         self.apply()
     }

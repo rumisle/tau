@@ -13,6 +13,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     private var statusBarHost: ApplicationStatusBarHost?
     private var context: AppContext?
     private var themeDisposable: Disposable?
+    private var appearanceDisposable: Disposable?
     private var notificationController: NotificationContainerController?
     private let answersDisposable = MetaDisposable()
     private var navigationController: NavigationController?
@@ -86,9 +87,13 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             context.telegramShared.update(presentationData: theme.presentationData)
             hostView.containerView.backgroundColor = theme.chatList.backgroundColor
             navigationController.updateTheme(theme.navigationControllerTheme)
-            // System controls (keyboard, menus) follow the theme; with Auto-Night they follow the phone, which drives it.
-            window.overrideUserInterfaceStyle = themeContext.settings.autoNight ? .unspecified : (theme.overallDarkAppearance ? .dark : .light)
             LiveActivityController.shared.setAccent(theme.accent.rgb(for: theme.builtin))
+        })
+        // System controls (keyboard, menus) follow the theme; with Auto-Night they follow the phone, which drives it.
+        // On each change of either: Auto-Night turned on with the theme unchanged must lift the override, or the
+        // window keeps the phone's dark mode from the app until it is launched again.
+        self.appearanceDisposable = (combineLatest(themeContext.theme, themeContext.settingsSignal) |> deliverOnMainQueue).start(next: { theme, settings in
+            window.overrideUserInterfaceStyle = settings.autoNight ? .unspecified : (theme.overallDarkAppearance ? .dark : .light)
         })
 
         window.makeKeyAndVisible()
@@ -263,10 +268,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 context.themeContext.force(builtin)
             }
         }
-        // -accent pink|blue|…: the accent of the theme in effect.
+        // -accent pink|blue|…: the app's accent.
         if let name = defaults.string(forKey: "accent"), let accent = TauTheme.Accent(rawValue: name) {
-            let builtin = context.themeContext.current.builtin
-            context.themeContext.update { $0.accents[builtin] = accent }
+            context.themeContext.update { $0.accent = accent }
         }
         // -appearance YES, -dictationSettings YES: that settings screen on top.
         if defaults.bool(forKey: "appearance") || defaults.bool(forKey: "dictationSettings") {

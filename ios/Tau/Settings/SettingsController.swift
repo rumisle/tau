@@ -260,7 +260,7 @@ final class AppearanceController: SettingsListController {
                 themeContext.update { $0.theme = builtin }
             }))
         }
-        // The accent of the theme on screen, which may be the night theme: each theme keeps its own, as in Telegram.
+        // The app's accent, in the theme on screen (which may be the night theme): one for all of them.
         let shown = themeContext.current.builtin
         let accents = TauTheme.Accent.available(for: shown)
         items.append(SettingsTextItem(theme: theme, text: "Accent Color", kind: .header))
@@ -268,9 +268,8 @@ final class AppearanceController: SettingsListController {
             guard let accent = TauTheme.Accent(rawValue: id) else {
                 return
             }
-            themeContext.update { $0.accents[shown] = accent }
+            themeContext.update { $0.accent = accent }
         }))
-        items.append(SettingsTextItem(theme: theme, text: "For \(shown.title).", kind: .footer))
         items.append(SettingsTextItem(theme: theme, text: "Auto-Night Mode", kind: .header))
         items.append(SettingsRowItem(theme: theme, icon: nil, title: "Disabled", accessory: .checkmark(!settings.autoNight), position: SettingsRowPosition(isFirst: true, isLast: false), action: {
             themeContext.update { $0.autoNight = false }
