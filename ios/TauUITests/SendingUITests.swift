@@ -2131,7 +2131,7 @@ final class SendingUITests: XCTestCase {
         self.shot("cc-1-idle-placed")
         // While the agent works.
         self.focusInput()
-        self.type("$ sleep 8 && echo done")
+        self.type("$ sleep 14 && echo done")
         self.send()
         XCTAssertTrue(self.app.waitForBusy())
         settle()
@@ -2140,7 +2140,10 @@ final class SendingUITests: XCTestCase {
         self.app.descendants(matching: .any)["Compact Context"].firstMatch.tap()
         usleep(1_500_000)
         self.shot("cc-2-midrun-running")
-        sleep(3)
+        // Summarized while the command still runs: it waits for the run's next step.
+        let waiting = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'compactionPill' AND label BEGINSWITH 'Context summarized'")).firstMatch
+        XCTAssertTrue(waiting.waitForExistence(timeout: 12), "waiting for the next step")
+        settle()
         self.shot("cc-3-midrun-waiting")
         XCTAssertTrue(self.app.waitForIdle(timeout: 40))
         sleep(2)
@@ -2148,5 +2151,18 @@ final class SendingUITests: XCTestCase {
         let cards = self.app.descendants(matching: .any).matching(identifier: "compactionCard").count
         let notes = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'compactionPill' AND label BEGINSWITH 'Compaction not used'")).count
         XCTAssertTrue(cards >= 2 || notes >= 1, "placed, or a note that it was not used (\(cards) cards, \(notes) notes)")
+    }
+
+    /// For screenshots of a chat on another server: TAU_SHOT_SERVER, TAU_SHOT_CHAT.
+    func testShotChat() throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipIf(env["TAU_SHOT_CHAT"] == nil, "a chat to shoot")
+        self.launch(["-openChat", env["TAU_SHOT_CHAT"]!] + (env["TAU_SHOT_THEME"].map { ["-theme", $0] } ?? []), server: env["TAU_SHOT_SERVER"] ?? devServer)
+        sleep(4)
+        for _ in 0 ..< (Int(env["TAU_SHOT_SWIPES"] ?? "0") ?? 0) {
+            self.point(0.5, 0.4).press(forDuration: 0.05, thenDragTo: self.point(0.5, 0.7))
+        }
+        settle()
+        self.shot("shot-chat")
     }
 }
