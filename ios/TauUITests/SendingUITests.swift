@@ -117,13 +117,16 @@ final class SendingUITests: XCTestCase {
 
     /// Steer while the agent works: the panel shows it with a check; it lands after the tool, and the answer follows.
     func testSteerLifecycle() {
-        self.startWorking(6)
+        // Long enough to still work once the steer is typed on a loaded Mac, where typing alone takes seconds.
+        self.startWorking(12)
         self.shot("steer-0-running")
         self.type("first steer")
         self.send()
-        usleep(800_000)
+        // The panel when it is there, not after a guessed time.
+        let title = self.app.staticTexts["accessoryTitle"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "the queue panel")
         self.shot("steer-1-queued")
-        XCTAssertEqual(self.app.staticTexts["accessoryTitle"].firstMatch.label, "Steer")
+        XCTAssertEqual(title.label, "Steer")
         XCTAssertEqual(self.accessoryText, "first steer")
         self.app.waitForIdle(timeout: 30)
         settle()
@@ -1535,8 +1538,17 @@ final class SendingUITests: XCTestCase {
     }
 
     /// An image the model read, in its tool card, fetched by reference; a tap opens it in the media viewer. Photos the
-    /// user sent come back by reference too, from the phone's own copy. Needs /tmp/tau-read-test.png.
+    /// user sent come back by reference too, from the phone's own copy. Writes /tmp/tau-read-test.png, which the dev server reads.
     func testModelImages() {
+        // The image the model reads, made here: one left in /tmp is gone after the Mac restarts.
+        let size = CGSize(width: 600.0, height: 400.0)
+        let png = UIGraphicsImageRenderer(size: size).pngData { context in
+            UIColor(red: 0.95, green: 0.34, blue: 0.6, alpha: 1.0).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 150.0, y: 100.0, width: 300.0, height: 200.0))
+        }
+        XCTAssertNoThrow(try png.write(to: URL(fileURLWithPath: "/tmp/tau-read-test.png")))
         self.launch(["-newChat", "YES"])
         self.focusInput()
         self.type("!read /tmp/tau-read-test.png")
