@@ -627,6 +627,10 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                 // As ChatListItemNode: texts are placed, not animated, since a text node's frame animating its size
                 // stretches what it drew.
                 strongSelf.titleNode.frame = titleFrame
+                // The chat's title, for VoiceOver and the UI tests (where a row is).
+                strongSelf.titleNode.isAccessibilityElement = true
+                strongSelf.titleNode.accessibilityIdentifier = "chatTitle"
+                strongSelf.titleNode.accessibilityLabel = title
 
                 let authorFrame = CGRect(origin: CGPoint(x: contentRect.origin.x - 1.0, y: contentRect.minY + titleLayout.size.height - 2.0), size: authorLayout.size)
                 strongSelf.authorNode.frame = authorFrame

@@ -42,6 +42,60 @@ private struct ChatListEntry: Comparable, Identifiable {
     }
 }
 
+/// The list's changes as ListView takes them, with as few moves as can be: the rows whose order holds (the longest
+/// run of them in their old order) stay and update in place, the others move. Not mergeListsStableWithUpdates, which
+/// expects each entry's order to be a key of its own (Telegram's chat list index): ours is the row's position, so a
+/// chat that went to the top changed the order of every row above it, and all of them were taken out and inserted
+/// again, the rows on screen with them, and a list scrolled down lost its place (it jumped, mostly to the top).
+private func chatListDiff(_ previous: [ChatListEntry], _ entries: [ChatListEntry]) -> ([Int], [(Int, ChatListEntry, Int?)], [(Int, ChatListEntry, Int)]) {
+    var oldIndices: [Int: Int] = [:]
+    for (index, entry) in previous.enumerated() {
+        oldIndices[entry.stableId] = index
+    }
+    // The rows in both, in the new order, by their old position; the longest increasing run of those positions stays.
+    let common = entries.enumerated().compactMap { index, entry in oldIndices[entry.stableId].map { (new: index, old: $0) } }
+    var tails: [Int] = []
+    var parents = [Int](repeating: -1, count: common.count)
+    for (k, pair) in common.enumerated() {
+        var low = 0
+        var high = tails.count
+        while low < high {
+            let middle = (low + high) / 2
+            if common[tails[middle]].old < pair.old {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        parents[k] = low > 0 ? tails[low - 1] : -1
+        if low == tails.count {
+            tails.append(k)
+        } else {
+            tails[low] = k
+        }
+    }
+    var staying = Set<Int>()
+    var k = tails.last ?? -1
+    while k >= 0 {
+        staying.insert(entries[common[k].new].stableId)
+        k = parents[k]
+    }
+    let deleteIndices = previous.enumerated().compactMap { index, entry in staying.contains(entry.stableId) ? nil : index }
+    var insertions: [(Int, ChatListEntry, Int?)] = []
+    var updates: [(Int, ChatListEntry, Int)] = []
+    for (index, entry) in entries.enumerated() {
+        if staying.contains(entry.stableId), let oldIndex = oldIndices[entry.stableId] {
+            let old = previous[oldIndex]
+            if old.content != entry.content || old.isLastPinned != entry.isLastPinned {
+                updates.append((index, entry, oldIndex))
+            }
+        } else {
+            insertions.append((index, entry, oldIndices[entry.stableId]))
+        }
+    }
+    return (deleteIndices, insertions, updates)
+}
+
 /// Which chats a list shows: Telegram's root list, with Archived Chats on top, or the archive folder itself.
 enum ChatListMode {
     case main
@@ -802,7 +856,7 @@ final class ChatListPaneNode: ASDisplayNode {
         let isInitial = self.entries.isEmpty
         let previous = self.entries
         self.entries = entries
-        let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: previous, rightList: entries)
+        let (deleteIndices, indicesAndItems, updateIndices) = chatListDiff(previous, entries)
         self.listNode.transaction(
             deleteIndices: deleteIndices.map { ListViewDeleteItem(index: $0, directionHint: nil) },
             insertIndicesAndItems: indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: self.makeItem($0.1), directionHint: nil) },

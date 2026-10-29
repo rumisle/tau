@@ -2159,6 +2159,46 @@ final class SendingUITests: XCTestCase {
         XCTAssertTrue(cards >= 2 || notes >= 1, "placed, or a note that it was not used (\(cards) cards, \(notes) notes)")
     }
 
+    /// The chat list scrolled down stays where it is while chats move to the top: a chat further down that gets a
+    /// message goes to the top, out of sight, and the rows on screen stay put. The list's diff told the list view
+    /// that every row above the one that moved had moved too (its order was each row's position), so the rows on
+    /// screen were taken out and put back, and the list lost its place: it jumped, to the top more often than not.
+    func testListKeepsScroll() throws {
+        let server = try DevServerClient(url: devServer)
+        var ids: [Int] = []
+        for index in 0 ..< 12 {
+            let id = try server.request("conversation.create", ["title": "Keep \(index)"]).object("dialog")?.object("conversation")?.int("id") ?? -1
+            XCTAssertGreaterThan(id, 0)
+            ids.append(id)
+            _ = try server.submit(id, "!burst row \(index)")
+            usleep(150_000)
+        }
+        // Out of the list again, whatever happens (a failing XCUITest query stops the test, past a defer).
+        self.addTeardownBlock {
+            for id in ids {
+                _ = try? server.request("conversation.mark", ["conversationId": id, "hidden": true])
+            }
+        }
+        sleep(2)
+        self.launch([])
+        sleep(2)
+        // Keep 11 to 8 above the screen's top, Keep 5 in its middle.
+        self.point(0.5, 0.8).press(forDuration: 0.1, thenDragTo: self.point(0.5, 0.45), withVelocity: .slow, thenHoldForDuration: 0.5)
+        sleep(2)
+        let anchor = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'chatTitle' AND label == 'Keep 5'")).firstMatch
+        XCTAssertTrue(anchor.waitForExistence(timeout: 5), "Keep 5 on screen")
+        let before = anchor.frame
+        self.shot("keep-0-scrolled")
+        // Chats below it go to the top, one by one.
+        for (step, index) in [1, 0, 2].enumerated() {
+            _ = try server.submit(ids[index], "!burst again")
+            sleep(2)
+            self.shot("keep-\(step + 1)-moved")
+            XCTAssertTrue(anchor.exists, "Keep 5 still there after Keep \(index) moved")
+            XCTAssertEqual(anchor.frame.minY, before.minY, accuracy: 2.0, "Keep 5 where it was after Keep \(index) moved")
+        }
+    }
+
     /// The accent picked is the app's in every theme: with Auto-Night following the phone, the night theme of a
     /// phone in dark mode has it too, not tau's pink (Raya's yellow that went pink for a while).
     func testAccentFollowsNight() {
@@ -2188,3 +2228,88 @@ final class SendingUITests: XCTestCase {
         XCTAssertEqual(selected.identifier, "accent-yellow", "the night theme keeps the accent picked")
     }
 }
+
+/// The dev server's protocol from the test runner itself (docs/protocol.md): to change chats while the app shows them.
+final class DevServerClient {
+    private let task: URLSessionWebSocketTask
+    private var nextId = 1
+
+    init(url: String) throws {
+        self.task = URLSession.shared.webSocketTask(with: URL(string: url)!)
+        self.task.resume()
+        _ = try self.request("hello", ["protocol": 1])
+    }
+
+    deinit {
+        self.task.cancel(with: .goingAway, reason: nil)
+    }
+
+    func submit(_ id: Int, _ text: String) throws -> [String: Any] {
+        return try self.request("conversation.submit", ["conversationId": id, "requestId": UUID().uuidString, "content": text])
+    }
+
+    /// One request and its result; events on the way are skipped.
+    @discardableResult
+    func request(_ method: String, _ params: [String: Any]) throws -> [String: Any] {
+        let id = self.nextId
+        self.nextId += 1
+        let data = try JSONSerialization.data(withJSONObject: ["id": id, "method": method, "params": params])
+        try self.wait { done in self.task.send(.string(String(decoding: data, as: UTF8.self))) { done($0) } }
+        while true {
+            var message: URLSessionWebSocketTask.Message?
+            try self.wait { done in
+                self.task.receive { result in
+                    switch result {
+                    case let .success(value):
+                        message = value
+                        done(nil)
+                    case let .failure(error):
+                        done(error)
+                    }
+                }
+            }
+            var text = ""
+            switch message {
+            case let .string(value)?:
+                text = value
+            case let .data(value)?:
+                text = String(decoding: value, as: UTF8.self)
+            default:
+                break
+            }
+            guard let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any], object["id"] as? Int == id else {
+                continue
+            }
+            if let error = object["error"] {
+                throw NSError(domain: "DevServerClient", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(method): \(error)"])
+            }
+            return object["result"] as? [String: Any] ?? [:]
+        }
+    }
+
+    private func wait(_ body: (@escaping (Error?) -> Void) -> Void) throws {
+        let semaphore = DispatchSemaphore(value: 0)
+        var failure: Error?
+        body { error in
+            failure = error
+            semaphore.signal()
+        }
+        if semaphore.wait(timeout: .now() + 15) == .timedOut {
+            throw NSError(domain: "DevServerClient", code: 2, userInfo: [NSLocalizedDescriptionKey: "timed out"])
+        }
+        if let failure {
+            throw failure
+        }
+    }
+}
+
+private extension Dictionary where Key == String, Value == Any {
+    func object(_ key: String) -> [String: Any]? {
+        return self[key] as? [String: Any]
+    }
+
+    func int(_ key: String) -> Int? {
+        return self[key] as? Int
+    }
+}
+
