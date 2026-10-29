@@ -791,11 +791,19 @@ final class ServerStore: ConversationStore, TauServer {
             self.dialogs[id]?.outgoing = self.outgoingSummary(id)
             self.dialogs[id]?.draft = self.inputDrafts.draft(String(id))
         }
-        var working: [Int: [String]] = [:]
+        // Each chat's subagents that work, or whose own subagents do, at any depth: by the name of its own subagent.
+        var working: [Int: Set<String>] = [:]
         for dialog in self.dialogs.values where dialog.busy {
-            if let parent = dialog.parentConversationId {
+            var child = dialog
+            var depth = 0
+            while let parentId = child.parentConversationId, depth < 16 {
                 // Background subagents are titled "name: task".
-                working[parent, default: []].append(dialog.title.components(separatedBy: ":").first ?? dialog.title)
+                working[parentId, default: []].insert(child.title.components(separatedBy: ":").first ?? child.title)
+                guard let parent = self.dialogs[parentId] else {
+                    break
+                }
+                child = parent
+                depth += 1
             }
         }
         for id in Array(self.dialogs.keys) {

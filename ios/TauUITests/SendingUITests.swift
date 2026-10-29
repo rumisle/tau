@@ -2024,4 +2024,17 @@ final class SendingUITests: XCTestCase {
         sleep(3)
         XCTAssertEqual(card.value as? String, "stopped", "still")
     }
+
+    /// The chat's own run is done and its subagent works: its row in the list has the typing dots.
+    func testListDotsForSubagent() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("& slowpoke: $ sleep 30 && echo done")
+        self.send()
+        sleep(5)
+        self.point(0.1, 0.08).tap()
+        settle()
+        self.shot("subdots-0-list")
+        XCTAssertTrue(self.app.descendants(matching: .any)["chatWorking"].firstMatch.exists, "the dots while only the subagent works")
+    }
 }

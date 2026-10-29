@@ -208,6 +208,10 @@ transcript up to the request) and on another model or effort (`model: "provider/
 `{ name, conversationId, action, model?, thinking?, fork? }`. Subscribe to the conversation like any other to show the
 subagent's own transcript.
 
+A dialog's `busy` is its own run only. Whether its subagents work is their dialogs' `busy` (they are in the list, with
+`conversation.owner`): the iOS app shows a chat as working, with Telegram's typing dots, while it or any subagent under
+it, at any depth, works.
+
 ### `conversation.create`
 `{ requestId?: string, title?, autoTitle?: boolean, agent?: AgentPatch }` -> `{ dialog: Dialog }`
 

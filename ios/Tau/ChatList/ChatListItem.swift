@@ -258,6 +258,9 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
         self.separatorNode.isLayerBacked = true
 
         self.busyIndicatorNode = BusyDotsNode()
+        self.busyIndicatorNode.isAccessibilityElement = true
+        self.busyIndicatorNode.accessibilityIdentifier = "chatWorking"
+        self.busyIndicatorNode.accessibilityLabel = "working"
 
         super.init(layerBacked: false, rotated: false, seeThrough: false)
 
@@ -450,7 +453,8 @@ final class ChatListItemNode: ItemListRevealOptionsItemNode {
                 }
                 textLines = serverTag != nil && item.interaction.serverTags == .underMessage ? 1 : 2
                 date = dialog.last?.date
-                busy = dialog.busy
+                // Typing while it works, or only its subagents do.
+                busy = dialog.busy || !dialog.workingSubagents.isEmpty
                 avatarKey = "\(dialog.id):\(dialog.title)"
                 if dialog.unreadCount > 0 {
                     badgeContent = .text(NSAttributedString(string: "\(dialog.unreadCount)", font: badgeFont, textColor: presentationTheme.chatList.unreadBadgeActiveTextColor))
