@@ -1954,4 +1954,54 @@ final class SendingUITests: XCTestCase {
         XCTAssertEqual(self.app.state, .runningForeground)
         XCTAssertTrue(resumed, "the new attempt streams")
     }
+
+    /// A message with a tau:// link to a message the phone has (its chat loaded): the card takes its words while the
+    /// rows are made, when sent, opened, and previewed from the list; a reload from inside the chat's update crashed
+    /// the list.
+    func testLinkToLoadedMessage() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("linked words")
+        self.send()
+        self.app.waitForIdle()
+        settle()
+        self.pressMessage("linked words")
+        settle()
+        let copyLink = self.app.descendants(matching: .any)["Copy Link"].firstMatch
+        XCTAssertTrue(copyLink.waitForExistence(timeout: 3), "the message's Copy Link")
+        copyLink.tap()
+        settle()
+        // New Chat in the bar: over this chat, which stays loaded.
+        self.point(0.775, 0.097).tap()
+        settle()
+        self.focusInput()
+        self.app.textViews.firstMatch.press(forDuration: 1.0)
+        let paste = self.app.menuItems["Paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 3), "Paste")
+        paste.tap()
+        self.type(" see")
+        self.send()
+        self.app.waitForIdle()
+        settle()
+        self.shot("linkref-0-sent")
+        XCTAssertEqual(self.app.state, .runningForeground, "sent")
+        let card = self.app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'linked words'")).firstMatch
+        XCTAssertTrue(card.exists, "the card has the linked message's words")
+        // Back to the list (through the first chat), then the chat again, and its preview.
+        self.point(0.1, 0.097).tap()
+        settle()
+        self.point(0.1, 0.097).tap()
+        settle()
+        self.point(0.5, 0.24).tap()
+        self.app.waitForChat()
+        settle()
+        self.shot("linkref-1-opened")
+        XCTAssertEqual(self.app.state, .runningForeground, "opened")
+        self.point(0.1, 0.097).tap()
+        settle()
+        self.point(0.5, 0.24).press(forDuration: 1.0)
+        settle()
+        self.shot("linkref-2-preview")
+        XCTAssertEqual(self.app.state, .runningForeground, "previewed")
+    }
 }

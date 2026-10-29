@@ -373,6 +373,7 @@ final class ChatControllerNode: ASDisplayNode {
 
         let previous = self.entries
         self.entries = entries
+        self.isMakingRows = true
         if !self.isAtBottom && !previous.isEmpty {
             // New rows below the screen: committed answers and messages, counted as Telegram counts unread ones.
             let known = Set(previous.map(\.stableId))
@@ -435,6 +436,11 @@ final class ChatControllerNode: ASDisplayNode {
             }
         }
         self.historyNode.transaction(deleteIndices: deletions, insertIndicesAndItems: insertions, updateIndicesAndItems: updates, options: options, scrollToItem: scrollToItem, updateOpaqueState: nil)
+        self.isMakingRows = false
+        if self.reloadAfterRows {
+            self.reloadAfterRows = false
+            self.reloadItems()
+        }
         // Nothing here yet and the server's still to come: Telegram's spinner until it does. Shown with the chat as it
         // opens, gone with an animation.
         self.updateIsLoading(!state.isLoaded && entries.isEmpty, animated: self.contentReady == nil)
@@ -524,8 +530,21 @@ final class ChatControllerNode: ASDisplayNode {
     /// history node is ready with its loading state, a chat never waits for the network to open.
     var contentReady: (() -> Void)?
 
+    /// While the rows of an update are being made: `entries` is already the new list and the list's items are not yet,
+    /// so a reload asked for meanwhile (something an item reads answering at once) waits for the update's transaction;
+    /// one between the two updated rows the list did not have, and crashed it.
+    private var isMakingRows = false
+    private var reloadAfterRows = false
+
     private func reloadItems() {
+        if self.isMakingRows {
+            self.reloadAfterRows = true
+            return
+        }
+        self.isMakingRows = true
         let updates = self.entries.enumerated().map { ListViewUpdateItem(index: $0.offset, previousIndex: $0.offset, item: self.item(for: $0.element), directionHint: nil) }
+        self.isMakingRows = false
+        self.reloadAfterRows = false
         self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: updates, options: [.Synchronous], updateOpaqueState: nil)
     }
 
