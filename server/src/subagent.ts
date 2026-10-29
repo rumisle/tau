@@ -164,7 +164,7 @@ const subagentTool = defineTool({
 		message: Type.Optional(Type.String({ description: "The task for spawn, or the message for send" })),
 		followUp: Type.Optional(Type.Boolean()),
 		fork: Type.Optional(Type.Boolean({ description: "spawn: start from a copy of this conversation instead of empty" })),
-		model: Type.Optional(Type.String({ description: "spawn: provider/id of the model to run on; yours when omitted" })),
+		model: Type.Optional(Type.String({ description: 'spawn: provider/id of the model to run on; yours when omitted. The ones available: models.getAvailableOfType("chat") in code mode' })),
 		thinking: Type.Optional(Type.Union(THINKING_LEVELS.map((level) => Type.Literal(level)))),
 	}),
 	// A call cut off by a crash is not run again: a repeated stop could stop newer work. The model sees the call was

@@ -12,11 +12,15 @@ so a new process runs it again with those results and it carries on where it was
 
 ## Setup
 
-`server/src/host.ts` installs `createCodemodeExtension({ sandbox, models: false })` with a `CodemodeSandbox` of 256 MB.
+`server/src/host.ts` installs `createCodemodeExtension({ sandbox })` with a `CodemodeSandbox` of 256 MB.
 
 - The other tools stay offered to the model as they were; the script is one more way to call them. Its prompt section
   lists them as TypeScript declarations (a fixed text, so the prompt cache keeps it).
-- `models: false`: no classifiers or image models (`models.*`), which need providers tau does not set up.
+- `models.*`: the catalog (`models.getAvailableOfType("chat")` lists the models with a login or key, which the
+  subagent tool's `model` points to), `models.classify()` and `models.generateImages()`, for the classifier and image
+  providers the server has keys for (TypeSafe, OpenRouter, Cloudflare Workers AI, OpenAI, llama.cpp). The code mode
+  tool's description says how to call them. Their spend is in the conversation's `pi.usage`, not yet in the Usage
+  report.
 - Every conversation has it, subagents too. A script cannot start another script (`callers: ["model"]`).
 
 ## What the user sees of a script's calls

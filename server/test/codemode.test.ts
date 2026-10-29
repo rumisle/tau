@@ -38,6 +38,28 @@ describe("code mode", () => {
 			});
 		});
 
+	test("a script lists the models it may use, and starts a subagent on one", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", {});
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		const script = [
+			'const chat = await models.getAvailableOfType("chat");',
+			'const dev = chat.find((model) => model.provider === "dev");',
+			'await tools.subagent({ action: "spawn", name: "cheap", message: "say hi", model: `${dev.provider}/${dev.id}` });',
+			'return `models ${chat.length} dev ${dev.provider}/${dev.id}`;',
+		].join("\n");
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "m-1", content: `!code ${script}` });
+		const entries = () => replica.ordered() as unknown as Entry[];
+		const result = () => entries().find((entry) => entry.kind === "pi.tool-result" && entry.model?.[0]?.toolName === "codemode");
+		await until(replica, () => result() !== undefined);
+		const text = JSON.stringify(result()!.model![0]!.content);
+		assert.match(text, /models [1-9]\d* dev dev\/echo/, text);
+		const started = entries().find((entry) => entry.kind === "tau.subagent")!.data as { model?: string };
+		assert.equal(started.model, "dev/echo");
+		await client.close();
+	});
+
 	test("a script's calls run as nested calls, and what the user sees of them comes as display entries", async () => {
 		writeFileSync(join(cwd, "chart.png"), PNG);
 		const client = await TauClient.connect(server.url);

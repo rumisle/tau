@@ -191,10 +191,11 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	registry.install(createCodingTools({ images }));
 	registry.install(Subagent);
 	registry.install(sendFileExtension(files));
-	// Code mode (docs/codemode.md): the model's scripts call the tools, each script in a QuickJS worker of its own. No
-	// `models.*`: classifiers and image models need providers tau does not set up.
+	// Code mode (docs/codemode.md): the model's scripts call the tools, each script in a QuickJS worker of its own, and
+	// `models.*`: the catalog (which models a subagent may run on), and classifier and image models for the providers
+	// the server has logins or keys for.
 	const sandbox = new CodemodeSandbox({ memoryLimitBytes: 256 * 1024 * 1024 });
-	registry.install(createCodemodeExtension({ sandbox, models: false }));
+	registry.install(createCodemodeExtension({ sandbox }));
 	registry.install(
 		defineExtension({
 			name: "tau",
