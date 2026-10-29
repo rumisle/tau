@@ -1875,4 +1875,57 @@ final class SendingUITests: XCTestCase {
         sleep(3)
         self.shot("share-4-list")
     }
+
+    /// A chat is open: its state element is there. `chatState` reads the element's value too, which fails the test
+    /// when a chat on its way out takes the element between finding and reading it.
+    private var inChat: Bool {
+        return self.app.descendants(matching: .any)["chatState"].firstMatch.exists
+    }
+
+    /// A new chat, a message, and back with a swipe from the screen's edge while the answer is placed, waited for and
+    /// streamed: the chat leaves, and the answer goes on, without a crash.
+    func testSwipeBackWhileAnswering() {
+        let rounds: [(text: String, delay: useconds_t)] = [("!doc 20", 0), ("~3 swipe", 300_000), ("!doc 20", 1_500_000), ("!doc 20", 4_000_000), ("~1 swipe", 900_000), ("!doc 20", 2_500_000)]
+        for (round, (text, delay)) in rounds.enumerated() {
+            // A new chat each time, without the list's bar, where the last answer's notification comes down.
+            self.launch(["-newChat", "YES"])
+            self.focusInput()
+            self.type(text)
+            self.send()
+            usleep(delay)
+            // The interactive pop: from the left edge, slowly, as a thumb does.
+            self.point(0.0, 0.5).press(forDuration: 0.05, thenDragTo: self.point(0.75, 0.52), withVelocity: .slow, thenHoldForDuration: 0.0)
+            settle()
+            self.shot("swipe-back-\(round)")
+            XCTAssertEqual(self.app.state, .runningForeground, "round \(round): still running")
+            XCTAssertTrue(waitUntil(5.0) { !self.inChat }, "round \(round): back in the list")
+            // The answer goes on in the list's row meanwhile.
+            sleep(1)
+            XCTAssertEqual(self.app.state, .runningForeground, "round \(round): still running in the list")
+        }
+    }
+
+    /// Back while the answer streams, and the chat again from its notification once the answer is done: the chat
+    /// opens with it. The phone kept the live document the chat last had while the answer's entry still
+    /// came, and the streaming answer stood beside the finished one under its ID, which crashed the list.
+    func testReopenAfterAnswer() {
+        for (round, delay) in [useconds_t(4_000_000), 1_500_000, 1_500_000, 500_000].enumerated() {
+            self.launch(["-newChat", "YES"])
+            self.focusInput()
+            self.type("!doc 20")
+            self.send()
+            usleep(delay)
+            self.point(0.0, 0.5).press(forDuration: 0.05, thenDragTo: self.point(0.75, 0.52), withVelocity: .slow, thenHoldForDuration: 0.0)
+            XCTAssertTrue(waitUntil(5.0) { !self.inChat }, "round \(round): back in the list")
+            // The answer's notification, at the top, once it is done.
+            XCTAssertTrue(waitUntil(40.0) {
+                self.point(0.5, 0.098).tap()
+                return self.inChat
+            }, "round \(round): opened from the notification")
+            settle()
+            sleep(2)
+            self.shot("reopen-\(round)")
+            XCTAssertEqual(self.app.state, .runningForeground, "round \(round): still running")
+        }
+    }
 }

@@ -352,6 +352,16 @@ final class ChatControllerNode: ASDisplayNode {
             // Working with nothing to show yet: the τ where the answer will start.
             messages.append(ChatMessage(id: ChatControllerNode.waitingRowId, role: .assistant, text: "", date: Date(timeIntervalSince1970: 0.0), isStreaming: true, isWaiting: true, retry: state.retry))
         }
+        // One row per ID: the list's diff pairs rows by it, and two with one ID gave two rows one item node, which
+        // crashed the list laying out its rows (a stale live answer beside its committed message did).
+        var seenIds = Set<Int>()
+        messages = messages.filter { message in
+            if seenIds.insert(message.id).inserted {
+                return true
+            }
+            assertionFailure("two rows with ID \(message.id)")
+            return false
+        }
         // The answer's blocks come one after another: once the next has begun, the one before is written, and goes on
         // to its end at once instead of at the reveal's pace for text still coming (a provider that buffers sends the
         // whole thinking, then the answer, and the thinking took seconds to show while pushing the answer down).

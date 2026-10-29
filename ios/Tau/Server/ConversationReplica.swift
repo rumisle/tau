@@ -183,6 +183,8 @@ enum TranscriptBuilder {
         /// error; errors in the run it asked past.
         var pendingError: (entry: JSONObject, id: Int, base: Int, date: Date, error: String)?
         var retriedErrors = 0
+        /// The generation tasks whose message is in the transcript.
+        var committedTasks = Set<Int>()
 
         func addAssistant(content: [JSONObject], base: Int, date: Date, entryId: Int?, streaming: Bool, toolStart: Date? = nil) {
             for (index, block) in content.enumerated() {
@@ -296,6 +298,9 @@ enum TranscriptBuilder {
                 if pendingError != nil {
                     pendingError = nil
                     retriedErrors += 1
+                }
+                if let taskId = entry.int("byTaskId") {
+                    committedTasks.insert(taskId)
                 }
                 // Its calls start once it is written.
                 let written = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
@@ -411,7 +416,10 @@ enum TranscriptBuilder {
         if !replica.isBusy {
             flushError()
         }
-        if let generation = live.object("generation"), let partial = generation.object("message"), let run = live.object("run"), let taskId = run.int("taskId") {
+        // Not once its message is in the transcript: that is a live document the replica kept from its last
+        // subscription (entries still come to a chat not open, its docs do not), whose rows would have the committed
+        // ones' IDs.
+        if let generation = live.object("generation"), let partial = generation.object("message"), let run = live.object("run"), let taskId = run.int("taskId"), !committedTasks.contains(taskId) {
             addAssistant(content: partial.objects("content"), base: taskId, date: Date(), entryId: nil, streaming: true)
         }
         for slot in live.objects("tools") {
