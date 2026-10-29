@@ -1315,7 +1315,7 @@ final class ServerStore: ConversationStore, TauServer {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 let title = draft.titleIsManual ? (draft.title ?? "") : (trimmed.isEmpty ? attachmentsTitle(attachments) : String(trimmed.prefix(48)))
                 if let forkOf = draft.forkOf, let forkAt = draft.forkAt {
-                    // A copy made before its message (Restore Full Context): the fork, then the message.
+                    // A copy made before its message (Continue with Full Context): the fork, then the message.
                     self.outbox.enqueueCreate(requestId: createRequestId, title: draft.title ?? title, agent: nil, forkOf: forkOf, forkAt: forkAt)
                 } else {
                     self.outbox.enqueueCreate(requestId: createRequestId, title: title, agent: draft.agent)

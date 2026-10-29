@@ -27,6 +27,7 @@ import { type CompactionThreshold, MAX_COMPACTION_RATIO, MIN_COMPACTION_RATIO, M
 import type { Dialogs } from "./dialogs.ts";
 import { entryImages } from "./media.ts";
 import { clientDocs, clientEntry, clientOp } from "./outgoing.ts";
+import { CompactionsDoc } from "./compactions.ts";
 import type { KindName } from "./search/index.ts";
 import type { Search } from "./search/service.ts";
 import { CreatesDoc, type Host, MetaDoc } from "./host.ts";
@@ -60,6 +61,8 @@ const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp
 /** Tombstones kept per conversation; a withdrawn submit arrives within seconds, if ever. */
 const MAX_WITHDRAWN = 100;
 const MAX_CREATES = 200;
+
+const COMPACTIONS_DOC = CompactionsDoc.definition.kind;
 
 /** Requests that change a conversation run one at a time per conversation, in arrival order (src/serial.ts). */
 const SERIAL_METHODS = new Set([
@@ -130,6 +133,11 @@ export class Connection {
 		this.#context = context;
 		this.#cancel = () => cancel(new Error("connection closed"));
 		this.#cleanups.push(
+			// What became of the conversation's compactions (src/compactions.ts), as one more doc: clients apply it as
+			// they apply the others.
+			host.compactions.onChange((id, items) => {
+				if (this.#subscriptions.get(id)?.live) this.#push({ event: "conv.commit", conversationId: id, ops: [["s", [COMPACTIONS_DOC], { items }]] });
+			}),
 			dialogs.onSubmission((record) => {
 				// Every conversation's, once the chat list is subscribed: a client learns what became of a message it
 				// sent even with that chat closed.
@@ -590,7 +598,7 @@ export class Connection {
 			);
 			const result = {
 				conversation: record,
-				docs: clientDocs(view.docs),
+				docs: { ...clientDocs(view.docs), [COMPACTIONS_DOC]: { items: await this.#host.compactions.records(conversation.id) } },
 				entries: this.#outgoing(entries),
 				...(head === undefined ? {} : { head }),
 				hasOlder,
@@ -619,7 +627,7 @@ export class Connection {
 				this.#push({
 					event: "conv.commit",
 					conversationId: id,
-					docs: clientDocs(value.docs),
+					docs: { ...clientDocs(value.docs), [COMPACTIONS_DOC]: { items: await this.#host.compactions.records(id) } },
 					...(entries.length === 0 ? {} : { entries: this.#outgoing(entries) }),
 					...(head === undefined ? {} : { head }),
 				});

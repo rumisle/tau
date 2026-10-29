@@ -127,7 +127,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     /// When the compaction now running began, as the transcript's pill says.
     private var compactingSince: Date? {
         for message in (self.lastState?.messages ?? []).reversed() {
-            if case let .compacting(since) = message.service {
+            // Not one made and waiting for a run's step: the run is what holds the user up then.
+            if case let .compacting(since, waiting) = message.service, !waiting {
                 return since
             }
         }
@@ -258,7 +259,11 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         case .updating:
             status = .network(strings.ChatState_Updating)
         case .online:
-            if busy {
+            // What holds the user up: the agent's work (a compaction in the background meanwhile has its card in the
+            // chat), unless the run waits for a compaction; a compaction when the agent is idle.
+            if busy, self.lastState?.compactionBlocksRun == true, let since = self.compactingSince {
+                status = .working("compacting", elapsed: Date().timeIntervalSince(since))
+            } else if busy {
                 // How long this run has worked, as it goes.
                 let elapsed = self.lastState?.runStartedAt.map { Date().timeIntervalSince($0) } ?? 0.0
                 status = .working("working", elapsed: elapsed)
@@ -276,7 +281,8 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.updateNewChatCard(dialog: dialog)
         // Who the field writes to, and while the agent works, that Send steers it.
         let name = self.modelName()
-        let verb = busy && self.compactingSince == nil ? "Steer" : "Message"
+        // A message sent during a compaction is answered at once, on the whole context: a steer only while a run goes.
+        let verb = busy ? "Steer" : "Message"
         if self.isNodeLoaded {
             self.controllerNode.inputPanelNode.placeholder = name.isEmpty ? verb : "\(verb) \(name)"
         }
@@ -1305,7 +1311,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         if case .compacted = message.service, let entryId = message.entryId {
             // As an edit of an earlier message: the conversation goes on in a copy, from before the summary, with
             // everything the model saw then.
-            items.append(.action(ContextMenuActionItem(text: "Restore Full Context", textLayout: .secondLineWithValue("Continues in a copy"), icon: { theme in
+            items.append(.action(ContextMenuActionItem(text: "Continue with Full Context", textLayout: .secondLineWithValue("In a new chat, from before the summary"), icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Reload"), color: theme.actionSheet.primaryTextColor)
             }, action: { [weak self] _, f in
                 f(.default)
@@ -1454,7 +1460,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
     }
 
-    /// Restore Full Context: a copy of this chat from before a compaction, opened over it; it exists once something
+    /// Continue with Full Context: a copy of this chat from before a compaction, opened over it; it exists once something
     /// is sent in it.
     private func restoreFullContext(before entryId: Int) {
         guard let forkId = self.context.store.forkBefore(entryId: entryId, in: self.conversationId), let navigationController = self.navigationController as? NavigationController else {

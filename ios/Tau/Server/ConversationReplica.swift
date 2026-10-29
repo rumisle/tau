@@ -78,9 +78,47 @@ final class ConversationReplica {
         return self.live["run"] != nil || !self.inboxItems.isEmpty
     }
 
+    /// What became of each compaction (`tau.compactions`, server/src/compactions.ts): kept by the server, so read even
+    /// from docs a chat left (its running ones are not: what runs is read from the live document).
+    var compactions: [CompactionRecord] {
+        return (self.docs.object("tau.compactions")?.objects("items") ?? []).compactMap(CompactionRecord.init)
+    }
+
     /// What waits for a boundary (`pi.inbox`): steers, follow-ups, and writes such as a queued reset.
     var inboxItems: [JSONObject] {
         return self.docsAreStale ? [] : self.docs.object("pi.inbox")?.objects("items") ?? []
+    }
+}
+
+/// One compaction as the server keeps it (server/src/compactions.ts).
+struct CompactionRecord: Equatable {
+    var taskId: Int
+    var reason: String
+    var blocking: Bool
+    var startedAt: Date
+    var state: String
+    var entryId: Int?
+    var after: Int?
+    var error: String?
+    var tokensBefore: Int?
+    var tokensAfter: Int?
+    var cost: Double?
+
+    init?(_ object: JSONObject) {
+        guard let taskId = object.int("taskId"), let state = object.string("state") else {
+            return nil
+        }
+        self.taskId = taskId
+        self.reason = object.string("reason") ?? "manual"
+        self.blocking = object.bool("blocking") ?? false
+        self.startedAt = Date(timeIntervalSince1970: (object.double("startedAt") ?? 0.0) / 1000.0)
+        self.state = state
+        self.entryId = object.int("entryId")
+        self.after = object.int("after")
+        self.error = object.string("error")
+        self.tokensBefore = object.int("tokensBefore")
+        self.tokensAfter = object.int("tokensAfter")
+        self.cost = object.double("cost")
     }
 }
 
@@ -101,6 +139,7 @@ enum TranscriptBuilder {
             var rowIdForUserEntry: [Int: Int]
             var streamingTask: Int?
             var hasMedia: Bool
+            var compactions: [CompactionRecord]
         }
         let key: Key
         /// Names these rows: two states with the same token have the same rows up to their `StablePrefix`.
@@ -287,7 +326,8 @@ enum TranscriptBuilder {
         // The task streaming now: a generation cut off by a server restart is committed as an aborted message and
         // asked again under the same task.
         let streamingTask = replica.live.object("generation") != nil ? replica.live.object("run")?.int("taskId") : nil
-        let key = Committed.Key(entriesVersion: replica.entriesVersion, rowIdForUserEntry: rowIdForUserEntry, streamingTask: streamingTask, hasMedia: media != nil)
+        let compactions = replica.compactions
+        let key = Committed.Key(entriesVersion: replica.entriesVersion, rowIdForUserEntry: rowIdForUserEntry, streamingTask: streamingTask, hasMedia: media != nil, compactions: compactions)
         let token: Int
         if let cached = replica.committed, cached.key == key {
             token = cached.token
@@ -309,10 +349,22 @@ enum TranscriptBuilder {
                 }
             }
 
+            // Compactions that ended unused, each a note after the entry the chat had then; not those before what is
+            // loaded.
+            let oldestLoaded = ordered.first?.int("id") ?? 0
+            var notes = compactions.filter { ["stale", "failed", "empty"].contains($0.state) && $0.after != nil && !(replica.hasOlder && $0.after! < oldestLoaded) }.sorted { $0.after! < $1.after! }
+            func addNotes(before id: Int?) {
+                while let note = notes.first, id == nil || note.after! < id! {
+                    notes.removeFirst()
+                    rows.append(ChatMessage(id: self.rowId(base: note.taskId, block: 62), role: .service, text: "", date: note.startedAt, service: .compactionUnused(state: note.state, error: note.error)))
+                }
+            }
+
             for entry in ordered {
                 guard let id = entry.int("id"), let kind = entry.string("kind") else {
                     continue
                 }
+                addNotes(before: id)
                 // A message after an error: the run had ended on it.
                 if kind == "pi.user" {
                     flushError()
@@ -486,11 +538,14 @@ enum TranscriptBuilder {
                         summary = String(summary.dropLast("\n</summary>".count))
                     }
                     let reason = entry.object("data")?.string("reason") ?? "manual"
-                    rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .service, text: summary, date: date, entryId: id, service: .compacted(summary: summary.trimmingCharacters(in: .whitespacesAndNewlines), reason: reason)))
+                    // Under the row its compaction had while it ran: the pill turns into the card in place.
+                    let record = compactions.first(where: { $0.entryId == id })
+                    rows.append(ChatMessage(id: record.map { self.rowId(base: $0.taskId, block: 62) } ?? self.rowId(base: id, block: 0), role: .service, text: summary, date: date, entryId: id, service: .compacted(summary: summary.trimmingCharacters(in: .whitespacesAndNewlines), reason: reason, before: record?.tokensBefore, after: record?.tokensAfter, cost: record?.cost)))
                 default:
                     continue
                 }
             }
+            addNotes(before: nil)
             token = Committed.newToken()
             replica.committed = Committed(key: key, token: token, rows: rows, toolRowIndex: toolRowIndex, subagentTasks: subagentTasks, turnStart: turnStart, subagentCallRows: subagentCallRows, pendingError: pendingError, retriedErrors: retriedErrors, committedTasks: committedTasks)
         }
@@ -570,13 +625,26 @@ enum TranscriptBuilder {
             }
         }
         // A summary being made: it does not stop the conversation, so it is a row of its own at the end.
-        if let compaction = live.objects("compactions").first, let taskId = compaction.int("taskId") {
-            rows.append(ChatMessage(id: self.rowId(base: taskId, block: 62), role: .service, text: "", date: Date(timeIntervalSince1970: 0.0), service: .compacting(since: self.firstSeen(compaction: taskId))))
+        // Its row from the start, at the end until its summary is placed (or it ends unused): running, then waiting
+        // for a run's next step. From the server's record (when it began); from the live document until that comes.
+        var shown = Set<Int>()
+        for record in compactions where !replica.docsAreStale && (record.state == "running" || record.state == "waiting") {
+            shown.insert(record.taskId)
+            rows.append(ChatMessage(id: self.rowId(base: record.taskId, block: 62), role: .service, text: "", date: Date(timeIntervalSince1970: 0.0), service: .compacting(since: record.startedAt, waiting: record.state == "waiting")))
         }
+        for compaction in live.objects("compactions") {
+            guard let taskId = compaction.int("taskId"), !shown.contains(taskId), !compactions.contains(where: { $0.taskId == taskId }) else {
+                continue
+            }
+            rows.append(ChatMessage(id: self.rowId(base: taskId, block: 62), role: .service, text: "", date: Date(timeIntervalSince1970: 0.0), service: .compacting(since: self.firstSeen(compaction: taskId), waiting: false)))
+        }
+        // A run waiting on a compaction (past the blocking threshold): what holds the user up is the compaction.
+        let blocksRun = replica.live["run"] != nil && live.objects("compactions").contains { $0.bool("blocking") == true }
         let queue = self.queue(replica: replica, items: items)
         // The agent works, or something waits for it: a message on its way is not that.
         var state = ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !queue.isEmpty, queued: queue, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
         state.stablePrefix = StablePrefix(token: token, count: stableCount)
+        state.compactionBlocksRun = blocksRun
         state.runStartedAt = replica.isBusy ? turnStart : nil
         if let failure = live.object("compactionFailure"), let taskId = failure.int("taskId") {
             state.compactionFailure = CompactionFailure(taskId: taskId, error: failure.string("error") ?? "")

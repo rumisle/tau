@@ -54,12 +54,33 @@ the Usage ledger as the model `tau/compaction` (`server/src/search/usage.ts`).
 
 ## In the app
 
-The summary shows as a card in the chat, "Context compacted", with why (filling up, overflowed, on request) and the
-summary folded under it; a tap unfolds it. The chat's menu (⋯) has Compact Context, and Restore Full Context on the card
-continues in a copy from before the summary.
+Durable's semantics stand: a manual or background compaction never holds the conversation up. A message sent meanwhile
+is answered at once, on the whole context, and the summary goes in at the run's next boundary, or not at all when the
+conversation moved past it (its write settles `stale`). The app says so instead of hiding it:
+
+- **From start to end, one row.** A compaction shows at the bottom of the chat from the moment it starts, Telegram's
+  service pill with the τ: "Compacting context… 1m 20s"; once summarized while a run goes on, "Context summarized ·
+  goes in at the next step". When the summary is placed the pill turns, in place, into the "Context compacted" card:
+  when and why (on request, automatically, after an overflow), that the model reads this summary instead of everything
+  above it, the context's size before and after it ("412k → 38k tokens", from the last answer before it and the first
+  after it) and what tau's summary request cost; the summary folded under it, a tap unfolds it. One that was not used
+  stays as a small note where the chat was then: "Compaction not used: the chat moved on", "Compaction failed: …",
+  "Nothing to compact". Manual and automatic ones alike.
+- **The server keeps what became of each** (`server/src/compactions.ts`): from `pi.live.compactions`, the summary's
+  entry (a blocking one's own) or its write submission (`compaction:<taskId>`: placed, or `stale`), the failure, the
+  answers' usage and the follow-up's cost, in the conversation doc `tau.compactions`, which clients get with the
+  others (`docs["tau.compactions"].items`, docs/protocol.md). So a chat says it after a restart or a week later too.
+- **The title says what holds the user up**: "working" while the agent works, a background compaction meanwhile
+  included (the row says that one); "compacting" when the agent is idle and a compaction runs, and when the run waits
+  for one (past durable's blocking threshold). The field says Steer while a run goes, else Message: a message during
+  an idle compaction is answered at once.
+- The chat's menu (⋯) has Compact Context; the card's Continue with Full Context goes on in a new chat, a copy from
+  before the summary.
 
 ## Tests
 
 `server/test/compaction.test.ts`: the thresholds, a manual compaction whose follow-up reads its context from the dev
 model's prompt cache (`devCacheTtl`), the fallback when the follow-up calls a tool (`!no-follow-up` in the chat), and a
-threshold compaction started on its own after `settings.configure { compaction: { ratio: 0.3 } }`.
+threshold compaction started on its own after `settings.configure { compaction: { ratio: 0.3 } }`, each with its
+`tau.compactions` record (placed, the context before and after, the cost), and one asked for mid-run (placed at the
+next step, or not used). `SendingUITests.testCompactionCard`: the pill to the card, idle and mid-run, and the title.

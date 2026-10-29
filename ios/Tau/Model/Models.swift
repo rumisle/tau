@@ -77,10 +77,14 @@ enum MessageRole: Equatable {
 
 /// What a service row says.
 enum ServiceContent: Equatable {
-    /// A summary being made, since `since` (when this app first saw it).
-    case compacting(since: Date)
-    /// The summary that now stands in for what came before it, for the model.
-    case compacted(summary: String, reason: String)
+    /// A summary being made, since `since`; `waiting` once made, until a run's next step places it.
+    case compacting(since: Date, waiting: Bool)
+    /// The summary that now stands in for what came before it, for the model: the context's size before and after it
+    /// (tokens) and what it cost, when known.
+    case compacted(summary: String, reason: String, before: Int?, after: Int?, cost: Double?)
+    /// A compaction that ended unused: the chat moved past it (`stale`), it failed (`error`), or there was nothing to
+    /// compact (`empty`).
+    case compactionUnused(state: String, error: String?)
     /// A run that ended on a model error, after the server's own retries: why, cleaned up to read.
     case failed(error: String)
 }
@@ -333,11 +337,13 @@ struct ConversationState: Equatable {
     /// The first `count` messages are the same in every state with this token: the chat compares and lays out only
     /// what comes after them.
     var stablePrefix: StablePrefix?
+    /// The run waits for a compaction (past the blocking threshold): the title says compacting, not working.
+    var compactionBlocksRun = false
 
     /// As the synthesized one (every property; keep it so), but the messages of two states with one stable prefix are
     /// compared after it only.
     static func == (lhs: ConversationState, rhs: ConversationState) -> Bool {
-        guard lhs.stablePrefix == rhs.stablePrefix, lhs.messages.count == rhs.messages.count, lhs.streaming == rhs.streaming, lhs.busy == rhs.busy, lhs.queued == rhs.queued, lhs.hasOlder == rhs.hasOlder, lhs.isLoaded == rhs.isLoaded, lhs.agent == rhs.agent, lhs.title == rhs.title, lhs.runStartedAt == rhs.runStartedAt, lhs.compactionFailure == rhs.compactionFailure, lhs.retry == rhs.retry else {
+        guard lhs.stablePrefix == rhs.stablePrefix, lhs.messages.count == rhs.messages.count, lhs.streaming == rhs.streaming, lhs.busy == rhs.busy, lhs.queued == rhs.queued, lhs.hasOlder == rhs.hasOlder, lhs.isLoaded == rhs.isLoaded, lhs.agent == rhs.agent, lhs.title == rhs.title, lhs.runStartedAt == rhs.runStartedAt, lhs.compactionFailure == rhs.compactionFailure, lhs.retry == rhs.retry, lhs.compactionBlocksRun == rhs.compactionBlocksRun else {
             return false
         }
         let start = min(lhs.stablePrefix?.count ?? 0, lhs.messages.count)

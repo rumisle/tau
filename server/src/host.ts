@@ -27,6 +27,7 @@ import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { CacheWarmer, type CacheWarmingMode } from "./cache.ts";
 import { type CompactionThreshold, compactionOverrides, DEFAULT_COMPACTION_THRESHOLD, FollowUpCompaction } from "./compaction.ts";
+import { CompactionLog } from "./compactions.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
 import { Serial } from "./serial.ts";
 import { skillsSection } from "./skills.ts";
@@ -142,6 +143,8 @@ export type Host = {
 	/** Compaction as a follow-up to the conversation's cached context (src/compaction.ts). */
 	readonly compaction: FollowUpCompaction;
 	readonly compactionThreshold: CompactionThreshold;
+	/** What became of each compaction, for the app's card (src/compactions.ts). */
+	readonly compactions: CompactionLog;
 	setCompactionThreshold(threshold: CompactionThreshold): Promise<void>;
 	readonly cwd: string;
 	/** The files messages refer to (src/files.ts). */
@@ -239,6 +242,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	);
 	cache.attach(harness, async (id) => (await storage.conversation(id, context))?.owner !== undefined);
 	compaction.attach(harness);
+	const compactions = new CompactionLog(harness, compaction);
 	const serverId = await harness.commit(async (tx) => {
 		const doc = await tx.doc(ServerDoc);
 		if (doc.id === "") doc.id = randomUUID();
@@ -292,6 +296,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 			cache.modeChanged();
 		},
 		compaction,
+		compactions,
 		get compactionThreshold() {
 			return compactionThreshold;
 		},
@@ -307,6 +312,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		images,
 		close: async () => {
 			cache.close();
+			compactions.close();
 			await harness.close(context);
 			await sandbox.close();
 			files.close();

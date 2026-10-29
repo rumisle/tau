@@ -1175,7 +1175,7 @@ final class SendingUITests: XCTestCase {
     }
 
     /// Compaction from the title menu: its pill with the τ and its time, messages go on meanwhile, then the summary's
-    /// card, which unfolds, and Restore Full Context.
+    /// card, which unfolds, and Continue with Full Context.
     func testCompaction() {
         self.launch(["-newChat", "YES"])
         self.focusInput()
@@ -1205,7 +1205,7 @@ final class SendingUITests: XCTestCase {
         card.press(forDuration: 1.0)
         settle()
         self.shot("compact-4-menu")
-        self.app.descendants(matching: .any)["Restore Full Context"].firstMatch.tap()
+        self.app.descendants(matching: .any)["Continue with Full Context"].firstMatch.tap()
         settle()
         self.shot("compact-5-restored")
     }
@@ -2098,5 +2098,51 @@ final class SendingUITests: XCTestCase {
             XCTAssertFalse(text.exists)
             self.shot("showall-\(theme)-4-back")
         }
+    }
+
+    /// Compaction from start to end (docs/compaction.md): the pill at the bottom while it runs, which turns into the
+    /// card in place when the summary goes in; idle, the title says compacting. Asked for while the agent works: the
+    /// title says working, and the summary goes in at the run's next step, or a note says it was not used.
+    func testCompactionCard() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        for text in ["one two three four five six seven", "eight nine ten eleven twelve", "thirteen fourteen fifteen"] {
+            self.type(text)
+            self.send()
+            self.app.waitForIdle()
+        }
+        settle()
+        self.openChatMenu()
+        settle()
+        self.app.descendants(matching: .any)["Compact Context"].firstMatch.tap()
+        let pill = self.app.descendants(matching: .any).matching(identifier: "compactionPill").firstMatch
+        XCTAssertTrue(pill.waitForExistence(timeout: 5), "the pill from the start")
+        usleep(1_200_000)
+        self.shot("cc-0-idle-running")
+        let card = self.app.descendants(matching: .any).matching(identifier: "compactionCard").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 15), "the card when the summary is in")
+        XCTAssertFalse(pill.exists, "the pill turned into it")
+        XCTAssertTrue(card.label.contains("The model reads this summary"), card.label)
+        settle()
+        self.shot("cc-1-idle-placed")
+        // While the agent works.
+        self.focusInput()
+        self.type("$ sleep 8 && echo done")
+        self.send()
+        XCTAssertTrue(self.app.waitForBusy())
+        settle()
+        self.openChatMenu()
+        settle()
+        self.app.descendants(matching: .any)["Compact Context"].firstMatch.tap()
+        usleep(1_500_000)
+        self.shot("cc-2-midrun-running")
+        sleep(3)
+        self.shot("cc-3-midrun-waiting")
+        XCTAssertTrue(self.app.waitForIdle(timeout: 40))
+        sleep(2)
+        self.shot("cc-4-midrun-done")
+        let cards = self.app.descendants(matching: .any).matching(identifier: "compactionCard").count
+        let notes = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'compactionPill' AND label BEGINSWITH 'Compaction not used'")).count
+        XCTAssertTrue(cards >= 2 || notes >= 1, "placed, or a note that it was not used (\(cards) cards, \(notes) notes)")
     }
 }

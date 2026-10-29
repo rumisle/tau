@@ -267,7 +267,7 @@ deletes none), and `hidden: false` shows it again.
 ```ts
 {
   conversation: ConversationRecord;
-  docs: Record<string, JsonObject>;   // pi.live, pi.inbox, pi.agent, pi.usage, pi.provider
+  docs: Record<string, JsonObject>;   // pi.live, pi.inbox, pi.agent, pi.usage, pi.provider, tau.compactions
   entries: EntryRecord[];             // ascending
   head?: EntryId;                     // first entry of the model's active context (after the newest reset/compaction)
   hasOlder: boolean;                  // only without `after`: entries exist before entries[0]
@@ -295,6 +295,11 @@ After the response, the server pushes one frame per commit that touched the conv
 
 Apply a frame as a whole before rendering: when a run ends, the frame that removes `pi.live.run` also carries the
 answer entry.
+
+`tau.compactions` is tau's own: `{ items: CompactionRecord[] }`, what became of the conversation's compactions
+(`server/src/compactions.ts`: `taskId`, `reason`, `blocking`, `startedAt`, `state` running | waiting | placed | stale |
+failed | empty, `entryId` once placed, `after` (the newest entry when one ended unused), `error`, `tokensBefore`,
+`tokensAfter`, `cost`). It changes as a whole: a `conv.commit` frame with the op `["s", ["tau.compactions"], value]`.
 
 Separately, `{ event: "submission", record: SubmissionRecord }` reports a status change of a submission: of every
 conversation once `dialogs.subscribe` was called, else of the subscribed ones. It is sent when the change commits and

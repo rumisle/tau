@@ -32,6 +32,8 @@ const idle = (replica: ConversationReplica) => (replica.docs["pi.live"] as { run
 const settled = (replica: ConversationReplica) => idle(replica) && (replica.docs["pi.live"] as { compactions?: unknown } | undefined)?.compactions === undefined;
 const ofKind = (replica: ConversationReplica, kind: string) => replica.ordered().filter((entry) => entry.kind === kind);
 const text = (entry: Entry) => JSON.stringify(entry.model);
+type Record = { taskId: number; reason: string; state: string; entryId?: number; after?: number; tokensBefore?: number; tokensAfter?: number; cost?: number };
+const records = (replica: ConversationReplica) => ((replica.docs["tau.compactions"] as { items?: Record[] } | undefined)?.items ?? []);
 
 async function chat(client: TauClient, replica: ConversationReplica, content: string, requestId: string, timeoutMs?: number): Promise<void> {
 	const { submission } = await client.request("conversation.submit", { conversationId: replica.id, requestId, content });
@@ -183,6 +185,31 @@ describe("follow-up compaction", () => {
 		assert.ok((report.models.find((each) => each.model === "tau/compaction")?.replies ?? 0) >= 1);
 		// The conversation goes on after it.
 		await chat(client, replica, "after", "f-after");
+		// What the app's card says (tau.compactions): placed as that entry, the context before and after, the cost.
+		await until(replica, () => records(replica)[0]?.tokensAfter !== undefined);
+		const [record] = records(replica);
+		assert.equal(record!.state, "placed");
+		assert.equal(record!.reason, "manual");
+		assert.equal(record!.entryId, compaction.id);
+		assert.ok(record!.tokensBefore! > 10_000, `before: ${record!.tokensBefore}`);
+		assert.ok(record!.tokensAfter! < record!.tokensBefore!, `after: ${record!.tokensAfter} of ${record!.tokensBefore}`);
+		assert.ok(record!.cost! > 0, "the summary's cost");
+		await client.close();
+	});
+
+	test("a compaction asked for while the agent works waits for its next step, or is not used", async () => {
+		const client = await TauClient.connect(server.url);
+		const replica = await conversation(client);
+		for (const word of ["one", "two", "three"]) await chat(client, replica, `!quiet ${word} ${"lorem ipsum dolor sit amet ".repeat(500)}`, `m-${word}`);
+		const { submission } = await client.request("conversation.submit", { conversationId: replica.id, requestId: "m-run", content: "$ sleep 2 && echo done" });
+		await until(replica, () => !idle(replica));
+		await client.request("conversation.compact", { conversationId: replica.id });
+		await until(replica, () => replica.submissions.get(submission.id)?.status === "done" && settled(replica), 30_000);
+		await until(replica, () => ["placed", "stale"].includes(records(replica)[0]?.state ?? ""), 15_000);
+		const [record] = records(replica);
+		// Either way it says so: placed where its entry is, or not used, after the entry the chat had then.
+		if (record!.state === "placed") assert.equal(record!.entryId, ofKind(replica, "pi.compaction")[0]!.id);
+		else assert.ok(record!.after !== undefined);
 		await client.close();
 	});
 
@@ -213,6 +240,8 @@ describe("follow-up compaction", () => {
 			await chat(client, replica, `!quiet big ${"lorem ipsum dolor sit amet ".repeat(10_000)}`, "t-big", 60_000);
 			await until(replica, () => ofKind(replica, "pi.compaction").length >= 1 && settled(replica), 30_000);
 			assert.equal((ofKind(replica, "pi.compaction")[0]!.data as { reason?: string } | undefined)?.reason, "threshold");
+			await until(replica, () => records(replica)[0]?.state === "placed");
+			assert.equal(records(replica)[0]!.reason, "threshold");
 			await chat(client, replica, "next", "t-next");
 		} finally {
 			await client.request("settings.configure", { compaction: { ratio: 0.9 } });

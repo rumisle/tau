@@ -1492,11 +1492,35 @@ final class ChatMessageItemNode: ListViewItemNode {
             case .service:
                 let serviceText = theme.serviceTextColor
                 let insets = UIEdgeInsets(top: 10.0, left: 0.0, bottom: 10.0, right: 0.0)
-                switch message.service ?? .compacting(since: Date()) {
-                case let .compacting(since):
-                    // Telegram's service pill, with the τ tracing in it and the time it has taken so far.
+                switch message.service ?? .compacting(since: Date(), waiting: false) {
+                case .compacting, .compactionUnused:
+                    // Telegram's service pill: a compaction at work, with the τ tracing in it and the time it has taken
+                    // so far; made and waiting for the run's next step; or a note of one that ended unused.
+                    var titleText = "Compacting context…"
+                    var since: Date?
+                    var showsTau = true
+                    switch message.service {
+                    case let .compacting(start, waiting):
+                        if waiting {
+                            titleText = "Context summarized · goes in at the next step"
+                        } else {
+                            since = start
+                        }
+                    case let .compactionUnused(state, error):
+                        showsTau = false
+                        switch state {
+                        case "stale":
+                            titleText = "Compaction not used: the chat moved on"
+                        case "empty":
+                            titleText = "Nothing to compact"
+                        default:
+                            titleText = "Compaction failed" + (error.map { ": \($0)" } ?? "")
+                        }
+                    default:
+                        break
+                    }
                     let pillHeight: CGFloat = 28.0
-                    let title = NSAttributedString(string: "Compacting context", font: Font.medium(13.0), textColor: serviceText)
+                    let title = NSAttributedString(string: titleText, font: Font.medium(13.0), textColor: serviceText)
                     let (titleLayout, titleApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: title, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: contentWidth - 80.0, height: 30.0)))
                     let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: pillHeight), insets: insets)
                     return (layout, { _ in
@@ -1524,20 +1548,30 @@ final class ChatMessageItemNode: ListViewItemNode {
                         for node in self.fileNodes {
                             node.isHidden = true
                         }
-                        let tau = existingTau ?? ChatWaitingNode()
-                        if tau.supernode !== self.contentNode {
-                            self.contentNode.addSubnode(tau)
+                        var tau: ChatWaitingNode?
+                        if showsTau {
+                            let node = existingTau ?? ChatWaitingNode()
+                            if node.supernode !== self.contentNode {
+                                self.contentNode.addSubnode(node)
+                            }
+                            self.serviceTauNode = node
+                            node.update(color: serviceText)
+                            tau = node
+                        } else {
+                            existingTau?.removeFromSupernode()
                         }
-                        self.serviceTauNode = tau
-                        tau.update(color: serviceText)
+                        self.isAccessibilityElement = true
+                        self.accessibilityIdentifier = "compactionPill"
+                        self.accessibilityLabel = titleText
                         let _ = titleApply()
                         self.toolBackgroundNode.backgroundColor = theme.serviceFillColor
-                        let tauSize: CGFloat = 18.0
+                        let tauSize: CGFloat = showsTau ? 18.0 : 0.0
+                        let tauGap: CGFloat = showsTau ? 5.0 : 2.0
                         let place = { [weak self] in
                             guard let self else {
                                 return
                             }
-                            let elapsed = Date().timeIntervalSince(since)
+                            let elapsed = since.map { Date().timeIntervalSince($0) } ?? 0.0
                             let time = elapsed >= 1.0 ? "  " + formatElapsed(elapsed) : nil
                             var timeWidth: CGFloat = 0.0
                             if let time {
@@ -1545,18 +1579,25 @@ final class ChatMessageItemNode: ListViewItemNode {
                                 timeWidth = self.timerNode.updateLayout(CGSize(width: 200.0, height: 30.0)).width
                             }
                             self.timerNode.isHidden = time == nil
-                            let width = 10.0 + tauSize + 5.0 + titleLayout.size.width + timeWidth + 12.0
+                            let width = 10.0 + tauSize + tauGap + titleLayout.size.width + timeWidth + 12.0
                             let pill = CGRect(x: floor((params.width - width) / 2.0), y: 0.0, width: width, height: pillHeight)
                             self.toolBackgroundNode.frame = pill
                             self.contentFrame = pill
-                            tau.bounds = CGRect(origin: CGPoint(), size: ChatWaitingNode.size)
-                            tau.position = CGPoint(x: pill.minX + 10.0 + tauSize / 2.0, y: pill.midY)
-                            tau.transform = CATransform3DMakeScale(tauSize / ChatWaitingNode.size.width, tauSize / ChatWaitingNode.size.width, 1.0)
-                            let titleFrame = CGRect(origin: CGPoint(x: pill.minX + 10.0 + tauSize + 5.0, y: floor(pill.midY - titleLayout.size.height / 2.0)), size: titleLayout.size)
+                            if let tau {
+                                tau.bounds = CGRect(origin: CGPoint(), size: ChatWaitingNode.size)
+                                tau.position = CGPoint(x: pill.minX + 10.0 + tauSize / 2.0, y: pill.midY)
+                                tau.transform = CATransform3DMakeScale(tauSize / ChatWaitingNode.size.width, tauSize / ChatWaitingNode.size.width, 1.0)
+                            }
+                            let titleFrame = CGRect(origin: CGPoint(x: pill.minX + 10.0 + tauSize + tauGap, y: floor(pill.midY - titleLayout.size.height / 2.0)), size: titleLayout.size)
                             self.toolTitleNode.frame = titleFrame
                             self.timerNode.frame = CGRect(x: titleFrame.maxX, y: titleFrame.minY, width: timeWidth, height: titleLayout.size.height)
                         }
-                        self.setTimerTick(place)
+                        if since != nil {
+                            self.setTimerTick(place)
+                        } else {
+                            self.setTimerTick(nil)
+                            place()
+                        }
                         self.layoutContainers(size: layout.contentSize)
                     })
 
@@ -1625,7 +1666,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                     })
 
-                case let .compacted(summary, reason):
+                case let .compacted(summary, reason, tokensBefore, tokensAfter, cost):
                     // A card on the service fill, as Telegram's service messages with content: what happened, then
                     // the summary the model now reads, folded until tapped.
                     let cardWidth = min(contentWidth - 48.0, 360.0)
@@ -1645,8 +1686,22 @@ final class ChatMessageItemNode: ListViewItemNode {
                     default:
                         when = "at \(time)"
                     }
-                    let subline = NSAttributedString(string: when, font: Font.regular(13.0), textColor: serviceText.withMultipliedAlpha(0.7))
-                    let (sublineLayout, sublineApply) = makeSubagentTaskLayout(TextNodeLayoutArguments(attributedString: subline, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: 30.0)))
+                    // What it means for the model from here on, and what it made of the context and cost.
+                    var lines = [when.prefix(1).uppercased() + when.dropFirst(), "The model reads this summary instead of everything above it."]
+                    var figures: [String] = []
+                    if let tokensBefore, tokensBefore > 0 {
+                        figures.append("\(formatTokens(tokensBefore)) → \(tokensAfter.map(formatTokens) ?? "…") tokens")
+                    }
+                    if let cost, cost > 0.0 {
+                        figures.append(formatCost(cost))
+                    }
+                    if !figures.isEmpty {
+                        lines.append(figures.joined(separator: " · "))
+                    }
+                    let paragraph = NSMutableParagraphStyle()
+                    paragraph.alignment = .center
+                    let subline = NSAttributedString(string: lines.joined(separator: "\n"), attributes: [.font: Font.regular(13.0), .foregroundColor: serviceText.withMultipliedAlpha(0.7), .paragraphStyle: paragraph])
+                    let (sublineLayout, sublineApply) = makeSubagentTaskLayout(TextNodeLayoutArguments(attributedString: subline, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: .greatestFiniteMagnitude), alignment: .center))
                     var style = MarkdownStyle(fontSize: 14.0, textColor: serviceText, linkColor: serviceText, accentColor: serviceText)
                     style.maxWidth = innerWidth
                     let summaryText = MarkdownText.render(summary.isEmpty ? "No summary." : summary, style: style)
@@ -1689,7 +1744,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         }
                         self.isAccessibilityElement = true
                         self.accessibilityIdentifier = "compactionCard"
-                        self.accessibilityLabel = "Context compacted. " + summary
+                        self.accessibilityLabel = "Context compacted. " + lines.joined(separator: " ") + " " + summary
                         let card = CGRect(x: floor((params.width - cardWidth) / 2.0), y: 0.0, width: cardWidth, height: cardHeight)
                         self.contentFrame = card
                         self.toolBackgroundNode.backgroundColor = theme.serviceFillColor
@@ -3210,3 +3265,4 @@ private func withReferences(_ text: NSAttributedString, _ references: [LinkRefer
     }
     return result
 }
+
