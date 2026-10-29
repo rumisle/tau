@@ -474,4 +474,15 @@ final class TauUITests: XCTestCase {
             self.shot("bg-\(theme)")
         }
     }
+
+    /// The title's status pill with short and long statuses, in both themes (ChatTitleView): the text inside it, with
+    /// even margins.
+    func testTitlePill() {
+        for theme in ["night", "day"] {
+            for (index, status) in ["working:5", "working:754", "compacting:750", "documentation-reviewer working", "compacting:4000"].enumerated() {
+                self.launch(["-mock", "YES", "-openChat", "1", "-theme", theme, "-titleStatus", status])
+                self.shot("pill-\(theme)-\(index)")
+            }
+        }
+    }
 }

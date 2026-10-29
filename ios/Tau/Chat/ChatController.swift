@@ -231,6 +231,12 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
     }
 
+    /// For checking the title's pill: `-titleStatus "compacting:750"` shows that status, working that many seconds.
+    private static let forcedTitleStatus: ChatTitleView.Status? = UserDefaults.standard.string(forKey: "titleStatus").map { value in
+        let parts = value.split(separator: ":", maxSplits: 1).map(String.init)
+        return .working(parts[0], elapsed: parts.count > 1 ? Double(parts[1]) : nil)
+    }
+
     private func updateTitle(busy: Bool) {
         if let ids = self.isNodeLoaded ? self.controllerNode.selectedIds : nil {
             self.titleView.update(selectedCount: ids.count)
@@ -264,7 +270,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 status = nil
             }
         }
-        self.titleView.update(status: status)
+        self.titleView.update(status: ChatController.forcedTitleStatus ?? status)
         self.updateNewChatCard(dialog: dialog)
         // Who the field writes to, and while the agent works, that Send steers it.
         let name = self.modelName()
@@ -1593,7 +1599,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
 /// dots, "connecting…", or "3 Selected" while selecting. With nothing to say it is not there: the chat's title, server and
 /// model are in the menu of the bar's ⋯. Text is an AnimatedTextComponent, so a count changes in place, its digits
 /// rolling, while the dots go on without a restart; the capsule springs to its new width.
-final class ChatTitleView: UIView {
+/// A NavigationBarTitleView, so the bar gives it all the room between its buttons (the back button's side is narrower
+/// than the buttons' on the right): the capsule stays centered on the bar while it fits beside the buttons, and moves
+/// over where it does not.
+final class ChatTitleView: UIView, NavigationBarTitleView {
     enum Status: Equatable {
         /// "working", "compacting", "reader working", and for how long it has been at it.
         case working(String, elapsed: TimeInterval?)
@@ -1625,6 +1634,15 @@ final class ChatTitleView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    var requestUpdate: ((ContainedViewLayoutTransition) -> Void)?
+
+    func animateLayoutTransition() {
+    }
+
+    func updateLayout(availableSize: CGSize, transition: ContainedViewLayoutTransition) -> CGSize {
+        return CGSize(width: availableSize.width, height: 44.0)
+    }
+
     func updateTheme(_ theme: TauTheme) {
         self.theme = theme
         self.dotsLayer.color = theme.accentColor
@@ -1653,18 +1671,19 @@ final class ChatTitleView: UIView {
     }
 
     /// The status as AnimatedTextComponent's items: words, then each number of the time on its own, so only the
-    /// digits that change roll.
-    private static func items(_ status: Status) -> [AnimatedTextComponent.Item] {
+    /// digits that change roll. `label` in place of the status's own words, cut to fit; without the time if `timed` is
+    /// false; `joiner` between the words and the time.
+    private static func items(_ status: Status, label: String? = nil, timed: Bool = true, joiner: String = " for ") -> [AnimatedTextComponent.Item] {
         switch status {
         case let .network(text):
-            return [AnimatedTextComponent.Item(id: AnyHashable("text"), content: .text(text))]
-        case let .working(label, elapsed):
-            var items = [AnimatedTextComponent.Item(id: AnyHashable("label"), content: .text(label))]
-            guard let elapsed, elapsed >= 1.0 else {
+            return [AnimatedTextComponent.Item(id: AnyHashable("text"), content: .text(label ?? text))]
+        case let .working(text, elapsed):
+            var items = [AnimatedTextComponent.Item(id: AnyHashable("label"), content: .text(label ?? text))]
+            guard timed, let elapsed, elapsed >= 1.0 else {
                 return items
             }
             let seconds = Int(elapsed)
-            items.append(AnimatedTextComponent.Item(id: AnyHashable("for"), content: .text(" for ")))
+            items.append(AnimatedTextComponent.Item(id: AnyHashable("for"), content: .text(joiner)))
             func number(_ id: String, _ value: Int, digits: Int, unit: String) {
                 items.append(AnimatedTextComponent.Item(id: AnyHashable(id), isUnbreakable: true, content: .number(value, minDigits: digits)))
                 items.append(AnimatedTextComponent.Item(id: AnyHashable(id + "-unit"), content: .text(unit)))
@@ -1681,6 +1700,64 @@ final class ChatTitleView: UIView {
             }
             return items
         }
+    }
+
+    private static let statusFont = Font.with(size: 13.0, traits: .monospacedNumbers)
+    /// The capsule's height, as the bar's buttons' glass, and its margins on either side of what it says.
+    private static let capsuleHeight: CGFloat = 44.0
+    private static let capsuleMargin: CGFloat = 16.0
+
+    /// How wide the items set: every digit as wide as any (the font's are), so the width changes when the time gains a
+    /// digit, not as the digits roll.
+    private static func width(_ items: [AnimatedTextComponent.Item]) -> CGFloat {
+        let text = items.map { item -> String in
+            switch item.content {
+            case let .text(text):
+                return text
+            case let .number(value, minDigits):
+                return String(repeating: "0", count: max(minDigits, String(value).count))
+            case .icon:
+                return "  "
+            }
+        }.joined()
+        return ceil((text as NSString).size(withAttributes: [.font: ChatTitleView.statusFont]).width)
+    }
+
+    /// The status's items as they fit in `width`: whole, then without its time, then its words cut with "…".
+    private static func fitted(_ status: Status, width: CGFloat) -> (items: [AnimatedTextComponent.Item], width: CGFloat) {
+        let whole = ChatTitleView.items(status)
+        let wholeWidth = ChatTitleView.width(whole)
+        if wholeWidth <= width {
+            return (whole, wholeWidth)
+        }
+        // "compacting 12m 30s".
+        let short = ChatTitleView.items(status, joiner: " ")
+        let shortWidth = ChatTitleView.width(short)
+        if short != whole, shortWidth <= width {
+            return (short, shortWidth)
+        }
+        let untimed = ChatTitleView.items(status, timed: false)
+        let untimedWidth = ChatTitleView.width(untimed)
+        if untimedWidth <= width {
+            return (untimed, untimedWidth)
+        }
+        let text: String
+        switch status {
+        case let .network(value), let .working(value, _):
+            text = value
+        }
+        var count = text.count
+        while count > 1 {
+            count -= 1
+            let cut = String(text.prefix(count)).trimmingCharacters(in: .whitespaces) + "…"
+            let items = ChatTitleView.items(status, label: cut, timed: false)
+            let cutWidth = ChatTitleView.width(items)
+            if cutWidth <= width {
+                return (items, cutWidth)
+            }
+        }
+        let items = ChatTitleView.items(status, label: "…", timed: false)
+        return (items, ChatTitleView.width(items))
     }
 
     override func layoutSubviews() {
@@ -1708,22 +1785,29 @@ final class ChatTitleView: UIView {
             hasDots = true
         }
         let dotsWidth: CGFloat = hasDots ? 24.0 : 0.0
+        // What it says fits in the capsule, and the capsule in the title's place.
+        let margin = ChatTitleView.capsuleMargin
+        let fit = status.map { ChatTitleView.fitted($0, width: max(20.0, self.bounds.width - margin * 2.0 - dotsWidth)) }
         let statusSize = self.statusText.update(
             transition: transition,
-            component: AnyComponent(AnimatedTextComponent(font: Font.with(size: 12.0, traits: .monospacedNumbers), color: statusColor, items: status.map(ChatTitleView.items) ?? [], noDelay: true, animateScale: false, animateSlide: true, blur: false)),
+            component: AnyComponent(AnimatedTextComponent(font: ChatTitleView.statusFont, color: statusColor, items: fit?.items ?? [], noDelay: true, animateScale: false, animateSlide: true, blur: false)),
             environment: {},
-            containerSize: CGSize(width: maxTextWidth - dotsWidth, height: 16.0)
+            containerSize: CGSize(width: max(20.0, self.bounds.width - margin * 2.0 - dotsWidth), height: 18.0)
         )
 
-        // "N Selected" in Telegram's 44 pt title capsule, 12 pt wider than the text on each side; a status alone in a
-        // 32 pt one, 14 pt wider.
+        // "N Selected" in Telegram's 44 pt title capsule, 12 pt wider than the text on each side; a status in one as
+        // tall as the bar's buttons, its margins even: the capsule is as wide as the status sets (by `fitted`, not as
+        // the digits roll), with what it says centered in it.
         let backgroundSize: CGSize
         if hasTitle {
             backgroundSize = CGSize(width: min(maxTextWidth, ceil(titleSize.width)) + 24.0, height: 44.0)
         } else {
-            backgroundSize = CGSize(width: min(maxTextWidth, dotsWidth + ceil(statusSize.width)) + 28.0, height: 32.0)
+            backgroundSize = CGSize(width: min(self.bounds.width, dotsWidth + (fit?.width ?? 0.0) + margin * 2.0), height: ChatTitleView.capsuleHeight)
         }
-        let backgroundFrame = CGRect(origin: CGPoint(x: floor((self.bounds.width - backgroundSize.width) / 2.0), y: floor((self.bounds.height - backgroundSize.height) / 2.0)), size: backgroundSize)
+        // Centered on the bar, unless that takes it past this view's room.
+        let barCenter = self.superview.map { self.convert(CGPoint(x: $0.bounds.midX, y: 0.0), from: $0).x } ?? self.bounds.midX
+        let originX = max(0.0, min(self.bounds.width - backgroundSize.width, floor(barCenter - backgroundSize.width / 2.0)))
+        let backgroundFrame = CGRect(origin: CGPoint(x: originX, y: floor((self.bounds.height - backgroundSize.height) / 2.0)), size: backgroundSize)
         transition.setFrame(view: self.backgroundView, frame: backgroundFrame)
         self.backgroundView.update(size: backgroundSize, cornerRadius: backgroundSize.height / 2.0, isDark: self.theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: false, transition: transition)
         // It comes and goes as Telegram's glass does: a fade and a little scale.

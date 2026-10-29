@@ -73,6 +73,7 @@ For checking UI from the command line (`ios/scripts/shot.sh out.png 3 -- <args>`
 | `-tab 1` | Open the Settings tab |
 | `-wrapCode NO` | Code blocks scroll sideways instead of wrapping (Settings > Appearance > Wrap Lines) |
 | `-compose YES` | Open New Chat |
+| `-titleStatus compacting:750` | The chat title's pill shows that status (seconds after the colon, if any) |
 
 `TAU_TIMING=1` in the environment (`SIMCTL_CHILD_TAU_TIMING=1 xcrun simctl launch ...`) logs each message row's layout
 time and, once a second, the frames drawn and missed, to `/tmp/tau-timing.log`.
