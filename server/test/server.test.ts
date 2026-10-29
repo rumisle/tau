@@ -678,6 +678,25 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("a subagent's answer reaches a conversation still working at its next step, as a steer", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Busy parent" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "spawn-early", content: "& reader: $ sleep 1 && echo found it" });
+		await until(replica, () => idle(replica) && kinds(replica).includes("pi.tool-result"));
+		// The parent works on past the subagent's answer.
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "long-step", content: "$ sleep 4 && echo parent done" });
+		const isReport = (entry: { kind: string; model?: unknown }) => entry.kind === "pi.user" && JSON.stringify(entry.model).includes('<subagent name=\\"reader\\"');
+		await until(replica, () => idle(replica) && replica.ordered().some(isReport), 20_000);
+		const entries = replica.ordered().filter((entry) => entry.kind !== "pi.system");
+		const step = entries.findLastIndex((entry) => entry.kind === "pi.tool-result" && JSON.stringify(entry.model).includes("parent done"));
+		assert.ok(step >= 0, "the parent's step ran");
+		// Right after the step's result, before the parent answers it: not a follow-up after the whole answer.
+		assert.ok(isReport(entries[step + 1]!), `the report after the step, not ${entries[step + 1]?.kind}`);
+		await client.close();
+	});
+
 	test("a subagent can start from a copy of its conversation, at another effort", async () => {
 		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", { title: "Forking parent" });

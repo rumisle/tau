@@ -108,12 +108,13 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 				return next(subagentReport(name, conversationId, "answered", textOf(answer)));
 			}, taskContext);
 		},
-		// As a follow-up: it starts a turn when this conversation is idle, or waits for its current answer.
+		// As a steer: it starts a turn when this conversation is idle, or reaches it at its next step, so a conversation
+		// still working reads it then, not after its whole answer.
 		report: async (reporter, runtime, taskContext) => {
 			const report = reporter.state.checkpoint.report;
 			if (report !== undefined) {
 				const main = (await runtime.conversation(runtime.conversationId, taskContext))!;
-				const input = { type: "input", content: report, whenBusy: "followUp" } as const;
+				const input = { type: "input", content: report, whenBusy: "steer" } as const;
 				await main.submit({ ...input, requestId: `subagent-report:${reporter.id}` }, taskContext);
 			}
 			await runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), taskContext);
@@ -150,7 +151,8 @@ const subagentTool = defineTool({
 	description:
 		"Run work in the background with named subagents, each with the same tools and working directory and its own " +
 		"conversation. They never block you: start them, keep answering, and each answer arrives later as a message " +
-		'starting with <subagent name="…">; it needs no reply unless the user should hear about it. Actions: spawn ' +
+		'starting with <subagent name="…">, at your next step if you are still working; it needs no reply unless the ' +
+		"user should hear about it. Actions: spawn " +
 		"(name, message: the task), send (name, message; followUp: true waits for its current answer instead of " +
 		"steering it), stop (name: stops its current work), status (name, or every subagent without one). Use subagents " +
 		"for independent investigations that would fill this conversation with tool output; start several to work in " +
