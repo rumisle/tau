@@ -64,6 +64,10 @@ final class LinkReferenceResolver {
             } else {
                 text = "…"
                 if self.pending.insert(string).inserted {
+                    // The store answers at once for a message it has: then the row takes the text now. Only a later
+                    // answer reloads the rows, since this runs while they are being made (ChatControllerNode.item(for:)
+                    // in update(state:)), and a reload from inside that update crashed the list.
+                    var synchronous = true
                     self.store.linkedEntryText(id, entryId: entry) { [weak self] found in
                         guard let self else {
                             return
@@ -74,7 +78,15 @@ final class LinkReferenceResolver {
                         } else {
                             self.missing.insert(string)
                         }
-                        self.updated?()
+                        if !synchronous {
+                            self.updated?()
+                        }
+                    }
+                    synchronous = false
+                    if let found = self.entryTexts[string] {
+                        text = found
+                    } else if self.missing.contains(string) {
+                        text = dialog.last?.text ?? ""
                     }
                 }
             }
