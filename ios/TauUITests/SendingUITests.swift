@@ -1580,7 +1580,10 @@ final class SendingUITests: XCTestCase {
         self.shot("dict-0-listening")
         sleep(2)
         self.shot("dict-1-more")
-        self.app.descendants(matching: .any)["stopDictation"].firstMatch.tap()
+        // Its stop button once listening has begun: on a loaded Mac that takes more than the settle.
+        let stop = self.app.descendants(matching: .any)["stopDictation"].firstMatch
+        XCTAssertTrue(stop.waitForExistence(timeout: 5), "listening")
+        stop.tap()
         settle()
         self.shot("dict-2-stopped")
         self.focusInput()
@@ -1589,7 +1592,8 @@ final class SendingUITests: XCTestCase {
         self.app.descendants(matching: .any)["microphone"].firstMatch.tap()
         settle()
         self.shot("dict-3-append")
-        self.app.descendants(matching: .any)["stopDictation"].firstMatch.tap()
+        XCTAssertTrue(stop.waitForExistence(timeout: 5), "listening again")
+        stop.tap()
         settle()
         XCTAssertTrue(self.app.descendants(matching: .any)["send"].firstMatch.waitForExistence(timeout: 3))
         self.shot("dict-4-send")
