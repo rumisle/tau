@@ -1928,4 +1928,30 @@ final class SendingUITests: XCTestCase {
             XCTAssertEqual(self.app.state, .runningForeground, "round \(round): still running")
         }
     }
+
+    /// The server restarts while the answer streams: durable commits what was written as an aborted message and asks
+    /// again under the same generation task. The new attempt streams in its place (not hidden behind the aborted one,
+    /// nor beside it under its row IDs) and ends as the answer.
+    func testServerRestartMidAnswer() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!doc 12")
+        self.send()
+        XCTAssertTrue(self.app.waitForBusy())
+        sleep(3)
+        self.server("stop")
+        sleep(1)
+        self.server("start")
+        // Streaming again once the chat has reconnected: the answer grows.
+        let answer = self.app.descendants(matching: .any).matching(identifier: "assistantMessage").firstMatch
+        XCTAssertTrue(waitUntil(20) { self.app.chatState == "busy" && answer.exists }, "working again")
+        let before = answer.exists ? answer.label.count : 0
+        let resumed = waitUntil(20) { self.app.chatState == "busy" && answer.exists && answer.label.count > before }
+        self.shot("restart-0-resumed")
+        XCTAssertTrue(self.app.waitForIdle(timeout: 90))
+        settle()
+        self.shot("restart-1-done")
+        XCTAssertEqual(self.app.state, .runningForeground)
+        XCTAssertTrue(resumed, "the new attempt streams")
+    }
 }

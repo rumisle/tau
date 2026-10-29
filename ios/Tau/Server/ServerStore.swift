@@ -1016,6 +1016,11 @@ final class ServerStore: ConversationStore, TauServer {
         var state = TranscriptBuilder.build(replica: replica, outbox: self.outbox, rowIdForUserEntry: self.rowIdForUserEntry[realId] ?? [:], media: self.media)
         state.agent = self.agent(realId)
         state.title = self.dialog(id)?.title
+        // Until the subscribe brings the docs (a chat opened from the cache, or again after it was left): the list's
+        // word for whether it works.
+        if !replica.isSynced, self.dialogs[realId]?.busy == true {
+            state.busy = true
+        }
         // A background subagent works on after its call returned: its card follows its conversation.
         for index in state.messages.indices {
             if let child = state.messages[index].tool?.childConversationId {
@@ -1052,6 +1057,7 @@ final class ServerStore: ConversationStore, TauServer {
         self.watchers[id] = count
         if count == 0 {
             self.replicas[id]?.isSynced = false
+            self.replicas[id]?.docsAreStale = true
             self.connection.request("conversation.unsubscribe", ["conversationId": id]) { _ in }
         }
     }
@@ -1078,6 +1084,7 @@ final class ServerStore: ConversationStore, TauServer {
                 replica.hasOlder = value.bool("hasOlder") ?? false
             }
             replica.docs = value.object("docs") ?? [:]
+            replica.docsAreStale = false
             replica.head = value.int("head")
             replica.upsert(value.objects("entries"))
             replica.submissions = [:]
@@ -1263,7 +1270,7 @@ final class ServerStore: ConversationStore, TauServer {
 
     /// Whether a message sent now waits in the queue: the agent is working, or something is queued before it.
     private func sendsToQueue(_ realId: Int) -> Bool {
-        if let replica = self.replicas[realId], replica.isBusy {
+        if let replica = self.replicas[realId], replica.isBusy || (replica.docsAreStale && self.dialogs[realId]?.busy == true) {
             return true
         }
         return self.outbox.items(for: realId).contains { item in

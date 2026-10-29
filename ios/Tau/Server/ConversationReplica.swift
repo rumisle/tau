@@ -55,8 +55,13 @@ final class ConversationReplica {
         }
     }
 
+    /// Since the chat was unsubscribed and until its next subscribe: entries still come (the list's preload), the docs
+    /// do not, so what runs (`pi.live`) and waits (`pi.inbox`) is not read from them, or a run long done would show as
+    /// streaming beside its committed message. The model and the usage are still read.
+    var docsAreStale = false
+
     var live: JSONObject {
-        return self.docs.object("pi.live") ?? [:]
+        return self.docsAreStale ? [:] : self.docs.object("pi.live") ?? [:]
     }
 
     var isBusy: Bool {
@@ -65,7 +70,7 @@ final class ConversationReplica {
 
     /// What waits for a boundary (`pi.inbox`): steers, follow-ups, and writes such as a queued reset.
     var inboxItems: [JSONObject] {
-        return self.docs.object("pi.inbox")?.objects("items") ?? []
+        return self.docsAreStale ? [] : self.docs.object("pi.inbox")?.objects("items") ?? []
     }
 }
 
@@ -183,7 +188,8 @@ enum TranscriptBuilder {
         /// error; errors in the run it asked past.
         var pendingError: (entry: JSONObject, id: Int, base: Int, date: Date, error: String)?
         var retriedErrors = 0
-        /// The generation tasks whose message is in the transcript.
+        /// The generation tasks whose message is in the transcript and ended them. Not an aborted one: durable resumes a
+        /// generation cut off by a restart under the same task.
         var committedTasks = Set<Int>()
 
         func addAssistant(content: [JSONObject], base: Int, date: Date, entryId: Int?, streaming: Bool, toolStart: Date? = nil) {
@@ -239,7 +245,18 @@ enum TranscriptBuilder {
             retriedErrors = 0
         }
 
-        for entry in replica.ordered() {
+        let ordered = replica.ordered()
+        // Each generation task's last message, and the one streaming now: a generation cut off by a server restart is
+        // committed as an aborted message and asked again under the same task.
+        var lastOfTask: [Int: Int] = [:]
+        for entry in ordered where entry.string("kind") == "pi.assistant" {
+            if let taskId = entry.int("byTaskId"), let id = entry.int("id") {
+                lastOfTask[taskId] = max(lastOfTask[taskId] ?? id, id)
+            }
+        }
+        let streamingTask = replica.live.object("generation") != nil ? replica.live.object("run")?.int("taskId") : nil
+
+        for entry in ordered {
             guard let id = entry.int("id"), let kind = entry.string("kind") else {
                 continue
             }
@@ -286,6 +303,11 @@ enum TranscriptBuilder {
                 rows.append(ChatMessage(id: rowIdForUserEntry[id] ?? self.rowId(base: id, block: 0), role: .user, text: text, date: date, attachments: attachments, entryId: id))
             case "pi.assistant":
                 let base = entry.int("byTaskId") ?? id
+                // Cut off and asked again: the later attempt replaces it, as for the model, which does not read aborted
+                // messages either. One the user stopped ends its task, and stays.
+                if message.string("stopReason") == "aborted", let taskId = entry.int("byTaskId"), (lastOfTask[taskId] ?? id) > id || streamingTask == taskId {
+                    continue
+                }
                 if message.string("stopReason") == "error" {
                     // Shown only if the run ends on it; a later attempt replaces it, as it does for the model, which
                     // never reads failed responses.
@@ -299,7 +321,7 @@ enum TranscriptBuilder {
                     pendingError = nil
                     retriedErrors += 1
                 }
-                if let taskId = entry.int("byTaskId") {
+                if let taskId = entry.int("byTaskId"), message.string("stopReason") != "aborted" {
                     committedTasks.insert(taskId)
                 }
                 // Its calls start once it is written.
@@ -416,9 +438,8 @@ enum TranscriptBuilder {
         if !replica.isBusy {
             flushError()
         }
-        // Not once its message is in the transcript: that is a live document the replica kept from its last
-        // subscription (entries still come to a chat not open, its docs do not), whose rows would have the committed
-        // ones' IDs.
+        // Not once the message that ended its task is in the transcript: its rows would have the committed ones' IDs.
+        // (The replica's stale docs are not read; this guards against a live document behind its entries otherwise.)
         if let generation = live.object("generation"), let partial = generation.object("message"), let run = live.object("run"), let taskId = run.int("taskId"), !committedTasks.contains(taskId) {
             addAssistant(content: partial.objects("content"), base: taskId, date: Date(), entryId: nil, streaming: true)
         }

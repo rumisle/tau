@@ -25,9 +25,13 @@ func settle() {
 extension XCUIApplication {
     /// The open chat's state (ChatControllerNode's test marker, with `-uiTesting`): "loading", "busy" (the agent
     /// works, streams, has messages queued, or one is on its way) or "idle"; "" with no chat open.
+    /// One snapshot: an exists-then-value read failed the test when a chat on its way out took the element between the
+    /// two.
     var chatState: String {
-        let element = self.descendants(matching: .any)["chatState"].firstMatch
-        return element.exists ? (element.value as? String ?? "") : ""
+        guard let snapshot = try? self.descendants(matching: .any)["chatState"].firstMatch.snapshot() else {
+            return ""
+        }
+        return snapshot.value as? String ?? ""
     }
 
     /// Until the open chat has its transcript.
