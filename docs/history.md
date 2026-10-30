@@ -1,13 +1,14 @@
 # History
 
-Design notes, not built: two tools that let an agent search and read the server's conversations, its own included,
+Two tools that let an agent search and read the server's conversations, its own included,
 past its compaction boundary, its subagents', and its owner's. `history_search` finds messages; `history_read` opens a
 conversation at one and pages through it. Both return JSON, and both name everything by tau's links
 (docs/links.md), so what an agent finds is what the user can tap, and what the user pastes is what an agent can read.
 
-Built on what exists: the search index (`server/src/search`, docs/search.md) for finding, durable's `scanEntries` for
-reading another conversation and the tool's `api.entries()` / `api.entry()` for reading its own (raw history, which
-compaction never changes), and durable's `truncate.ts` for bounding text.
+Built on what exists: the search index (`server/src/search`, docs/search.md) for finding, and durable's `scanEntries`
+for reading any conversation, the calling one included (raw history, which compaction never changes). The tools are
+`server/src/history.ts`; the text of a part, which the index and a read share, and its truncation are
+`server/src/history-text.ts`.
 
 ## Why
 
@@ -82,8 +83,8 @@ does not reach into another's conversations.
 | Where | What it continues |
 |---|---|
 | A search's `next` | The following page of hits: `{ query, in, kinds, …, cursor }` |
-| A window's `older` / `newer` | The entries before or after the window: `{ link: <first or last entry>, older: n }` |
-| A part's `next` | The rest of a cut part: `{ link: <its entry>, older: 0, newer: 0, offset }` |
+| A window's `older` / `newer` | The entries before or after the window: `{ link: <the entry before the first>, older: n, newer: 0 }` |
+| A part's `next` | The rest of a cut part: `{ link: <its entry>, older: 0, newer: 0, part?, offset }` |
 
 A result without `next` is complete.
 
@@ -194,16 +195,18 @@ history_read({
 
 A read is a window around an anchor:
 
-- **A conversation's link** anchors at its newest entry: the last ten, the final answer at the bottom. Whether that
+- **A conversation's link** anchors at its newest entry: the last ten (it and 9 older), the final answer at the bottom. Whether that
   answer is final is the conversation's `status`.
 - **An entry's link** anchors there: it and three on each side.
-- **`older` and `newer`** size the window. To page up, read the first entry's link with `older`; `older` in the result
-  is that call, ready.
+- **`older` and `newer`** size the window. To page up, read the link of the entry before the first with `older`;
+  `older` in the result is that call, ready (`newer: 0`, so nothing is shown twice), and pages up by as many again.
 - **`older: 0, newer: 0`** is the entry alone, read whole (below).
 
 `scanEntries` reads it: `maxEntryId` the anchor, descending, `older + 1` entries; `minEntryId` after it, ascending,
-`newer`. Entries are as durable keeps them; a fork's window crosses into its origin's entries before its fork point,
-as its transcript does.
+`newer + 1` (the one more says whether there is more, and which entry `older` / `newer` start at). Entries are as
+durable keeps them; a fork's window crosses into its origin's entries before its fork point, as its transcript does.
+Only entries with a part of the kinds asked for count: a tool's result is in its call's entry, and entries with no
+part (the system prompt, display entries) are not shown.
 
 ### Result
 
@@ -252,10 +255,15 @@ as its transcript does.
   or replaces it. Only meaningful in the caller's own conversation; elsewhere it is absent.
 - **Images** in a part are named, not inlined: `{ "kind": "user", "text": "…", "images": 2 }`. Reading them is a
   later question (docs/media.md stores them by reference).
+- **Marks**: a compaction's summary is an `assistant` part with `"summary": true`, where the conversation was cut for
+  the model; a failed model response is an `assistant` part with `"error": true` and the error as its text, as is a
+  tool's error result (`tool_output` with `"error": true`).
+- **A part's `next`** names the part (`part`, its index in the entry) when the entry has several, so reading on
+  shows that part alone, from `offset`.
 
 ### Truncation
 
-durable's `src/truncate.ts`, the one `read` and `bash` use: lines and bytes, a result that says what it cut.
+After durable's `src/truncate.ts`, the one `read` uses: lines and bytes, whole lines, a result that says what it cut.
 
 | Where | How | Limit |
 |---|---|---|
@@ -269,8 +277,9 @@ a file. `truncate: false` turns all of it off: every part whole.
 Nothing else bounds a result. The harness's output limit cuts what the model sees of a large one, as it cuts bash's;
 the model reads cut JSON well enough, and a script gets all of it from `structuredOutput`.
 
-`truncate.ts` is not exported from `@earendil-works/pi-durable` (it is not in `src/index.ts`). It should be, a line in
-pi; until then tau imports it from `vendor/pi`.
+`truncate.ts` is not exported from `@earendil-works/pi-durable` (it is not in `src/index.ts`), and at pi 4b535d57 it
+has no `truncateTail` (bash bounds its output with chord's `OutputBuffer` instead). tau has its own, `cut()` in
+`server/src/history-text.ts`, by the same rules, from the head or the tail.
 
 ## The index
 

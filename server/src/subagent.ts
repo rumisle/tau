@@ -66,7 +66,7 @@ type Agent = {
 };
 
 /** The conversation's subagents by name, and the `Reporter` of each message sent before run-end reports. */
-const Subagents = defineDoc<{ agents: Record<string, Agent>; reporters: Record<string, TaskId> }>({
+export const Subagents = defineDoc<{ agents: Record<string, Agent>; reporters: Record<string, TaskId> }>({
 	kind: "tau.subagents",
 	version: 1,
 	scope: "conversation",

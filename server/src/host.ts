@@ -32,6 +32,7 @@ import { DEV_MODEL, devProvider } from "./dev-model.ts";
 import { Serial } from "./serial.ts";
 import { skillsSection } from "./skills.ts";
 import { Subagent, SubagentFailures, SubagentReports } from "./subagent.ts";
+import { History, historyExtension } from "./history.ts";
 import { FileStore } from "./files.ts";
 import { sendFileExtension } from "./send-file.ts";
 
@@ -196,6 +197,13 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	registry.install(Subagent);
 	registry.install(SubagentReports);
 	registry.install(sendFileExtension(files));
+	// history_read and history_search (docs/history.md), over the Harness once it is open.
+	let opened: { harness: Harness; serverId: string } | undefined;
+	const history = new History(() => {
+		if (opened === undefined) throw new Error("The server is still starting");
+		return { harness: opened.harness, storage, serverId: opened.serverId };
+	});
+	registry.install(historyExtension(history));
 	// Code mode (docs/codemode.md): the model's scripts call the tools, each script in a QuickJS worker of its own, and
 	// `models.*`: the catalog (which models a subagent may run on), and classifier and image models for the providers
 	// the server has logins or keys for.
@@ -262,6 +270,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		compactionThreshold = savedSettings.compaction;
 		updateSettings();
 	}
+	opened = { harness, serverId };
 	// Continue runs the last process left unfinished.
 	harness.resume();
 	// Subagents' failed runs, told to their leaders; those a stop of the server came between at once.
