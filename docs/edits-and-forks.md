@@ -58,7 +58,8 @@ By which version they belong to:
 2. **Spawned in the part edited away**: they belong to an abandoned version. Stopped, but kept in `tau.subagents`
    (stopping keeps a subagent's conversation and context), so switching back to that version finds them again.
 3. **Spawned before, but given work in the part edited away** (`send`): the agent stays; the work it is doing for the
-   abandoned version is stopped, or finishes without reporting (to decide).
+   abandoned version is stopped, or finishes without reporting (to decide). Reports are per run of the subagent
+   (`afterRun`), not per message, so one that finishes reports to the chat unless its leader changes.
 
 ### Fork
 

@@ -200,10 +200,14 @@ type EntrySummary = { id: number; kind: string; role?: string; text: string; tim
 ```
 
 Conversations owned by a task (subagents) have `owner`; a chat list usually hides them. The server's `subagent` tool
-runs them in the background: a spawn creates one, titled after its task, and returns at once; the subagent's answer
-comes back later as a user message of the parent, submitted as a steer (a parent still working reads it at its next
-step, not after its whole answer), `<subagent name="…" conversation="…" status="answered|failed">answer
-</subagent>`, which an app shows as the subagent's card. A spawn may start from a copy of the parent (`fork: true`, the
+runs them in the background: a spawn creates one, titled after its task, and returns at once. Every run of the
+subagent that answers reports its answer to the parent (its leader), whoever started the run: the parent's spawn or
+send, a steer, or the user writing in the subagent's own chat. The report is a run-end task of the run (durable's
+`afterRun`), resumed after a crash and sent once, as a user message of the parent, submitted as a steer (a parent still
+working reads it at its next step, not after its whole answer), `<subagent name="…" conversation="…"
+status="answered|failed">answer</subagent>`, which an app shows as the subagent's card. A run that fails (its
+`pi.live.runFailure`) sends `status="failed"` with a short note instead ("helper failed: the model failed (…)."); a
+stopped one, or one a new context ended, sends nothing. A spawn may start from a copy of the parent (`fork: true`, the
 transcript up to the request) and on another model or effort (`model: "provider/id"`, `thinking`). The call's details
 (`pi.live.tools[i].details` while it runs, the `pi.tool-result` entry's `details` after) say which:
 `{ name, conversationId, action, model?, thinking?, fork? }`. Subscribe to the conversation like any other to show the

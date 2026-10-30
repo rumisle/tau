@@ -31,7 +31,7 @@ import { CompactionLog } from "./compactions.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
 import { Serial } from "./serial.ts";
 import { skillsSection } from "./skills.ts";
-import { Subagent } from "./subagent.ts";
+import { Subagent, SubagentFailures, SubagentReports } from "./subagent.ts";
 import { FileStore } from "./files.ts";
 import { sendFileExtension } from "./send-file.ts";
 
@@ -194,6 +194,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const images = await createNodePhotonImages();
 	registry.install(createCodingTools({ images }));
 	registry.install(Subagent);
+	registry.install(SubagentReports);
 	registry.install(sendFileExtension(files));
 	// Code mode (docs/codemode.md): the model's scripts call the tools, each script in a QuickJS worker of its own, and
 	// `models.*`: the catalog (which models a subagent may run on), and classifier and image models for the providers
@@ -263,6 +264,9 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	}
 	// Continue runs the last process left unfinished.
 	harness.resume();
+	// Subagents' failed runs, told to their leaders; those a stop of the server came between at once.
+	const subagentFailures = new SubagentFailures(harness);
+	void subagentFailures.sweep().catch((error) => console.error("[tau] subagent failures not checked:", error));
 
 	return {
 		harness,
@@ -318,6 +322,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		close: async () => {
 			cache.close();
 			compactions.close();
+			subagentFailures.close();
 			await harness.close(context);
 			await sandbox.close();
 			files.close();
