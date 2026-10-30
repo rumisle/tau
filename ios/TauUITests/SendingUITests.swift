@@ -1077,8 +1077,10 @@ final class SendingUITests: XCTestCase {
             XCTAssertTrue(self.app.waitForEcho(String(word.prefix(20))))
         }
         self.app.waitForIdle()
-        // A page of a larger search: four hits of what the user wrote and the answers.
-        self.type("!tool history_search query=axolotl in=this kinds=user,assistant limit=4")
+        // A page of a larger search: four hits of what the user wrote and the answers, the newest: by relevance the
+        // four would depend on whether the message asking (whose text has the query) is indexed yet when the search runs,
+        // which it is or not by the time the index's writer takes (a worker thread with a database file).
+        self.type("!tool history_search query=axolotl in=this kinds=user,assistant limit=4 sort=newest")
         self.send()
         let search = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label BEGINSWITH 'History search'")).firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 10))
