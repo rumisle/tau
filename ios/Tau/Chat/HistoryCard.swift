@@ -13,32 +13,40 @@ enum HistoryCard {
         return name == searchName || name == readName
     }
 
-    /// The call, as its first line says it: what is written as written (the query, a link), in monospace, and words for
-    /// the rest (`tool calls`, `this chat`, `10 older`). Only arguments that are not defaults.
-    static func call(name: String, arguments: JSONObject) -> (code: String, words: String) {
+    /// The call, as its first line says it. What it is about: a search's query and a link as written, in monospace
+    /// (`plain` false), or a read's chat named in words, "This chat" until the result names it by its title. Then the
+    /// other arguments that are not defaults, in words (`in subagents`, `10 older`), set apart in the dim color.
+    static func call(name: String, arguments: JSONObject) -> (code: String, plain: Bool, words: String) {
         var code: [String] = []
+        var plain = false
         var words: [String] = []
-        func place(_ value: String?) {
-            switch value {
-            case nil:
-                break
-            case "this"?:
-                words.append("this chat")
-            case "owner"?:
-                words.append("owner")
-            case "subagents"?:
-                words.append("subagents")
-            case let value?:
-                code.append(value)
-            }
-        }
         if name == searchName {
             if let query = arguments.string("query"), !query.isEmpty {
                 code.append(query)
             }
-            place(arguments.string("in"))
+            switch arguments.string("in") {
+            case nil:
+                break
+            case "this"?:
+                words.append("in this chat")
+            case "owner"?:
+                words.append("in its owner")
+            case "subagents"?:
+                words.append("in subagents")
+            case let link?:
+                code.append(link)
+            }
         } else {
-            place(arguments.string("link"))
+            switch arguments.string("link") {
+            case nil, "this"?:
+                code.append("This chat")
+                plain = true
+            case "owner"?:
+                code.append("Its owner")
+                plain = true
+            case let link?:
+                code.append(link)
+            }
         }
         if let kinds = arguments["kinds"] as? [Any] {
             words.append(contentsOf: kinds.compactMap { $0 as? String }.map(kindWords))
@@ -71,7 +79,7 @@ enum HistoryCard {
         if arguments.bool("truncate") == false {
             words.append("whole")
         }
-        return (code.joined(separator: " "), words.joined(separator: " "))
+        return (code.joined(separator: " "), plain, words.joined(separator: "  "))
     }
 
     private static func kindWords(_ kind: String) -> String {

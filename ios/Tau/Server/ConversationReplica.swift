@@ -777,7 +777,7 @@ enum ToolSummary {
             return .code(script: arguments.string("code") ?? "", error: nil)
         case HistoryCard.searchName, HistoryCard.readName:
             let call = HistoryCard.call(name: name, arguments: arguments)
-            return .history(code: call.code, words: call.words)
+            return .history(code: call.code, plain: call.plain, words: call.words)
         default:
             return .none
         }

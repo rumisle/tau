@@ -361,9 +361,11 @@ it, a body in 12, on `toolCardBackgroundColor`, the time at the right. `toolTitl
 
 One rule, which the rest follows: **the first line is the call; below it is the result.**
 
-- **The first line** is the tool and every argument that is not a default: the query and links as written, in
-  monospace; words for the rest (`tool calls`, `this chat`, `subagents`, `10 older`), in the text font. It wraps
-  rather than cut (to three lines folded). A read's link gives way to its chat's title once the result is in.
+- **The first line** is the tool, what the call is about, and every other argument that is not a default. What it is
+  about: a search's query (and a link it searches in) as written, in monospace; a read's chat, by its title in the
+  text font once the result is in (never an entry's text), and before that its link in monospace or "This chat" /
+  "Its owner". The other arguments follow in words (`in subagents`, `10 older`, `newest`), after a wider gap and in
+  the dim color, so they do not run into the title. It wraps rather than cut (to three lines folded).
 - **The result** is a line per item, then what is not shown (`6 more`, `4 earlier`), which says how much there is
   without a count line of its own; an empty search says `No results`, an empty read `No messages`.
 

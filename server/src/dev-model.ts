@@ -60,6 +60,12 @@ export function devProvider(options: { tokensPerSecond?: number; cacheTtl?: numb
 			const turns = context.messages.filter((message) => message.role === "user").length;
 			return fauxAssistantMessage([fauxText(`## Goal\nTry tau's compaction with the dev model.\n\n## Progress\n- ${turns} messages summarized\n- The echo model answered each one\n\n## Next Steps\n1. Keep chatting after the summary`)]);
 		}
+		// A title (src/titles.ts): the first words of the user's message, as a model would name the chat by what it asks.
+		if (last?.role === "user" && context.messages.some((message) => (message.role as string) === "system" && JSON.stringify(message).includes("Write a title for this conversation"))) {
+			const asked = /^User: (.*)/.exec(userText(last.content))?.[1] ?? "";
+			const words = asked.replace(/[^\p{L}\p{N}\s-]/gu, " ").split(/\s+/).filter((word) => word !== "").slice(0, 5).join(" ");
+			return fauxAssistantMessage([fauxText(words === "" ? "Dev chat" : `${words[0]!.toUpperCase()}${words.slice(1)}`)]);
+		}
 		// Provider errors: retried ones a number of times for this message, then the answer; a final one at once.
 		const text = last?.role === "user" ? userText(last.content) : "";
 		const overloaded = /^!overloaded (\d+) /.exec(text);

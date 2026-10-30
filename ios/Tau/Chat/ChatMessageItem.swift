@@ -2044,13 +2044,16 @@ final class ChatMessageItemNode: ListViewItemNode {
                 // Title: the tool, then what it works on, as a terminal agent prints a call.
                 let title = NSMutableAttributedString(string: titleText, font: toolTitleFont, textColor: status == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTitleColor)
                 if !summaryText.isEmpty {
-                    // A history card's: what is written as written in monospace, then words in the text font.
+                    // A history card's: what it is about, a query or link in monospace or a chat's title in the text
+                    // font; then the other arguments, set apart by a wider gap and the dim color.
                     let parts = summaryText.components(separatedBy: historyWordsMark)
-                    if !parts[0].isEmpty {
-                        title.append(NSAttributedString(string: "  " + parts[0], font: Font.monospace(13.0), textColor: theme.toolCardTextColor))
+                    let plain = parts[0].hasPrefix(historyPlainMark)
+                    let about = plain ? String(parts[0].dropFirst()) : parts[0]
+                    if !about.isEmpty {
+                        title.append(NSAttributedString(string: "  " + about, font: plain ? Font.regular(13.0) : Font.monospace(13.0), textColor: theme.toolCardTextColor))
                     }
                     if parts.count > 1 {
-                        title.append(NSAttributedString(string: "  " + parts[1], font: Font.regular(13.0), textColor: theme.toolCardTextColor))
+                        title.append(NSAttributedString(string: (about.isEmpty ? "  " : "    ") + parts[1], font: Font.regular(13.0), textColor: theme.toolCardTextColor.withMultipliedAlpha(0.55)))
                     }
                 }
                 var isHistory = false
@@ -2999,17 +3002,20 @@ func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, is
     if case let .code(script, error) = tool?.detail {
         return ("Code", codeCallCount(tool?.nested.count ?? 0), codeCardBody(script: script, calls: tool?.nested ?? [], output: output, error: error, isExpanded: isExpanded, isActive: isActive, errorColor: isDark ? diffRemovedDark : diffRemovedLight, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth, limit: limit, cuts: cuts))
     }
-    if case let .history(code, words) = tool?.detail {
+    if case let .history(code, plain, words) = tool?.detail {
         let title = toolCardTitle(name)
         // Failed: the error under the title, which says so in the destructive color.
         if tool?.status == .failed {
             body.append(NSAttributedString(string: isExpanded ? output : clippedLines(output, count: 3, fromStart: true), font: Font.regular(12.0), textColor: textColor))
-            return (title, historySummary(code: code, words: words), body)
+            return (title, historySummary(code: code, plain: plain, words: words), body)
         }
         // Expanded, every line the result has, without Show All: the card is the whole of it.
         let (chatTitle, historyBody) = HistoryCard.body(name: name, output: output, isExpanded: isExpanded, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth)
-        // A read names its chat by its title once it has it.
-        return (title, historySummary(code: chatTitle ?? code, words: words), historyBody)
+        // A read names its chat by its title once it has it, never by what an entry says.
+        if let chatTitle {
+            return (title, historySummary(code: chatTitle, plain: true, words: words), historyBody)
+        }
+        return (title, historySummary(code: code, plain: plain, words: words), historyBody)
     }
     if tool?.status == .failed, !output.isEmpty {
         let errorColor = isDark ? diffRemovedDark : diffRemovedLight
@@ -3099,10 +3105,12 @@ func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, is
     }
 }
 
-/// A history card's first line after its title: what is written as written, then, after `historyWordsMark`, words.
+/// A history card's first line after its title: what it is about (after `historyPlainMark` when in words, not
+/// monospace), then, after `historyWordsMark`, the other arguments.
 let historyWordsMark = "\u{1F}"
-private func historySummary(code: String, words: String) -> String {
-    return words.isEmpty ? code : code + historyWordsMark + words
+let historyPlainMark = "\u{1E}"
+private func historySummary(code: String, plain: Bool, words: String) -> String {
+    return (plain ? historyPlainMark : "") + code + (words.isEmpty ? "" : historyWordsMark + words)
 }
 
 /// "3 calls", as the title of a script's card counts them; nothing before the first.
