@@ -395,7 +395,7 @@ enum TranscriptBuilder {
                     }
                     if let report = SubagentReport(text) {
                         // A background subagent's answer, posted as a message: its card, not the user's bubble.
-                        var tool = ToolCallInfo(callId: "report-\(id)", name: "subagent", summary: report.status == "answered" ? "\(report.name) answered" : "\(report.name) stopped", status: report.status == "answered" ? .done : .failed, output: report.text, childConversationId: report.conversationId)
+                        var tool = ToolCallInfo(callId: "report-\(id)", name: "subagent", summary: report.status == "answered" ? "\(report.name) answered" : "\(report.name) failed", status: report.status == "answered" ? .done : .failed, output: report.text, childConversationId: report.conversationId)
                         var call = SubagentCall(kind: report.status == "answered" ? .answer : .failed, name: report.name, text: report.text, task: subagentTasks[report.name])
                         // How long it worked: from the call that gave it the work, which shows the time too.
                         if let callRow = subagentCallRows.removeValue(forKey: report.name), let started = rows[callRow].tool?.subagent?.startedAt {

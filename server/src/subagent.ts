@@ -192,10 +192,35 @@ const reportAfterRun = hook(GenerationTask, {
 	},
 });
 
+/** "401 {"error":{"message":"invalid x-api-key"}}" as "401: invalid x-api-key"; other text as it is. */
+function cleanError(raw: string): string {
+	const text = raw.trim();
+	const brace = text.indexOf("{");
+	if (brace === -1) return text;
+	let json: unknown;
+	try {
+		json = JSON.parse(text.slice(brace));
+	} catch {
+		return text;
+	}
+	const message = (value: unknown): string | undefined => {
+		if (typeof value === "string" && value !== "") return value;
+		if (typeof value !== "object" || value === null) return undefined;
+		const object = value as { error?: unknown; message?: unknown };
+		return message(object.error) ?? (typeof object.message === "string" && object.message !== "" ? object.message : undefined);
+	};
+	const found = message(json);
+	if (found === undefined) return text;
+	const prefix = text.slice(0, brace).trim();
+	return prefix === "" ? found : `${prefix}: ${found}`;
+}
+
 /** How a run that ended without an answer is told to the leader; undefined for what someone did (stop, a new context). */
 export function failureNote(name: string, reason: string, given: string | undefined): string | undefined {
-	// A provider's error can be a whole JSON body: its start says enough.
-	const detail = given === undefined || given.length <= 300 ? given : `${given.slice(0, 299)}…`;
+	// A provider's error is often its status and a JSON body: the body's innermost message says it (as the app's
+	// ModelErrorText.clean), and a long one's start.
+	const cleaned = given === undefined ? undefined : cleanError(given);
+	const detail = cleaned === undefined || cleaned.length <= 300 ? cleaned : `${cleaned.slice(0, 299)}…`;
 	const why = (() => {
 		switch (reason) {
 			case "aborted":

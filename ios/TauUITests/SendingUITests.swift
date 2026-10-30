@@ -1047,6 +1047,23 @@ final class SendingUITests: XCTestCase {
         self.shot("sub-2-answered")
     }
 
+    /// A subagent whose run fails: its note arrives as its card, which says it failed, not that it stopped.
+    func testSubagentFailed() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("& fragile: !fatal broken")
+        self.send()
+        let card = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'subagentCard' AND label BEGINSWITH 'fragile  failed'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 20.0))
+        XCTAssertTrue(card.label.contains("fragile failed: the model failed (401: invalid x-api-key)."), card.label)
+        XCTAssertFalse(card.label.contains("stopped"), card.label)
+        self.app.waitForIdle()
+        // The leader's answer to it came after: back to the card.
+        self.app.swipeDown()
+        settle()
+        self.shot("subfail-0-card")
+    }
+
     /// An answer in a chat that is not on screen: Telegram's banner; and Settings > Notifications.
     func testInAppNotification() {
         self.launch(["-newChat", "YES"])

@@ -113,7 +113,7 @@ describe("subagent reports", () => {
 		await until(child, () => idle(child));
 		await send(client, child, "!fatal broken", "fatal-1");
 		await until(leader, () => reports(leader, "failed").length === 1);
-		assert.match(reports(leader, "failed")[0]!, /fragile failed: the model failed \(401/);
+		assert.match(reports(leader, "failed")[0]!, /fragile failed: the model failed \(401: invalid x-api-key\)\./);
 		// Stopped while it works: no report, no note.
 		await send(client, child, "$ sleep 5", "sleep-1");
 		await until(child, () => !idle(child));

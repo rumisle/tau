@@ -1966,6 +1966,10 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.toolShowAllNode.isHidden = true
                         self.toolShowAllFrame = nil
                         self.setSubagentVisible(true)
+                        // Read as one: who and how it ended ("reader  failed"), then what it said.
+                        self.isAccessibilityElement = true
+                        self.accessibilityIdentifier = "subagentCard"
+                        self.accessibilityLabel = [header.string, call.kind == .answer || call.kind == .failed ? call.text : quoted].filter { !$0.isEmpty }.joined(separator: "\n")
 
                         self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
                         let cardFrame = CGRect(origin: CGPoint(x: params.leftInset + freeTextInset - 4.0 + leftShift, y: 0.0), size: cardSize)
