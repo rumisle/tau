@@ -117,10 +117,16 @@ The index's query syntax, as docs/search.md has it: every word must appear, `"a 
   forgives a slip on a phone; an agent sends whole words and does not slip, and a research pass must not collect
   near-misses. Each word or phrase is first found by the index (the tokens, adjacent for a phrase), then checked as a
   literal substring of the part's text, punctuation included, so `"--conditions=source"` matches that and not
-  `conditions source`. The check reads the text the excerpt is cut from, so it costs nothing extra.
+  `conditions source`. A term of lower-case letters and digits needs no check (the token is the word as written);
+  any other, a capital, punctuation, a phrase's spacing or CJK, reads the text of every part the index found, before
+  counting and ranking, so `total` and the pages are of literal matches. The text is the one the excerpt is cut from,
+  so a shown hit is read once.
 - **`exact: false`**: the user's search exactly: prefixes and one typo away (docs/search.md, Matching).
 - **Case** is ripgrep's smart case, in both: a query in lower case ignores case; one with a capital letter matches it.
-  `error` finds `Error:` and `ERROR`; `CommandPalette` finds only that. No parameter: the query says it.
+  `error` finds `Error:` and `ERROR`; `CommandPalette` finds only that. No parameter: the query says it. With
+  `exact: false`, a term with a capital is matched as written (no prefix or typo for it); the others as the user's
+  search matches them.
+- **`-word`** leaves out a part that has it (the index's `NOT`), not a whole conversation as in the user's search.
 - **No query** lists the scope's parts newest first, filtered by `kinds`: `history_search({ in: "subagents" })` is
   what the subagents said; `history_search({ in: link, kinds: ["tool_call"] })` is every call in one conversation.
 

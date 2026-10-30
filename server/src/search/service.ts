@@ -7,7 +7,7 @@ import type { ConversationId, ConversationRecord, Cursor, EntryId, EntryRecord }
 import { attachedFiles, fileIdFromPath, ownText } from "../attachments.ts";
 import { FilesEntry } from "../shown.ts";
 import { type Host, MetaDoc } from "../host.ts";
-import { type IndexEntry, type IndexPart, Kind, type KindName, SearchIndex, type SearchResponse } from "./index.ts";
+import { type HitOptions, type HitResponse, type IndexEntry, type IndexPart, Kind, type KindName, SearchIndex, type SearchResponse } from "./index.ts";
 import { type UsageReport, UsageLedger, type UsageRow } from "./usage.ts";
 import { type IndexWriter, localWriter, WorkerWriter } from "./writer.ts";
 import { onCommit, changedValue } from "../commits.ts";
@@ -258,6 +258,23 @@ export class Search {
 			return found === undefined ? undefined : partText(found.entry, idx);
 		};
 		return this.index.search(query, load, { ...options, hits: 1, exclude: this.#hidden });
+	}
+
+	/** Every matching part, for history_search (docs/history.md): hidden conversations left out. */
+	async hits(query: string, options: Omit<HitOptions, "exclude">, context: Context): Promise<HitResponse> {
+		await this.ready;
+		const { storage } = this.#host;
+		const load = async (conversationId: number, entryId: number, idx: number): Promise<string | undefined> => {
+			if (idx < 0) return this.#titles.get(conversationId);
+			const found = await storage.entry(conversationId as ConversationId, entryId as EntryId, context).catch(() => undefined);
+			return found === undefined ? undefined : partText(found.entry, idx);
+		};
+		return this.index.hits(query, load, { ...options, exclude: this.#hidden });
+	}
+
+	/** A conversation's title, as the index has it. */
+	title(conversationId: number): string | undefined {
+		return this.#titles.get(conversationId);
 	}
 
 	/** What the models cost over the last `days` days (0: all), in the client's days. */

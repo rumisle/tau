@@ -159,6 +159,8 @@ export type Host = {
 	 * returns, a photo past the limits.
 	 */
 	readonly images: ImageProcessor;
+	/** history_read and history_search (src/history.ts); search once a server gives it the index. */
+	readonly history: History;
 	close(): Promise<void>;
 };
 
@@ -328,6 +330,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		cwd,
 		files,
 		images,
+		history,
 		close: async () => {
 			cache.close();
 			compactions.close();

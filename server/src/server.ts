@@ -48,6 +48,7 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 	});
 	// Beside the database, or in memory with it.
 	const search = new Search(host, host.database === undefined ? ":memory:" : searchIndexPath(host.database));
+	host.history.index = search;
 	// A pending file an entry names is kept, not swept (src/files.ts).
 	host.files.referenced = (id) => search.referencesFile(id);
 	void host.files.sweep().catch(() => {});

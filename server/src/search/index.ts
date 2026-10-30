@@ -84,6 +84,36 @@ export type SearchResponse = {
 	ms: number;
 };
 
+/** Where history_search looks: conversations, each up to an entry (a fork's origin, up to the fork point). */
+export type Scope = { conversationId: number; upTo?: number }[];
+
+export type HitOptions = {
+	/** Undefined: every conversation. */
+	scope?: Scope;
+	kinds?: KindName[];
+	exact: boolean;
+	/** Hits; -1: all. */
+	limit?: number;
+	offset?: number;
+	now?: number;
+	context?: number;
+	/** Conversations left out (hidden ones). */
+	exclude?: ReadonlySet<number>;
+	/** An entry left out: the one making the call. */
+	skip?: { conversationId: number; entryId: number };
+};
+
+export type PartHit = Omit<SearchHit, "entryId"> & { conversationId: number; entryId?: number; idx?: number };
+
+export type HitResponse = {
+	hits: PartHit[];
+	/** Every hit; a floor when not `complete`. */
+	total: number;
+	/** False when the index stopped at its scan cap. */
+	complete: boolean;
+	ms: number;
+};
+
 /** `title`: the one indexed, so a start that offers it again writes nothing; null before version 4 kept it. */
 type ConvRow = { id: number; counter: number; cursor: number; updated: number; parent: number | null; parent_at: number | null; archived: number; title: string | null };
 
@@ -489,6 +519,115 @@ export class SearchIndex {
 		return { hits: hits.slice(0, limit), terms: compiled };
 	}
 
+	/**
+	 * Every matching part, not one per conversation: history_search's (docs/history.md). `exact`: no prefixes or typos,
+	 * and each term found as written in the part's text (`literal`); smart case, as ripgrep's: a query with a capital
+	 * matches case. Without terms, the scope's parts newest first. Ranked by tier (every word exactly, then with
+	 * prefixes or typos), then the part's bm25 times its recency; a title counts 1.5 times, an archived chat half.
+	 */
+	async hits(input: string, load: TextLoader, options: HitOptions): Promise<HitResponse> {
+		const started = performance.now();
+		const now = options.now ?? Date.now();
+		const query = parseQuery(input);
+		const caseSensitive = /\p{Lu}/u.test(query.terms.map((term) => term.raw).join(" "));
+		const vocabulary = this.#vocabulary();
+		// A term with a capital is matched as written, case and all: no prefixes or typos for it.
+		const terms = query.terms.flatMap((term) => compile(vocabulary, term, { fuzzy: !options.exact && !/\p{Lu}/u.test(term.raw) }) ?? []);
+		const excluded = query.excluded.flatMap((term) => compile(vocabulary, term, { fuzzy: false }) ?? []);
+		// Kinds the index does not have find nothing.
+		const kinds = (options.kinds ?? KIND_NAMES).flatMap((kind) => (Object.hasOwn(Kind, kind) ? [Kind[kind]] : []));
+		if (kinds.length === 0) return { hits: [], total: 0, complete: true, ms: 0 };
+		const limit = options.limit ?? 20;
+		const offset = options.offset ?? 0;
+		const exclude = options.exclude ?? new Set<number>();
+		const scope = scopeSql(options.scope);
+		const kindFilter = ` AND (f.rowid & 7) IN (${kinds.join(",")})`;
+		type Row = { rowid: number; b: number; entry: number | null; idx: number | null; time: number | null };
+		let rows: Row[];
+		if (terms.length === 0) {
+			if (query.terms.length > 0) return { hits: [], total: 0, complete: true, ms: performance.now() - started };
+			// No query: the parts, newest first; titles are not parts of an entry.
+			const partKinds = kinds.filter((kind) => kind !== Kind.title);
+			if (partKinds.length === 0) return { hits: [], total: 0, complete: true, ms: performance.now() - started };
+			rows = this.db
+				.prepare(
+					`SELECT p.rowid AS rowid, 0 AS b, p.entry AS entry, p.idx AS idx, p.time AS time FROM part p
+					 WHERE 1${scope.replaceAll("f.rowid", "p.rowid")} AND (p.rowid & 7) IN (${partKinds.join(",")}) ORDER BY p.time DESC LIMIT ${MAX_MATCHES}`,
+				)
+				.all() as Row[];
+		} else {
+			let expression = terms.map((term) => ftsExpression(term)).join(" AND ");
+			if (excluded.length > 0) expression = `(${expression}) NOT (${excluded.map((term) => ftsExpression(term, true)).join(" OR ")})`;
+			rows = this.db
+				.prepare(
+					`SELECT f.rowid AS rowid, bm25(fts) AS b, p.entry AS entry, p.idx AS idx, p.time AS time FROM fts f LEFT JOIN part p ON p.rowid = f.rowid
+					 WHERE fts MATCH ?${scope}${kindFilter} ORDER BY f.rowid DESC LIMIT ${MAX_MATCHES}`,
+				)
+				.all(expression) as Row[];
+		}
+		const complete = rows.length < MAX_MATCHES;
+		const fuzzy = terms.some((term) => term.prefix || term.variants.length > 0);
+		const exactRows = fuzzy ? new Set(this.#rowids(terms.map((term) => ftsExpression(term, true)).join(" AND "), scope, kindFilter)) : undefined;
+		// The literal check: a term of lower-case letters and digits found as a token is in the text as written; any other
+		// (a capital, punctuation, a phrase's spacing, CJK) is looked for in the text.
+		const literal = terms.filter((term) => options.exact || /\p{Lu}/u.test(term.raw)).filter((term) => caseSensitive || !/^[a-z0-9]+$/.test(term.raw));
+		const texts = new Map<number, string | undefined>();
+		const textOf = async (row: Row): Promise<string | undefined> => {
+			if (texts.has(row.rowid)) return texts.get(row.rowid);
+			const conversation = conversationOf(row.rowid);
+			const text = kindOf(row.rowid) === Kind.title ? await load(conversation, 0, -1) : row.entry === null ? undefined : await load(conversation, row.entry, row.idx ?? 0);
+			texts.set(row.rowid, text);
+			return text;
+		};
+		const kept: { row: Row; tier: number; score: number; time: number }[] = [];
+		for (const row of rows) {
+			const conversation = conversationOf(row.rowid);
+			if (exclude.has(conversation)) continue;
+			if (options.skip !== undefined && conversation === options.skip.conversationId && row.entry === options.skip.entryId) continue;
+			if (literal.length > 0) {
+				const text = await textOf(row);
+				if (text === undefined || !literal.every((term) => contains(text, term.raw, caseSensitive))) continue;
+			}
+			const conv = this.#conversations.get(conversation);
+			const time = row.time ?? conv?.updated ?? 0;
+			const kind = kindOf(row.rowid);
+			const weight = (kind === Kind.title ? 1.5 : kind >= 4 ? 0.5 : 1) * (conv?.archived === 1 ? 0.5 : 1);
+			const age = Math.max(0, now - time);
+			const score = Math.max(-row.b, 0.5) * weight * (1 + 1.5 * 2 ** (-age / (14 * DAY)));
+			kept.push({ row, tier: exactRows === undefined || exactRows.has(row.rowid) ? 2 : 1, score, time });
+		}
+		if (terms.length > 0) kept.sort((a, b) => b.tier - a.tier || b.score - a.score || b.time - a.time);
+		const page = limit < 0 ? kept.slice(offset) : kept.slice(offset, offset + limit);
+		const context = options.context ?? 150;
+		const hits: PartHit[] = [];
+		for (const item of page) {
+			const text = await textOf(item.row);
+			if (text === undefined) continue;
+			const ranges = literal.length > 0 || options.exact ? literalRanges(text, terms, caseSensitive) : highlight(text, terms);
+			const cut = excerpt(text, ranges.length > 0 ? ranges : highlight(text, terms), context);
+			const kind = KIND_NAMES[kindOf(item.row.rowid)]!;
+			hits.push({
+				conversationId: conversationOf(item.row.rowid),
+				...(item.row.entry === null ? {} : { entryId: item.row.entry, idx: item.row.idx ?? 0 }),
+				kind,
+				time: item.time,
+				text: cut.text,
+				before: cut.before,
+				after: cut.after,
+				ranges: cut.ranges.map((range: Range) => [range.start, range.end]),
+			});
+		}
+		return { hits, total: kept.length, complete, ms: performance.now() - started };
+	}
+
+	#rowids(expression: string, scope: string, kindFilter: string): number[] {
+		return (
+			this.db.prepare(`SELECT f.rowid AS rowid FROM fts f LEFT JOIN part p ON p.rowid = f.rowid WHERE fts MATCH ?${scope}${kindFilter} ORDER BY f.rowid DESC LIMIT ${MAX_MATCHES}`).all(expression) as {
+				rowid: number;
+			}[]
+		).map((row) => row.rowid);
+	}
+
 	/** The most recently active fork of `conv` that still shares the entry of `rowid`, or `conv`. */
 	#newestFork(conv: ConvRow, rowid: number | undefined, exclude?: ReadonlySet<number>): ConvRow {
 		if (rowid === undefined || kindOf(rowid) === Kind.title || !this.#forked.has(conv.id)) return conv;
@@ -586,4 +725,40 @@ function rank(conv: ConvRow, relevance: number, now: number): number {
 	const age = Math.max(0, now - conv.updated);
 	const recency = 1 + 1.5 * 2 ** (-age / (14 * DAY));
 	return relevance * recency * (conv.archived === 1 ? 0.5 : 1);
+}
+
+/** The SQL condition of a scope, on `f.rowid` and the part's entry `p.entry`. */
+function scopeSql(scope: Scope | undefined): string {
+	if (scope === undefined) return "";
+	if (scope.length === 0) return " AND 0";
+	const each = scope.map(({ conversationId, upTo }) => {
+		const [low, high] = range(Math.trunc(conversationId));
+		return `(f.rowid BETWEEN ${low} AND ${high}${upTo === undefined ? "" : ` AND (p.entry IS NULL OR p.entry <= ${Math.trunc(upTo)})`})`;
+	});
+	return ` AND (${each.join(" OR ")})`;
+}
+
+/** Whether `text` has `needle` as written; without `caseSensitive`, in any case. */
+function contains(text: string, needle: string, caseSensitive: boolean): boolean {
+	return caseSensitive ? text.includes(needle) : text.toLowerCase().includes(needle.toLowerCase());
+}
+
+/** Where each term is in `text` as written, in order, without overlaps. */
+function literalRanges(text: string, terms: Compiled[], caseSensitive: boolean): Range[] {
+	const haystack = caseSensitive ? text : text.toLowerCase();
+	const ranges: Range[] = [];
+	terms.forEach((term, index) => {
+		const needle = caseSensitive ? term.raw : term.raw.toLowerCase();
+		if (needle === "") return;
+		for (let at = haystack.indexOf(needle); at !== -1 && ranges.length < 1000; at = haystack.indexOf(needle, at + needle.length)) {
+			ranges.push({ start: at, end: at + needle.length, term: index, kind: "exact" });
+		}
+	});
+	ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+	let covered = -1;
+	return ranges.filter((range) => {
+		if (range.start < covered) return false;
+		covered = range.end;
+		return true;
+	});
 }

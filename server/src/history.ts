@@ -16,6 +16,7 @@ import {
 	type Storage,
 } from "@earendil-works/pi-durable";
 import { MetaDoc } from "./host.ts";
+import type { HitOptions, HitResponse, Scope } from "./search/index.ts";
 import { cut, HISTORY_KINDS, type HistoryKind, toolCallText, toolOutputText, userText } from "./history-text.ts";
 import { modelCallId } from "./shown.ts";
 import { Subagents } from "./subagent.ts";
@@ -59,6 +60,27 @@ export type ChatCard = {
 	subagents?: { name: string; link: string; status: "working" | "idle" }[];
 };
 
+export type SearchArgs = {
+	query?: string;
+	in?: string;
+	kinds?: HistoryKind[];
+	exact?: boolean;
+	limit?: number;
+	cursor?: string;
+	truncate?: boolean;
+};
+export type SearchHitOut = { link: string; chat: { link: string; title: string }; kind: HistoryKind; time: string; text: string; inContext?: boolean };
+export type SearchResult = { hits: SearchHitOut[]; total: number; next?: SearchArgs };
+
+/** The search index, as history_search reads it (src/search/service.ts). */
+export type HistoryIndex = {
+	hits(query: string, options: Omit<HitOptions, "exclude">, context: Context): Promise<HitResponse>;
+	title(conversationId: number): string | undefined;
+};
+
+/** A page of a search: where it starts, and the time its first page ranked by, so every page ranks alike. */
+type CursorValue = { o: number; n: number };
+
 export type ReadArgs = { link?: string; kinds?: HistoryKind[]; older?: number; newer?: number; part?: number; offset?: number; truncate?: boolean };
 export type ReadResult = { chat: ChatCard; entries: ReadEntry[]; older: ReadArgs | null; newer: ReadArgs | null };
 
@@ -69,6 +91,8 @@ const LINK = /^tau:\/\/([0-9a-z]+)\/(\d+)(?:\/(\d+))?\/?(?:\?.*)?$/i;
 
 export class History {
 	readonly #hostOf: () => HistoryHost;
+	/** The search index, once the server has one (src/server.ts). */
+	index: HistoryIndex | undefined;
 
 	/** `host`: read when used, as the Harness opens after its tools are installed. */
 	constructor(host: () => HistoryHost) {
@@ -225,6 +249,94 @@ export class History {
 		return { chat: card, entries, older: olderNext, newer: newerNext };
 	}
 
+	async search(caller: ConversationId, args: SearchArgs, context: Context, callId?: string): Promise<SearchResult> {
+		const index = this.index;
+		if (index === undefined) throw new HistoryError("Search is not available on this server yet.");
+		const kinds = args.kinds ?? HISTORY_KINDS;
+		if (kinds.length === 0) throw new HistoryError("kinds is empty: name at least one kind, or leave it out for all.");
+		const limit = args.limit ?? 20;
+		if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new HistoryError("limit is a number of hits from 1 to 200.");
+		let cursor: CursorValue = { o: 0, n: Date.now() };
+		if (args.cursor !== undefined) {
+			try {
+				const value = JSON.parse(Buffer.from(args.cursor, "base64url").toString("utf8")) as CursorValue;
+				if (!Number.isInteger(value.o) || value.o < 0 || typeof value.n !== "number") throw new Error();
+				cursor = value;
+			} catch {
+				throw new HistoryError("Not a cursor of history_search: pass next as it came.");
+			}
+		}
+		// Where: one chat with what it shares with the chats it was forked from, the subagents, or everything.
+		let chats: ConversationId[] | undefined;
+		if (args.in === "subagents") chats = await this.subagents(caller, context);
+		else if (args.in !== undefined) chats = [(await this.address(args.in, caller, context)).conversation];
+		const scope = chats === undefined ? undefined : (await Promise.all(chats.map((chat) => this.#lineage(chat, context)))).flat();
+		// The caller's own chat: the entry making this call is left out, or it would find its own query.
+		let skip: { conversationId: number; entryId: number } | undefined;
+		const own = await this.#lineage(caller, context);
+		if (callId !== undefined && (scope === undefined || scope.some((each) => each.conversationId === caller))) {
+			await this.#scan(caller, { order: "descending" }, 50, (entry) => {
+				if (callingEntry([entry], callId) === undefined) return true;
+				skip = { conversationId: caller, entryId: entry.id };
+				return false;
+			}, context);
+		}
+		const response = await index.hits(
+			args.query ?? "",
+			{
+				...(scope === undefined ? {} : { scope }),
+				kinds: kinds as HitOptions["kinds"],
+				exact: args.exact !== false,
+				limit,
+				offset: cursor.o,
+				now: cursor.n,
+				...(args.truncate === false ? { context: 10_000_000 } : {}),
+				...(skip === undefined ? {} : { skip }),
+			},
+			context,
+		);
+		const mine = (conversation: number, entry: number) => own.some((each) => each.conversationId === conversation && (each.upTo === undefined || entry <= each.upTo));
+		const active = response.hits.some((hit) => hit.entryId !== undefined && mine(hit.conversationId, hit.entryId)) ? await this.inContext(caller, context) : undefined;
+		const titles = new Map<number, string>();
+		const title = async (conversation: number) => {
+			let value = titles.get(conversation) ?? index.title(conversation);
+			value ??= (await this.#host.harness.snapshot(MetaDoc, conversation as ConversationId, context))?.title ?? "";
+			titles.set(conversation, value);
+			return value;
+		};
+		const hits: SearchHitOut[] = [];
+		for (const hit of response.hits) {
+			hits.push({
+				link: this.link(hit.conversationId, hit.entryId),
+				chat: { link: this.link(hit.conversationId), title: await title(hit.conversationId) },
+				kind: hit.kind as HistoryKind,
+				time: iso(hit.time),
+				text: marked(hit.text, hit.ranges, hit.before, hit.after),
+				...(active !== undefined && hit.entryId !== undefined && mine(hit.conversationId, hit.entryId) ? { inContext: active.has(hit.entryId) } : {}),
+			});
+		}
+		const end = cursor.o + limit;
+		const result: SearchResult = { hits, total: response.total };
+		if (end < response.total) {
+			const { cursor: _cursor, ...rest } = args;
+			result.next = { ...rest, cursor: Buffer.from(JSON.stringify({ o: end, n: cursor.n } satisfies CursorValue)).toString("base64url") };
+		}
+		return result;
+	}
+
+	/** A conversation and the ones it was forked from, each up to where the next was forked off. */
+	async #lineage(id: ConversationId, context: Context): Promise<Scope> {
+		const scope: Scope = [{ conversationId: id }];
+		let record = await this.#host.storage.conversation(id, context);
+		let upTo = Number.POSITIVE_INFINITY;
+		while (record?.parent !== undefined && scope.length < 32) {
+			upTo = Math.min(upTo, record.parent.at);
+			scope.push({ conversationId: record.parent.conversationId, upTo });
+			record = await this.#host.storage.conversation(record.parent.conversationId, context);
+		}
+		return scope;
+	}
+
 	/** The results of the calls in `entries`, by call ID: after each call, as durable writes them. */
 	async #results(id: ConversationId, entries: readonly EntryRecord[], context: Context): Promise<Map<string, EntryRecord>> {
 		const wanted = new Set<string>();
@@ -326,6 +438,18 @@ export function entryParts(entry: EntryRecord, results: ReadonlyMap<string, Entr
 	return parts;
 }
 
+/** An excerpt with its matched words between « and », and … where it was cut. */
+export function marked(text: string, ranges: readonly [number, number][], before: boolean, after: boolean): string {
+	let out = "";
+	let at = 0;
+	for (const [start, end] of ranges) {
+		out += `${text.slice(at, start)}«${text.slice(start, end)}»`;
+		at = end;
+	}
+	out += text.slice(at);
+	return `${before ? "…" : ""}${out}${after ? "…" : ""}`;
+}
+
 export function entryTime(entry: EntryRecord): number | undefined {
 	return (entry.model?.[0] as { timestamp?: number } | undefined)?.timestamp;
 }
@@ -343,6 +467,14 @@ const READ_DESCRIPTION =
 	"chat (link, title, status, owner, forkOf, subagents), entries (id; an entry's link is chat.link + /id; parts by " +
 	"kind: user, assistant, reasoning, tool_call, tool_output), and older/newer: the arguments to call again for the " +
 	"entries before or after. A cut part has next: the arguments to read the rest. kinds narrows the parts shown.";
+
+const SEARCH_DESCRIPTION =
+	"Search the chats of this server, yours included past its compaction, for messages: what the user wrote, answers, " +
+	'reasoning, chat titles. query: every word must appear; "a phrase" as written; -word leaves a hit out; a capital ' +
+	"letter makes it match case. Exact by default (no prefixes or typos). in: a chat's link, \"this\", \"owner\" " +
+	"or \"subagents\"; omitted: every chat. No query: the newest messages first. Each hit has its link (read it with " +
+	"history_read), its chat, kind, time (UTC) and an excerpt with the matched words between « and ». A result with " +
+	"next is not complete: call history_search again with next as the arguments.";
 
 /** The two tools, over `history` (and a search index, once there is one: `search()`). */
 export function historyExtension(history: History): Extension {
@@ -370,7 +502,31 @@ export function historyExtension(history: History): Extension {
 			}
 		},
 	});
-	return defineExtension({ name: "history", tools: [read] });
+	const search = defineTool({
+		name: "history_search",
+		description: SEARCH_DESCRIPTION,
+		parameters: Type.Object({
+			query: Type.Optional(Type.String({ description: 'Every word must appear; "a phrase" as written; -word leaves a hit out. Omitted: the newest first' })),
+			in: Type.Optional(Type.String({ description: 'A tau:// link to a chat, "this", "owner" or "subagents"; omitted: every chat' })),
+			kinds: Type.Optional(Type.Array(KIND)),
+			exact: Type.Optional(Type.Boolean({ description: "Default true: words as written. false: prefixes and typos too, as the user's search" })),
+			limit: Type.Optional(Type.Integer({ description: "Hits, default 20" })),
+			cursor: Type.Optional(Type.String({ description: "From next only" })),
+			truncate: Type.Optional(Type.Boolean({ description: "false: each hit's whole text instead of an excerpt" })),
+		}),
+		structuredOutputSchema: Type.Unknown(),
+		replay: "safe",
+		execute: async (args, api, context: Context) => {
+			try {
+				const result = await history.search(api.conversationId, args, context, api.callId);
+				return { output: [{ type: "text" as const, text: JSON.stringify(result) }], structuredOutput: result as never };
+			} catch (error) {
+				if (!(error instanceof HistoryError)) throw error;
+				return { output: [{ type: "text" as const, text: error.message }], isError: true };
+			}
+		},
+	});
+	return defineExtension({ name: "history", tools: [read, search] });
 }
 
 /** The model's call of a running tool: its entry, so a search of `this` leaves out the call itself. */

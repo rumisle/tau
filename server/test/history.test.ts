@@ -4,7 +4,7 @@ import { after, before, describe, test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import { ConversationReplica, TauClient } from "../src/client.ts";
-import { History, type ReadArgs, type ReadResult } from "../src/history.ts";
+import type { History, ReadArgs, ReadResult, SearchArgs, SearchResult } from "../src/history.ts";
 import { type Host, openHost } from "../src/host.ts";
 import { type Server, serve } from "../src/server.ts";
 
@@ -45,12 +45,15 @@ describe("history", () => {
 	}
 
 	const read = (caller: number, args: ReadArgs): Promise<ReadResult> => history.read(caller as ConversationId, args, BACKGROUND_CONTEXT);
+	const search = (caller: number, args: SearchArgs): Promise<SearchResult> => history.search(caller as ConversationId, args, BACKGROUND_CONTEXT);
+	/** Until the index has what was committed: it is written a tick after each commit. */
+	const indexed = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 	before(async () => {
 		host = await openHost({ devTokensPerSecond: 4_000, cwd: tmpdir() });
 		server = await serve(host);
 		client = await TauClient.connect(server.url);
-		history = new History(() => ({ harness: host.harness, storage: host.storage, serverId: host.serverId }));
+		history = host.history;
 	});
 	after(async () => {
 		await client.close();
@@ -165,5 +168,78 @@ describe("history", () => {
 		await assert.rejects(read(replica.id, { link: history.link(999_999) }), /No chat/);
 		await assert.rejects(read(replica.id, { link: "subagents" }), /search/);
 		await assert.rejects(read(replica.id, { link: "nonsense" }), /Not a chat's link/);
+	});
+
+	test("search: past the head, in subagents and in the owner, with inContext in the caller's own chat", async () => {
+		const replica = await chat("Compacted");
+		for (const word of ["xylophone", "beta", "gamma", "delta"]) await say(replica, `${word} ${"filler ".repeat(60)}`);
+		await client.request("conversation.compact", { conversationId: replica.id });
+		await until(replica, () => replica.ordered().some((entry) => entry.kind === "pi.compaction") && idle(replica), 30_000);
+		await indexed();
+		const found = await search(replica.id, { query: "xylophone", in: "this", kinds: ["user"] });
+		assert.equal(found.total, 1);
+		assert.equal(found.hits[0]!.inContext, false, "before the compaction's head");
+		assert.match(found.hits[0]!.text, /^«xylophone» filler/);
+		assert.equal(found.hits[0]!.chat.title, "Compacted");
+		assert.match(found.hits[0]!.time, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+		// From another chat: found, without inContext.
+		const other = await chat();
+		const elsewhere = await search(other.id, { query: "xylophone", kinds: ["user"] });
+		assert.equal(elsewhere.hits[0]!.inContext, undefined);
+		// Subagents and the owner.
+		const leader = await chat("Boss");
+		await say(leader, "& scout: find the quokka");
+		const helper = (await read(leader.id, {})).chat.subagents![0]!;
+		const child = Number(helper.link.split("/").at(-1));
+		await until(leader, () => leader.ordered().some((entry) => JSON.stringify(entry.model ?? "").includes('status=\\"answered\\"')), 15_000);
+		await indexed();
+		const inSubagents = await search(leader.id, { query: "quokka", in: "subagents" });
+		assert.ok(inSubagents.hits.length > 0 && inSubagents.hits.every((hit) => hit.chat.link === helper.link), JSON.stringify(inSubagents));
+		const inOwner = await search(child, { query: "quokka", in: "owner", kinds: ["user"] });
+		assert.ok(inOwner.hits.some((hit) => hit.chat.link === history.link(leader.id)), JSON.stringify(inOwner));
+		assert.equal((await search(leader.id, { query: "xylophone", in: "subagents" })).total, 0);
+	});
+
+	test("search: exact by default, prefixes and typos with exact: false; smart case; phrases as written", async () => {
+		const replica = await chat();
+		await say(replica, "the compaction of Zebrafish logs");
+		await say(replica, "node --conditions=source main.ts");
+		await say(replica, "conditions, source and more");
+		await indexed();
+		const one = async (args: SearchArgs) => (await search(replica.id, { in: "this", kinds: ["user"], ...args })).total;
+		assert.equal(await one({ query: "compacton" }), 0, "no typos when exact");
+		assert.equal(await one({ query: "compacton", exact: false }), 1);
+		assert.equal(await one({ query: "compac" }), 0, "no prefixes when exact");
+		assert.equal(await one({ query: "compac", exact: false }), 1);
+		assert.equal(await one({ query: "zebrafish" }), 1, "lower case: any case");
+		assert.equal(await one({ query: "Zebrafish" }), 1);
+		assert.equal(await one({ query: "ZebraFish" }), 0, "a capital: as written");
+		assert.equal(await one({ query: '"--conditions=source"' }), 1, "punctuation as written");
+		assert.equal(await one({ query: "conditions source" }), 2);
+		assert.equal(await one({ query: "conditions source -main" }), 1);
+		const hit = (await search(replica.id, { in: "this", kinds: ["user"], query: '"--conditions=source"' })).hits[0]!;
+		assert.equal(hit.text, "node «--conditions=source» main.ts");
+	});
+
+	test("search: next round-trips through every hit once; no query lists the newest first", async () => {
+		const replica = await chat("Paged");
+		for (let index = 1; index <= 7; index++) await say(replica, `pagination sample ${index}`);
+		await indexed();
+		const first = await search(replica.id, { query: "pagination", in: "this", kinds: ["user"], limit: 3 });
+		assert.equal(first.total, 7);
+		const links = first.hits.map((hit) => hit.link);
+		let next = first.next;
+		while (next !== undefined) {
+			const page = await search(replica.id, next);
+			links.push(...page.hits.map((hit) => hit.link));
+			next = page.next;
+		}
+		assert.equal(links.length, 7);
+		assert.equal(new Set(links).size, 7);
+		const newest = await search(replica.id, { in: "this", kinds: ["user"], limit: 2 });
+		assert.deepEqual(newest.hits.map((hit) => hit.text), ["pagination sample 7", "pagination sample 6"]);
+		assert.equal(newest.total, 7);
+		await assert.rejects(search(replica.id, { query: "x", cursor: "nonsense" }), /cursor/);
+		await assert.rejects(search(replica.id, { query: "x", in: "tau://ffffffff/1" }), /Not on this server/);
 	});
 });
