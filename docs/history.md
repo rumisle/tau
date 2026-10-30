@@ -364,12 +364,11 @@ One rule, which the rest follows: **the first line is the call; below it is the 
 - **The first line** is the tool and every argument that is not a default: the query and links as written, in
   monospace; words for the rest (`tool calls`, `this chat`, `subagents`, `10 older`), in the text font. It wraps
   rather than cut (to three lines folded). A read's link gives way to its chat's title once the result is in.
-- **The result** starts with what it amounts to: `9 results`, `7 messages`, `No results`. Then a line per item, then
-  what is not shown.
+- **The result** is a line per item, then what is not shown (`6 more`, `4 earlier`), which says how much there is
+  without a count line of its own; an empty search says `No results`, an empty read `No messages`.
 
 ```
-History search  "npm run build" tool calls                  0.2s
-9 results
+History search  "npm run build"   Tool calls                0.2s
 durable 示例  $ cd packages/ai && npm run build:offline     10:12
 压缩 bug  $ npm run build && npm test                   Yesterday
 tau release 0.9  $ cd server && npm run build                 Mon
@@ -377,8 +376,7 @@ tau release 0.9  $ cd server && npm run build                 Mon
 ```
 
 ```
-History read  压缩 bug                                       0.1s
-7 messages
+History read  压缩 bug   10 older                            0.1s
 4 earlier
 Reasoning  identity.js missing from dist: stale build of pi-ai
 Bash  npm run hydrate:model-data
@@ -396,7 +394,8 @@ Answer  缺了 identity.ts，先 hydrate 模型数据再 build
 - **Folded**: the first three hits, then `N more` (of the total, so also those on later pages); the last three
   lines, after `N earlier`, as a code card shows the last three calls after "N earlier calls". Each item is one line,
   cut to fit. **Unfolded**: all of those the result has, each item on up to two lines (the first broken at a word,
-  the time still at its right), cut after the second.
+  the time still at its right), cut after the second; when the result is a page of a larger search, `N more` after
+  them is what the search has past it.
 - **A tap** folds and unfolds the card, as any tool card's; its lines open nothing (to go to a hit, ask the agent
   for its tau link, which opens it). It has no Show All: unfolded, it is all the result has.
 - **Failed**: the title in the destructive color, the error under it (`Not on this server: …`).
@@ -458,7 +457,8 @@ past the head, in subagents and in the owner; read pages by `older` until it end
 
 - **Access.** Any conversation reads any other on its server: a server is one person's. (A draft elsewhere,
   `docs/later.md`, limited `read_transcript` to descendants, owner, and linked threads; not taken.)
-- **The summary line** stays: `No results` needs a place.
+- **No count line**: the lines and `N more` / `N earlier` say how much there is; `No results` stands alone. (The
+  first build had `9 results` above the lines; it said what the lines said.)
 - **`-1` and the scan cap**: the cap holds and a result past it says `"complete": false`; the benchmark (Speed) says
   lifting it costs in proportion, for words no research means.
 - **Images** in a read are counted, not read.

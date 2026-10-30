@@ -3,8 +3,8 @@ import UIKit
 import Display
 
 /// The cards of history_search and history_read (docs/history.md, In the app): the first line is the call, below it the
-/// result: what it amounts to ("9 results", "7 messages"), a line per hit or message, then what is not shown. A tap
-/// folds and unfolds it, as any tool card.
+/// result: a line per hit or message and what is not shown ("6 more", "2 earlier"), or "No results". A tap folds and
+/// unfolds it, as any tool card.
 enum HistoryCard {
     static let searchName = "history_search"
     static let readName = "history_read"
@@ -114,7 +114,7 @@ enum HistoryCard {
         }
     }
 
-    /// The body: the result's summary line, its lines, and what is not shown. Folded: three; unfolded: all.
+    /// The body: the result's lines and what is not shown. Folded: three; unfolded: all the result has.
     static func body(name: String, output: String, isExpanded: Bool, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat) -> (title: String?, body: NSMutableAttributedString) {
         let body = NSMutableAttributedString()
         guard let data = output.data(using: .utf8), let result = (try? JSONSerialization.jsonObject(with: data)) as? JSONObject else {
@@ -124,26 +124,39 @@ enum HistoryCard {
             return (nil, body)
         }
         let summaryFont = Font.regular(12.0)
-        func summary(_ text: String) {
+        /// A line that is not an item: "No results", "4 more", "2 earlier".
+        func note(_ text: String) {
+            if body.length > 0 {
+                body.append(NSAttributedString(string: "\n"))
+            }
             body.append(NSAttributedString(string: text, font: summaryFont, textColor: textColor))
+        }
+        func item(_ line: NSAttributedString) {
+            if body.length > 0 {
+                body.append(NSAttributedString(string: "\n"))
+            }
+            body.append(line)
         }
         if name == searchName {
             let hits = result.objects("hits")
             let total = result.int("total") ?? hits.count
             let floor = result.bool("complete") == false
-            summary(total == 0 ? "No results" : "\(total)\(floor ? "+" : "") \(total == 1 ? "result" : "results")")
+            if hits.isEmpty {
+                note(total == 0 ? "No results" : "\(total)\(floor ? "+" : "") more")
+                return (nil, body)
+            }
             // In one chat, the line says the part's kind; across chats, the chat.
             let chats = Set(hits.compactMap { $0.object("chat")?.string("link") })
             let shown = isExpanded ? hits : Array(hits.prefix(3))
             for hit in shown {
-                body.append(NSAttributedString(string: "\n"))
                 let label = chats.count <= 1 && hits.count > 1 ? kindLabel(hit.string("kind")) : (hit.object("chat")?.string("title").flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled")
                 let time = hit.string("time").flatMap { ISO8601DateFormatter().date(from: $0) }.map(chatListDateString) ?? ""
-                body.append(line(name: label, marked: hit.string("text") ?? "", time: time, lines: isExpanded ? 2 : 1, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
+                item(line(name: label, marked: hit.string("text") ?? "", time: time, lines: isExpanded ? 2 : 1, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
             }
+            // What is not shown: folded, the rest; unfolded, what the search has past the page it returned.
             let more = total - shown.count
             if more > 0 {
-                body.append(NSAttributedString(string: "\n\(more)\(floor ? "+" : "") more", font: summaryFont, textColor: textColor))
+                note("\(more)\(floor ? "+" : "") more")
             }
             return (nil, body)
         }
@@ -164,15 +177,15 @@ enum HistoryCard {
                 lines.append((partName(part), text))
             }
         }
-        let messages = result.objects("entries").count
-        summary(messages == 0 ? "No messages" : "\(messages) \(messages == 1 ? "message" : "messages")")
+        if lines.isEmpty {
+            note("No messages")
+        }
         let shown = isExpanded ? lines : Array(lines.suffix(3))
         if shown.count < lines.count {
-            body.append(NSAttributedString(string: "\n\(lines.count - shown.count) earlier", font: summaryFont, textColor: textColor))
+            note("\(lines.count - shown.count) earlier")
         }
-        for item in shown {
-            body.append(NSAttributedString(string: "\n"))
-            body.append(line(name: item.name, marked: item.text, time: "", lines: isExpanded ? 2 : 1, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
+        for each in shown {
+            item(line(name: each.name, marked: each.text, time: "", lines: isExpanded ? 2 : 1, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
         }
         return (chat?.string("title").flatMap { $0.isEmpty ? nil : $0 }, body)
     }
