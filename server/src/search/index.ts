@@ -9,11 +9,13 @@ import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { type Compiled, compile, excerpt, ftsExpression, highlight, parseQuery, type Range, type Vocabulary } from "./match.ts";
 import { tokenize } from "./tokenize.ts";
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
-export const Kind = { user: 0, assistant: 1, reasoning: 2, title: 3 } as const;
+export const Kind = { user: 0, assistant: 1, reasoning: 2, title: 3, tool_call: 4, tool_output: 5 } as const;
 export type KindName = keyof typeof Kind;
-const KIND_NAMES: readonly KindName[] = ["user", "assistant", "reasoning", "title"];
+const KIND_NAMES: readonly KindName[] = ["user", "assistant", "reasoning", "title", "tool_call", "tool_output"];
+/** What the user's search looks in: tool calls and output are for agents (docs/history.md). */
+export const USER_KINDS: readonly KindName[] = ["user", "assistant", "reasoning", "title"];
 
 const CONV_BITS = 25;
 const CONV_SHIFT = 2 ** CONV_BITS;
@@ -25,7 +27,11 @@ export const conversationOf = (rowid: number): number => Math.floor(rowid / CONV
 export const kindOf = (rowid: number): number => rowid % 8;
 const range = (conversation: number): [number, number] => [conversation * CONV_SHIFT, (conversation + 1) * CONV_SHIFT - 1];
 
-export type IndexPart = { kind: number; text: string; idx: number };
+/**
+ * `entry`: where the part is shown, when not its own entry's: a tool's output is shown in its call's entry (`idx` then
+ * the result's distance from it, so its text is read from the result).
+ */
+export type IndexPart = { kind: number; text: string; idx: number; entry?: number };
 /** `files`: the kept files the entry names (src/files.ts), so a file an entry names is never swept. */
 export type IndexEntry = { conversationId: number; entryId: number; time: number; parts: IndexPart[]; files?: string[] };
 
@@ -34,8 +40,8 @@ export type ConversationInfo = {
 	parent?: { conversationId: number; at: number };
 };
 
-/** A part's text, for excerpts: read from the entries, which the index does not copy. */
-export type TextLoader = (conversationId: number, entryId: number, idx: number) => Promise<string | undefined>;
+/** A part's text, for excerpts: read from the entries, which the index does not copy. `idx` -1: the title. */
+export type TextLoader = (conversationId: number, entryId: number, idx: number, kind: number) => Promise<string | undefined>;
 
 export type SearchHit = {
 	kind: KindName;
@@ -114,8 +120,12 @@ export type HitResponse = {
 	ms: number;
 };
 
-/** `title`: the one indexed, so a start that offers it again writes nothing; null before version 4 kept it. */
-type ConvRow = { id: number; counter: number; cursor: number; updated: number; parent: number | null; parent_at: number | null; archived: number; title: string | null };
+/**
+ * `title`: the one indexed, so a start that offers it again writes nothing; null before version 4 kept it. `tools`: the
+ * newest entry whose tool calls and output are indexed, behind `cursor` in an index from before version 5 until the
+ * start's pass catches it up.
+ */
+type ConvRow = { id: number; counter: number; cursor: number; updated: number; parent: number | null; parent_at: number | null; archived: number; title: string | null; tools: number };
 
 type Candidate = {
 	conversation: number;
@@ -140,7 +150,7 @@ const MAX_MATCHES = 50_000;
 const COUNTS_STALE_PARTS = 2_000;
 const COUNTS_STALE_MS = 60_000;
 // By kind: title and prompts and answers first, then reasoning.
-const PRIORITY = [1, 1, 2, 0];
+const PRIORITY = [1, 1, 2, 0, 3, 3];
 
 export class SearchIndex {
 	readonly db: DatabaseSync;
@@ -183,10 +193,20 @@ export class SearchIndex {
 	#migrate(): void {
 		const version = (this.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
 		if (version === SCHEMA_VERSION) return;
+		if (version === 4) {
+			// Version 5 indexes tool calls and output: each conversation's `tools` cursor starts at 0, and the next start
+			// indexes them for the entries indexed before (Search's backfill).
+			this.db.exec("BEGIN");
+			this.#addToolsCursor();
+			this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+			this.db.exec("COMMIT");
+			return;
+		}
 		if (version === 3) {
 			// Version 4 keeps each conversation's indexed title; the next start writes each title once more.
 			this.db.exec("BEGIN");
 			this.db.exec("ALTER TABLE conv ADD COLUMN title TEXT");
+			this.#addToolsCursor();
 			this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 			this.db.exec("COMMIT");
 			return;
@@ -197,10 +217,11 @@ export class SearchIndex {
 		this.db.exec("CREATE TABLE file_ref (file TEXT NOT NULL, entry INTEGER NOT NULL, PRIMARY KEY (file, entry)) WITHOUT ROWID");
 		this.db.exec(`CREATE TABLE conv (
 			id INTEGER PRIMARY KEY, counter INTEGER NOT NULL, cursor INTEGER NOT NULL, updated INTEGER NOT NULL,
-			parent INTEGER, parent_at INTEGER, archived INTEGER NOT NULL DEFAULT 0, title TEXT)`);
+			parent INTEGER, parent_at INTEGER, archived INTEGER NOT NULL DEFAULT 0, title TEXT, tools INTEGER NOT NULL DEFAULT 0)`);
 		this.db.exec("CREATE INDEX conv_parent ON conv (parent)");
 		// Where each document came from: its entry and content block, and when.
 		this.db.exec("CREATE TABLE part (rowid INTEGER PRIMARY KEY, entry INTEGER NOT NULL, idx INTEGER NOT NULL, time INTEGER NOT NULL)");
+		this.db.exec("CREATE INDEX part_time ON part (time)");
 		// Words for typo matching: alphabetic terms of 4 to 24 letters, by first letter and length.
 		this.db.exec("CREATE TABLE vocab (term TEXT PRIMARY KEY, head TEXT NOT NULL, len INTEGER NOT NULL) WITHOUT ROWID");
 		this.db.exec("CREATE INDEX vocab_head ON vocab (head, len)");
@@ -209,6 +230,13 @@ export class SearchIndex {
 		this.db.exec(`CREATE VIRTUAL TABLE fts USING fts5(body, parts, content='', contentless_delete=1, tokenize='ascii', prefix='2 3')`);
 		this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 		this.db.exec("COMMIT");
+	}
+
+	/** Version 5's: each conversation's tools cursor, at 0 so the start indexes them (`addTools`), and parts by time. */
+	#addToolsCursor(): void {
+		const columns = this.db.prepare("PRAGMA table_info(conv)").all() as { name: string }[];
+		if (!columns.some((column) => column.name === "tools")) this.db.exec("ALTER TABLE conv ADD COLUMN tools INTEGER NOT NULL DEFAULT 0");
+		this.db.exec("CREATE INDEX IF NOT EXISTS part_time ON part (time)");
 	}
 
 	#statement(sql: string): StatementSync {
@@ -223,7 +251,7 @@ export class SearchIndex {
 	#conversation(id: number): ConvRow {
 		let row = this.#conversations.get(id);
 		if (row === undefined) {
-			row = { id, counter: 0, cursor: 0, updated: 0, parent: null, parent_at: null, archived: 0, title: null };
+			row = { id, counter: 0, cursor: 0, updated: 0, parent: null, parent_at: null, archived: 0, title: null, tools: 0 };
 			this.#statement("INSERT OR IGNORE INTO conv (id, counter, cursor, updated) VALUES (?, 0, 0, 0)").run(id);
 			this.#conversations.set(id, row);
 		}
@@ -235,13 +263,18 @@ export class SearchIndex {
 		return this.#conversations.get(conversationId)?.cursor ?? 0;
 	}
 
+	/** The newest entry of the conversation whose tool calls and output are indexed. */
+	toolsCursor(conversationId: number): number {
+		return this.#conversations.get(conversationId)?.tools ?? 0;
+	}
+
 	/** Index entries, each once: one past a conversation's cursor is new. One transaction for all. */
 	add(entries: readonly IndexEntry[]): void {
 		if (entries.length === 0) return;
 		const insertFts = this.#statement("INSERT INTO fts (rowid, body, parts) VALUES (?, ?, ?)");
 		const insertPart = this.#statement("INSERT INTO part (rowid, entry, idx, time) VALUES (?, ?, ?, ?)");
 		const insertVocab = this.#statement("INSERT OR IGNORE INTO vocab (term, head, len) VALUES (?, ?, ?)");
-		const updateConv = this.#statement("UPDATE conv SET counter = ?, cursor = ?, updated = ? WHERE id = ?");
+		const updateConv = this.#statement("UPDATE conv SET counter = ?, cursor = ?, updated = ?, tools = ? WHERE id = ?");
 		const insertFile = this.#statement("INSERT OR IGNORE INTO file_ref (file, entry) VALUES (?, ?)");
 		const touched = new Set<ConvRow>();
 		this.db.exec("BEGIN");
@@ -249,6 +282,9 @@ export class SearchIndex {
 			for (const entry of entries) {
 				const conv = this.#conversation(entry.conversationId);
 				if (entry.entryId <= conv.cursor) continue;
+				// A conversation whose tools are indexed as far as its entries keeps them so; one behind (an index from
+				// before version 5) catches up in its own pass (`addTools`).
+				if (conv.tools >= conv.cursor) conv.tools = entry.entryId;
 				conv.cursor = entry.entryId;
 				conv.updated = Math.max(conv.updated, entry.time);
 				touched.add(conv);
@@ -273,15 +309,54 @@ export class SearchIndex {
 						}
 					}
 					insertFts.run(rowid, body.join(" "), parts.join(" "));
-					insertPart.run(rowid, entry.entryId, part.idx, entry.time);
+					insertPart.run(rowid, part.entry ?? entry.entryId, part.idx, entry.time);
 					this.#countsWritten += 1;
 				}
 			}
-			for (const conv of touched) updateConv.run(conv.counter, conv.cursor, conv.updated, conv.id);
+			for (const conv of touched) updateConv.run(conv.counter, conv.cursor, conv.updated, conv.tools, conv.id);
 			this.db.exec("COMMIT");
 		} catch (error) {
 			this.db.exec("ROLLBACK");
 			// The rows in memory may be ahead of the file: read them again.
+			this.#conversations.clear();
+			for (const row of this.db.prepare("SELECT * FROM conv").all() as ConvRow[]) this.#conversations.set(row.id, { ...row });
+			throw error;
+		}
+	}
+
+	/**
+	 * The tool calls and output of entries indexed before version 5, up to `upTo` (the conversation's cursor when its
+	 * pass began): `entries` hold only those parts. Then the conversation's tools are caught up.
+	 */
+	addTools(conversationId: number, entries: readonly IndexEntry[], upTo: number): void {
+		const conv = this.#conversation(conversationId);
+		if (conv.tools >= upTo) return;
+		const insertFts = this.#statement("INSERT INTO fts (rowid, body, parts) VALUES (?, ?, ?)");
+		const insertPart = this.#statement("INSERT INTO part (rowid, entry, idx, time) VALUES (?, ?, ?, ?)");
+		this.db.exec("BEGIN");
+		try {
+			for (const entry of entries) {
+				if (entry.entryId <= conv.tools || entry.entryId > upTo) continue;
+				for (const part of entry.parts) {
+					if (conv.counter >= MAX_SEQ) break;
+					const tokens = tokenize(part.text.length > MAX_PART ? part.text.slice(0, MAX_PART) : part.text);
+					if (tokens.length === 0) continue;
+					conv.counter += 1;
+					const rowid = conv.id * CONV_SHIFT + conv.counter * 8 + part.kind;
+					insertFts.run(
+						rowid,
+						tokens.filter((token) => token.part !== true).map((token) => token.text).join(" "),
+						tokens.filter((token) => token.part === true).map((token) => token.text).join(" "),
+					);
+					insertPart.run(rowid, part.entry ?? entry.entryId, part.idx, entry.time);
+					this.#countsWritten += 1;
+				}
+			}
+			conv.tools = upTo;
+			this.#statement("UPDATE conv SET counter = ?, tools = ? WHERE id = ?").run(conv.counter, conv.tools, conv.id);
+			this.db.exec("COMMIT");
+		} catch (error) {
+			this.db.exec("ROLLBACK");
 			this.#conversations.clear();
 			for (const row of this.db.prepare("SELECT * FROM conv").all() as ConvRow[]) this.#conversations.set(row.id, { ...row });
 			throw error;
@@ -380,7 +455,7 @@ export class SearchIndex {
 		const typing = options.typing === true && !/\s$/.test(input);
 		const terms = query.terms.flatMap((term, index) => compile(vocabulary, term, { fuzzy: true, typing: typing && index === query.terms.length - 1 }) ?? []);
 		const excluded = query.excluded.flatMap((term) => compile(vocabulary, term, { fuzzy: false }) ?? []);
-		const kinds = options.kinds?.map((kind) => Kind[kind]);
+		const kinds = (options.kinds ?? USER_KINDS).map((kind) => Kind[kind]);
 		const limit = options.limit ?? 20;
 		const offset = options.offset ?? 0;
 		const compiled = terms.map((term) => ({ tokens: term.tokens, prefix: term.prefix, variants: term.variants }));
@@ -451,13 +526,13 @@ export class SearchIndex {
 				let entryId: number | undefined;
 				let time = item.conv.updated;
 				if (kind === "title") {
-					text = await load(source, 0, -1);
+					text = await load(source, 0, -1, Kind.title);
 				} else {
 					const part = partRow.get(rowid) as { entry: number; idx: number; time: number } | undefined;
 					if (part === undefined) continue;
 					entryId = part.entry;
 					time = part.time;
-					text = await load(source, part.entry, part.idx);
+					text = await load(source, part.entry, part.idx, kindOf(rowid));
 				}
 				if (text === undefined) continue;
 				const ranges = highlight(text, item.candidate.exact ? exactTerms : terms);
@@ -575,7 +650,7 @@ export class SearchIndex {
 		const textOf = async (row: Row): Promise<string | undefined> => {
 			if (texts.has(row.rowid)) return texts.get(row.rowid);
 			const conversation = conversationOf(row.rowid);
-			const text = kindOf(row.rowid) === Kind.title ? await load(conversation, 0, -1) : row.entry === null ? undefined : await load(conversation, row.entry, row.idx ?? 0);
+			const text = kindOf(row.rowid) === Kind.title ? await load(conversation, 0, -1, Kind.title) : row.entry === null ? undefined : await load(conversation, row.entry, row.idx ?? 0, kindOf(row.rowid));
 			texts.set(row.rowid, text);
 			return text;
 		};

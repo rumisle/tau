@@ -18,6 +18,9 @@ parentPort!.on("message", (message: WriteMessage | { type: "close" }) => {
 			index.add(message.entries);
 			usage.add(message.usage);
 			break;
+		case "tools":
+			index.addTools(message.conversationId, message.entries, message.upTo);
+			break;
 		case "title":
 			index.setTitle(message.conversationId, message.title);
 			break;

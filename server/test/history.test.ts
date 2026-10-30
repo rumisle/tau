@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ConversationId } from "@earendil-works/pi-durable";
@@ -241,5 +244,62 @@ describe("history", () => {
 		assert.equal(newest.total, 7);
 		await assert.rejects(search(replica.id, { query: "x", cursor: "nonsense" }), /cursor/);
 		await assert.rejects(search(replica.id, { query: "x", in: "tau://ffffffff/1" }), /Not on this server/);
+	});
+
+	test("search: tool calls and output, linked to the call; the user's search leaves them out", async () => {
+		const replica = await chat("Tools");
+		await say(replica, "$ echo narwhal-77 && echo 'Error: narwhal exploded'");
+		await indexed();
+		const calls = await search(replica.id, { query: '"echo narwhal-77"', kinds: ["tool_call"] });
+		assert.equal(calls.total, 1, JSON.stringify(calls));
+		assert.match(calls.hits[0]!.text, /^bash: «echo narwhal-77»/);
+		const call = replica.ordered().find((entry) => entry.kind === "pi.assistant" && JSON.stringify(entry.model).includes("narwhal-77"))!;
+		assert.equal(calls.hits[0]!.link, history.link(replica.id, call.id));
+		const outputs = await search(replica.id, { query: "Error: narwhal", kinds: ["tool_output"] });
+		assert.equal(outputs.total, 1);
+		assert.equal(outputs.hits[0]!.link, history.link(replica.id, call.id), "the output's link is its call's");
+		assert.match(outputs.hits[0]!.text, /«Error:» «narwhal» exploded/);
+		const shown = await read(replica.id, { link: outputs.hits[0]!.link, older: 0, newer: 0 });
+		assert.deepEqual(shown.entries[0]!.parts.map((part) => part.kind), ["tool_call", "tool_output"]);
+		// The user's search: what was said, not the logs.
+		const user = await client.request("search", { query: "narwhal" });
+		assert.ok(user.results.every((result: { hits: { kind: string }[] }) => result.hits.every((hit) => hit.kind !== "tool_call" && hit.kind !== "tool_output")), JSON.stringify(user));
+	});
+});
+
+describe("history index from before tool calls", () => {
+	const dir = mkdtempSync(join(tmpdir(), "tau-history-"));
+	after(() => rmSync(dir, { recursive: true, force: true }));
+
+	test("a start indexes the tool calls and output of the entries indexed before, once", async () => {
+		const database = join(dir, "tau.db");
+		let host = await openHost({ database, devTokensPerSecond: 4_000, cwd: tmpdir() });
+		let server = await serve(host);
+		let client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", {});
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		const { submission } = await client.request("conversation.submit", { conversationId: replica.id, requestId: "old", content: "$ echo okapi-42" });
+		await until(replica, () => replica.submissions.get(submission.id)?.status === "done" && idle(replica));
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		await client.close();
+		await server.close();
+		await host.close();
+		// The index as version 4 left it: no tool parts, no tools cursor.
+		const index = new DatabaseSync(join(dir, "tau.search.db"));
+		index.exec("DELETE FROM fts WHERE rowid IN (SELECT rowid FROM part WHERE (rowid & 7) IN (4, 5))");
+		index.exec("DELETE FROM part WHERE (rowid & 7) IN (4, 5)");
+		index.exec("DROP INDEX part_time");
+		index.exec("ALTER TABLE conv DROP COLUMN tools");
+		index.exec("PRAGMA user_version = 4");
+		index.close();
+		for (let start = 0; start < 2; start++) {
+			host = await openHost({ database, devTokensPerSecond: 4_000, cwd: tmpdir() });
+			server = await serve(host);
+			const found = await host.history.search(replica.id as ConversationId, { query: "okapi", kinds: ["tool_call", "tool_output"] }, BACKGROUND_CONTEXT);
+			assert.deepEqual(found.hits.map((hit) => hit.kind).sort(), ["tool_call", "tool_output"], `start ${start}: ${JSON.stringify(found)}`);
+			await server.close();
+			await host.close();
+		}
 	});
 });

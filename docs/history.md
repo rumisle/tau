@@ -296,10 +296,19 @@ of a transcript's bytes and the user's search would mostly find logs. For agents
 errors. The rowid's three kind bits hold eight values and four are used (user 0, assistant 1, reasoning 2, title 3); the two
 kinds take the next two:
 
-- `tool_call` (4): the tool's name and its arguments as text (`bash npm run build`), whole. Small and dense: searching
-  `edit` finds every edit.
+- `tool_call` (4): the tool's name and its arguments as text, as a hit and a read show it (`bash: npm run build`, the
+  other arguments as `key: value` lines after; `toolCallText` in `server/src/history-text.ts`), whole. Small and
+  dense: searching `edit` finds every edit.
 - `tool_output` (5): the first and last 2 KB of the output. Errors are at the end, headers at the start; the middle of
-  a log is what made indexing it costly.
+  a log is what made indexing it costly. Its `part` row names its call's entry (its link), and the result's distance
+  from it, so its excerpt is read from the result.
+
+The index is version 5 (`server/src/search/index.ts`): each conversation has a `tools` cursor beside its entries' one,
+the newest entry whose tool calls and output are indexed. New entries are indexed with them. An index from before is
+migrated at start (a column and an index on the parts' time, at once) and its tools cursors start at 0: the start's
+backfill first indexes the tool calls and output of each conversation's entries up to its entries' cursor, in the
+backfill's worker thread, then goes on as before. A tool's result in a fork whose call is in its origin is linked to
+the origin's entry.
 
 The user's search does not show them (its `kinds` default stays as it is); ranked by relevance with words in a
 reply, they weigh half, as archived chats do.

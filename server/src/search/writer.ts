@@ -7,6 +7,7 @@ import type { UsageLedger, UsageRow, WarmRow } from "./usage.ts";
 
 export type IndexWriter = {
 	add(entries: IndexEntry[], usage: UsageRow[]): void;
+	addTools(conversationId: number, entries: IndexEntry[], upTo: number): void;
 	setTitle(conversationId: number, title: string): void;
 	setArchived(conversationId: number, archived: boolean): void;
 	setConversation(conversationId: number, info: ConversationInfo): void;
@@ -17,6 +18,7 @@ export type IndexWriter = {
 /** A write, as the worker takes it. */
 export type WriteMessage =
 	| { type: "add"; entries: IndexEntry[]; usage: UsageRow[] }
+	| { type: "tools"; conversationId: number; entries: IndexEntry[]; upTo: number }
 	| { type: "title"; conversationId: number; title: string }
 	| { type: "archived"; conversationId: number; archived: boolean }
 	| { type: "conversation"; conversationId: number; info: ConversationInfo }
@@ -30,6 +32,7 @@ export function localWriter(index: SearchIndex, usage: UsageLedger): IndexWriter
 			index.add(entries);
 			usage.add(rows);
 		},
+		addTools: (conversationId, entries, upTo) => index.addTools(conversationId, entries, upTo),
 		setTitle: (conversationId, title) => index.setTitle(conversationId, title),
 		setArchived: (conversationId, archived) => index.setArchived(conversationId, archived),
 		setConversation: (conversationId, info) => index.setConversation(conversationId, info),
@@ -71,6 +74,10 @@ export class WorkerWriter implements IndexWriter {
 	add(entries: IndexEntry[], usage: UsageRow[]): void {
 		if (entries.length === 0 && usage.length === 0) return;
 		this.#post({ type: "add", entries, usage });
+	}
+
+	addTools(conversationId: number, entries: IndexEntry[], upTo: number): void {
+		this.#post({ type: "tools", conversationId, entries, upTo });
 	}
 
 	setTitle(conversationId: number, title: string): void {

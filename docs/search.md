@@ -6,8 +6,9 @@ offline search yet: the cached transcripts are not indexed on the phone.
 ## What is indexed
 
 What the user wrote, what the model answered, and its reasoning, as separate parts; conversation titles. Tool calls and
-tool output are not indexed: they are most of a transcript's bytes (873 MB of pi sessions hold 28.6M characters of
-prompts, answers and reasoning) and searching them would mostly find logs. A subagent's report counts as the agent's
+the first and last 2 KB of tool output are indexed too, for agents (`history_search`, docs/history.md), but the user's
+search leaves them out: they are most of a transcript's bytes (873 MB of pi sessions hold 28.6M characters of prompts,
+answers and reasoning) and would mostly find logs. A subagent's report counts as the agent's
 answer. Failed model responses are not indexed: the server retried them, or the chat shows their error.
 
 ## Index
@@ -19,7 +20,7 @@ answer. Failed model responses are not indexed: the server retried them, or the 
   always exactly what matched. Tokens are lowercased runs of letters and digits without diacritics; each CJK character
   is a token, and a CJK query is a phrase of its characters, so it matches as a substring; identifiers also yield their
   parts (`palette` finds `CommandPalette`).
-- The rowid is `conversation * 2^25 + seq * 8 + kind`: grouping by conversation and filtering by kind read the full-text
+- The rowid is `conversation * 2^25 + seq * 8 + kind` (user 0, assistant 1, reasoning 2, title 3, tool call 4, tool output 5): grouping by conversation and filtering by kind read the full-text
   table alone, with bit operations.
 - Written as entries are committed (the Session's commit stream), so there is no refresh pass; on start the server
   indexes what was written before the index caught up, a page at a time. Each entry is indexed once, as its own
