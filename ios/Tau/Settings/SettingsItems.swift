@@ -542,7 +542,8 @@ final class SettingsProfileItemNode: ListViewItemNode {
             let (subtitleLayout, subtitleApply) = makeSubtitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.subtitle, font: Font.regular(17.0), textColor: item.theme.list.itemSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: params.width - 40.0, height: 30.0)))
             let height = avatarSize + 14.0 + titleLayout.size.height + 2.0 + subtitleLayout.size.height
             let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets(top: 8.0, left: 0.0, bottom: 4.0, right: 0.0))
-            let avatar = Avatar.image(letters: "τ", colorIndex: 5, diameter: avatarSize)
+            // tau's own, in the accent of the theme on screen (as the Live Activity's τ is).
+            let avatar = Avatar.image(letters: "τ", accent: item.theme.accent.rgb(for: item.theme.builtin), diameter: avatarSize)
             return (layout, {
                 guard let self else {
                     return
@@ -550,6 +551,10 @@ final class SettingsProfileItemNode: ListViewItemNode {
                 let _ = titleApply()
                 let _ = subtitleApply()
                 self.avatarNode.image = avatar
+                self.avatarNode.isAccessibilityElement = true
+                self.avatarNode.accessibilityIdentifier = "tauAvatar"
+                self.avatarNode.accessibilityLabel = "tau"
+                self.avatarNode.accessibilityValue = String(format: "%06x", item.theme.accent.rgb(for: item.theme.builtin))
                 self.avatarNode.frame = CGRect(x: floor((params.width - avatarSize) / 2.0), y: 0.0, width: avatarSize, height: avatarSize)
                 self.titleNode.frame = CGRect(origin: CGPoint(x: floor((params.width - titleLayout.size.width) / 2.0), y: avatarSize + 14.0), size: titleLayout.size)
                 self.subtitleNode.frame = CGRect(origin: CGPoint(x: floor((params.width - subtitleLayout.size.width) / 2.0), y: self.titleNode.frame.maxY + 2.0), size: subtitleLayout.size)

@@ -22,6 +22,12 @@ one until the window reports it. The colors are Telegram's base colors
 white only for Night, and no gray for Night (ThemePickerController). tau's default is Telegram's pink, `0xeb6ca4`.
 Telegram's presets (an accent with bubble gradients and a wallpaper) and custom colors are not offered.
 
+tau's own τ (the header of Settings and About) is in the accent: Telegram's avatar gradient made from it, the accent at
+the bottom and a lighter tint of it on top (`Avatar.image(letters:accent:diameter:)`), so yellow and gray, which have no
+avatar palette, have one too. White, Night's, goes from white down to a light gray under a dark τ; black, Day's,
+lightens to a dark gray on top. The Live Activity's τ and ring take the accent too (`ContentState.accent`); the app icon
+does not.
+
 A theme is made as Telegram makes a built-in theme with an accent (`makePresentationTheme(mediaBox:themeReference:
 accentColor:)`): `customizePresentationTheme(..., editing: true, accentColor:, baseColor:)`, which tints buttons,
 links, checks, switches and the tab bar, and the outgoing bubbles of Day and Night; Tinted Night derives its

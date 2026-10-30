@@ -2199,16 +2199,50 @@ final class SendingUITests: XCTestCase {
         }
     }
 
+    /// tau's τ in Settings' header is in the accent, and follows it at once: yellow, then blue picked in Appearance.
+    func testAvatarFollowsAccent() {
+        self.launch(["-theme", "classic", "-accent", "yellow", "-tab", "1"])
+        self.addTeardownBlock { [weak self] in
+            self?.resetAccent()
+        }
+        let avatar = self.app.descendants(matching: .any)["tauAvatar"].firstMatch
+        XCTAssertTrue(avatar.waitForExistence(timeout: 5), "the τ in Settings' header")
+        XCTAssertEqual(avatar.value as? String, "edb400", "yellow")
+        self.app.descendants(matching: .any)["Appearance"].firstMatch.tap()
+        let blue = self.app.descendants(matching: .any)["accent-blue"].firstMatch
+        XCTAssertTrue(blue.waitForExistence(timeout: 5))
+        blue.tap()
+        settle()
+        self.point(0.1, 0.08).tap()
+        settle()
+        XCTAssertEqual(avatar.value as? String, "0088ff", "blue, once picked")
+    }
+
+    /// For screenshots of the τ: TAU_SHOT_THEME and TAU_SHOT_ACCENT, Settings' header.
+    func testShotAvatar() {
+        let env = ProcessInfo.processInfo.environment
+        self.launch(["-theme", env["TAU_SHOT_THEME"] ?? "classic", "-accent", env["TAU_SHOT_ACCENT"] ?? "pink", "-tab", "1"])
+        self.addTeardownBlock { [weak self] in
+            self?.resetAccent()
+        }
+        sleep(1)
+        self.shot("avatar-\(env["TAU_SHOT_THEME"] ?? "classic")-\(env["TAU_SHOT_ACCENT"] ?? "pink")")
+    }
+
+    /// tau's pink again, for the tests after.
+    private func resetAccent() {
+        self.app.terminate()
+        self.app.launchArguments = ["-server.url", devServer, "-uiTesting", "YES", "-accent", "pink"]
+        self.app.launch()
+        sleep(1)
+    }
+
     /// The accent picked is the app's in every theme: with Auto-Night following the phone, the night theme of a
     /// phone in dark mode has it too, not tau's pink (Raya's yellow that went pink for a while).
     func testAccentFollowsNight() {
         self.launch(["-theme", "classic", "-appearance", "YES"])
-        defer {
-            // The next tests have tau's.
-            self.app.terminate()
-            self.app.launchArguments = ["-server.url", devServer, "-uiTesting", "YES", "-accent", "pink"]
-            self.app.launch()
-            sleep(1)
+        self.addTeardownBlock { [weak self] in
+            self?.resetAccent()
         }
         self.app.descendants(matching: .any)["System"].firstMatch.tap()
         let yellow = self.app.descendants(matching: .any)["accent-yellow"].firstMatch
