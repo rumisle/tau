@@ -168,6 +168,8 @@ function reply(messages: readonly Message[]) {
 	// System messages carry prompt changes; the request is about the message before them.
 	const last = messages.findLast((message) => (message.role as string) !== "system");
 	if (last?.role === "toolResult" && last.toolName === "codemode") return fauxAssistantMessage([fauxText(last.isError ? "The script failed." : "Ran the script.")]);
+	// The history tools' JSON is for the model; the card shows it.
+	if (last?.role === "toolResult" && last.toolName.startsWith("history_")) return fauxAssistantMessage([fauxText(last.isError ? "That failed." : "Looked it up.")]);
 	if (last?.role === "toolResult") {
 		const output = last.content.map((part) => (part.type === "text" ? part.text : `[${part.type}]`)).join("");
 		return fauxAssistantMessage([fauxText(`Ran it${last.isError ? " (it failed)" : ""}:\n\n\`\`\`\n${output.trimEnd()}\n\`\`\``)]);
@@ -182,6 +184,27 @@ function reply(messages: readonly Message[]) {
 		const script = command.slice(6);
 		const code = script.startsWith("@") ? readFileSync(script.slice(1).trim(), "utf8") : script;
 		return fauxAssistantMessage([fauxToolCall("codemode", { code })], { stopReason: "toolUse" });
+	}
+	// `!tool <name> <JSON arguments | key=value …>`: a call of any tool, as a model makes it (the history tools' cards, for one).
+	const tool = /^!tool ([\w-]+)(?: ([\s\S]*))?$/.exec(command);
+	if (tool !== null) {
+		let args: Record<string, unknown> = {};
+		const given = (tool[2] ?? "").trim();
+		if (given.startsWith("{")) {
+			try {
+				args = JSON.parse(given) as Record<string, unknown>;
+			} catch {
+				return fauxAssistantMessage([fauxText(`Not JSON: ${given}`)]);
+			}
+		} else {
+			// Or `key=value` pairs, which a phone's keyboard types without curly quotes: numbers and booleans as such,
+			// a value with commas a list.
+			for (const pair of given.split(/\s+/).filter((each) => each.includes("="))) {
+				const [key, value] = [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)];
+				args[key] = value.includes(",") ? value.split(",") : /^-?\d+$/.test(value) ? Number(value) : value === "true" ? true : value === "false" ? false : value;
+			}
+		}
+		return fauxAssistantMessage([fauxToolCall(tool[1]!, args as Parameters<typeof fauxToolCall>[1])], { stopReason: "toolUse" });
 	}
 	if (text.startsWith("$ ")) {
 		return fauxAssistantMessage([fauxToolCall("bash", { command: text.slice(2) })], { stopReason: "toolUse" });

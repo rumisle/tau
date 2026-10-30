@@ -37,6 +37,8 @@ final class ChatMessageItemInteraction {
     var openLinkMenu: (String, Int, TapLongTapOrDoubleTapGestureRecognizer) -> Void = { _, _, _ in }
     /// A tool card's Show All: its whole text, in a viewer.
     var openToolText: (ChatMessage) -> Void = { _ in }
+    /// A history card's hit or message: the chat it is in, opened at it.
+    var openHistoryLink: (ChatMessage, String) -> Void = { _, _ in }
     /// A file's row: where the file is, as its circle shows; a tap fetches, stops fetching, or opens it.
     var fileStatus: (FileAttachment) -> Signal<FileTransferStatus, NoError> = { file in .single(file.localURL.map { .local($0) } ?? .remote) }
     var openFile: (FileAttachment, FileTransferStatus) -> Void = { _, _ in }
@@ -570,6 +572,14 @@ final class ChatMessageItemNode: ListViewItemNode {
             return
         }
         let point = self.view.convert(location, to: self.contentNode.view)
+        // A history card's hit or message: its chat, at it.
+        if !self.toolTextNode.isHidden, self.toolTextNode.frame.contains(point) {
+            let local = self.contentNode.view.convert(point, to: self.toolTextNode.view)
+            if let (_, attributes) = self.toolTextNode.attributesAtPoint(local, orNearest: false), let url = attributes[MarkdownText.urlKey] as? String {
+                item.interaction.openHistoryLink(item.message, url)
+                return
+            }
+        }
         if let frame = self.toolShowAllFrame, frame.contains(point) {
             item.interaction.openToolText(item.message)
             return
@@ -2044,7 +2054,18 @@ final class ChatMessageItemNode: ListViewItemNode {
                 // Title: the tool, then what it works on, as a terminal agent prints a call.
                 let title = NSMutableAttributedString(string: titleText, font: toolTitleFont, textColor: status == .failed ? item.theme.list.itemDestructiveColor : theme.toolCardTitleColor)
                 if !summaryText.isEmpty {
-                    title.append(NSAttributedString(string: "  " + summaryText, font: Font.monospace(13.0), textColor: theme.toolCardTextColor))
+                    // A history card's: what is written as written in monospace, then words in the text font.
+                    let parts = summaryText.components(separatedBy: historyWordsMark)
+                    if !parts[0].isEmpty {
+                        title.append(NSAttributedString(string: "  " + parts[0], font: Font.monospace(13.0), textColor: theme.toolCardTextColor))
+                    }
+                    if parts.count > 1 {
+                        title.append(NSAttributedString(string: "  " + parts[1], font: Font.regular(13.0), textColor: theme.toolCardTextColor))
+                    }
+                }
+                var isHistory = false
+                if case .history = tool?.detail {
+                    isHistory = true
                 }
                 // Its time at the right of the title: ticking while it runs past a second, then how long it took.
                 let runningSince = status == .running ? tool?.startedAt : nil
@@ -2062,7 +2083,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                     timerReserve = timerWidth(finalTime) + 8.0
                 }
                 let titleWidth = maxWidth - (isActive ? 22.0 : 0.0) - timerReserve
-                let (titleLayout, titleApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: title, maximumNumberOfLines: item.isExpanded ? 6 : 1, truncationType: .end, constrainedSize: CGSize(width: titleWidth, height: .greatestFiniteMagnitude)))
+                // A history card's call wraps rather than cut.
+                let (titleLayout, titleApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: title, maximumNumberOfLines: item.isExpanded ? 6 : (isHistory ? 3 : 1), truncationType: .end, constrainedSize: CGSize(width: titleWidth, height: .greatestFiniteMagnitude)))
 
                 if body.length > 0, body.string.hasSuffix("\n") {
                     body.deleteCharacters(in: NSRange(location: body.length - 1, length: 1))
@@ -2987,6 +3009,17 @@ func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, is
     if case let .code(script, error) = tool?.detail {
         return ("Code", codeCallCount(tool?.nested.count ?? 0), codeCardBody(script: script, calls: tool?.nested ?? [], output: output, error: error, isExpanded: isExpanded, isActive: isActive, errorColor: isDark ? diffRemovedDark : diffRemovedLight, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth, limit: limit, cuts: cuts))
     }
+    if case let .history(code, words) = tool?.detail {
+        let title = toolCardTitle(name)
+        // Failed: the error under the title, which says so in the destructive color.
+        if tool?.status == .failed {
+            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? limit : 3, fromStart: true, cuts: isExpanded ? cuts : nil), font: Font.regular(12.0), textColor: textColor))
+            return (title, historySummary(code: code, words: words), body)
+        }
+        let (chatTitle, historyBody) = HistoryCard.body(name: name, output: output, isExpanded: isExpanded, limit: limit, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth, cuts: cuts)
+        // A read names its chat by its title once it has it.
+        return (title, historySummary(code: chatTitle ?? code, words: words), historyBody)
+    }
     if tool?.status == .failed, !output.isEmpty {
         let errorColor = isDark ? diffRemovedDark : diffRemovedLight
         switch tool?.detail ?? .none {
@@ -3056,7 +3089,7 @@ func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, is
             body.append(NSAttributedString(string: "\n" + output, font: codeFont, textColor: removed))
         }
         return ("Edit", shortPath(path, isExpanded: isExpanded) + "  +\(addedCount) −\(removedCount)", body)
-    case .code:
+    case .code, .history:
         // Made above.
         return (name, "", body)
     case .none:
@@ -3075,29 +3108,15 @@ func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, is
     }
 }
 
+/// A history card's first line after its title: what is written as written, then, after `historyWordsMark`, words.
+let historyWordsMark = "\u{1F}"
+private func historySummary(code: String, words: String) -> String {
+    return words.isEmpty ? code : code + historyWordsMark + words
+}
+
 /// "3 calls", as the title of a script's card counts them; nothing before the first.
 private func codeCallCount(_ count: Int) -> String {
     return count == 0 ? "" : (count == 1 ? "1 call" : "\(count) calls")
-}
-
-/// A tool's name as its own card's title says it.
-private func toolTitle(_ name: String) -> String {
-    switch name {
-    case "bash":
-        return "Bash"
-    case "read":
-        return "Read"
-    case "write":
-        return "Write"
-    case "edit":
-        return "Edit"
-    case "send_file":
-        return "Send"
-    case "subagent":
-        return "Subagent"
-    default:
-        return name
-    }
 }
 
 /// A code mode script's card (docs/codemode.md): the script, highlighted; a line for each call it made, as the call's
@@ -3153,7 +3172,7 @@ private func codeCardBody(script: String, calls: [NestedToolCall], output: Strin
             } else if let duration = call.duration, duration >= 1.0 {
                 suffix = "  " + formatDuration(duration)
             }
-            body.append(fittedLine(name: toolTitle(call.name), nameFont: nameFont, nameColor: nameColor, detail: call.summary.replacingOccurrences(of: "\n", with: " "), detailFont: codeFont, detailColor: call.status == .running ? titleColor : textColor, suffix: suffix, maxWidth: maxWidth))
+            body.append(fittedLine(name: toolCardTitle(call.name), nameFont: nameFont, nameColor: nameColor, detail: call.summary.replacingOccurrences(of: "\n", with: " "), detailFont: codeFont, detailColor: call.status == .running ? titleColor : textColor, suffix: suffix, maxWidth: maxWidth))
             // At work: the last line it wrote, as a command's card ends with its output.
             if call.status == .running, let last = call.output?.components(separatedBy: "\n").last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
                 body.append(NSAttributedString(string: "\n" + fittedText(last.trimmingCharacters(in: .whitespaces), font: codeFont, maxWidth: maxWidth), font: codeFont, textColor: textColor))

@@ -42,6 +42,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/media.md` | Images by reference: a photo or a tool's image laid out from its size, fetched when shown |
 | `docs/files.md` | Files: kept beside the database, named to the model by path, sent back with `send_file`, shown as Telegram's documents |
 | `docs/search.md` | Search: the index each server keeps as entries are written (`server/src/search`), matching and ranking, and the benchmark |
+| `docs/history.md` | history_search and history_read: an agent searches and reads the server's chats by tau link, its own past compaction, its subagents', its owner's; tool calls and output in the index; the cards |
 | `docs/links.md` | tau's links to chats and messages: copying, opening, the cards they show |
 | `docs/quotes.md` | Quoting selected text into the field: `<tau:quote>`, how the field and the chat show it |
 | `docs/share.md` | The share extension (`ios/TauShare`): sending to chats or a new one from any app |
@@ -77,12 +78,13 @@ stays apart, so a deploy replaces it freely. `server/contrib/tau-server.service`
 
 ## The dev model
 
-`dev/echo` is free: it echoes, runs `$ <command>` through bash, starts a subagent for
-`& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`, fails as an overloaded
-provider `!overloaded <times> <text>`, for good `!fatal <text>` or for good once `!flaky <text>` (a continue then
-answers), streams a long Markdown answer for `!doc <sections>`, answers all at once as a buffering provider for
-`!burst <text>`, reads a file for `!read <path>`, runs a code mode script for `!code <script>` or `!code @<path>`,
-writes a slow tool call for `!longcall <n>`, and writes a short summary when asked to compact. `--dev-cache-ttl <seconds>` gives it a prompt cache and prices, to try cache warming.
+`dev/echo` is free: it echoes, runs `$ <command>` through bash, starts a subagent for `& <name> [fork] [model=…]
+[thinking=…]: <task>`, waits before answering `~<seconds> <text>`, fails as an overloaded provider `!overloaded <times>
+<text>`, for good `!fatal <text>` or for good once `!flaky <text>` (a continue then answers), streams a long Markdown
+answer for `!doc <sections>`, answers all at once as a buffering provider for `!burst <text>`, reads a file for `!read
+<path>`, runs a code mode script for `!code <script>` or `!code @<path>`, writes a slow tool call for `!longcall <n>`,
+calls any tool for `!tool <name> <JSON or key=value arguments>`, and writes a short summary when asked to compact.
+`--dev-cache-ttl <seconds>` gives it a prompt cache and prices, to try cache warming.
 
 ## The app
 

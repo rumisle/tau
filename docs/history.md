@@ -277,9 +277,9 @@ After durable's `src/truncate.ts`, the one `read` uses: lines and bytes, whole l
 
 | Where | How | Limit |
 |---|---|---|
-| A part in a window | `truncateHead`; `truncateTail` for `tool_output` (a command says how it went at the end, as bash keeps its tail) | 2,000 bytes or 40 lines |
+| A part in a window | From the head; from the tail for `tool_output` (a command says how it went at the end, as bash keeps its tail) | 2,000 bytes or 40 lines |
 | A hit's `text` | The excerpt around the match | about 300 characters |
-| An entry alone (`older: 0, newer: 0`) | `truncateHead`, from `offset` | 2,000 lines or 50 KB, as `read` |
+| An entry alone (`older: 0, newer: 0`) | From the head, from `offset` | 2,000 lines or 50 KB, as `read` |
 
 A cut part has `truncated` and `next`; following `next` reads the entry alone from the line after, as `read` continues
 a file. `truncate: false` turns all of it off: every part whole.
@@ -312,14 +312,14 @@ the newest entry whose tool calls and output are indexed. New entries are indexe
 migrated at start (a column and an index on the parts' time, at once) and its tools cursors start at 0: the start's
 backfill first indexes the tool calls and output of each conversation's entries up to its entries' cursor, in the
 backfill's worker thread, then goes on as before. A tool's result in a fork whose call is in its origin is linked to
-the origin's entry.
+the origin's entry. On a copy of chorus's database (160 MB, 202 chats) that pass indexed the tool calls and output of
+12,041 entries in 1.2 s, and the index grew from 9 to 25 MB.
 
 The user's search does not show them (its `kinds` default stays as it is); ranked by relevance with words in a
 reply, they weigh half, as archived chats do.
 
 **The scan cap.** A search reads at most the 50,000 newest matching parts (`MAX_MATCHES`). A search with `limit: -1`
-or a cursor past the cap reports `complete: false` and `total` as a floor. Whether `-1` should lift the cap is to be
-measured (below).
+or a cursor past the cap reports `complete: false` and `total` as a floor. The benchmark kept it (Speed).
 
 **Exact and smart case.** The index tokenizes in lower case; the literal check after it is what makes a match exact
 and case sensitive. Nothing in the index changes for them.
@@ -363,7 +363,7 @@ One rule, which the rest follows: **the first line is the call; below it is the 
 
 - **The first line** is the tool and every argument that is not a default: the query and links as written, in
   monospace; words for the rest (`tool calls`, `this chat`, `subagents`, `10 older`), in the text font. It wraps
-  rather than cut.
+  rather than cut (to three lines folded). A read's link gives way to its chat's title once the result is in.
 - **The result** starts with what it amounts to: `9 results`, `7 messages`, `No results`. Then a line per item, then
   what is not shown.
 
@@ -385,16 +385,21 @@ Bash  npm run hydrate:model-data
 Answer  缺了 identity.ts，先 hydrate 模型数据再 build
 ```
 
-- **A hit** is a line as a code card's call is: the chat's title in semibold 12, the excerpt in monospace 12, its time
-  at the right in the dim color. The matched words are the title color, brighter than the rest; nothing in the card
-  is the accent. In one chat's search the line starts with the part's kind (Answer, User, Reasoning) instead of the
-  chat.
-- **A message** in a read is a line: its part's kind as a name (User, Bash, Output, Reasoning, Answer), then its text.
-  A tool call is named by its tool's card title.
-- **Folded**: the first three hits, then `N more`; the last three messages, after `N earlier`, as a code card shows
-  the last three calls after "N earlier calls". **Unfolded**: all of them.
+- **A hit** is a line as a code card's call is: the chat's title in semibold 12, the excerpt in monospace 12 cut to
+  the line, its time at the right in the dim color (the text node has no tab stops: a space kerned to the width
+  places it). The matched words are the title color, brighter than the rest; nothing in the card is the accent. When
+  every hit is in one chat the line starts with the part's kind (User, Answer, Reasoning, Call, Output) instead of
+  the chat.
+- **A message** in a read is a line per part: its kind as a name (User, Output, Reasoning, Answer, Summary for a
+  compaction's, Error), then its text. A tool call is named by its tool's card title, and its text is the call
+  without the tool's name.
+- **Folded**: the first three hits, then `N more` (of the total, so also those on later pages); the last three
+  lines, after `N earlier`, as a code card shows the last three calls after "N earlier calls". **Unfolded**: all of
+  those the result has.
 - **A tap** on a hit or a message opens its chat at it, the words marked, as a search result opens one (docs/links.md).
-- **Failed**: the title in the destructive color, the error under it (`Not on this server.`).
+- **Failed**: the title in the destructive color, the error under it (`Not on this server: …`).
+- **The model's JSON is not read when cut**: a result past the harness's output limit (a `limit: -1` the model asked
+  for, which is a script's thing) shows as its text.
 - **In a script**: a line in the code card with the call's first line (`History search  "npm run build" tool calls`),
   as for any nested call.
 - **Links in the answer** are the link cards docs/links.md already draws: an answer that cites three places shows
@@ -438,6 +443,10 @@ With the reads, `limit: -1` over `error` is about 0.45 s and over `the` 0.9 s (1
 4. **`sort`, `limit: -1`, the scan cap's `complete`**, after the benchmark; and `text: false`, which the benchmark
    showed is worth having.
 5. **The cards** in the app, and their UI tests.
+
+Built: `server/src/history.ts`, `history-text.ts` and the index's `hits()`, `ios/Tau/Chat/HistoryCard.swift`.
+`testHistoryCards` (`ios/TauUITests/SendingUITests.swift`) drives the cards with the dev model's `!tool <name>
+key=value …`, which calls any tool.
 
 Tests: `server/test/history.test.ts` with the dev model: a conversation compacted, a subagent, a fork; search finds
 past the head, in subagents and in the owner; read pages by `older` until it ends; `next` round-trips;

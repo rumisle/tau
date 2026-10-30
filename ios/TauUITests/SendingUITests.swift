@@ -1064,6 +1064,69 @@ final class SendingUITests: XCTestCase {
         self.shot("subfail-0-card")
     }
 
+    /// The history tools' cards (docs/history.md, In the app): the call on the first line, the result under it, a line
+    /// per hit or message, folded to three; a tap on a hit opens its chat at it; a failed call says why; in a script,
+    /// a line of the code card.
+    func testHistoryCards() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        for word in ["axolotl one", "axolotl two", "axolotl three", "axolotl four"] {
+            self.type(word)
+            self.send()
+            XCTAssertTrue(self.app.waitForEcho(word))
+        }
+        self.app.waitForIdle()
+        self.type("!tool history_search query=axolotl in=this kinds=user")
+        self.send()
+        let search = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label BEGINSWITH 'History search'")).firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        self.app.waitForIdle()
+        settle()
+        // The four, and the message asking.
+        XCTAssertTrue(search.label.contains("5 results"), search.label)
+        XCTAssertTrue(search.label.contains("2 more"), "folded to three: \(search.label)")
+        self.shot("history-0-search")
+        // The title: a tap on a line would open its hit.
+        search.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.0)).withOffset(CGVector(dx: 0.0, dy: 14.0)).tap()
+        settle()
+        self.shot("history-1-search-expanded")
+        XCTAssertFalse(search.label.contains("more"), "unfolded, all five: \(search.label)")
+        self.type("!tool history_read older=3")
+        self.send()
+        let read = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label BEGINSWITH 'History read'")).firstMatch
+        XCTAssertTrue(read.waitForExistence(timeout: 10))
+        self.app.waitForIdle()
+        settle()
+        XCTAssertTrue(read.label.contains("4 messages"), read.label)
+        self.shot("history-2-read")
+        self.type("!tool history_read link=tau://ffffffff/1")
+        self.send()
+        let failed = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label CONTAINS 'Not on this server'")).firstMatch
+        XCTAssertTrue(failed.waitForExistence(timeout: 10))
+        self.app.waitForIdle()
+        settle()
+        self.shot("history-3-failed")
+        // Written to a file: the keyboard would curl the script's quotes.
+        try? "await tools.history_search({ query: \"axolotl\", kinds: [\"user\"] });\nreturn \"done\";\n".write(toFile: "\(uiDirectory)/history.js", atomically: true, encoding: .utf8)
+        self.type("!code @\(uiDirectory)/history.js")
+        self.send()
+        let script = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label BEGINSWITH 'Code' AND label CONTAINS 'History search'")).firstMatch
+        XCTAssertTrue(script.waitForExistence(timeout: 10))
+        self.app.waitForIdle()
+        settle()
+        self.shot("history-4-script")
+        // A hit opens its chat at it, its words marked: here this chat, scrolled back to its first message.
+        self.app.swipeDown()
+        settle()
+        XCTAssertTrue(search.isHittable, "the search's card on screen")
+        search.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1.0)).withOffset(CGVector(dx: 0.0, dy: -14.0)).tap()
+        sleep(2)
+        settle()
+        self.shot("history-5-opened")
+        let first = self.app.descendants(matching: .any).matching(identifier: "userMessage").matching(NSPredicate(format: "label == %@", "axolotl one")).firstMatch
+        XCTAssertTrue(first.isHittable, "at the first message")
+    }
+
     /// An answer in a chat that is not on screen: Telegram's banner; and Settings > Notifications.
     func testInAppNotification() {
         self.launch(["-newChat", "YES"])

@@ -775,6 +775,9 @@ enum ToolSummary {
             return .edit(path: path, diff: lines.joined(separator: "\n"))
         case "codemode":
             return .code(script: arguments.string("code") ?? "", error: nil)
+        case HistoryCard.searchName, HistoryCard.readName:
+            let call = HistoryCard.call(name: name, arguments: arguments)
+            return .history(code: call.code, words: call.words)
         default:
             return .none
         }
@@ -908,6 +911,9 @@ enum ToolSummary {
             return path()
         case "codemode":
             return ""
+        case HistoryCard.searchName, HistoryCard.readName:
+            let call = HistoryCard.call(name: name, arguments: arguments)
+            return [call.code, call.words].filter { !$0.isEmpty }.joined(separator: "  ")
         case "send_file":
             return ((arguments["paths"] as? [Any]) ?? []).compactMap { ($0 as? String)?.split(separator: "/").last.map(String.init) }.joined(separator: ", ")
         case "subagent":

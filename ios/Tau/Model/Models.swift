@@ -208,6 +208,9 @@ enum ToolDetail: Equatable {
     case edit(path: String, diff: String)
     /// A code mode script, and once it failed, its error (the output it wrote before is the call's output).
     case code(script: String, error: String?)
+    /// history_search or history_read (docs/history.md): the call as its first line says it, what is written as
+    /// written (`code`) and words for the rest; the result is the call's output, JSON.
+    case history(code: String, words: String)
 }
 
 /// A file of a message, the user's or what the agent sent (docs/files.md): on the server once it has its ID, fetched
