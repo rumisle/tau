@@ -1070,42 +1070,60 @@ final class SendingUITests: XCTestCase {
     func testHistoryCards() {
         self.launch(["-newChat", "YES"])
         self.focusInput()
-        for word in ["axolotl one", "axolotl two", "axolotl three", "axolotl four"] {
+        let long = "axolotl four lives in the lakes of Xochimilco and grows back its limbs, which is why biologists study it so closely"
+        for word in ["axolotl one", "axolotl two", "axolotl three", long] {
             self.type(word)
             self.send()
-            XCTAssertTrue(self.app.waitForEcho(word))
+            XCTAssertTrue(self.app.waitForEcho(String(word.prefix(20))))
         }
         self.app.waitForIdle()
-        self.type("!tool history_search query=axolotl in=this kinds=user")
+        // A page of a larger search: four hits of what the user wrote and the answers.
+        self.type("!tool history_search query=axolotl in=this kinds=user,assistant limit=4")
         self.send()
         let search = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label BEGINSWITH 'History search'")).firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 10))
         self.app.waitForIdle()
         settle()
-        // The four, and the message asking.
-        XCTAssertTrue(search.label.contains("5 results"), search.label)
-        XCTAssertTrue(search.label.contains("2 more"), "folded to three: \(search.label)")
+        XCTAssertTrue(search.label.contains("User, Answer"), "the kinds as a set: \(search.label)")
+        XCTAssertTrue(search.label.contains("in this chat"), search.label)
+        XCTAssertFalse(search.label.contains("results"), "no count line: \(search.label)")
+        XCTAssertTrue(search.label.contains(" more"), "folded to three: \(search.label)")
         self.shot("history-0-search")
-        // The title: a tap on a line would open its hit.
-        search.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.0)).withOffset(CGVector(dx: 0.0, dy: 14.0)).tap()
+        search.tap()
         settle()
         self.shot("history-1-search-expanded")
-        XCTAssertFalse(search.label.contains("more"), "unfolded, all five: \(search.label)")
-        self.type("!tool history_read older=3")
+        // Unfolded: the four it returned, each on up to two lines, and what the search has past them.
+        XCTAssertTrue(search.label.contains(" more"), "the search's rest: \(search.label)")
+        XCTAssertTrue(search.label.contains("Xochimilco"), "the long one wraps: \(search.label)")
+        XCTAssertFalse(self.app.descendants(matching: .any)["Show All"].exists, "no Show All")
+        self.type("!tool history_read older=3 kinds=user,assistant")
         self.send()
         let read = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label BEGINSWITH 'History read'")).firstMatch
         XCTAssertTrue(read.waitForExistence(timeout: 10))
         self.app.waitForIdle()
         settle()
-        XCTAssertTrue(read.label.contains("4 messages"), read.label)
+        // The chat by its title, then the arguments.
+        XCTAssertTrue(read.label.hasPrefix("History read  Axolotl one    "), read.label)
+        XCTAssertTrue(read.label.contains("User, Answer") && read.label.contains("3 older"), read.label)
+        XCTAssertFalse(read.label.contains("messages"), read.label)
         self.shot("history-2-read")
+        read.tap()
+        settle()
+        self.shot("history-3-read-expanded")
+        self.type("!tool history_search query=quetzal in=this kinds=assistant")
+        self.send()
+        let empty = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label CONTAINS 'quetzal' AND label CONTAINS 'No results'")).firstMatch
+        XCTAssertTrue(empty.waitForExistence(timeout: 10))
+        self.app.waitForIdle()
+        settle()
+        self.shot("history-4-empty")
         self.type("!tool history_read link=tau://ffffffff/1")
         self.send()
         let failed = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'toolCard' AND label CONTAINS 'Not on this server'")).firstMatch
         XCTAssertTrue(failed.waitForExistence(timeout: 10))
         self.app.waitForIdle()
         settle()
-        self.shot("history-3-failed")
+        self.shot("history-5-failed")
         // Written to a file: the keyboard would curl the script's quotes.
         try? "await tools.history_search({ query: \"axolotl\", kinds: [\"user\"] });\nreturn \"done\";\n".write(toFile: "\(uiDirectory)/history.js", atomically: true, encoding: .utf8)
         self.type("!code @\(uiDirectory)/history.js")
@@ -1114,16 +1132,17 @@ final class SendingUITests: XCTestCase {
         XCTAssertTrue(script.waitForExistence(timeout: 10))
         self.app.waitForIdle()
         settle()
-        self.shot("history-4-script")
-        // A tap anywhere on the card, a line too, folds it again: lines open nothing.
-        self.app.swipeDown()
-        settle()
+        self.shot("history-6-script")
+        // A tap on a line folds the card again, as anywhere on it: lines open nothing.
+        for _ in 0 ..< 8 where !search.isHittable {
+            self.app.swipeDown(velocity: .slow)
+            settle()
+        }
         XCTAssertTrue(search.isHittable, "the search's card on screen")
-        search.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1.0)).withOffset(CGVector(dx: 0.0, dy: -14.0)).tap()
+        search.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1.0)).withOffset(CGVector(dx: 0.0, dy: -24.0)).tap()
         settle()
-        self.shot("history-5-folded")
-        XCTAssertTrue(search.label.contains("more"), "folded again: \(search.label)")
-        XCTAssertFalse(self.app.descendants(matching: .any)["Show All"].exists)
+        XCTAssertFalse(search.label.contains("Xochimilco"), "folded again: \(search.label)")
+        self.shot("history-7-folded")
     }
 
     /// An answer in a chat that is not on screen: Telegram's banner; and Settings > Notifications.

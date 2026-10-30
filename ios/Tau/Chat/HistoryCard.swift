@@ -63,7 +63,8 @@ enum HistoryCard {
             words.append("fuzzy")
         }
         if let limit = arguments.int("limit"), limit != 20 {
-            words.append(limit < 0 ? "all" : "\(limit) hits")
+            // Not "4 hits", which would read as the result's count.
+            words.append(limit < 0 ? "all hits" : "\(limit) per page")
         }
         if arguments.string("cursor") != nil {
             words.append("more")
@@ -84,7 +85,8 @@ enum HistoryCard {
         if arguments.bool("truncate") == false {
             words.append("whole")
         }
-        return (code.joined(separator: " "), plain, words.joined(separator: "  "))
+        // Three spaces between arguments: two read as one in the narrow card, and a set's own commas need the gap.
+        return (code.joined(separator: " "), plain, words.joined(separator: "   "))
     }
 
     private static func kindWords(_ kind: String) -> String {

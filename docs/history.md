@@ -364,8 +364,8 @@ One rule, which the rest follows: **the first line is the call; below it is the 
 - **The first line** is the tool, what the call is about, and every other argument that is not a default. What it is
   about: a search's query (and a link it searches in) as written, in monospace; a read's chat, by its title in the
   text font once the result is in (never an entry's text), and before that its link in monospace or "This chat" /
-  "Its owner". The other arguments follow in words (`in subagents`, `10 older`, `newest`), after a wider gap and in
-  the dim color, so they do not run into the title; `kinds` is one set among them, `User, Answer`, on both cards. It
+  "Its owner". The other arguments follow in words (`in subagents`, `10 older`, `newest`), three spaces apart, after
+  a wider gap and in the dim color, so they do not run into the title; `kinds` is one set among them, `User, Answer`, on both cards. It
   wraps rather than cut (to three lines folded).
 - **The result** is a line per item, then what is not shown (`6 more`, `4 earlier`), which says how much there is
   without a count line of its own; an empty search says `No results`, an empty read `No messages`.
@@ -404,7 +404,7 @@ Answer  缺了 identity.ts，先 hydrate 模型数据再 build
 - **Failed**: the title in the destructive color, the error under it (`Not on this server: …`).
 - **The model's JSON is not read when cut**: a result past the harness's output limit (a `limit: -1` the model asked
   for, which is a script's thing) shows as its text.
-- **In a script**: a line in the code card with the call's first line (`History search  "npm run build" tool calls`),
+- **In a script**: a line in the code card with the call's first line (`History search  "npm run build"  Tool call`),
   as for any nested call.
 - **Links in the answer** are the link cards docs/links.md already draws: an answer that cites three places shows
   three cards to tap. Nothing to build.
