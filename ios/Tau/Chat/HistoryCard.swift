@@ -139,7 +139,7 @@ enum HistoryCard {
                 body.append(NSAttributedString(string: "\n"))
                 let label = chats.count <= 1 && hits.count > 1 ? kindLabel(hit.string("kind")) : (hit.object("chat")?.string("title").flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled")
                 let time = hit.string("time").flatMap { ISO8601DateFormatter().date(from: $0) }.map(chatListDateString) ?? ""
-                body.append(line(name: label, marked: hit.string("text") ?? "", time: time, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
+                body.append(line(name: label, marked: hit.string("text") ?? "", time: time, lines: isExpanded ? 2 : 1, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
             }
             let more = total - shown.count
             if more > 0 {
@@ -172,7 +172,7 @@ enum HistoryCard {
         }
         for item in shown {
             body.append(NSAttributedString(string: "\n"))
-            body.append(line(name: item.name, marked: item.text, time: "", textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
+            body.append(line(name: item.name, marked: item.text, time: "", lines: isExpanded ? 2 : 1, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
         }
         return (chat?.string("title").flatMap { $0.isEmpty ? nil : $0 }, body)
     }
@@ -215,47 +215,74 @@ enum HistoryCard {
         return found
     }
 
-    /// One line: its name in semibold 12, the text in monospace 12 with its matched words bright, cut to fit, and the
-    /// time at the right in the dim color.
-    private static func line(name: String, marked: String, time: String, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat) -> NSAttributedString {
+    /// An item: its name in semibold 12, the text in monospace 12 with its matched words bright, cut to fit `lines`
+    /// lines (one folded, two unfolded), and the time at the right of the first line in the dim color.
+    private static func line(name: String, marked: String, time: String, lines: Int, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat) -> NSAttributedString {
         let nameFont = Font.semibold(12.0)
         let codeFont = Font.monospace(12.0)
+        let timeFont = Font.regular(12.0)
         let flat = marked.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
         let matches = marks(flat)
-        let plain = flat.replacingOccurrences(of: "«", with: "").replacingOccurrences(of: "»", with: "")
-        let timeFont = Font.regular(12.0)
+        let plain = flat.replacingOccurrences(of: "«", with: "").replacingOccurrences(of: "»", with: "") as NSString
         let space = NSAttributedString(string: " ", font: timeFont).size().width
         // The time and at least 8 points before it.
         let timeWidth = time.isEmpty ? 0.0 : ceil(NSAttributedString(string: time, font: timeFont).size().width) + 8.0 + space + 2.0
-        func build(_ count: Int) -> NSMutableAttributedString {
-            let line = NSMutableAttributedString(string: name, font: nameFont, textColor: titleColor)
-            let shown = (plain as NSString).length > count ? (plain as NSString).substring(to: count) + "…" : plain
-            let text = NSMutableAttributedString(string: "  " + shown, font: codeFont, textColor: textColor)
-            for match in matches where match.range.location + match.range.length <= count {
-                text.addAttribute(.foregroundColor, value: titleColor, range: NSRange(location: match.range.location + 2, length: match.range.length))
+        /// `plain[from..<to]` in monospace, its matched words bright, after `prefix`, with … when cut.
+        func piece(_ prefix: NSAttributedString?, from: Int, to: Int, ellipsis: Bool) -> NSMutableAttributedString {
+            let line = NSMutableAttributedString()
+            if let prefix {
+                line.append(prefix)
             }
-            line.append(text)
+            let start = line.length
+            line.append(NSAttributedString(string: plain.substring(with: NSRange(location: from, length: to - from)) + (ellipsis ? "…" : ""), font: codeFont, textColor: textColor))
+            for match in matches {
+                let lower = max(match.range.location, from)
+                let upper = min(match.range.location + match.range.length, to)
+                if lower < upper {
+                    line.addAttribute(.foregroundColor, value: titleColor, range: NSRange(location: start + lower - from, length: upper - lower))
+                }
+            }
             return line
         }
-        var low = 0
-        var high = (plain as NSString).length
-        if build(high).size().width > maxWidth - timeWidth {
+        /// How much of `plain` from `from` fits `width` after `prefix`; at a space near the end when `words`.
+        func fit(_ prefix: NSAttributedString?, from: Int, width: CGFloat, words: Bool) -> Int {
+            if piece(prefix, from: from, to: plain.length, ellipsis: false).size().width <= width {
+                return plain.length
+            }
+            var low = from
+            var high = plain.length
             while low < high {
                 let middle = (low + high + 1) / 2
-                if build(middle).size().width <= maxWidth - timeWidth {
+                if piece(prefix, from: from, to: middle, ellipsis: !words).size().width <= width {
                     low = middle
                 } else {
                     high = middle - 1
                 }
             }
-            high = low
+            if words {
+                // Back to the last space, unless that loses most of the line.
+                let space = plain.range(of: " ", options: .backwards, range: NSRange(location: from, length: low - from))
+                if space.location != NSNotFound, low - space.location < 16 {
+                    return space.location + 1
+                }
+            }
+            return low
         }
-        let line = build(high)
+        let prefix = NSMutableAttributedString(string: name + "  ", font: nameFont, textColor: titleColor)
+        // The first line: as much as fits before the time; with a second, broken at a word.
+        let firstEnd = fit(prefix, from: 0, width: maxWidth - timeWidth, words: lines > 1)
+        let wraps = lines > 1 && firstEnd < plain.length
+        let line = piece(prefix, from: 0, to: firstEnd, ellipsis: !wraps && firstEnd < plain.length)
         if !time.isEmpty {
             // At the right: a space stretched by its kerning to the time's place, as the text node has no tab stops.
             let gap = max(8.0, floor(maxWidth - (timeWidth - 10.0 - space) - line.size().width - space - 1.0))
             line.append(NSAttributedString(string: " ", attributes: [.font: timeFont, .kern: gap]))
             line.append(NSAttributedString(string: time, font: timeFont, textColor: textColor.withAlphaComponent(0.7)))
+        }
+        if wraps {
+            let secondEnd = fit(nil, from: firstEnd, width: maxWidth, words: false)
+            line.append(NSAttributedString(string: "\n"))
+            line.append(piece(nil, from: firstEnd, to: secondEnd, ellipsis: secondEnd < plain.length))
         }
         return line
     }

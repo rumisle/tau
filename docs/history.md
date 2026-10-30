@@ -394,8 +394,9 @@ Answer  缺了 identity.ts，先 hydrate 模型数据再 build
   compaction's, Error), then its text. A tool call is named by its tool's card title, and its text is the call
   without the tool's name.
 - **Folded**: the first three hits, then `N more` (of the total, so also those on later pages); the last three
-  lines, after `N earlier`, as a code card shows the last three calls after "N earlier calls". **Unfolded**: all of
-  those the result has.
+  lines, after `N earlier`, as a code card shows the last three calls after "N earlier calls". Each item is one line,
+  cut to fit. **Unfolded**: all of those the result has, each item on up to two lines (the first broken at a word,
+  the time still at its right), cut after the second.
 - **A tap** folds and unfolds the card, as any tool card's; its lines open nothing (to go to a hit, ask the agent
   for its tau link, which opens it). It has no Show All: unfolded, it is all the result has.
 - **Failed**: the title in the destructive color, the error under it (`Not on this server: …`).
