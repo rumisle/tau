@@ -5,6 +5,9 @@ import XCTest
 /// Where screenshots go, and the server requests of SendingUITests: TAU_UI_DIR, one per simulator when
 /// ios/scripts/uitests.sh runs several.
 let uiDirectory = ProcessInfo.processInfo.environment["TAU_UI_DIR"] ?? "/tmp/tau-ui"
+/// This Mac's tau server, which the server tests read (and some write to): TAU_MAIN_SERVER, by default port 7878; a
+/// copy of it on another port keeps a run off the real one.
+let mainServer = ProcessInfo.processInfo.environment["TAU_MAIN_SERVER"] ?? "ws://127.0.0.1:7878"
 
 final class TauUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -17,7 +20,7 @@ final class TauUITests: XCTestCase {
     private func launch(_ arguments: [String] = []) {
         self.app = XCUIApplication()
         // Server tests talk to the local server directly, without the tailnet.
-        self.app.launchArguments = ["-server.url", "ws://127.0.0.1:7878", "-uiTesting", "YES"] + mainServerToken + (arguments.contains("-wrapCode") ? [] : ["-wrapCode", "YES"]) + arguments
+        self.app.launchArguments = ["-server.url", mainServer, "-uiTesting", "YES"] + mainServerToken + (arguments.contains("-wrapCode") ? [] : ["-wrapCode", "YES"]) + arguments
         self.app.launch()
         // Until what the launch opens is there: a chat's transcript, or the list.
         if arguments.contains(where: { ["-openChat", "-newChat", "-sendTo", "-pushChat"].contains($0) }) {

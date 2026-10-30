@@ -25,7 +25,7 @@ final class SendingUITests: XCTestCase {
 
     private func launch(_ arguments: [String], server: String = devServer) {
         self.app = XCUIApplication()
-        self.app.launchArguments = ["-server.url", server, "-wrapCode", "YES", "-uiTesting", "YES"] + (arguments.contains("-theme") ? [] : ["-theme", "dark"]) + (server.hasSuffix(":7878") ? mainServerToken : []) + arguments
+        self.app.launchArguments = ["-server.url", server, "-wrapCode", "YES", "-uiTesting", "YES"] + (arguments.contains("-theme") ? [] : ["-theme", "dark"]) + (server == mainServer ? mainServerToken : []) + arguments
         self.app.launch()
         self.waitForLaunch(arguments)
     }
@@ -965,7 +965,7 @@ final class SendingUITests: XCTestCase {
 
     /// A server that turns the token away: its row says so, in red, while the other server works.
     func testRefusedToken() {
-        self.launch(["-server2.url", "ws://127.0.0.1:7878", "-server2.token", "wrong-token-wrong-token"])
+        self.launch(["-server2.url", mainServer, "-server2.token", "wrong-token-wrong-token"])
         sleep(6)
         self.point(0.75, 0.96).tap()
         settle()
@@ -2293,11 +2293,12 @@ final class SendingUITests: XCTestCase {
     /// The folder tabs made while a chat opened at launch covers the list: once back on the list, the selected tab's
     /// title (All) is drawn, not an empty lens.
     func testTabsAfterChatAtLaunch() throws {
-        let second = try DevServerClient(url: "ws://127.0.0.1:7982")
+        let url = ProcessInfo.processInfo.environment["TAU_CACHE_SERVER"] ?? "ws://127.0.0.1:7982"
+        let second = try DevServerClient(url: url)
         let id = try second.request("conversation.create", ["title": "Second"]).object("dialog")?.object("conversation")?.int("id") ?? -1
         _ = try second.submit(id, "!burst hello")
         sleep(1)
-        self.launch(["-server2.url", "ws://127.0.0.1:7982", "-folders", "YES", "-openChat", "1"])
+        self.launch(["-server2.url", url, "-folders", "YES", "-openChat", "1"])
         self.point(0.1, 0.08).tap()
         sleep(3)
         self.shot("tabs-0-back")
