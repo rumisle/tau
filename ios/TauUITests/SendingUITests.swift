@@ -2491,6 +2491,46 @@ final class SendingUITests: XCTestCase {
         }
     }
 
+    /// A pressed link's highlight covers its text as laid out: all of "Mitchell Hashimoto's birthplace" (not up to its
+    /// typeset apostrophe), and a card's lines, not wider or lower than them. `-pressLink` shows it pressed.
+    func testLinkHighlight() throws {
+        let server = try DevServerClient(url: devServer)
+        let prefix = String(server.serverId.prefix(8))
+        var made: [Int] = []
+        self.addTeardownBlock {
+            for id in made {
+                _ = try? server.request("conversation.mark", ["conversationId": id, "hidden": true])
+            }
+        }
+        let answers = [
+            "Why did my yellow turn pink?": "The night theme had its own accent. Now there is one, yours, in every theme.",
+            "Where was he born?": "",
+        ]
+        let linked = try server.create("Accent everywhere")
+        made.append(linked)
+        let answer = "See [Mitchell Hashimoto's birthplace](https://en.wikipedia.org/wiki/Mitchell_Hashimoto) for that, and the accent chat:\n\ntau://\(prefix)/\(linked)"
+        var scripted = answers
+        scripted["Where was he born?"] = answer
+        try JSONSerialization.data(withJSONObject: scripted).write(to: URL(fileURLWithPath: "/tmp/tau-dev-answers.json"))
+        _ = try server.submit(linked, "Why did my yellow turn pink?")
+        sleep(1)
+        let chat = try server.create("Highlights")
+        made.append(chat)
+        _ = try server.submit(chat, "Where was he born?")
+        sleep(2)
+        for theme in ["dark", "day"] {
+            for (name, words) in [("link", "Mitchell"), ("card", "night theme had")] {
+                self.launch(["-theme", theme, "-openChat", "\(chat)", "-pressLink", words])
+                let message = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage' AND value CONTAINS 'highlight'")).firstMatch
+                XCTAssertTrue(message.waitForExistence(timeout: 8), "\(name) pressed")
+                settle()
+                self.shot("highlight-\(theme)-\(name)")
+                let value = message.value as? String ?? ""
+                XCTAssertTrue(value.hasSuffix("; highlight covers its text"), "\(name), \(theme): \(value)")
+            }
+        }
+    }
+
     /// The accent picked is the app's in every theme: with Auto-Night following the phone, the night theme of a
     /// phone in dark mode has it too, not tau's pink (Raya's yellow that went pink for a while).
     func testAccentFollowsNight() {

@@ -512,7 +512,11 @@ final class ChatMessageItemNode: ListViewItemNode {
 
     /// Telegram's pressed link: its rects in the link highlight color, under the text, while the finger is on it.
     private func updateLinkHighlight(_ point: CGPoint?) {
-        guard let point, let item = self.item, let link = self.link(at: point), let rects = link.textNode.attributeRects(name: MarkdownText.urlKey.rawValue, at: link.index), !rects.isEmpty else {
+        self.highlightLink(point.flatMap { self.link(at: $0) }.map { ($0.textNode, $0.index) })
+    }
+
+    private func highlightLink(_ link: (textNode: InteractiveTextNode, index: Int)?) {
+        guard let link, let item = self.item, let rects = link.textNode.attributeRects(name: MarkdownText.urlKey.rawValue, at: link.index), !rects.isEmpty else {
             if let node = self.linkHighlightNode {
                 self.linkHighlightNode = nil
                 node.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.18, removeOnCompletion: false, completion: { [weak node] _ in
@@ -535,6 +539,30 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
         node.frame = link.textNode.frame
         node.updateRects(rects, color: color)
+    }
+
+    /// For the UI tests (`-pressLink <words>`): the link with those words shown pressed, and left so, and whether its
+    /// highlight covers its text as laid out (the selection's rects of the whole link), after the message's value.
+    private func pressLink(_ words: String) {
+        for textNode in self.textNodes where textNode.supernode != nil {
+            guard let string = textNode.cachedLayout?.attributedString else {
+                continue
+            }
+            let found = (string.string as NSString).range(of: words)
+            guard found.location != NSNotFound, string.attribute(MarkdownText.urlKey, at: found.location, effectiveRange: nil) != nil else {
+                continue
+            }
+            self.highlightLink((textNode, found.location))
+            var whole = NSRange()
+            _ = string.attribute(MarkdownText.urlKey, at: found.location, longestEffectiveRange: &whole, in: NSRange(location: 0, length: string.length))
+            let shown = textNode.attributeRects(name: MarkdownText.urlKey.rawValue, at: found.location) ?? []
+            let text = textNode.rangeRects(in: whole)?.rects ?? []
+            let matches = shown.count == text.count && zip(shown, text).allSatisfy { abs($0.minX - $1.minX) <= 1.0 && abs($0.maxX - $1.maxX) <= 1.0 && abs($0.minY - $1.minY) <= 1.0 && abs($0.maxY - $1.maxY) <= 1.0 }
+            let describe = { (rects: [CGRect]) in rects.map { "\(Int($0.minX)),\(Int($0.minY)),\(Int($0.width))x\(Int($0.height))" }.joined(separator: " ") }
+            // On the message, which is one accessibility element: after its blocks.
+            self.accessibilityValue = (self.accessibilityValue?.components(separatedBy: "; highlight").first ?? "") + "; highlight " + (matches ? "covers its text" : "shown \(describe(shown)), text \(describe(text))")
+            return
+        }
     }
 
     @objc private func tapLongTapOrDoubleTapGesture(_ recognizer: TapLongTapOrDoubleTapGestureRecognizer) {
@@ -1496,6 +1524,11 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.accessibilityIdentifier = "assistantMessage"
                         self.accessibilityLabel = message.text
                         self.accessibilityValue = blockSummary
+                        if let words = UserDefaults.standard.string(forKey: "pressLink"), message.text.contains("tau://") || message.text.contains("](") {
+                            Queue.mainQueue().after(1.0) { [weak self] in
+                                self?.pressLink(words)
+                            }
+                        }
                     }
                     self.updateReveal(item: item, totalLength: totalLength)
                     self.layoutContainers(size: layout.contentSize)

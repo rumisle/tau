@@ -862,7 +862,8 @@ public final class InteractiveTextNodeLayout: NSObject {
     public func attributeSubstring(name: String, index: Int) -> (String, String)? {
         if let attributedString = self.attributedString {
             var range = NSRange()
-            let _ = attributedString.attribute(NSAttributedString.Key(rawValue: name), at: index, effectiveRange: &range)
+            // tau: the attribute's whole run, not up to where another attribute changes (a typeset apostrophe's).
+            let _ = attributedString.attribute(NSAttributedString.Key(rawValue: name), at: index, longestEffectiveRange: &range, in: NSRange(location: 0, length: attributedString.length))
             if range.length != 0 {
                 return ((attributedString.string as NSString).substring(with: range), attributedString.string)
             }
@@ -873,7 +874,8 @@ public final class InteractiveTextNodeLayout: NSObject {
     public func attributeSubstringWithRange(name: String, index: Int) -> (String, String, NSRange)? {
         if let attributedString = self.attributedString {
             var range = NSRange()
-            let _ = attributedString.attribute(NSAttributedString.Key(rawValue: name), at: index, effectiveRange: &range)
+            // tau: the attribute's whole run, not up to where another attribute changes (a typeset apostrophe's).
+            let _ = attributedString.attribute(NSAttributedString.Key(rawValue: name), at: index, longestEffectiveRange: &range, in: NSRange(location: 0, length: attributedString.length))
             if range.length != 0 {
                 return ((attributedString.string as NSString).substring(with: range), attributedString.string, range)
             }
@@ -942,7 +944,8 @@ public final class InteractiveTextNodeLayout: NSObject {
     public func lineAndAttributeRects(name: String, at index: Int) -> [(CGRect, CGRect)]? {
         if let attributedString = self.attributedString {
             var range = NSRange()
-            let _ = attributedString.attribute(NSAttributedString.Key(rawValue: name), at: index, effectiveRange: &range)
+            // tau: the attribute's whole run, not up to where another attribute changes (a typeset apostrophe's).
+            let _ = attributedString.attribute(NSAttributedString.Key(rawValue: name), at: index, longestEffectiveRange: &range, in: NSRange(location: 0, length: attributedString.length))
             if range.length != 0 {
                 var rects: [(CGRect, CGRect)] = []
                 for segment in self.segments {
@@ -956,8 +959,11 @@ public final class InteractiveTextNodeLayout: NSObject {
                             if lineRange.location != rangeValue.location || line.isRTL {
                                 leftOffset = floor(CTLineGetOffsetForStringIndex(line.line, lineRange.location, nil))
                             }
-                            var rightOffset: CGFloat = line.frame.width
-                            if lineRange.location + lineRange.length != rangeValue.length || line.isRTL {
+                            // tau: as rangeRects, a line's end is where its text ends (a quote's line frame is the
+                            // quote's width), and the run ends before the line's end when it ends before its upper bound.
+                            let textWidth = line.isRTL ? line.frame.width : max(0.0, min(line.frame.width, CGFloat(CTLineGetTypographicBounds(line.line, nil, nil, nil) - CTLineGetTrailingWhitespaceWidth(line.line))))
+                            var rightOffset: CGFloat = textWidth
+                            if lineRange.location + lineRange.length != rangeValue.upperBound || line.isRTL {
                                 var secondaryOffset: CGFloat = 0.0
                                 let rawOffset = CTLineGetOffsetForStringIndex(line.line, lineRange.location + lineRange.length, &secondaryOffset)
                                 rightOffset = ceil(rawOffset)
@@ -2212,7 +2218,9 @@ open class InteractiveTextNode: ASDisplayNode, TextNodeProtocol, UIGestureRecogn
             
             segments.append(InteractiveTextNodeSegment(
                 lines: segmentLines,
-                visibleLineCount: visibleLineCount,
+                // tau: of `lines`, which start with a quote's title line when it has one: without it counted, the
+                // last line was left out of what goes by visible lines (a pressed link's rects, a range's rects).
+                visibleLineCount: visibleLineCount + (segment.titleLine != nil ? 1 : 0),
                 tintColor: segment.tintColor,
                 secondaryTintColor: segment.secondaryTintColor,
                 tertiaryTintColor: segment.tertiaryTintColor,
