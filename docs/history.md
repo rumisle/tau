@@ -365,12 +365,13 @@ One rule, which the rest follows: **the first line is the call; below it is the 
   about: a search's query (and a link it searches in) as written, in monospace; a read's chat, by its title in the
   text font once the result is in (never an entry's text), and before that its link in monospace or "This chat" /
   "Its owner". The other arguments follow in words (`in subagents`, `10 older`, `newest`), after a wider gap and in
-  the dim color, so they do not run into the title. It wraps rather than cut (to three lines folded).
+  the dim color, so they do not run into the title; `kinds` is one set among them, `User, Answer`, on both cards. It
+  wraps rather than cut (to three lines folded).
 - **The result** is a line per item, then what is not shown (`6 more`, `4 earlier`), which says how much there is
   without a count line of its own; an empty search says `No results`, an empty read `No messages`.
 
 ```
-History search  "npm run build"   Tool calls                0.2s
+History search  "npm run build"    Tool call                 0.2s
 durable 示例  $ cd packages/ai && npm run build:offline     10:12
 压缩 bug  $ npm run build && npm test                   Yesterday
 tau release 0.9  $ cd server && npm run build                 Mon

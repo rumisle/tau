@@ -48,8 +48,13 @@ enum HistoryCard {
                 code.append(link)
             }
         }
-        if let kinds = arguments["kinds"] as? [Any] {
-            words.append(contentsOf: kinds.compactMap { $0 as? String }.map(kindWords))
+        // The kinds as one set, "User, Answer": an array, or one kind as a string (which the server takes too).
+        var kinds = (arguments["kinds"] as? [Any])?.compactMap { $0 as? String } ?? []
+        if let one = arguments.string("kinds") {
+            kinds = one.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        }
+        if !kinds.isEmpty {
+            words.append(kinds.map(kindWords).joined(separator: ", "))
         }
         if let sort = arguments.string("sort"), sort != "relevance" {
             words.append(sort)
@@ -85,17 +90,17 @@ enum HistoryCard {
     private static func kindWords(_ kind: String) -> String {
         switch kind {
         case "user":
-            return "user"
+            return "User"
         case "assistant":
-            return "answers"
+            return "Answer"
         case "reasoning":
-            return "reasoning"
+            return "Reasoning"
         case "tool_call":
-            return "tool calls"
+            return "Tool call"
         case "tool_output":
-            return "tool output"
+            return "Tool output"
         case "title":
-            return "titles"
+            return "Title"
         default:
             return kind
         }

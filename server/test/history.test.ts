@@ -271,6 +271,24 @@ describe("history", () => {
 		}
 	});
 
+	test("search and read through the tools: several kinds pass through, one kind too", async () => {
+		const replica = await chat("Kinds");
+		await say(replica, "zebu grazing");
+		await indexed();
+		const results = async (command: string) => {
+			await say(replica, command);
+			const result = replica.ordered().findLast((entry) => entry.kind === "pi.tool-result")!;
+			return JSON.parse((result.model as { content: { text: string }[] }[])[0]!.content[0]!.text) as { hits?: { kind: string }[]; entries?: { parts: { kind: string }[] }[] };
+		};
+		const both = await results("!tool history_search query=zebu in=this kinds=user,assistant");
+		assert.deepEqual([...new Set(both.hits!.map((hit) => hit.kind))].sort(), ["assistant", "user"], JSON.stringify(both));
+		const one = await results("!tool history_search query=zebu in=this kinds=assistant");
+		assert.deepEqual([...new Set(one.hits!.map((hit) => hit.kind))], ["assistant"]);
+		const read = await results("!tool history_read older=4 kinds=user,assistant");
+		assert.ok(read.entries!.every((entry) => entry.parts.every((part) => part.kind === "user" || part.kind === "assistant")), JSON.stringify(read));
+		assert.ok(read.entries!.some((entry) => entry.parts.some((part) => part.kind === "assistant")));
+	});
+
 	test("search: tool calls and output, linked to the call; the user's search leaves them out", async () => {
 		const replica = await chat("Tools");
 		await say(replica, "$ echo narwhal-77 && echo 'Error: narwhal exploded'");

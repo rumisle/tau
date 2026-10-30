@@ -25,6 +25,9 @@ export const DEV_MODEL = { provider: "dev", modelId: "echo" } as const;
 /** With `--dev-cache-ttl`, the dev model's twin without a declared cache lifetime. */
 export const DEV_UNCACHED_MODEL_ID = "echo-uncached";
 
+/** `!tool`'s arguments that are lists, so one value is a list of one. */
+const LIST_ARGUMENTS = new Set(["kinds", "paths"]);
+
 /** Errors made so far for each `!overloaded` message. */
 const failures = new Map<string, number>();
 
@@ -204,10 +207,10 @@ function reply(messages: readonly Message[]) {
 			}
 		} else {
 			// Or `key=value` pairs, which a phone's keyboard types without curly quotes: numbers and booleans as such,
-			// a value with commas a list.
+			// a value with commas a list, and the arguments that are lists always one (kinds=user is ["user"]).
 			for (const pair of given.split(/\s+/).filter((each) => each.includes("="))) {
 				const [key, value] = [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)];
-				args[key] = value.includes(",") ? value.split(",") : /^-?\d+$/.test(value) ? Number(value) : value === "true" ? true : value === "false" ? false : value;
+				args[key] = value.includes(",") || LIST_ARGUMENTS.has(key) ? value.split(",").filter((each) => each !== "") : /^-?\d+$/.test(value) ? Number(value) : value === "true" ? true : value === "false" ? false : value;
 			}
 		}
 		return fauxAssistantMessage([fauxToolCall(tool[1]!, args as Parameters<typeof fauxToolCall>[1])], { stopReason: "toolUse" });
