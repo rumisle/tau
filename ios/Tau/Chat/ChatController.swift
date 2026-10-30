@@ -427,14 +427,6 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self.toolTextOpened = (message.id, CACurrentMediaTime())
             (self.navigationController as? NavigationController)?.pushViewController(ToolTextController(context: self.context, message: message))
         }
-        node.setHistoryLinkHandler { [weak self] message, link in
-            guard let self else {
-                return
-            }
-            // The tap is the link's, not the card's: it stays as it is.
-            self.toolTextOpened = (message.id, CACurrentMediaTime())
-            self.openLink(link)
-        }
         node.presentInGlobalOverlay = { [weak self] controller, arguments in
             self?.presentInGlobalOverlay(controller, with: arguments)
         }

@@ -1065,8 +1065,8 @@ final class SendingUITests: XCTestCase {
     }
 
     /// The history tools' cards (docs/history.md, In the app): the call on the first line, the result under it, a line
-    /// per hit or message, folded to three; a tap on a hit opens its chat at it; a failed call says why; in a script,
-    /// a line of the code card.
+    /// per hit or message, folded to three; a tap folds and unfolds the card, as any tool card's; a failed call says
+    /// why; in a script, a line of the code card.
     func testHistoryCards() {
         self.launch(["-newChat", "YES"])
         self.focusInput()
@@ -1115,16 +1115,15 @@ final class SendingUITests: XCTestCase {
         self.app.waitForIdle()
         settle()
         self.shot("history-4-script")
-        // A hit opens its chat at it, its words marked: here this chat, scrolled back to its first message.
+        // A tap anywhere on the card, a line too, folds it again: lines open nothing.
         self.app.swipeDown()
         settle()
         XCTAssertTrue(search.isHittable, "the search's card on screen")
         search.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1.0)).withOffset(CGVector(dx: 0.0, dy: -14.0)).tap()
-        sleep(2)
         settle()
-        self.shot("history-5-opened")
-        let first = self.app.descendants(matching: .any).matching(identifier: "userMessage").matching(NSPredicate(format: "label == %@", "axolotl one")).firstMatch
-        XCTAssertTrue(first.isHittable, "at the first message")
+        self.shot("history-5-folded")
+        XCTAssertTrue(search.label.contains("more"), "folded again: \(search.label)")
+        XCTAssertFalse(self.app.descendants(matching: .any)["Show All"].exists)
     }
 
     /// An answer in a chat that is not on screen: Telegram's banner; and Settings > Notifications.

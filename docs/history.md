@@ -396,7 +396,8 @@ Answer  缺了 identity.ts，先 hydrate 模型数据再 build
 - **Folded**: the first three hits, then `N more` (of the total, so also those on later pages); the last three
   lines, after `N earlier`, as a code card shows the last three calls after "N earlier calls". **Unfolded**: all of
   those the result has.
-- **A tap** on a hit or a message opens its chat at it, the words marked, as a search result opens one (docs/links.md).
+- **A tap** folds and unfolds the card, as any tool card's; its lines open nothing (to go to a hit, ask the agent
+  for its tau link, which opens it). It has no Show All: unfolded, it is all the result has.
 - **Failed**: the title in the destructive color, the error under it (`Not on this server: …`).
 - **The model's JSON is not read when cut**: a result past the harness's output limit (a `limit: -1` the model asked
   for, which is a script's thing) shows as its text.

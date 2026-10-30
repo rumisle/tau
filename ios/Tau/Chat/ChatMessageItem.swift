@@ -37,8 +37,6 @@ final class ChatMessageItemInteraction {
     var openLinkMenu: (String, Int, TapLongTapOrDoubleTapGestureRecognizer) -> Void = { _, _, _ in }
     /// A tool card's Show All: its whole text, in a viewer.
     var openToolText: (ChatMessage) -> Void = { _ in }
-    /// A history card's hit or message: the chat it is in, opened at it.
-    var openHistoryLink: (ChatMessage, String) -> Void = { _, _ in }
     /// A file's row: where the file is, as its circle shows; a tap fetches, stops fetching, or opens it.
     var fileStatus: (FileAttachment) -> Signal<FileTransferStatus, NoError> = { file in .single(file.localURL.map { .local($0) } ?? .remote) }
     var openFile: (FileAttachment, FileTransferStatus) -> Void = { _, _ in }
@@ -572,14 +570,6 @@ final class ChatMessageItemNode: ListViewItemNode {
             return
         }
         let point = self.view.convert(location, to: self.contentNode.view)
-        // A history card's hit or message: its chat, at it.
-        if !self.toolTextNode.isHidden, self.toolTextNode.frame.contains(point) {
-            let local = self.contentNode.view.convert(point, to: self.toolTextNode.view)
-            if let (_, attributes) = self.toolTextNode.attributesAtPoint(local, orNearest: false), let url = attributes[MarkdownText.urlKey] as? String {
-                item.interaction.openHistoryLink(item.message, url)
-                return
-            }
-        }
         if let frame = self.toolShowAllFrame, frame.contains(point) {
             item.interaction.openToolText(item.message)
             return
@@ -3013,10 +3003,11 @@ func toolCardContent(name: String, tool: ToolCallInfo?, fallbackText: String, is
         let title = toolCardTitle(name)
         // Failed: the error under the title, which says so in the destructive color.
         if tool?.status == .failed {
-            body.append(NSAttributedString(string: clippedLines(output, count: isExpanded ? limit : 3, fromStart: true, cuts: isExpanded ? cuts : nil), font: Font.regular(12.0), textColor: textColor))
+            body.append(NSAttributedString(string: isExpanded ? output : clippedLines(output, count: 3, fromStart: true), font: Font.regular(12.0), textColor: textColor))
             return (title, historySummary(code: code, words: words), body)
         }
-        let (chatTitle, historyBody) = HistoryCard.body(name: name, output: output, isExpanded: isExpanded, limit: limit, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth, cuts: cuts)
+        // Expanded, every line the result has, without Show All: the card is the whole of it.
+        let (chatTitle, historyBody) = HistoryCard.body(name: name, output: output, isExpanded: isExpanded, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth)
         // A read names its chat by its title once it has it.
         return (title, historySummary(code: chatTitle ?? code, words: words), historyBody)
     }

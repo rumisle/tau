@@ -3,8 +3,8 @@ import UIKit
 import Display
 
 /// The cards of history_search and history_read (docs/history.md, In the app): the first line is the call, below it the
-/// result: what it amounts to ("9 results", "7 messages"), a line per hit or message, then what is not shown. A hit or a
-/// message is a link: a tap opens its chat at it.
+/// result: what it amounts to ("9 results", "7 messages"), a line per hit or message, then what is not shown. A tap
+/// folds and unfolds it, as any tool card.
 enum HistoryCard {
     static let searchName = "history_search"
     static let readName = "history_read"
@@ -115,7 +115,7 @@ enum HistoryCard {
     }
 
     /// The body: the result's summary line, its lines, and what is not shown. Folded: three; unfolded: all.
-    static func body(name: String, output: String, isExpanded: Bool, limit: Int, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat, cuts: ClipTracker?) -> (title: String?, body: NSMutableAttributedString) {
+    static func body(name: String, output: String, isExpanded: Bool, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat) -> (title: String?, body: NSMutableAttributedString) {
         let body = NSMutableAttributedString()
         guard let data = output.data(using: .utf8), let result = (try? JSONSerialization.jsonObject(with: data)) as? JSONObject else {
             if !output.isEmpty {
@@ -134,28 +134,23 @@ enum HistoryCard {
             summary(total == 0 ? "No results" : "\(total)\(floor ? "+" : "") \(total == 1 ? "result" : "results")")
             // In one chat, the line says the part's kind; across chats, the chat.
             let chats = Set(hits.compactMap { $0.object("chat")?.string("link") })
-            let shown = isExpanded ? Array(hits.prefix(limit)) : Array(hits.prefix(3))
+            let shown = isExpanded ? hits : Array(hits.prefix(3))
             for hit in shown {
                 body.append(NSAttributedString(string: "\n"))
                 let label = chats.count <= 1 && hits.count > 1 ? kindLabel(hit.string("kind")) : (hit.object("chat")?.string("title").flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled")
                 let time = hit.string("time").flatMap { ISO8601DateFormatter().date(from: $0) }.map(chatListDateString) ?? ""
-                body.append(line(name: label, marked: hit.string("text") ?? "", time: time, link: hit.string("link").map { highlightLink($0, text: hit.string("text") ?? "") }, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
+                body.append(line(name: label, marked: hit.string("text") ?? "", time: time, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
             }
             let more = total - shown.count
             if more > 0 {
-                if isExpanded {
-                    cuts?.clipped = true
-                }
                 body.append(NSAttributedString(string: "\n\(more)\(floor ? "+" : "") more", font: summaryFont, textColor: textColor))
             }
             return (nil, body)
         }
         // A read: a line per part, the newest at the bottom.
         let chat = result.object("chat")
-        let chatLink = chat?.string("link")
-        var lines: [(name: String, text: String, link: String?)] = []
+        var lines: [(name: String, text: String)] = []
         for entry in result.objects("entries") {
-            let link = chatLink.flatMap { link in entry.int("id").map { "\(link)/\($0)" } }
             for part in entry.objects("parts") {
                 var text = part.string("text") ?? ""
                 // A call's text starts with its tool's name, which the line's name says already.
@@ -166,21 +161,18 @@ enum HistoryCard {
                         text = String(text.dropFirst(tool.count)).trimmingCharacters(in: .whitespacesAndNewlines)
                     }
                 }
-                lines.append((partName(part), text, link))
+                lines.append((partName(part), text))
             }
         }
         let messages = result.objects("entries").count
         summary(messages == 0 ? "No messages" : "\(messages) \(messages == 1 ? "message" : "messages")")
-        let shown = isExpanded ? Array(lines.suffix(limit)) : Array(lines.suffix(3))
+        let shown = isExpanded ? lines : Array(lines.suffix(3))
         if shown.count < lines.count {
-            if isExpanded {
-                cuts?.clipped = true
-            }
             body.append(NSAttributedString(string: "\n\(lines.count - shown.count) earlier", font: summaryFont, textColor: textColor))
         }
         for item in shown {
             body.append(NSAttributedString(string: "\n"))
-            body.append(line(name: item.name, marked: item.text, time: "", link: item.link, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
+            body.append(line(name: item.name, marked: item.text, time: "", textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
         }
         return (chat?.string("title").flatMap { $0.isEmpty ? nil : $0 }, body)
     }
@@ -204,16 +196,6 @@ enum HistoryCard {
         }
     }
 
-    /// A hit's link with its matched words, so the chat opens at it with them marked (docs/links.md).
-    private static func highlightLink(_ link: String, text: String) -> String {
-        let words = marks(text).map { $0.text }
-        guard !words.isEmpty, var components = URLComponents(string: link) else {
-            return link
-        }
-        components.queryItems = [URLQueryItem(name: "q", value: Array(NSOrderedSet(array: words)).compactMap { $0 as? String }.joined(separator: " "))]
-        return components.url?.absoluteString ?? link
-    }
-
     /// The matched words of an excerpt, between « and », and the text without the marks.
     private static func marks(_ text: String) -> [(range: NSRange, text: String)] {
         var found: [(NSRange, String)] = []
@@ -235,7 +217,7 @@ enum HistoryCard {
 
     /// One line: its name in semibold 12, the text in monospace 12 with its matched words bright, cut to fit, and the
     /// time at the right in the dim color.
-    private static func line(name: String, marked: String, time: String, link: String?, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat) -> NSAttributedString {
+    private static func line(name: String, marked: String, time: String, textColor: UIColor, titleColor: UIColor, maxWidth: CGFloat) -> NSAttributedString {
         let nameFont = Font.semibold(12.0)
         let codeFont = Font.monospace(12.0)
         let flat = marked.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
@@ -274,9 +256,6 @@ enum HistoryCard {
             let gap = max(8.0, floor(maxWidth - (timeWidth - 10.0 - space) - line.size().width - space - 1.0))
             line.append(NSAttributedString(string: " ", attributes: [.font: timeFont, .kern: gap]))
             line.append(NSAttributedString(string: time, font: timeFont, textColor: textColor.withAlphaComponent(0.7)))
-        }
-        if let link {
-            line.addAttribute(MarkdownText.urlKey, value: link, range: NSRange(location: 0, length: line.length))
         }
         return line
     }

@@ -600,10 +600,6 @@ final class ChatControllerNode: ASDisplayNode {
         self.interaction.openToolText = open
     }
 
-    func setHistoryLinkHandler(_ open: @escaping (ChatMessage, String) -> Void) {
-        self.interaction.openHistoryLink = open
-    }
-
     /// The row whose text a double tap selected, in place (ChatMessageItemNode.beginInlineSelection): one at a time.
     private weak var inlineSelectionNode: ChatMessageItemNode?
 
