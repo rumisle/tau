@@ -43,7 +43,11 @@ struct ChatListFolderTab: Equatable {
 final class ChatListFolderTabsNode: ASDisplayNode {
     static let height: CGFloat = 52.0
 
-    private let tabsView = ComponentView<Empty>()
+    private var tabsView = ComponentView<Empty>()
+    /// The system's liquid lens draws nothing in the selected tab (All's title went missing) when the tabs were set up
+    /// outside a window, as when the app opens straight into a chat: such tabs are made again once in one, as
+    /// RootTabController does with its bar.
+    private var madeOutsideWindow = false
     private var theme: TauTheme
     private var tabs: [ChatListFolderTab] = []
     private var selected: ChatListFolderId = .all
@@ -107,6 +111,9 @@ final class ChatListFolderTabsNode: ASDisplayNode {
                 }
             )
         }
+        if self.tabsView.view == nil {
+            self.madeOutsideWindow = self.view.window == nil
+        }
         let size = self.tabsView.update(
             transition: transition,
             component: AnyComponent(HeaderPanelContainerComponent(
@@ -130,6 +137,17 @@ final class ChatListFolderTabsNode: ASDisplayNode {
             }
             transition.setFrame(view: view, frame: CGRect(origin: CGPoint(x: 0.0, y: 4.0), size: size))
         }
+    }
+
+    /// Once the list is on screen (its controller appeared): tabs made outside a window, made again.
+    func remakeIfNeeded() {
+        guard self.madeOutsideWindow, self.view.window != nil else {
+            return
+        }
+        self.madeOutsideWindow = false
+        self.tabsView.view?.removeFromSuperview()
+        self.tabsView = ComponentView<Empty>()
+        self.updateLayout(width: self.width, transition: .immediate)
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
