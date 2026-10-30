@@ -105,6 +105,7 @@ history_search({
   limit?: number,          // hits; default 20; -1: all
   cursor?: string,         // from next
   truncate?: boolean,      // default true
+  text?: boolean,          // default true; false: hits without text, links only
 })
 ```
 
@@ -172,7 +173,10 @@ those are the best. `newest` and `oldest` order by the entry's time and skip bm2
   marks words with ranges, the model reads markers. A `tool_call` hit's text is the tool's name, a colon, and its
   arguments as the call's card titles them (the command for bash, the path for read).
 - **`total`** counts every hit. When the index stopped at its scan cap (below), `total` is a floor and the result says
-  so: `"complete": false`. It is never silently short.
+  so: `"complete": false` (absent when it is complete). It is never silently short.
+- **`text: false`** leaves the excerpts out: the hits' links, chats, kinds and times, read from the index alone (a
+  term that needs the literal check still reads its parts). For a script that reads each hit anyway, about five
+  times faster over many hits (Speed).
 - **`time`** is ISO 8601 in UTC: unambiguous for the model, which converts when it tells the user.
 
 ### Pages and the cursor
@@ -399,13 +403,29 @@ Answer  缺了 identity.ts，先 hydrate 模型数据再 build
 
 ## Speed
 
-The index answers in milliseconds (docs/search.md, Speed: 1 to 20 ms over 28.6M characters). What costs is reading
-each hit's text from its entry for the excerpt and the exact check: twenty hits are nothing, `limit: -1` over a
-common word is hundreds of thousands of reads. A rare command, the research case, is a few hundred.
+The index answers in milliseconds (docs/search.md, Speed). What costs is reading each hit's text from its entry for the
+excerpt and the exact check: twenty hits are nothing, `limit: -1` over a common word is tens of thousands of reads. A
+rare command, the research case, is a few hundred.
 
-To measure with `server/bench/search.ts` before building `-1`: hits per second of excerpts, `sort: newest` against
-relevance, and the scan cap's cost lifted. If excerpts dominate, a script can ask for less: hits without `text`
-(links only) read nothing but the index.
+`server/bench/search.ts` indexes the pi sessions with their tool calls and the edges of tool output, as the server
+does, and times `hits()` (32 cores, Node 24; 1,370 sessions, 322k entries, 346M characters, a 412 MB index; texts from
+memory). Reading an entry from the server's SQLite costs more: about 87,000 a second on a copy of chorus's database.
+
+| | hits | relevance, 20 | newest, 20 | all, relevance | all, newest | all, no text | all, no cap |
+|---|---|---|---|---|---|---|---|
+| a rare word | 8 | <1 ms | <1 ms | <1 ms | <1 ms | <1 ms | <1 ms |
+| `"npm run build"` | 126 | 1 ms | 1 ms | 1 ms | 1 ms | 1 ms | 1 ms |
+| `error` | 26,019 | 37 ms | 21 ms | 156 ms | 137 ms | 33 ms | 135 ms |
+| `the` | 50,000 of 157,054 | 70 ms | 40 ms | 352 ms | 301 ms | 62 ms | 973 ms (relevance 1,158 ms) |
+
+With the reads, `limit: -1` over `error` is about 0.45 s and over `the` 0.9 s (1.8 s more without the cap); with
+`text: false` they read nothing. So:
+
+- **`sort: newest`** saves bm25, about 40% of a page over a common word, and little over all of them, where the
+  excerpts cost most.
+- **Excerpts dominate** `limit: -1`: four to five times the rest. `text: false` is the cheap way to many hits.
+- **The cap holds**: lifting it costs in proportion (three times as many hits of `the`, three times the time), and
+  only for words common enough that no script means them. Past it the result says `"complete": false`.
 
 ## Order of work
 
@@ -415,7 +435,8 @@ relevance, and the scan cap's cost lifted. If excerpts dominate, a script can as
 2. **`history_search`** over the index as it is: user, assistant, reasoning and title; `exact` and smart case; the
    cursor.
 3. **`tool_call` and `tool_output`** in the index, with a backfill of the existing entries (`backfill-worker.ts` pass).
-4. **`sort`, `limit: -1`, the scan cap's `complete`**, after the benchmark.
+4. **`sort`, `limit: -1`, the scan cap's `complete`**, after the benchmark; and `text: false`, which the benchmark
+   showed is worth having.
 5. **The cards** in the app, and their UI tests.
 
 Tests: `server/test/history.test.ts` with the dev model: a conversation compacted, a subagent, a fork; search finds
@@ -427,6 +448,6 @@ past the head, in subagents and in the owner; read pages by `older` until it end
 - **Access.** Any conversation reads any other on its server: a server is one person's. (A draft elsewhere,
   `docs/later.md`, limited `read_transcript` to descendants, owner, and linked threads; not taken.)
 - **The summary line** stays: `No results` needs a place.
-- **`-1` and the scan cap**: the cap holds and a result past it says `"complete": false`, until the benchmark says
-  lifting it is cheap.
+- **`-1` and the scan cap**: the cap holds and a result past it says `"complete": false`; the benchmark (Speed) says
+  lifting it costs in proportion, for words no research means.
 - **Images** in a read are counted, not read.

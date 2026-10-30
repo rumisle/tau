@@ -107,6 +107,12 @@ export type HitOptions = {
 	exclude?: ReadonlySet<number>;
 	/** An entry left out: the one making the call. */
 	skip?: { conversationId: number; entryId: number };
+	/** Default relevance with a query; newest and oldest by the part's time, without bm25. */
+	sort?: "relevance" | "newest" | "oldest";
+	/** Matching parts read at most; default `MAX_MATCHES` (the benchmark lifts it). */
+	cap?: number;
+	/** false: hits without their text, which then costs no reads unless the literal check needs them. */
+	excerpts?: boolean;
 };
 
 export type PartHit = Omit<SearchHit, "entryId"> & { conversationId: number; entryId?: number; idx?: number };
@@ -617,6 +623,9 @@ export class SearchIndex {
 		const exclude = options.exclude ?? new Set<number>();
 		const scope = scopeSql(options.scope);
 		const kindFilter = ` AND (f.rowid & 7) IN (${kinds.join(",")})`;
+		const sort = options.sort ?? (query.terms.length === 0 ? "newest" : "relevance");
+		const cap = options.cap ?? MAX_MATCHES;
+		const capSql = Number.isFinite(cap) ? ` LIMIT ${Math.trunc(cap)}` : "";
 		type Row = { rowid: number; b: number; entry: number | null; idx: number | null; time: number | null };
 		let rows: Row[];
 		if (terms.length === 0) {
@@ -627,7 +636,7 @@ export class SearchIndex {
 			rows = this.db
 				.prepare(
 					`SELECT p.rowid AS rowid, 0 AS b, p.entry AS entry, p.idx AS idx, p.time AS time FROM part p
-					 WHERE 1${scope.replaceAll("f.rowid", "p.rowid")} AND (p.rowid & 7) IN (${partKinds.join(",")}) ORDER BY p.time DESC LIMIT ${MAX_MATCHES}`,
+					 WHERE 1${scope.replaceAll("f.rowid", "p.rowid")} AND (p.rowid & 7) IN (${partKinds.join(",")}) ORDER BY p.time ${sort === "oldest" ? "ASC" : "DESC"}${capSql}`,
 				)
 				.all() as Row[];
 		} else {
@@ -635,14 +644,14 @@ export class SearchIndex {
 			if (excluded.length > 0) expression = `(${expression}) NOT (${excluded.map((term) => ftsExpression(term, true)).join(" OR ")})`;
 			rows = this.db
 				.prepare(
-					`SELECT f.rowid AS rowid, bm25(fts) AS b, p.entry AS entry, p.idx AS idx, p.time AS time FROM fts f LEFT JOIN part p ON p.rowid = f.rowid
-					 WHERE fts MATCH ?${scope}${kindFilter} ORDER BY f.rowid DESC LIMIT ${MAX_MATCHES}`,
+					`SELECT f.rowid AS rowid, ${sort === "relevance" ? "bm25(fts)" : "0"} AS b, p.entry AS entry, p.idx AS idx, p.time AS time FROM fts f LEFT JOIN part p ON p.rowid = f.rowid
+					 WHERE fts MATCH ?${scope}${kindFilter} ORDER BY f.rowid DESC${capSql}`,
 				)
 				.all(expression) as Row[];
 		}
-		const complete = rows.length < MAX_MATCHES;
+		const complete = rows.length < cap;
 		const fuzzy = terms.some((term) => term.prefix || term.variants.length > 0);
-		const exactRows = fuzzy ? new Set(this.#rowids(terms.map((term) => ftsExpression(term, true)).join(" AND "), scope, kindFilter)) : undefined;
+		const exactRows = fuzzy && sort === "relevance" ? new Set(this.#rowids(terms.map((term) => ftsExpression(term, true)).join(" AND "), scope, kindFilter, capSql)) : undefined;
 		// The literal check: a term of lower-case letters and digits found as a token is in the text as written; any other
 		// (a capital, punctuation, a phrase's spacing, CJK) is looked for in the text.
 		const literal = terms.filter((term) => options.exact || /\p{Lu}/u.test(term.raw)).filter((term) => caseSensitive || !/^[a-z0-9]+$/.test(term.raw));
@@ -671,11 +680,25 @@ export class SearchIndex {
 			const score = Math.max(-row.b, 0.5) * weight * (1 + 1.5 * 2 ** (-age / (14 * DAY)));
 			kept.push({ row, tier: exactRows === undefined || exactRows.has(row.rowid) ? 2 : 1, score, time });
 		}
-		if (terms.length > 0) kept.sort((a, b) => b.tier - a.tier || b.score - a.score || b.time - a.time);
+		if (sort === "relevance") kept.sort((a, b) => b.tier - a.tier || b.score - a.score || b.time - a.time);
+		else if (terms.length > 0) kept.sort((a, b) => (sort === "oldest" ? a.time - b.time : b.time - a.time));
 		const page = limit < 0 ? kept.slice(offset) : kept.slice(offset, offset + limit);
 		const context = options.context ?? 150;
 		const hits: PartHit[] = [];
 		for (const item of page) {
+			if (options.excerpts === false) {
+				hits.push({
+					conversationId: conversationOf(item.row.rowid),
+					...(item.row.entry === null ? {} : { entryId: item.row.entry, idx: item.row.idx ?? 0 }),
+					kind: KIND_NAMES[kindOf(item.row.rowid)]!,
+					time: item.time,
+					text: "",
+					before: false,
+					after: false,
+					ranges: [],
+				});
+				continue;
+			}
 			const text = await textOf(item.row);
 			if (text === undefined) continue;
 			const ranges = literal.length > 0 || options.exact ? literalRanges(text, terms, caseSensitive) : highlight(text, terms);
@@ -695,9 +718,9 @@ export class SearchIndex {
 		return { hits, total: kept.length, complete, ms: performance.now() - started };
 	}
 
-	#rowids(expression: string, scope: string, kindFilter: string): number[] {
+	#rowids(expression: string, scope: string, kindFilter: string, capSql: string): number[] {
 		return (
-			this.db.prepare(`SELECT f.rowid AS rowid FROM fts f LEFT JOIN part p ON p.rowid = f.rowid WHERE fts MATCH ?${scope}${kindFilter} ORDER BY f.rowid DESC LIMIT ${MAX_MATCHES}`).all(expression) as {
+			this.db.prepare(`SELECT f.rowid AS rowid FROM fts f LEFT JOIN part p ON p.rowid = f.rowid WHERE fts MATCH ?${scope}${kindFilter} ORDER BY f.rowid DESC${capSql}`).all(expression) as {
 				rowid: number;
 			}[]
 		).map((row) => row.rowid);

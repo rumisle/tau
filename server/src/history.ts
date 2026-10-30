@@ -64,13 +64,16 @@ export type SearchArgs = {
 	query?: string;
 	in?: string;
 	kinds?: HistoryKind[];
+	sort?: "relevance" | "newest" | "oldest";
 	exact?: boolean;
 	limit?: number;
 	cursor?: string;
 	truncate?: boolean;
+	text?: boolean;
 };
-export type SearchHitOut = { link: string; chat: { link: string; title: string }; kind: HistoryKind; time: string; text: string; inContext?: boolean };
-export type SearchResult = { hits: SearchHitOut[]; total: number; next?: SearchArgs };
+export type SearchHitOut = { link: string; chat: { link: string; title: string }; kind: HistoryKind; time: string; text?: string; inContext?: boolean };
+/** `complete: false`: the index stopped at its scan cap, so `total` is a floor. */
+export type SearchResult = { hits: SearchHitOut[]; total: number; complete?: false; next?: SearchArgs };
 
 /** The search index, as history_search reads it (src/search/service.ts). */
 export type HistoryIndex = {
@@ -255,7 +258,7 @@ export class History {
 		const kinds = args.kinds ?? HISTORY_KINDS;
 		if (kinds.length === 0) throw new HistoryError("kinds is empty: name at least one kind, or leave it out for all.");
 		const limit = args.limit ?? 20;
-		if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new HistoryError("limit is a number of hits from 1 to 200.");
+		if (!Number.isInteger(limit) || (limit < 1 && limit !== -1)) throw new HistoryError("limit is a number of hits, or -1 for all of them.");
 		let cursor: CursorValue = { o: 0, n: Date.now() };
 		if (args.cursor !== undefined) {
 			try {
@@ -288,6 +291,8 @@ export class History {
 				kinds: kinds as HitOptions["kinds"],
 				exact: args.exact !== false,
 				limit,
+				...(args.sort === undefined ? {} : { sort: args.sort }),
+				...(args.text === false ? { excerpts: false } : {}),
 				offset: cursor.o,
 				now: cursor.n,
 				...(args.truncate === false ? { context: 10_000_000 } : {}),
@@ -311,12 +316,12 @@ export class History {
 				chat: { link: this.link(hit.conversationId), title: await title(hit.conversationId) },
 				kind: hit.kind as HistoryKind,
 				time: iso(hit.time),
-				text: marked(hit.text, hit.ranges, hit.before, hit.after),
+				...(args.text === false ? {} : { text: marked(hit.text, hit.ranges, hit.before, hit.after) }),
 				...(active !== undefined && hit.entryId !== undefined && mine(hit.conversationId, hit.entryId) ? { inContext: active.has(hit.entryId) } : {}),
 			});
 		}
-		const end = cursor.o + limit;
-		const result: SearchResult = { hits, total: response.total };
+		const end = limit < 0 ? response.total : cursor.o + limit;
+		const result: SearchResult = { hits, total: response.total, ...(response.complete ? {} : { complete: false as const }) };
 		if (end < response.total) {
 			const { cursor: _cursor, ...rest } = args;
 			result.next = { ...rest, cursor: Buffer.from(JSON.stringify({ o: end, n: cursor.n } satisfies CursorValue)).toString("base64url") };
@@ -473,8 +478,10 @@ const SEARCH_DESCRIPTION =
 	'reasoning, chat titles. query: every word must appear; "a phrase" as written; -word leaves a hit out; a capital ' +
 	"letter makes it match case. Exact by default (no prefixes or typos). in: a chat's link, \"this\", \"owner\" " +
 	"or \"subagents\"; omitted: every chat. No query: the newest messages first. Each hit has its link (read it with " +
-	"history_read), its chat, kind, time (UTC) and an excerpt with the matched words between « and ». A result with " +
-	"next is not complete: call history_search again with next as the arguments.";
+	"history_read), its chat, kind, time (UTC) and an excerpt with the matched words between « and ». sort: relevance " +
+	"(default), newest or oldest. limit: -1 returns every hit. A result with next is not complete: call history_search " +
+	'again with next as the arguments. complete: false means the index stopped at its scan cap (the 50,000 newest ' +
+	"matching parts) and total is a floor: narrow the query, the kinds or the chat.";
 
 /** The two tools, over `history` (and a search index, once there is one: `search()`). */
 export function historyExtension(history: History): Extension {
@@ -510,9 +517,11 @@ export function historyExtension(history: History): Extension {
 			in: Type.Optional(Type.String({ description: 'A tau:// link to a chat, "this", "owner" or "subagents"; omitted: every chat' })),
 			kinds: Type.Optional(Type.Array(KIND)),
 			exact: Type.Optional(Type.Boolean({ description: "Default true: words as written. false: prefixes and typos too, as the user's search" })),
-			limit: Type.Optional(Type.Integer({ description: "Hits, default 20" })),
+			sort: Type.Optional(Type.Union([Type.Literal("relevance"), Type.Literal("newest"), Type.Literal("oldest")], { description: "Default relevance; newest without a query" })),
+			limit: Type.Optional(Type.Integer({ description: "Hits, default 20; -1: all of them" })),
 			cursor: Type.Optional(Type.String({ description: "From next only" })),
 			truncate: Type.Optional(Type.Boolean({ description: "false: each hit's whole text instead of an excerpt" })),
+			text: Type.Optional(Type.Boolean({ description: "false: hits without text (links only), much faster for many" })),
 		}),
 		structuredOutputSchema: Type.Unknown(),
 		replay: "safe",

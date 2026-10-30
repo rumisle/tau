@@ -182,7 +182,7 @@ describe("history", () => {
 		const found = await search(replica.id, { query: "xylophone", in: "this", kinds: ["user"] });
 		assert.equal(found.total, 1);
 		assert.equal(found.hits[0]!.inContext, false, "before the compaction's head");
-		assert.match(found.hits[0]!.text, /^«xylophone» filler/);
+		assert.match(found.hits[0]!.text!, /^«xylophone» filler/);
 		assert.equal(found.hits[0]!.chat.title, "Compacted");
 		assert.match(found.hits[0]!.time, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
 		// From another chat: found, without inContext.
@@ -246,19 +246,44 @@ describe("history", () => {
 		await assert.rejects(search(replica.id, { query: "x", in: "tau://ffffffff/1" }), /Not on this server/);
 	});
 
+	test("search: sort by time, limit: -1 for every hit, text: false for links only, and complete: false past the scan cap", async () => {
+		const replica = await chat("Sorted");
+		for (let index = 1; index <= 5; index++) await say(replica, `ordering trial ${index}`);
+		await indexed();
+		const base = { query: "ordering", in: "this", kinds: ["user" as const] };
+		assert.deepEqual((await search(replica.id, { ...base, sort: "newest", limit: 2 })).hits.map((hit) => hit.text), ["«ordering» trial 5", "«ordering» trial 4"]);
+		assert.deepEqual((await search(replica.id, { ...base, sort: "oldest", limit: 2 })).hits.map((hit) => hit.text), ["«ordering» trial 1", "«ordering» trial 2"]);
+		const all = await search(replica.id, { ...base, limit: -1 });
+		assert.equal(all.hits.length, 5);
+		assert.equal(all.next, undefined);
+		assert.equal(all.complete, undefined);
+		const links = await search(replica.id, { ...base, limit: -1, text: false });
+		assert.ok(links.hits.every((hit) => hit.text === undefined && hit.link.startsWith("tau://")));
+		// An index that stops at two matches says so.
+		const real = history.index!;
+		history.index = { hits: (query, options, context) => real.hits(query, { ...options, cap: 2 }, context), title: (id) => real.title(id) };
+		try {
+			const capped = await search(replica.id, { ...base, limit: -1 });
+			assert.equal(capped.complete, false);
+			assert.equal(capped.total, 2);
+		} finally {
+			history.index = real;
+		}
+	});
+
 	test("search: tool calls and output, linked to the call; the user's search leaves them out", async () => {
 		const replica = await chat("Tools");
 		await say(replica, "$ echo narwhal-77 && echo 'Error: narwhal exploded'");
 		await indexed();
 		const calls = await search(replica.id, { query: '"echo narwhal-77"', kinds: ["tool_call"] });
 		assert.equal(calls.total, 1, JSON.stringify(calls));
-		assert.match(calls.hits[0]!.text, /^bash: «echo narwhal-77»/);
+		assert.match(calls.hits[0]!.text!, /^bash: «echo narwhal-77»/);
 		const call = replica.ordered().find((entry) => entry.kind === "pi.assistant" && JSON.stringify(entry.model).includes("narwhal-77"))!;
 		assert.equal(calls.hits[0]!.link, history.link(replica.id, call.id));
 		const outputs = await search(replica.id, { query: "Error: narwhal", kinds: ["tool_output"] });
 		assert.equal(outputs.total, 1);
 		assert.equal(outputs.hits[0]!.link, history.link(replica.id, call.id), "the output's link is its call's");
-		assert.match(outputs.hits[0]!.text, /«Error:» «narwhal» exploded/);
+		assert.match(outputs.hits[0]!.text!, /«Error:» «narwhal» exploded/);
 		const shown = await read(replica.id, { link: outputs.hits[0]!.link, older: 0, newer: 0 });
 		assert.deepEqual(shown.entries[0]!.parts.map((part) => part.kind), ["tool_call", "tool_output"]);
 		// The user's search: what was said, not the logs.

@@ -1,9 +1,11 @@
 // Search benchmark: indexes the prompts, answers and reasoning of the pi sessions in ~/.pi/agent/sessions (or the
-// directory given) as conversations, then times queries of each kind.
+// directory given) as conversations, then times queries of each kind; with tool calls and the edges of tool output, as
+// the server indexes them, and history_search's searches of every part.
 //   node --no-warnings bench/search.ts [sessions-dir] [--db /tmp/tau-search-bench.db] [--keep]
 import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { indexedOutputText, toolCallText } from "../src/history-text.ts";
 import { Kind, type IndexEntry, SearchIndex } from "../src/search/index.ts";
 
 const args = process.argv.slice(2);
@@ -22,7 +24,7 @@ function files(dir: string): string[] {
 	return out;
 }
 
-type Block = { type: string; text?: string; thinking?: string };
+type Block = { type: string; text?: string; thinking?: string; name?: string; arguments?: unknown };
 const texts = new Map<string, string>();
 const titles = new Map<number, string>();
 const conversations: IndexEntry[][] = [];
@@ -40,13 +42,19 @@ for (const file of files(root).sort()) {
 			continue;
 		}
 		const { role, content } = record.message;
-		if (role !== "user" && role !== "assistant") continue;
+		if (role !== "user" && role !== "assistant" && role !== "toolResult") continue;
 		const blocks: Block[] = typeof content === "string" ? [{ type: "text", text: content }] : content;
 		const parts: IndexEntry["parts"] = [];
+		if (role === "toolResult") {
+			// As the server indexes a tool's output: its first and last 2 KB.
+			const text = indexedOutputText(blocks.map((block) => (block.type === "text" ? (block.text ?? "") : "[image]")).join("\n"));
+			if (text.trim() !== "") parts.push({ kind: Kind.tool_output, text, idx: 0 });
+		}
 		blocks.forEach((block, idx) => {
-			const text = block.type === "text" ? block.text : block.type === "thinking" ? block.thinking : undefined;
+			if (role === "toolResult") return;
+			const text = block.type === "text" ? block.text : block.type === "thinking" ? block.thinking : block.type === "toolCall" ? toolCallText(block.name ?? "tool", block.arguments) : undefined;
 			if (text === undefined || text.trim() === "") return;
-			const kind = role === "user" ? Kind.user : block.type === "thinking" ? Kind.reasoning : Kind.assistant;
+			const kind = block.type === "toolCall" ? Kind.tool_call : role === "user" ? Kind.user : block.type === "thinking" ? Kind.reasoning : Kind.assistant;
 			parts.push({ kind, text, idx });
 		});
 		if (parts.length === 0) continue;
@@ -134,6 +142,43 @@ for (const [label, query, typing] of queries) {
 	rows.push(`${label.padEnd(20)} ${JSON.stringify(query).padEnd(22)} ${String(total).padStart(5)} chats  p50 ${times[3]!.toFixed(1).padStart(6)} ms  max ${times[6]!.toFixed(1).padStart(6)} ms  ${first}`);
 }
 console.log(rows.join("\n"));
+// history_search (docs/history.md): every matching part, ranked or by time, a page or all of them, with excerpts or not,
+// with the scan cap or without it.
+const hitQueries: [string, string][] = [
+	["rare word", "wallpaper"],
+	["command", '"npm run build"'],
+	["error", "error"],
+	["common word", "the"],
+];
+const hitRows: string[] = [];
+for (const [label, query] of hitQueries) {
+	for (const [variant, options] of [
+		["relevance, 20", { exact: true, limit: 20 }],
+		["newest, 20", { exact: true, limit: 20, sort: "newest" as const }],
+		["relevance, all", { exact: true, limit: -1 }],
+		["newest, all", { exact: true, limit: -1, sort: "newest" as const }],
+		["newest, all, no text", { exact: true, limit: -1, sort: "newest" as const, excerpts: false }],
+		["newest, all, no cap", { exact: true, limit: -1, sort: "newest" as const, cap: Number.POSITIVE_INFINITY }],
+		["relevance, all, no cap", { exact: true, limit: -1, cap: Number.POSITIVE_INFINITY }],
+		["fuzzy, relevance, 20", { exact: false, limit: 20 }],
+	] as const) {
+		const times: number[] = [];
+		let total = 0;
+		let hits = 0;
+		let complete = true;
+		for (let i = 0; i < 3; i++) {
+			const t = performance.now();
+			const response = await index.hits(query, load, options);
+			times.push(performance.now() - t);
+			total = response.total;
+			hits = response.hits.length;
+			complete = response.complete;
+		}
+		times.sort((a, b) => a - b);
+		hitRows.push(`${label.padEnd(12)} ${JSON.stringify(query).padEnd(16)} ${variant.padEnd(24)} ${String(total).padStart(7)} hits${complete ? " " : "+"} ${String(hits).padStart(7)} shown  p50 ${times[1]!.toFixed(0).padStart(6)} ms  ${(hits / (times[1]! / 1000)).toFixed(0).padStart(8)} hits/s`);
+	}
+}
+console.log(hitRows.join("\n"));
 const inChat = conversations.reduce((best, list) => (list.length > best.length ? list : best), conversations[0]!);
 const t = performance.now();
 const found = index.searchConversation(inChat[0]!.conversationId, "the");
