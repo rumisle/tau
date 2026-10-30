@@ -367,8 +367,10 @@ One rule, which the rest follows: **the first line is the call; below it is the 
   "Its owner". The other arguments follow in words (`in subagents`, `10 older`, `newest`), three spaces apart, after
   a wider gap and in the dim color, so they do not run into the title; `kinds` is one set among them, `User, Answer`, on both cards. It
   wraps rather than cut (to three lines folded).
-- **The result** is a line per item, then what is not shown (`6 more`, `4 earlier`), which says how much there is
-  without a count line of its own; an empty search says `No results`, an empty read `No messages`.
+- **The result** is a line per item and, folded, how many more of them the call returned (`1 more`, `4 earlier`); an
+  empty search says `No results`, an empty read `No messages`. A count is only ever of items the call returned:
+  never the hits a search has past its page (`total`) or the entries before a read's window, which are the model's
+  to page through.
 
 ```
 History search  "npm run build"    Tool call                 0.2s
@@ -394,11 +396,10 @@ Answer  缺了 identity.ts，先 hydrate 模型数据再 build
 - **A message** in a read is a line per part: its kind as a name (User, Output, Reasoning, Answer, Summary for a
   compaction's, Error), then its text. A tool call is named by its tool's card title, and its text is the call
   without the tool's name.
-- **Folded**: the first three hits, then `N more` (of the total, so also those on later pages); the last three
-  lines, after `N earlier`, as a code card shows the last three calls after "N earlier calls". Each item is one line,
+- **Folded**: the first three hits, then `N more` (those returned and not shown); the last three lines, after
+  `N earlier` (likewise), as a code card shows the last three calls after "N earlier calls". Each item is one line,
   cut to fit. **Unfolded**: all of those the result has, each item on up to two lines (the first broken at a word,
-  the time still at its right), cut after the second; when the result is a page of a larger search, `N more` after
-  them is what the search has past it.
+  the time still at its right), cut after the second, and no count after them.
 - **A tap** folds and unfolds the card, as any tool card's; its lines open nothing (to go to a hit, ask the agent
   for its tau link, which opens it). It has no Show All: unfolded, it is all the result has.
 - **Failed**: the title in the destructive color, the error under it (`Not on this server: …`).
@@ -460,8 +461,9 @@ past the head, in subagents and in the owner; read pages by `older` until it end
 
 - **Access.** Any conversation reads any other on its server: a server is one person's. (A draft elsewhere,
   `docs/later.md`, limited `read_transcript` to descendants, owner, and linked threads; not taken.)
-- **No count line**: the lines and `N more` / `N earlier` say how much there is; `No results` stands alone. (The
-  first build had `9 results` above the lines; it said what the lines said.)
+- **No count line**: the lines say what the call returned, and folded, `N more` / `N earlier` what of it is hidden;
+  `No results` stands alone. (The first build had `9 results` above the lines, and counted a search's hits past its
+  page; the card counts only what the call fetched.)
 - **`-1` and the scan cap**: the cap holds and a result past it says `"complete": false`; the benchmark (Speed) says
   lifting it costs in proportion, for words no research means.
 - **Images** in a read are counted, not read.

@@ -3,7 +3,7 @@ import UIKit
 import Display
 
 /// The cards of history_search and history_read (docs/history.md, In the app): the first line is the call, below it the
-/// result: a line per hit or message and what is not shown ("6 more", "2 earlier"), or "No results". A tap folds and
+/// result: a line per hit or message and, folded, how many more it returned ("1 more", "2 earlier"), or "No results". A tap folds and
 /// unfolds it, as any tool card.
 enum HistoryCard {
     static let searchName = "history_search"
@@ -154,10 +154,8 @@ enum HistoryCard {
         }
         if name == searchName {
             let hits = result.objects("hits")
-            let total = result.int("total") ?? hits.count
-            let floor = result.bool("complete") == false
             if hits.isEmpty {
-                note(total == 0 ? "No results" : "\(total)\(floor ? "+" : "") more")
+                note("No results")
                 return (nil, body)
             }
             // In one chat, the line says the part's kind; across chats, the chat.
@@ -168,10 +166,10 @@ enum HistoryCard {
                 let time = hit.string("time").flatMap { ISO8601DateFormatter().date(from: $0) }.map(chatListDateString) ?? ""
                 item(line(name: label, marked: hit.string("text") ?? "", time: time, lines: isExpanded ? 2 : 1, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
             }
-            // What is not shown: folded, the rest; unfolded, what the search has past the page it returned.
-            let more = total - shown.count
-            if more > 0 {
-                note("\(more)\(floor ? "+" : "") more")
+            // Folded, the hits the call returned that are not shown; only those: what the search has past the page it
+            // returned is not the card's to count. Unfolded, every hit it returned, and nothing after them.
+            if shown.count < hits.count {
+                note("\(hits.count - shown.count) more")
             }
             return (nil, body)
         }
@@ -195,6 +193,7 @@ enum HistoryCard {
         if lines.isEmpty {
             note("No messages")
         }
+        // Folded, the returned lines not shown, never entries before the window the read did not fetch.
         let shown = isExpanded ? lines : Array(lines.suffix(3))
         if shown.count < lines.count {
             note("\(lines.count - shown.count) earlier")

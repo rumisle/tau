@@ -1087,13 +1087,14 @@ final class SendingUITests: XCTestCase {
         XCTAssertTrue(search.label.contains("User, Answer"), "the kinds as a set: \(search.label)")
         XCTAssertTrue(search.label.contains("in this chat"), search.label)
         XCTAssertFalse(search.label.contains("results"), "no count line: \(search.label)")
-        XCTAssertTrue(search.label.contains(" more"), "folded to three: \(search.label)")
+        // Folded: three of the four it returned, and the one not shown; never the hits past the page.
+        XCTAssertTrue(search.label.hasSuffix("\n1 more"), "folded to three of four: \(search.label)")
         self.shot("history-0-search")
         search.tap()
         settle()
         self.shot("history-1-search-expanded")
-        // Unfolded: the four it returned, each on up to two lines, and what the search has past them.
-        XCTAssertTrue(search.label.contains(" more"), "the search's rest: \(search.label)")
+        // Unfolded: the four it returned, each on up to two lines, and no count after them.
+        XCTAssertFalse(search.label.contains(" more"), "nothing it did not return: \(search.label)")
         XCTAssertTrue(search.label.contains("Xochimilco"), "the long one wraps: \(search.label)")
         XCTAssertFalse(self.app.descendants(matching: .any)["Show All"].exists, "no Show All")
         self.type("!tool history_read older=3 kinds=user,assistant")
