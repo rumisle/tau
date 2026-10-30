@@ -477,7 +477,8 @@ const SEARCH_DESCRIPTION =
 	"Search the chats of this server, yours included past its compaction, for messages: what the user wrote, answers, " +
 	'reasoning, chat titles. query: every word must appear; "a phrase" as written; -word leaves a hit out; a capital ' +
 	"letter makes it match case. Exact by default (no prefixes or typos). in: a chat's link, \"this\", \"owner\" " +
-	"or \"subagents\"; omitted: every chat. No query: the newest messages first. Each hit has its link (read it with " +
+	"or \"subagents\"; omitted: every chat. No query: the newest messages first, and with kinds: [\"title\"] the " +
+	"chats by title, the most recently active first. Each hit has its link (read it with " +
 	"history_read), its chat, kind, time (UTC) and an excerpt with the matched words between « and ». sort: relevance " +
 	"(default), newest or oldest. limit: -1 returns every hit. A result with next is not complete: call history_search " +
 	'again with next as the arguments. complete: false means the index stopped at its scan cap (the 50,000 newest ' +

@@ -224,6 +224,36 @@ describe("history", () => {
 		assert.equal(hit.text, "node «--conditions=source» main.ts");
 	});
 
+	test("search: no query with kinds title lists chats by title, the most recently active first; mixed kinds too", async () => {
+		const older = await chat("Titled older");
+		await say(older, "first words");
+		const newer = await chat("Titled newer");
+		await say(newer, "second words");
+		await indexed();
+		const titles = await search(newer.id, { kinds: ["title"], limit: -1 });
+		const links = titles.hits.map((hit) => hit.link);
+		assert.ok(titles.hits.every((hit) => hit.kind === "title" && hit.link === hit.chat.link), JSON.stringify(titles));
+		assert.ok(links.indexOf(history.link(newer.id)) < links.indexOf(history.link(older.id)) && links.indexOf(history.link(older.id)) >= 0, JSON.stringify(links));
+		const titled = titles.hits.find((hit) => hit.link === history.link(newer.id))!;
+		assert.equal(titled.text, "Titled newer");
+		assert.equal(titled.chat.title, "Titled newer");
+		// Activity moves a chat up.
+		await say(older, "more words");
+		await indexed();
+		const again = await search(newer.id, { kinds: ["title"], limit: 2 });
+		assert.equal(again.hits[0]!.link, history.link(older.id));
+		assert.equal(again.total, titles.total);
+		// In one chat: its title among its messages, at the chat's last activity, so first.
+		const mixed = await search(older.id, { in: "this", kinds: ["user", "title"], limit: -1 });
+		assert.deepEqual(mixed.hits.map((hit) => hit.kind), ["title", "user", "user"], JSON.stringify(mixed));
+		assert.deepEqual(mixed.hits.slice(1).map((hit) => hit.text), ["more words", "first words"]);
+		const oldest = await search(older.id, { in: "this", kinds: ["user", "title"], sort: "oldest" });
+		assert.deepEqual(oldest.hits.map((hit) => hit.kind), ["user", "user", "title"]);
+		// And everything, no kinds given: titles among the parts.
+		const all = await search(older.id, { in: "this", limit: -1 });
+		assert.ok(all.hits.some((hit) => hit.kind === "title") && all.hits.some((hit) => hit.kind === "assistant"), JSON.stringify(all));
+	});
+
 	test("search: next round-trips through every hit once; no query lists the newest first", async () => {
 		const replica = await chat("Paged");
 		for (let index = 1; index <= 7; index++) await say(replica, `pagination sample ${index}`);

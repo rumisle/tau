@@ -630,15 +630,29 @@ export class SearchIndex {
 		let rows: Row[];
 		if (terms.length === 0) {
 			if (query.terms.length > 0) return { hits: [], total: 0, complete: true, ms: performance.now() - started };
-			// No query: the parts, newest first; titles are not parts of an entry.
+			// No query: the parts newest first, and with them the chats by their titles, each at its last activity (the
+			// newest entry it has, as the chat list orders them): a title is no part of an entry and has no time of its own.
 			const partKinds = kinds.filter((kind) => kind !== Kind.title);
-			if (partKinds.length === 0) return { hits: [], total: 0, complete: true, ms: performance.now() - started };
-			rows = this.db
-				.prepare(
-					`SELECT p.rowid AS rowid, 0 AS b, p.entry AS entry, p.idx AS idx, p.time AS time FROM part p
-					 WHERE 1${scope.replaceAll("f.rowid", "p.rowid")} AND (p.rowid & 7) IN (${partKinds.join(",")}) ORDER BY p.time ${sort === "oldest" ? "ASC" : "DESC"}${capSql}`,
-				)
-				.all() as Row[];
+			const order = sort === "oldest" ? "ASC" : "DESC";
+			rows =
+				partKinds.length === 0
+					? []
+					: (this.db
+							.prepare(
+								`SELECT p.rowid AS rowid, 0 AS b, p.entry AS entry, p.idx AS idx, p.time AS time FROM part p
+								 WHERE 1${scope.replaceAll("f.rowid", "p.rowid")} AND (p.rowid & 7) IN (${partKinds.join(",")}) ORDER BY p.time ${order}${capSql}`,
+							)
+							.all() as Row[]);
+			if (kinds.includes(Kind.title)) {
+				const within = options.scope === undefined ? undefined : new Set(options.scope.map((each) => each.conversationId));
+				const titles: Row[] = [];
+				for (const conv of this.#conversations.values()) {
+					if (conv.title === null || conv.title.trim() === "" || (within !== undefined && !within.has(conv.id))) continue;
+					titles.push({ rowid: conv.id * CONV_SHIFT + Kind.title, b: 0, entry: null, idx: null, time: conv.updated });
+				}
+				rows = [...rows, ...titles].sort((a, b) => (order === "ASC" ? a.time! - b.time! : b.time! - a.time!));
+				if (Number.isFinite(cap)) rows = rows.slice(0, cap);
+			}
 		} else {
 			let expression = terms.map((term) => ftsExpression(term)).join(" AND ");
 			if (excluded.length > 0) expression = `(${expression}) NOT (${excluded.map((term) => ftsExpression(term, true)).join(" OR ")})`;

@@ -129,7 +129,11 @@ The index's query syntax, as docs/search.md has it: every word must appear, `"a 
   search matches them.
 - **`-word`** leaves out a part that has it (the index's `NOT`), not a whole conversation as in the user's search.
 - **No query** lists the scope's parts newest first, filtered by `kinds`: `history_search({ in: "subagents" })` is
-  what the subagents said; `history_search({ in: link, kinds: ["tool_call"] })` is every call in one conversation.
+  what the subagents said; `history_search({ in: link, kinds: ["tool_call"] })` is every call in one conversation. With
+  `title` among the kinds (as by default), the chats in scope are listed by their titles too, each at the chat's last
+  activity (its newest entry, as the chat list orders chats; a title has no time of its own, and a renamed chat is not
+  more recent for it): `history_search({ kinds: ["title"] })` lists the chats, the most recently active first. A
+  chat without a title is not listed.
 
 ### Ranking
 
