@@ -15,7 +15,7 @@ import {
 	type HarnessSettings,
 	type ModelRef,
 	MemoryStorage,
-	type ReportInfo,
+	type Report,
 	type Storage,
 	section,
 } from "@earendil-works/pi-durable";
@@ -67,6 +67,7 @@ export const MetaDoc = defineDoc<MetaState>({
 	history: "latest",
 	fork: "initial",
 	initial: () => ({}),
+	checkpointWhen: () => false,
 });
 
 /** Identity of this storage; a client whose cache came from another one drops it. */
@@ -75,6 +76,7 @@ export const ServerDoc = defineDoc<{ id: string }>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ id: "" }),
+	checkpointWhen: () => false,
 });
 
 /** Conversations created per client request ID, so a retried `conversation.create` returns the first one. */
@@ -83,6 +85,7 @@ export const CreatesDoc = defineDoc<{ requests: Record<string, number>; order: s
 	version: 1,
 	scope: "session",
 	initial: () => ({ requests: {}, order: [] }),
+	checkpointWhen: () => false,
 });
 
 /** Settings a client changes for the whole server. */
@@ -98,6 +101,7 @@ export const SettingsDoc = defineDoc<{
 	version: 1,
 	scope: "session",
 	initial: () => ({}),
+	checkpointWhen: () => false,
 });
 
 export type HostOptions = {
@@ -112,7 +116,7 @@ export type HostOptions = {
 	devTokensPerSecond?: number;
 	/** A prompt cache lifetime for the dev model, in seconds, with prices to make warming it pay: to try warming. */
 	devCacheTtl?: number;
-	onReport?: (error: unknown, info: ReportInfo) => void;
+	onReport?: (report: Report) => void;
 	/** Whose `.agents/skills` the prompt lists besides the conversation directory's (src/skills.ts); default home. */
 	skillsHome?: string;
 	/** Where files are kept (src/files.ts); default beside the database (`tau.db`'s `tau.files`), or a temporary one. */
@@ -234,9 +238,9 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 				const meta = await tx.doc(MetaDoc, conversation.id);
 				meta.createdAt ??= Date.now();
 			},
-			onReport: (error, info) => {
-				if (options.onReport !== undefined) options.onReport(error, info);
-				else console.error(`[durable] ${info.type}:`, error);
+			onReport: (report) => {
+				if (options.onReport !== undefined) options.onReport(report);
+				else console.error(`[durable] ${report.kind}:`, report.error);
 			},
 		},
 		context,

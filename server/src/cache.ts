@@ -31,6 +31,7 @@ import {
 	LiveDoc,
 	ProviderDoc,
 } from "@earendil-works/pi-durable";
+import { onCommit, changedValue } from "./commits.ts";
 
 /** A refresh is sent only when it is expected to save at least this much, in dollars (pi's threshold). */
 const MINIMUM_SAVINGS = 0.05;
@@ -74,6 +75,7 @@ export const CacheDoc = defineDoc<CacheState>({
 	// A fork is another provider session: its cache is its own.
 	fork: "initial",
 	initial: () => ({}),
+	checkpointWhen: () => false,
 });
 
 /** A model as `tau.cache` names it. */
@@ -209,10 +211,10 @@ export class CacheWarmer {
 	attach(harness: Harness, owned?: (id: ConversationId) => Promise<boolean>): void {
 		this.#harness = harness;
 		if (owned !== undefined) this.#owned = owned;
-		this.#unsubscribe = harness.subscribeCommits((publication) => {
+		this.#unsubscribe = onCommit(harness, (publication) => {
 			for (const change of publication.changes) {
 				if (change.type === "document" && change.conversationId !== undefined && change.record.kind === LiveDoc.definition.kind) {
-					const live = change.value as { run?: unknown } | null;
+					const live = changedValue(change) as { run?: unknown } | null;
 					if (live?.run === undefined) void this.#settled(change.conversationId);
 				} else if (change.type === "entry" && (change.value.kind === "pi.compaction" || change.value.kind === "pi.reset")) {
 					// The next request starts with another prompt: the entry is not what it will read.

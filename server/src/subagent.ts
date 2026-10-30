@@ -63,6 +63,7 @@ const Subagents = defineDoc<{ agents: Record<string, Agent>; reporters: Record<s
 	// A fork starts without subagents: they belong to the original.
 	fork: "initial",
 	initial: () => ({ agents: {}, reporters: {} }),
+	checkpointWhen: () => false,
 });
 
 // A subagent outlives this conversation's turns: its conversation is owned by an anchor, a background task that

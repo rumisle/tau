@@ -10,6 +10,7 @@ import { type Host, MetaDoc } from "../host.ts";
 import { type IndexEntry, type IndexPart, Kind, type KindName, SearchIndex, type SearchResponse } from "./index.ts";
 import { type UsageReport, UsageLedger, type UsageRow } from "./usage.ts";
 import { type IndexWriter, localWriter, WorkerWriter } from "./writer.ts";
+import { onCommit, changedValue } from "../commits.ts";
 
 /** A conversation's searchable parts: what the user and the model said, and the model's reasoning; no tool calls or output. */
 export function searchParts(entry: EntryRecord): IndexPart[] {
@@ -124,7 +125,7 @@ export class Search {
 		this.#unsubscribeCompaction = host.compaction.onUsage(({ conversationId, time, usage }) =>
 			this.#writer.addCompaction({ conversationId, time, input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost.total }),
 		);
-		this.#unsubscribe = host.harness.subscribeCommits((publication) => {
+		this.#unsubscribe = onCommit(host.harness, (publication) => {
 			for (const change of publication.changes) {
 				if (change.type === "entry") {
 					this.#pending.push(indexEntry(change.value));
@@ -133,7 +134,7 @@ export class Search {
 				} else if (change.type === "conversation") {
 					this.#conversation(change.value);
 				} else if (change.type === "document" && change.conversationId !== undefined && change.record.kind === MetaDoc.definition.kind) {
-					const meta = change.value as { title?: string; archived?: boolean; hidden?: boolean } | null;
+					const meta = changedValue(change) as { title?: string; archived?: boolean; hidden?: boolean } | null;
 					this.#meta(change.conversationId, meta ?? {});
 				}
 			}

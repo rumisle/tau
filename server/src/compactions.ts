@@ -7,6 +7,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { type ConversationId, defineDoc, type EntryRecord, type Harness, LiveDoc, type Storage, type SubmissionId, type TaskId } from "@earendil-works/pi-durable";
 import type { FollowUpCompaction } from "./compaction.ts";
+import { onCommit, changedValue } from "./commits.ts";
 
 export type CompactionRecord = {
 	taskId: number;
@@ -39,6 +40,7 @@ export const CompactionsDoc = defineDoc<{ items: CompactionRecord[] }>({
 	history: "latest",
 	fork: "initial",
 	initial: () => ({ items: [] }),
+	checkpointWhen: () => false,
 });
 
 /** The conversations with a record still running or waiting: what to check at start (`reconcile`). */
@@ -47,6 +49,7 @@ export const OpenCompactionsDoc = defineDoc<{ conversations: number[] }>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ conversations: [] }),
+	checkpointWhen: () => false,
 });
 
 const isOpen = (item: CompactionRecord) => item.state === "running" || item.state === "waiting";
@@ -54,7 +57,7 @@ const isOpen = (item: CompactionRecord) => item.state === "running" || item.stat
 /** The newest this many a conversation keeps. */
 const KEPT = 50;
 
-type LiveCompactions = { compactions?: { taskId: number; reason: string; blocking: boolean }[]; compactionFailure?: { taskId: number; error: string } } | null;
+type LiveCompactions = { compactions?: { taskId: number; trigger: string; blocking: boolean }[]; compactionFailure?: { taskId: number; error: string } } | null;
 
 /** What one commit said of one conversation's compactions. */
 type Seen = {
@@ -77,7 +80,7 @@ export class CompactionLog {
 	constructor(harness: Harness, storage: Storage, followUp: FollowUpCompaction) {
 		this.#harness = harness;
 		this.#storage = storage;
-		this.#unsubscribe = harness.subscribeCommits((publication) => {
+		this.#unsubscribe = onCommit(harness, (publication) => {
 			const seen = new Map<ConversationId, Seen>();
 			const of = (id: ConversationId) => {
 				let each = seen.get(id);
@@ -95,7 +98,7 @@ export class CompactionLog {
 					const match = /^compaction:(\d+)$/.exec(record.requestId ?? "");
 					if (match !== null) of(record.conversationId).submissions.push({ taskId: Number(match[1]), status: record.status, entry: record.entry, reason: record.reason });
 				} else if (change.type === "document" && change.conversationId !== undefined && change.record.kind === LiveDoc.definition.kind) {
-					const live = change.value as LiveCompactions;
+					const live = changedValue(change) as LiveCompactions;
 					const key = JSON.stringify([live?.compactions?.map((each) => each.taskId) ?? [], live?.compactionFailure?.taskId ?? null]);
 					if (this.#lastLive.get(change.conversationId) === key) continue;
 					this.#lastLive.set(change.conversationId, key);
@@ -207,7 +210,7 @@ export class CompactionLog {
 		// Started.
 		for (const status of seen.live?.compactions ?? []) {
 			if (find(status.taskId) !== undefined) continue;
-			items.push({ taskId: status.taskId, reason: status.reason, blocking: status.blocking, startedAt: now, state: "running", tokensBefore: await this.#contextBefore(id) });
+			items.push({ taskId: status.taskId, reason: status.trigger, blocking: status.blocking, startedAt: now, state: "running", tokensBefore: await this.#contextBefore(id) });
 		}
 		// Placed: a blocking one's entry is its task's own; a conversation's comes through its write submission.
 		for (const entry of seen.entries) {

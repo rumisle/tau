@@ -11,6 +11,7 @@ import { type Apns, type ApnsPush, type ApnsResult, activityDate, isGone } from 
 import { type ActivityRecord, type ActivityRow, type DeviceRecord, DevicesDoc, VISIBLE_ROWS } from "./devices.ts";
 import { type Host, MetaDoc } from "./host.ts";
 import { withoutQuotes } from "./quotes.ts";
+import { onCommit } from "./commits.ts";
 
 /** What sends to Apple: the APNs client, or a stand-in in tests. */
 export type PushSender = Pick<Apns, "send">;
@@ -94,7 +95,7 @@ export class Notifier {
 		this.#host = host;
 		this.#apns = options.apns;
 		this.#doneLifetime = options.doneLifetimeMs ?? DONE_LIFETIME_MS;
-		this.#unsubscribe = host.harness.subscribeCommits((publication) => {
+		this.#unsubscribe = onCommit(host.harness, (publication) => {
 			for (const change of publication.changes) {
 				if (change.type === "entry" && change.value.kind === "pi.assistant") {
 					const message = change.value.model?.[0] as AssistantMessage | undefined;
@@ -108,7 +109,7 @@ export class Notifier {
 					}, 0);
 				} else if (change.type === "document" && change.conversationId !== undefined && change.record.kind === LiveDoc.definition.kind) {
 					const id = change.conversationId;
-					const busy = change.value !== null && (change.value as { run?: unknown }).run !== undefined;
+					const busy = change.kind === "change" && (change.value as { run?: unknown }).run !== undefined;
 					const was = this.#busy.get(id);
 					if (was === busy) continue;
 					this.#busy.set(id, busy);

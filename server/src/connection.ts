@@ -592,7 +592,7 @@ export class Connection {
 			if (replaced !== undefined) void replaced.watch.stop();
 			const view = watch.value;
 			const record = view.conversation;
-			const head = view.entries[0]?.head;
+			const head = await this.#head(conversation.id);
 			const submissions = (await this.#host.harness.inspect(this.#context)).submissions.filter(
 				(submission) => submission.conversationId === conversation.id,
 			);
@@ -617,13 +617,14 @@ export class Connection {
 		// Replaced by a later subscribe of the same conversation while this one was answering.
 		if (this.#subscriptions.get(id) !== subscription || subscription.live) return;
 		subscription.live = true;
-		subscription.watch.start(async (value, ops) => {
-			if (this.#subscriptions.get(id) !== subscription) return;
+		subscription.watch.start(async (call) => {
+			if (call.kind !== "value" || this.#subscriptions.get(id) !== subscription) return;
+			const { value, ops } = call;
 			await this.#drained();
 			if (ops.length === 1 && ops[0]![0] === "r") {
-				// The watch fell more than 100 frames behind and coalesced: fetch the entries missed, then replace docs.
+				// The watch fell more than 10,000 ops behind and coalesced: fetch the entries missed, then replace docs.
 				const entries = await this.#missed(id, subscription);
-				const head = value.entries[0]?.head;
+				const head = await this.#head(id);
 				this.#push({
 					event: "conv.commit",
 					conversationId: id,
@@ -661,6 +662,11 @@ export class Connection {
 				...(head === undefined ? {} : { head }),
 			});
 		});
+	}
+
+	/** The first entry of the model's active context: the newest head marker's `head` (a compaction or reset). */
+	async #head(id: ConversationId): Promise<EntryId | undefined> {
+		return (await this.#host.storage.findLatestHeadMarker(id, undefined, this.#context))?.head;
 	}
 
 	/** Every entry newer than the newest sent, for a resync. */

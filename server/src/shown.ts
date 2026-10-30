@@ -36,7 +36,7 @@ export function modelCallId(callId: string): string {
 }
 
 /** Whether a replay-safe call's entry was appended already: a rerun after a crash appends none again. */
-const Shown = defineDoc<{ shown?: true }>({ kind: "tau.shown", version: 1, scope: "task", initial: () => ({}) });
+const Shown = defineDoc<{ shown?: true }>({ kind: "tau.shown", version: 1, scope: "task", initial: () => ({}), checkpointWhen: () => false });
 
 /** Runs `append` once per task, in the caller's transaction. */
 export async function appendShownOnce(tx: Tx, taskId: TaskId, append: () => Promise<unknown>): Promise<void> {

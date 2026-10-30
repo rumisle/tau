@@ -5,6 +5,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { AgentDoc, type ConversationId, type EntryRecord } from "@earendil-works/pi-durable";
 import { attachedFiles, ownText } from "./attachments.ts";
 import { type Host, MetaDoc } from "./host.ts";
+import { onCommit } from "./commits.ts";
 
 const PROMPT =
 	"Write a title for this conversation: 2 to 6 words, sentence case, no quotes, no final period. Reply with the title only.";
@@ -17,7 +18,7 @@ export class Titler {
 
 	constructor(host: Host) {
 		this.#host = host;
-		this.#unsubscribe = host.harness.subscribeCommits((publication) => {
+		this.#unsubscribe = onCommit(host.harness, (publication) => {
 			for (const change of publication.changes) {
 				if (change.type !== "entry" || change.value.kind !== "pi.assistant") continue;
 				const message = change.value.model?.[0] as AssistantMessage | undefined;

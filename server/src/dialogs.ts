@@ -21,6 +21,7 @@ import { FilesEntry, SubagentEntry } from "./shown.ts";
 import { withoutQuotes } from "./quotes.ts";
 import { type Host, MetaDoc, type MetaState } from "./host.ts";
 import type { Dialog, EntrySummary } from "./protocol.ts";
+import { onCommit } from "./commits.ts";
 
 const PREVIEW_CHARS = 200;
 /** Unread counts stop here; a badge shows 99 at most. */
@@ -89,7 +90,7 @@ export class Dialogs {
 			this.#change(id).reread = true;
 			this.#schedule();
 		});
-		this.#unsubscribe = host.harness.subscribeCommits((publication) => {
+		this.#unsubscribe = onCommit(host.harness, (publication) => {
 			for (const change of publication.changes) {
 				if (change.type === "entry") this.#change(change.value.conversationId).entries.push(change.value);
 				else if (change.type === "conversation") this.#change(change.value.id).reread = true;
@@ -100,7 +101,7 @@ export class Dialogs {
 					if (kind === MetaDoc.definition.kind || kind === AgentDoc.definition.kind || kind === CacheDoc.definition.kind) this.#change(change.conversationId).reread = true;
 					else if (kind === LiveDoc.definition.kind) {
 						// pi.live changes on every streamed chunk; only a run starting or ending matters here.
-						const busy = change.value !== null && (change.value as { run?: unknown }).run !== undefined;
+						const busy = change.kind === "change" && (change.value as { run?: unknown }).run !== undefined;
 						const pending = this.#changes.get(change.conversationId);
 						const known = pending?.busy ?? this.#kept.get(change.conversationId)?.state.busy;
 						if (!this.#loaded || known !== busy) this.#change(change.conversationId).busy = busy;

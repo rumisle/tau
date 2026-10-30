@@ -53,6 +53,7 @@ export const DevicesDoc = defineDoc<{ devices: Record<string, DeviceRecord> }>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ devices: {} }),
+	checkpointWhen: () => false,
 });
 
 /** More than this many rows, and the rest are a count ("+2 more"), as in the app. */
