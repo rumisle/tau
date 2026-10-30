@@ -85,8 +85,10 @@ enum ServiceContent: Equatable {
     /// A compaction that ended unused: the chat moved past it (`stale`), it failed (`error`), or there was nothing to
     /// compact (`empty`).
     case compactionUnused(state: String, error: String?)
-    /// A run that ended on a model error, after the server's own retries: why, cleaned up to read.
-    case failed(error: String)
+    /// A run that ended without an answer (a model error after the server's own retries, or durable's
+    /// `pi.live.runFailure`): what happened, why, cleaned up to read, and whether Retry continues it (the latest run's
+    /// failure, while nothing runs, with something left to answer).
+    case failed(title: String, error: String, retry: Bool)
 }
 
 /// The server waiting to ask the model again after an error (durable's retry backoff, `pi.live.generation`).

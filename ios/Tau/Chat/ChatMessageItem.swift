@@ -1601,21 +1601,22 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.layoutContainers(size: layout.contentSize)
                     })
 
-                case let .failed(error):
-                    // Where the answer would be, as a card: what went wrong, and Retry, which sends the message again,
-                    // as an alert's button.
+                case let .failed(title, error, retry):
+                    // Where the answer would be, as a card: what went wrong, and Retry, which asks the model again
+                    // where the run stopped (a continue), as an alert's button; without it when there is nothing to
+                    // continue.
                     let destructive = item.theme.presentationTheme.overallDarkAppearance ? UIColor(rgb: 0xff6961) : UIColor(rgb: 0xd70015)
                     let cardWidth = min(contentWidth - freeTextInset * 2.0 - leftShift, 360.0)
                     let cardInsets = UIEdgeInsets(top: 10.0, left: 12.0, bottom: 0.0, right: 12.0)
                     let innerWidth = cardWidth - cardInsets.left - cardInsets.right
-                    let header = NSAttributedString(string: "The model failed", font: Font.semibold(15.0), textColor: destructive)
+                    let header = NSAttributedString(string: title, font: Font.semibold(15.0), textColor: destructive)
                     let (headerLayout, headerApply) = makeToolTitleLayout(TextNodeLayoutArguments(attributedString: header, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: 30.0)))
                     let body = NSAttributedString(string: error, font: Font.regular(14.0), textColor: theme.toolCardTextColor)
                     let (bodyLayout, bodyApply) = makeSubagentTaskLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? 40 : 4, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: .greatestFiniteMagnitude)))
                     let button = NSAttributedString(string: "Retry", font: Font.semibold(16.0), textColor: item.theme.accentColor)
                     let (buttonLayout, buttonApply) = makeSubagentMetaLayout(TextNodeLayoutArguments(attributedString: button, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: 30.0)))
-                    let buttonHeight: CGFloat = 44.0
-                    let separatorY = cardInsets.top + headerLayout.size.height + 3.0 + bodyLayout.size.height + 10.0
+                    let buttonHeight: CGFloat = retry ? 44.0 : 0.0
+                    let separatorY = cardInsets.top + headerLayout.size.height + 3.0 + bodyLayout.size.height + (retry ? 10.0 : 12.0)
                     let cardHeight = separatorY + buttonHeight
                     let mergedTop = above == .assistant || above == .tool
                     let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: cardHeight), insets: UIEdgeInsets(top: mergedTop ? 6.0 : 10.0, left: 0.0, bottom: 6.0, right: 0.0))
@@ -1644,7 +1645,8 @@ final class ChatMessageItemNode: ListViewItemNode {
                         }
                         self.isAccessibilityElement = true
                         self.accessibilityIdentifier = "modelError"
-                        self.accessibilityLabel = error
+                        self.accessibilityLabel = "\(title): \(error)"
+                        self.accessibilityValue = retry ? "retry" : nil
                         let card = CGRect(x: params.leftInset + freeTextInset - 4.0 + leftShift, y: 0.0, width: cardWidth, height: cardHeight)
                         self.contentFrame = card
                         self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
@@ -1654,14 +1656,14 @@ final class ChatMessageItemNode: ListViewItemNode {
                         let _ = bodyApply()
                         self.subagentTaskNode.isHidden = false
                         self.subagentTaskNode.frame = CGRect(origin: CGPoint(x: card.minX + cardInsets.left, y: card.minY + cardInsets.top + headerLayout.size.height + 3.0), size: bodyLayout.size)
-                        self.subagentQuoteNode.isHidden = false
+                        self.subagentQuoteNode.isHidden = !retry
                         self.subagentQuoteNode.backgroundColor = theme.toolCardTextColor.withMultipliedAlpha(0.25)
                         self.subagentQuoteNode.frame = CGRect(x: card.minX, y: card.minY + separatorY, width: cardWidth, height: UIScreenPixel)
                         self.subagentBarNode.frame = .zero
                         let _ = buttonApply()
-                        self.subagentMetaNode.isHidden = false
+                        self.subagentMetaNode.isHidden = !retry
                         self.subagentMetaNode.frame = CGRect(origin: CGPoint(x: card.minX + floor((cardWidth - buttonLayout.size.width) / 2.0), y: card.minY + separatorY + floor((buttonHeight - buttonLayout.size.height) / 2.0)), size: buttonLayout.size)
-                        self.retryButtonFrame = CGRect(x: card.minX, y: card.minY + separatorY, width: cardWidth, height: buttonHeight)
+                        self.retryButtonFrame = retry ? CGRect(x: card.minX, y: card.minY + separatorY, width: cardWidth, height: buttonHeight) : nil
                         self.layoutContainers(size: layout.contentSize)
                         self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                     })
@@ -2500,6 +2502,7 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.timerNode.isHidden = true
         self.isAccessibilityElement = false
         self.accessibilityIdentifier = nil
+        self.accessibilityValue = nil
         self.subagentAnswerNode?.layer.mask = nil
         for node in self.tableNodes where !nodes.contains(where: { $0 === node }) {
             node.removeFromSupernode()

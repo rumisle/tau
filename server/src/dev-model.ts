@@ -1,6 +1,7 @@
 // A free scripted model for development: streams an echo of each message, runs `$ <command>` through bash, and starts
 // a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`,
-// fails as an overloaded provider would `!overloaded <times> <text>` before answering, and fails for good `!fatal <text>`.
+// fails as an overloaded provider would `!overloaded <times> <text>` before answering, fails for good `!fatal <text>`,
+// and fails for good once `!flaky <text>` (then answers, as a continue after it finds).
 // `!read <path>` reads a file with the read tool (an image comes back as one); `!send <path> [<path>…]` sends files to
 // the user (src/send-file.ts). `!code <script>` runs a code mode script (docs/codemode.md), `!code @<path>` the one in a file. `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
 // streams. `!burst <text>` answers as the echo does but all at once, its thinking and text in one go, as a provider that
@@ -68,6 +69,14 @@ export function devProvider(options: { tokensPerSecond?: number; cacheTtl?: numb
 			if (failed < Number(overloaded[1])) {
 				failures.set(key, failed + 1);
 				return fauxAssistantMessage([], { stopReason: "error", errorMessage: '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}' });
+			}
+		}
+		// `!flaky <text>`: fails for good once for this message, then answers (what a continue after it gets).
+		if (text.startsWith("!flaky ") && last?.role === "user") {
+			const key = `${text}@${last.timestamp}`;
+			if (!failures.has(key)) {
+				failures.set(key, 1);
+				return fauxAssistantMessage([], { stopReason: "error", errorMessage: '400 {"type":"error","error":{"type":"invalid_request_error","message":"flaky for once"}}' });
 			}
 		}
 		if (text.startsWith("!fatal ")) {

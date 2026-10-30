@@ -120,6 +120,11 @@ Telegram's sending, with the agent's two ways of reading a message.
   messages to the editor. Send Now does the same with the others.
 - **Refused**: Telegram's red badge beside the bubble (ChatMessageDeliveryFailedNode), which opens the reason with
   Resend and Delete. The chat list shows the red badge too, and the clock for a message on its way.
+- **No answer**: a run that ended without one (a model error after the server's retries, the server stopped while the
+  model answered, no model, ...) is a card where the answer would be, saying why (durable's `pi.live.runFailure`).
+  Its Retry continues the run where it stopped (`conversation.continue`): the message is not sent again, so it stays
+  once in the chat and in the model's context. Retry is there only on the latest run's card, while nothing runs, and
+  not when there is nothing left to answer. A refused message's Resend is another thing: it never reached the model.
 - **No connection**: a capsule in the chat's bar says "Connecting…" where Telegram's title does, and messages keep their clocks.
 - **In the background**: the app keeps running briefly to finish sending, as Telegram does.
 

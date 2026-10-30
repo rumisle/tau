@@ -67,6 +67,7 @@ const COMPACTIONS_DOC = CompactionsDoc.definition.kind;
 /** Requests that change a conversation run one at a time per conversation, in arrival order (src/serial.ts). */
 const SERIAL_METHODS = new Set([
 	"conversation.submit",
+	"conversation.continue",
 	"submission.withdraw",
 	"submission.abort",
 	"conversation.abort",
@@ -452,6 +453,15 @@ export class Connection {
 				return this.#history(params);
 			case "conversation.submit":
 				return this.#submit(params);
+			case "conversation.continue": {
+				// After a run that ended without an answer (`pi.live.runFailure`): a run on the context as it is, so the
+				// model answers what the failed run left, without the message sent again. Only when idle (`busy`).
+				const conversation = await this.#conversation(params);
+				const requestId = str(params, "requestId");
+				if (requestId === "") throw new ProtocolError("bad_request", "requestId must not be empty");
+				const submission = await conversation.submit({ type: "continue", requestId }, context);
+				return { submission: await submission.status(context) };
+			}
 			case "submission.withdraw":
 				return this.#withdraw(params);
 			case "submission.abort": {

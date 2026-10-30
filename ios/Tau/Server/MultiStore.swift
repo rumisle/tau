@@ -523,6 +523,10 @@ final class MultiStore: TauStore {
         self.route(id).map { $0.0.compact($0.1) }
     }
 
+    func continueRun(_ id: Int) {
+        self.route(id).map { $0.0.continueRun($0.1) }
+    }
+
     func rename(_ id: Int, title: String) {
         self.route(id).map { $0.0.rename($0.1, title: title) }
     }

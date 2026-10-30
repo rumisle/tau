@@ -403,8 +403,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             guard let self else {
                 return
             }
-            if case .failed = message.service {
-                self.retryAfterError(message)
+            if case let .failed(_, _, retry) = message.service {
+                if retry {
+                    self.retryAfterError(message)
+                }
             } else if let child = message.tool?.childConversationId {
                 // A subagent's own conversation, live, as any chat.
                 (self.navigationController as? NavigationController)?.pushViewController(ChatController(context: self.context, conversationId: child))
@@ -1300,7 +1302,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 self.presentToast(.linkCopied(title: nil, text: strings.Conversation_LinkCopied))
             })))
         }
-        if case .failed = message.service {
+        if case .failed(_, _, true) = message.service {
             items.append(.action(ContextMenuActionItem(text: "Retry", icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Reload"), color: theme.actionSheet.primaryTextColor)
             }, action: { [weak self] _, f in
@@ -1355,14 +1357,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.presentInGlobalOverlay(controller)
     }
 
-    /// Retry after a model error: the message before it, sent again. It is what happens anyway: the server's own
-    /// retries are over, and the model never read the failed answer.
+    /// Retry after a run that ended without an answer: the run continues where it stopped (durable's continue), on
+    /// the context as it is, so the message is not sent again: it stays once in the chat and in the model's context.
     private func retryAfterError(_ error: ChatMessage) {
-        let messages = self.lastState?.messages ?? []
-        guard let index = messages.firstIndex(where: { $0.id == error.id }), let user = messages[..<index].last(where: { $0.role == .user }) else {
+        guard case .failed(_, _, true) = error.service, !(self.lastState?.busy ?? false) else {
             return
         }
-        self.context.store.send(user.text, attachments: user.attachments, to: self.conversationId)
+        self.context.store.continueRun(self.conversationId)
     }
 
     // MARK: - Search in the chat

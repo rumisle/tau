@@ -455,6 +455,9 @@ final class MockStore: TauStore, TauServer {
     func compact(_ id: Int) {
     }
 
+    func continueRun(_ id: Int) {
+    }
+
     func usage(_ id: Int) -> ConversationUsage {
         return ConversationUsage(models: [("anthropic/claude-opus-5-5", TokenUsage(input: 1_204, output: 18_330, cacheRead: 412_900, cacheWrite: 38_200, cost: 0.87))], contextTokens: 41_200, contextWindow: 200_000, cache: PromptCache(at: Date().addingTimeInterval(-48.0), ttl: 300.0, warming: true, warms: 4, cost: 0.12, saved: 1.30))
     }

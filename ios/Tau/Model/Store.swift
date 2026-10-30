@@ -147,6 +147,8 @@ protocol ConversationStore: AnyObject {
     func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?)
     /// Summarizes the context to free room; the transcript stays.
     func compact(_ id: Int)
+    /// Asks the model again after a run that ended without an answer, on the context as it is (no message sent).
+    func continueRun(_ id: Int)
     /// A name the user gave; the server's automatic naming never replaces it.
     func rename(_ id: Int, title: String)
     /// Starts a new context: the model forgets the conversation so far; the transcript stays.

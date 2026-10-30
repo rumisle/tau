@@ -789,6 +789,39 @@ describe("tau server", () => {
 		await client.close();
 	});
 
+	test("a run that failed is continued without its message sent again, once, and only when there is something to answer", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Continued" });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		const live = () => replica.docs["pi.live"] as { run?: unknown; runFailure?: { reason: string; detail?: string } } | undefined;
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "k-1", content: "!flaky hi" });
+		await until(replica, () => idle(replica) && live()?.runFailure !== undefined);
+		assert.equal(live()!.runFailure!.reason, "model_error");
+		assert.match(live()!.runFailure!.detail ?? "", /flaky for once/);
+		// Twice with one request ID, as a client sends it again after a dropped connection: one run.
+		const [first, again] = await Promise.all([
+			client.request("conversation.continue", { conversationId: replica.id, requestId: "k-continue" }),
+			client.request("conversation.continue", { conversationId: replica.id, requestId: "k-continue" }),
+		]);
+		assert.equal(first.submission.id, again.submission.id);
+		assert.equal(first.submission.type, "continue");
+		await until(replica, () => replica.submissions.get(first.submission.id)?.status === "done" && idle(replica));
+		assert.equal(live()?.runFailure, undefined, "a run that starts clears it");
+		assert.equal(replica.ordered().filter((entry) => entry.kind === "pi.user").length, 1, "the message is in once");
+		assert.match(assistantText(replica.ordered().findLast((entry) => entry.kind === "pi.assistant")), /hi/);
+		// After an answer there is nothing to answer: the run ends without asking the model.
+		const { submission } = await client.request("conversation.continue", { conversationId: replica.id, requestId: "k-nothing" });
+		await until(replica, () => replica.submissions.get(submission.id)?.status === "unanswered" && idle(replica));
+		assert.equal(live()?.runFailure?.reason, "nothing_to_answer");
+		// While a run works, a continue is refused.
+		await client.request("conversation.submit", { conversationId: replica.id, requestId: "k-slow", content: "~1 slow" });
+		await until(replica, () => !idle(replica));
+		await assert.rejects(client.request("conversation.continue", { conversationId: replica.id, requestId: "k-busy" }), (error: RequestError) => error.code === "busy");
+		await until(replica, () => idle(replica));
+		await client.close();
+	});
+
 	test("a manual compaction places its summary while the conversation goes on", async () => {
 		const client = await TauClient.connect(server.url);
 		const { dialog } = await client.request("conversation.create", { title: "Compacted" });

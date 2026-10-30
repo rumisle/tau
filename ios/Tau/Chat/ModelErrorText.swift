@@ -48,3 +48,55 @@ enum ModelErrorText {
         return cleaned.count > 40 ? String(cleaned.prefix(39)) + "…" : cleaned
     }
 }
+
+/// Why a run ended without an answer, as the error card says it: durable's `pi.live.runFailure`, a reason and a
+/// detail. Nil for what the user did (Stop, a new context), which needs no card.
+enum RunFailureText {
+    static func card(reason: String, detail: String?) -> (title: String, text: String)? {
+        let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        switch reason {
+        case "aborted", "reset":
+            return nil
+        case "model_error":
+            return ("The model failed", detail.map(ModelErrorText.clean) ?? "The model returned an error.")
+        case "no_model":
+            return ("No model", (detail ?? "The chat's model is not available") + ". Choose another one in the chat's settings.")
+        case "interrupted":
+            return ("The answer was cut off", "The server stopped while the model was answering.")
+        case "restart_limit":
+            return ("The run kept stopping", "The server stopped too many times while it ran.")
+        case "turn_limit":
+            return ("Turn limit reached", detail.map { "The agent stopped after \($0)." } ?? "The agent stopped after its last turn.")
+        case "orphaned":
+            let why: String
+            switch detail {
+            case "missing_task":
+                why = "something it needs is not installed"
+            case "task_too_old":
+                why = "a newer server started it"
+            case "migration_failed":
+                why = "its saved state could not be read"
+            default:
+                why = detail ?? "it cannot be run here"
+            }
+            return ("The run could not go on", "This server cannot run it: \(why).")
+        case "faulted":
+            return ("Something went wrong", detail ?? "The run hit an error on the server.")
+        case "nothing_to_answer":
+            return ("Nothing to answer", "The model has answered the last message.")
+        default:
+            return ("The run stopped", detail ?? "It ended without an answer.")
+        }
+    }
+
+    /// Whether continuing could give an answer: not when the context ends in one.
+    static func canContinue(reason: String) -> Bool {
+        return reason != "nothing_to_answer" && reason != "aborted" && reason != "reset"
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        return self.isEmpty ? nil : self
+    }
+}

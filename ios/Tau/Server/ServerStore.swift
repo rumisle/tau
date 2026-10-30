@@ -1896,6 +1896,19 @@ final class ServerStore: ConversationStore, TauServer {
         |> deliverOnMainQueue
     }
 
+    func continueRun(_ id: Int) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        // One request ID, so sending it again after a lost connection continues once. A busy chat refuses it: a run
+        // already answers.
+        self.outbox.enqueueRequest("conversation.continue", conversationId: realId, params: ["requestId": UUID().uuidString], repeatable: true) { [weak self] result in
+            if case let .failure(error) = result, error.code != "busy" {
+                self?.emit(realId, .notice("Could not retry: \(error.message)"))
+            }
+        }
+    }
+
     func compact(_ id: Int) {
         if let realId = self.resolve(id) {
             // Not repeated after a lost connection: two compactions in a row would summarize the summary.

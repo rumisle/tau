@@ -310,15 +310,16 @@ enum TranscriptBuilder {
             }
         }
 
-        /// The run ended on the error: what the model wrote before it, and the error's card.
-        func flushError() {
+        /// The run ended on the error: what the model wrote before it, and the error's card. `retry`: Retry continues
+        /// it (the failure is the latest run's, and nothing runs).
+        func flushError(retry: Bool = false) {
             guard let pending = pendingError else {
                 return
             }
             pendingError = nil
             let message = pending.entry.objects("model").first ?? [:]
             addAssistant(content: message.objects("content"), base: pending.base, date: pending.date, entryId: pending.id, streaming: false)
-            rows.append(ChatMessage(id: self.rowId(base: pending.id, block: 63), role: .service, text: pending.error, date: pending.date, entryId: pending.id, service: .failed(error: ModelErrorText.clean(pending.error))))
+            rows.append(ChatMessage(id: self.rowId(base: pending.id, block: 63), role: .service, text: pending.error, date: pending.date, entryId: pending.id, service: .failed(title: "The model failed", error: ModelErrorText.clean(pending.error), retry: retry)))
             turnStart = nil
             retriedErrors = 0
         }
@@ -554,9 +555,20 @@ enum TranscriptBuilder {
 
         // What is running now.
         let live = replica.live
-        // An error at the end stands unless the run goes on: then the server is asking again.
+        // An error at the end stands unless the run goes on: then the server is asking again. Why the latest run
+        // ended without an answer is durable's `runFailure`, until the next run starts: a model error's card is its
+        // error entry's, the others (cut off by a restart, no model, ...) have no entry and are a card of their own.
+        // Retry continues the run where it stopped, while nothing runs and something is left to answer.
         if !replica.isBusy {
-            flushError()
+            let failure = live.object("runFailure")
+            let reason = failure?.string("reason")
+            let retry = reason.map(RunFailureText.canContinue) ?? false
+            let erred = pendingError != nil
+            flushError(retry: retry && reason == "model_error")
+            if let failure, let reason, !(erred && reason == "model_error"), let card = RunFailureText.card(reason: reason, detail: failure.string("detail")) {
+                let taskId = failure.int("taskId") ?? 0
+                rows.append(ChatMessage(id: self.rowId(base: taskId, block: 61), role: .service, text: card.text, date: Date(timeIntervalSince1970: 0.0), service: .failed(title: card.title, error: card.text, retry: retry)))
+            }
         }
         // Not once the message that ended its task is in the transcript: its rows would have the committed ones' IDs.
         // (The replica's stale docs are not read; this guards against a live document behind its entries otherwise.)

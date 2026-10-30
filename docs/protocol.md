@@ -335,6 +335,17 @@ Photos and files are attachments, not content: an image block is `bad_request`. 
 with nothing written: `too_large` over 1,000,000 characters of text or 20 attachments; `withdrawn` when `submission.withdraw` named the request ID first; `file_missing`
 when an attachment's ID names no file (never uploaded, or swept a day after): upload it again.
 
+### `conversation.continue`
+`{ conversationId, requestId: string }` -> `{ submission: SubmissionRecord }` (`type: "continue"`)
+
+Asks the model again after a run that ended without an answer, on the context as it is: the message is not sent
+again, so it is in the chat and the model's context once. Why the run ended is `docs["pi.live"].runFailure`, until
+the next run starts: `{ reason, detail?, taskId, inputs }`, `reason` one of `model_error` (`detail` the error),
+`no_model` (`detail` the model), `interrupted` (the server stopped while the model answered), `restart_limit`,
+`faulted`, `orphaned`, `turn_limit`, `aborted`, `reset`, or `nothing_to_answer` (the context ends in an answer, so a
+continue has nothing to do). `requestId` makes it idempotent as for a submit. Only an idle conversation takes one:
+while a run works it is `busy`, never queued. Messages a failed run left queued join the run.
+
 ### `submission.withdraw`
 `{ conversationId, requestId }` -> `{ result: "withdrawn" | "aborted" | "already_placed" | "settled", submission? }`
 

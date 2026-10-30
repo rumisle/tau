@@ -1244,7 +1244,7 @@ final class SendingUITests: XCTestCase {
     }
 
     /// Provider errors: while the server retries, the τ says when it asks again and why, and the answer that comes
-    /// says it was retried; an error that stands is a card with Retry, which sends the message again.
+    /// says it was retried; an error that stands is a card with Retry, which asks the model again where the run stopped.
     func testModelErrors() {
         self.launch(["-newChat", "YES"])
         self.focusInput()
@@ -1267,6 +1267,50 @@ final class SendingUITests: XCTestCase {
         self.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.maxY - 20.0)).tap()
         sleep(3)
         self.shot("err-4-retried")
+    }
+
+    /// Retry on an error card continues the run where it stopped (durable's continue): the answer comes, and the
+    /// message is in the chat once, not sent again. Once answered, the card is gone; an error card from before a later
+    /// message has no Retry.
+    func testRetryContinues() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!flaky once")
+        self.send()
+        self.app.waitForIdle()
+        settle()
+        let card = self.app.descendants(matching: .any).matching(identifier: "modelError").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5.0))
+        XCTAssertEqual(card.value as? String, "retry")
+        XCTAssertTrue(card.label.hasPrefix("The model failed: "), card.label)
+        self.shot("retry-0-failed")
+        let frame = card.frame
+        self.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.maxY - 20.0)).tap()
+        XCTAssertTrue(self.app.waitForEcho("!flaky once"))
+        self.app.waitForIdle()
+        settle()
+        self.shot("retry-1-answered")
+        XCTAssertEqual(self.userMessages("!flaky once").count, 1, "sent once")
+        XCTAssertFalse(card.exists, "the answer replaces the card")
+        // A card that stands, and a message after it: that card's run is not the latest, so it has no Retry.
+        self.type("!fatal broken")
+        self.send()
+        self.app.waitForIdle()
+        settle()
+        XCTAssertTrue(card.waitForExistence(timeout: 5.0))
+        XCTAssertEqual(card.value as? String, "retry")
+        self.type("after")
+        self.send()
+        XCTAssertTrue(self.app.waitForEcho("after"))
+        self.app.waitForIdle()
+        settle()
+        XCTAssertTrue(card.exists)
+        XCTAssertTrue((card.value as? String ?? "").isEmpty, "no Retry on an earlier run's card")
+        self.shot("retry-2-earlier")
+    }
+
+    private func userMessages(_ text: String) -> [XCUIElement] {
+        return self.app.descendants(matching: .any).matching(identifier: "userMessage").matching(NSPredicate(format: "label == %@", text)).allElementsBoundByIndex
     }
 
     /// Pinned chats, as Telegram's: Pin from the menu puts the chat on top with the pin where the badge goes; the

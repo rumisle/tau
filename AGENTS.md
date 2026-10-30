@@ -79,10 +79,10 @@ stays apart, so a deploy replaces it freely. `server/contrib/tau-server.service`
 
 `dev/echo` is free: it echoes, runs `$ <command>` through bash, starts a subagent for
 `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`, fails as an overloaded
-provider `!overloaded <times> <text>` or for good `!fatal <text>`, streams a long Markdown answer for `!doc <sections>`,
-answers all at once as a buffering provider for `!burst <text>`, reads a file for `!read <path>`, runs a code mode
-script for `!code <script>` or `!code @<path>`, writes a slow tool call for `!longcall <n>`, and writes a short summary
-when asked to compact. `--dev-cache-ttl <seconds>` gives it a prompt cache and prices, to try cache warming.
+provider `!overloaded <times> <text>`, for good `!fatal <text>` or for good once `!flaky <text>` (a continue then
+answers), streams a long Markdown answer for `!doc <sections>`, answers all at once as a buffering provider for
+`!burst <text>`, reads a file for `!read <path>`, runs a code mode script for `!code <script>` or `!code @<path>`,
+writes a slow tool call for `!longcall <n>`, and writes a short summary when asked to compact. `--dev-cache-ttl <seconds>` gives it a prompt cache and prices, to try cache warming.
 
 ## The app
 
