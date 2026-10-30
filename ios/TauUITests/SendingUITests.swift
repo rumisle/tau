@@ -2260,16 +2260,81 @@ final class SendingUITests: XCTestCase {
         }
     }
 
+    /// tau's τ in Settings' header is in the accent, and follows it at once: yellow, then blue picked in Appearance.
+    func testAvatarFollowsAccent() {
+        self.launch(["-theme", "classic", "-accent", "yellow", "-tab", "1"])
+        self.addTeardownBlock { [weak self] in
+            self?.resetAccent()
+        }
+        let avatar = self.app.descendants(matching: .any)["tauAvatar"].firstMatch
+        XCTAssertTrue(avatar.waitForExistence(timeout: 5), "the τ in Settings' header")
+        XCTAssertEqual(avatar.value as? String, "edb400", "yellow")
+        self.app.descendants(matching: .any)["Appearance"].firstMatch.tap()
+        let blue = self.app.descendants(matching: .any)["accent-blue"].firstMatch
+        XCTAssertTrue(blue.waitForExistence(timeout: 5))
+        blue.tap()
+        settle()
+        self.point(0.1, 0.08).tap()
+        settle()
+        XCTAssertEqual(avatar.value as? String, "0088ff", "blue, once picked")
+    }
+
+    /// For screenshots of the τ: TAU_SHOT_THEME and TAU_SHOT_ACCENT, Settings' header.
+    func testShotAvatar() {
+        let env = ProcessInfo.processInfo.environment
+        self.launch(["-theme", env["TAU_SHOT_THEME"] ?? "classic", "-accent", env["TAU_SHOT_ACCENT"] ?? "pink", "-tab", "1"])
+        self.addTeardownBlock { [weak self] in
+            self?.resetAccent()
+        }
+        sleep(1)
+        self.shot("avatar-\(env["TAU_SHOT_THEME"] ?? "classic")-\(env["TAU_SHOT_ACCENT"] ?? "pink")")
+    }
+
+    /// The folder tabs made while a chat opened at launch covers the list: once back on the list, the selected tab's
+    /// title (All) is drawn, not an empty lens.
+    func testTabsAfterChatAtLaunch() throws {
+        let second = try DevServerClient(url: "ws://127.0.0.1:7982")
+        let id = try second.request("conversation.create", ["title": "Second"]).object("dialog")?.object("conversation")?.int("id") ?? -1
+        _ = try second.submit(id, "!burst hello")
+        sleep(1)
+        self.launch(["-server2.url", "ws://127.0.0.1:7982", "-folders", "YES", "-openChat", "1"])
+        self.point(0.1, 0.08).tap()
+        sleep(3)
+        self.shot("tabs-0-back")
+        // White text in Tinted Night: bright pixels where All's title is, the first tab under the search field (the
+        // tabs are not in the accessibility tree).
+        let screenshot = XCUIScreen.main.screenshot().image
+        let scale = screenshot.scale
+        let size = screenshot.size
+        let frame = CGRect(x: size.width * 0.08, y: size.height * 0.212, width: size.width * 0.24, height: size.height * 0.028)
+        guard let cgImage = screenshot.cgImage?.cropping(to: CGRect(x: frame.minX * scale, y: frame.minY * scale, width: frame.width * scale, height: frame.height * scale)) else {
+            return XCTFail("no screenshot")
+        }
+        let width = cgImage.width, height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var bright = 0
+        for k in stride(from: 0, to: pixels.count, by: 4) where pixels[k] > 200 && pixels[k + 1] > 200 && pixels[k + 2] > 200 {
+            bright += 1
+        }
+        XCTAssertGreaterThan(bright, 20, "All's title drawn in the selected tab")
+    }
+
+    /// tau's pink again, for the tests after.
+    private func resetAccent() {
+        self.app.terminate()
+        self.app.launchArguments = ["-server.url", devServer, "-uiTesting", "YES", "-accent", "pink"]
+        self.app.launch()
+        sleep(1)
+    }
+
     /// The accent picked is the app's in every theme: with Auto-Night following the phone, the night theme of a
     /// phone in dark mode has it too, not tau's pink (Raya's yellow that went pink for a while).
     func testAccentFollowsNight() {
         self.launch(["-theme", "classic", "-appearance", "YES"])
-        defer {
-            // The next tests have tau's.
-            self.app.terminate()
-            self.app.launchArguments = ["-server.url", devServer, "-uiTesting", "YES", "-accent", "pink"]
-            self.app.launch()
-            sleep(1)
+        self.addTeardownBlock { [weak self] in
+            self?.resetAccent()
         }
         self.app.descendants(matching: .any)["System"].firstMatch.tap()
         let yellow = self.app.descendants(matching: .any)["accent-yellow"].firstMatch

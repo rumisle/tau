@@ -490,6 +490,14 @@ final class ChatListController: ViewController {
         }
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // Once the navigation transition has put the list back in the window; at didMoveToWindow it is too early.
+        Queue.mainQueue().after(0.1) { [weak self] in
+            self?.tabsNode?.remakeIfNeeded()
+        }
+    }
+
     override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
         super.containerLayoutUpdated(layout, transition: transition)
         // The search field collapses as the list scrolls, which changes the bar's height; the list's inset must not
