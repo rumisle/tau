@@ -5,7 +5,7 @@
 // `!read <path>` reads a file with the read tool (an image comes back as one); `!send <path> [<path>…]` sends files to
 // the user (src/send-file.ts). `!code <script>` runs a code mode script (docs/codemode.md), `!code @<path>` the one in a file. `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
 // streams. `!burst <text>` answers as the echo does but all at once, its thinking and text in one go, as a provider that
-// buffers; `!burst+<ms> <text>` sends the thinking, then the rest that long after, `!burst-<ms>` the end that long after, `!burst*<ms>` each event that long after the one before. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
+// buffers; `!burst+<ms> <text>` sends the thinking, then the rest that long after, `!burst-<ms>` the end that long after, `!burst*<ms>` each event that long after the one before. A message that /tmp/tau-dev-answers.json (or TAU_DEV_ANSWERS) maps to an answer is answered with it as written, for screenshots of answers. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
 // that long after it was last used, to try cache warming (src/cache.ts) without paying for it.
 import { type Api, calculateCost, createAssistantMessageEventStream, type AssistantMessage, type Message, type Model, type Provider } from "@earendil-works/pi-ai";
 import { readFileSync } from "node:fs";
@@ -237,6 +237,10 @@ function reply(messages: readonly Message[]) {
 		}
 		return fauxAssistantMessage([fauxToolCall("subagent", { action: "spawn", name: subagent[1]!, message: subagent[3]!, ...options })], { stopReason: "toolUse" });
 	}
+	// Answers written beforehand: a message that /tmp/tau-dev-answers.json (or TAU_DEV_ANSWERS) maps to an answer gets
+	// it as written, for screenshots of how answers render (the UI tests write it).
+	const scripted = scriptedAnswer(text);
+	if (scripted !== undefined) return fauxAssistantMessage([fauxText(scripted)]);
 	// `!quiet …`: a short answer to a message of any length, as for a big paste.
 	if (text.startsWith("!quiet")) return fauxAssistantMessage([fauxText("Noted.")]);
 	const doc = /^!doc (\d+)/.exec(text);
@@ -278,4 +282,14 @@ export function longDocument(sections: number): string {
 		parts.push(`Paragraph ${index}.2 ends the section with $e^{i\\pi} + 1 = 0$ inline and one more line of text after it.`);
 	}
 	return parts.join("\n\n");
+}
+
+function scriptedAnswer(text: string): string | undefined {
+	try {
+		const answers = JSON.parse(readFileSync(process.env.TAU_DEV_ANSWERS ?? "/tmp/tau-dev-answers.json", "utf8")) as Record<string, unknown>;
+		const answer = answers[text.trim()];
+		return typeof answer === "string" ? answer : undefined;
+	} catch {
+		return undefined;
+	}
 }

@@ -2412,6 +2412,85 @@ final class SendingUITests: XCTestCase {
         sleep(1)
     }
 
+    /// tau links' cards where the links are (docs/links.md "In a message"): after the block with the link, in its place
+    /// when the block is the link alone, stacked after a block with several, one for a link written twice; the same in
+    /// the user's messages. Answers are written beforehand (the dev model's /tmp/tau-dev-answers.json); each example is
+    /// a chat of its own, shot in Tinted Night and Day with TAU_SHOT_LINKS.
+    func testLinkCards() throws {
+        let server = try DevServerClient(url: devServer)
+        let prefix = String(server.serverId.prefix(8))
+        XCTAssertEqual(prefix.count, 8, "the server's ID")
+        var made: [Int] = []
+        self.addTeardownBlock {
+            for id in made {
+                _ = try? server.request("conversation.mark", ["conversationId": id, "hidden": true])
+            }
+        }
+        // The chats the links name, with something said in each: their cards' words.
+        let linkedChats = [
+            ("The list that jumped", "Why does the list jump to the top?", "Fixed: the list keeps its place while chats move to the top, and only a tap on the status bar scrolls it up."),
+            ("Accent everywhere", "Why did my yellow turn pink?", "The night theme had its own accent. Now there is one, yours, in every theme."),
+            ("τ in the accent", "Can the τ follow the accent?", "Done: Settings' τ is drawn from your accent, a lighter tint on top."),
+            ("Folder tabs", "The All tab lost its title", "Fixed: the tabs are made again once the list is on screen, so All shows."),
+        ]
+        var answers = Dictionary(uniqueKeysWithValues: linkedChats.map { ($0.1, $0.2) })
+        try JSONSerialization.data(withJSONObject: answers).write(to: URL(fileURLWithPath: "/tmp/tau-dev-answers.json"))
+        var linked: [Int] = []
+        for (title, question, _) in linkedChats {
+            let id = try server.create(title)
+            made.append(id)
+            linked.append(id)
+            _ = try server.submit(id, question)
+            usleep(300_000)
+        }
+        sleep(2)
+        let a = "tau://\(prefix)/\(linked[0])", b = "tau://\(prefix)/\(linked[1])", c = "tau://\(prefix)/\(linked[2])"
+        let d = "tau://\(prefix)/\(linked[3])/\(try server.lastEntry(linked[3]))"
+        // Each example: its chat's title, the user's message, the answer, and the answer's blocks.
+        let examples: [(title: String, question: String, answer: String, blocks: String?)] = [
+            ("Link alone", "Where did we fix the list jumping?", "We fixed it in this chat, with a test that moves rows while the list is scrolled:\n\n\(a)", "text card"),
+            ("Inline link", "What happened to the accent?", "The accent now follows your choice in every theme, as [the accent chat](\(b)) explains. Nothing else changed in Appearance.\n\nThe Live Activity takes it too.", "text card text"),
+            ("List of chats", "Which chats should I read?", "These three, in this order:\n\n1. The list that jumped: \(a)\n2. The accent that flipped: \(b)\n3. The τ that follows it: \(c)\n\nEach has its test.", "text card text card text card text"),
+            ("Two links", "Which two go together?", "Read \(b) together with \(c): the second builds on the first.\n\nThe rest can wait.", "text card card text"),
+            ("Repeated link", "Where do the tabs stand?", "The tabs are fixed, see \(d).\n\nIf they break again, the same message has what to check: \(d).", "text card text"),
+            ("Markdown link alone", "And the folder tabs?", "Fixed as well:\n\n[The folder tabs fix](\(d))", "text card"),
+            ("Your link and text", "Look at \(b), the accent flipped again", "I'll look at it.", nil),
+            ("Your link alone", c, "Opening it.", nil),
+        ]
+        for example in examples {
+            answers[example.question] = example.answer
+        }
+        try JSONSerialization.data(withJSONObject: answers).write(to: URL(fileURLWithPath: "/tmp/tau-dev-answers.json"))
+        var chats: [Int] = []
+        for example in examples {
+            let id = try server.create(example.title)
+            made.append(id)
+            chats.append(id)
+            _ = try server.submit(id, example.question)
+            usleep(300_000)
+        }
+        sleep(3)
+        let themes = ProcessInfo.processInfo.environment["TAU_SHOT_LINKS"] == nil ? ["dark"] : ["dark", "day"]
+        for theme in themes {
+            for (index, example) in examples.enumerated() {
+                self.launch(["-theme", theme, "-openChat", "\(chats[index])"])
+                sleep(2)
+                if let blocks = example.blocks {
+                    let answer = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage'")).firstMatch
+                    _ = waitUntil(10.0) { answer.value as? String == blocks }
+                }
+                self.shot("cards-\(theme)-\(index + 1)-\(example.title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+                if let blocks = example.blocks {
+                    let answer = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage'")).firstMatch
+                    XCTAssertTrue(answer.waitForExistence(timeout: 5), example.title)
+                    // Its cards once the phone has the chats (its list and its server's hello come after launch).
+                    _ = waitUntil(10.0) { answer.value as? String == blocks }
+                    XCTAssertEqual(answer.value as? String, blocks, example.title)
+                }
+            }
+        }
+    }
+
     /// The accent picked is the app's in every theme: with Auto-Night following the phone, the night theme of a
     /// phone in dark mode has it too, not tau's pink (Raya's yellow that went pink for a while).
     func testAccentFollowsNight() {
@@ -2442,11 +2521,24 @@ final class SendingUITests: XCTestCase {
 final class DevServerClient {
     private let task: URLSessionWebSocketTask
     private var nextId = 1
+    /// The server's ID, whose first eight characters name it in tau links.
+    private(set) var serverId = ""
 
     init(url: String) throws {
         self.task = URLSession.shared.webSocketTask(with: URL(string: url)!)
         self.task.resume()
-        _ = try self.request("hello", ["protocol": 1])
+        self.serverId = try self.request("hello", ["protocol": 1])["serverId"] as? String ?? ""
+    }
+
+    /// A new chat with `title`; its ID.
+    func create(_ title: String) throws -> Int {
+        return try self.request("conversation.create", ["title": title]).object("dialog")?.object("conversation")?.int("id") ?? -1
+    }
+
+    /// The ID of the chat's newest entry.
+    func lastEntry(_ id: Int) throws -> Int {
+        let entries = try self.request("conversation.history", ["conversationId": id, "limit": 5])["entries"] as? [[String: Any]] ?? []
+        return entries.last?["id"] as? Int ?? -1
     }
 
     deinit {

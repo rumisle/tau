@@ -77,6 +77,11 @@ enum MarkdownText {
     static let avoidsOrphansKey = NSAttributedString.Key("Attribute__AvoidsOrphans")
     /// A heading's level, on its text: the space around it.
     static let headingKey = NSAttributedString.Key("tau.heading")
+    /// A block of the text (a paragraph, a list item's paragraph, a heading, a code block's line run, a quote's
+    /// paragraph): an identity of its own within its text block, which a link's card goes after (docs/links.md).
+    static let blockKey = NSAttributedString.Key("tau.block")
+    /// A tau link's card, on all of it: its link. Selections and copies leave it out.
+    static let cardKey = NSAttributedString.Key("tau.card")
     /// What a character typeset in place of another was (a curly quote, a centered ellipsis): copying gives it back.
     static let originalKey = NSAttributedString.Key("tau.original")
 
@@ -94,13 +99,157 @@ enum MarkdownText {
         let range = NSRange(location: 0, length: string.length)
         string.addAttribute(self.blockQuoteKey, value: data, range: range)
         string.addAttribute(self.urlKey, value: reference.url, range: range)
+        string.addAttribute(self.cardKey, value: reference.url, range: range)
         return string
     }
 
-    /// The whole message as one attributed string, tables included as plain rows.
-    static func render(_ text: String, style: MarkdownStyle) -> NSAttributedString {
+    /// The message's blocks with its tau links' cards where the links are (docs/links.md "In a message"): a card after
+    /// the block that has its link (a quote's or a code block's after the whole of it, a table's after the table), in
+    /// the order of the links; a block that is its link and nothing else, the card in its place; a link written again,
+    /// its card at the first. Cards are text blocks of their own. A link whose block is not found has its card at the end.
+    static func placingCards(_ blocks: [MarkdownBlock], references: [LinkReference], style: MarkdownStyle) -> [MarkdownBlock] {
+        guard !references.isEmpty else {
+            return blocks
+        }
+        var pending = references
+        var result: [MarkdownBlock] = []
+        for block in blocks {
+            guard !pending.isEmpty else {
+                result.append(block)
+                continue
+            }
+            switch block {
+            case let .text(string):
+                var anchors: [(range: NSRange, linkOnly: Bool, at: Int, reference: LinkReference)] = []
+                pending.removeAll { reference in
+                    guard let found = self.occurrence(of: reference.url, in: string) else {
+                        return false
+                    }
+                    anchors.append((found.block, found.linkOnly, found.at, reference))
+                    return true
+                }
+                guard !anchors.isEmpty else {
+                    result.append(block)
+                    continue
+                }
+                anchors.sort { ($0.range.location, $0.at) < ($1.range.location, $1.at) }
+                let nsString = string.string as NSString
+                func appendText(_ start: Int, _ end: Int) {
+                    var start = start
+                    var end = end
+                    while start < end, nsString.character(at: start) == 0x0a {
+                        start += 1
+                    }
+                    while end > start, nsString.character(at: end - 1) == 0x0a {
+                        end -= 1
+                    }
+                    if end > start {
+                        result.append(.text(string.attributedSubstring(from: NSRange(location: start, length: end - start))))
+                    }
+                }
+                var cursor = 0
+                var index = 0
+                while index < anchors.count {
+                    let range = anchors[index].range
+                    var group = [anchors[index]]
+                    while index + group.count < anchors.count, anchors[index + group.count].range == range {
+                        group.append(anchors[index + group.count])
+                    }
+                    let replaced = group.count == 1 && group[0].linkOnly
+                    appendText(cursor, replaced ? range.location : range.location + range.length)
+                    for anchor in group {
+                        result.append(.text(self.reference(anchor.reference, style: style)))
+                    }
+                    cursor = range.location + range.length
+                    index += group.count
+                }
+                appendText(cursor, string.length)
+            case let .code(string):
+                result.append(block)
+                pending.removeAll { reference in
+                    guard self.occurrence(of: reference.url, in: string) != nil else {
+                        return false
+                    }
+                    result.append(.text(self.reference(reference, style: style)))
+                    return true
+                }
+            case let .table(table):
+                result.append(block)
+                let cells = table.header + table.rows.flatMap { $0 }
+                pending.removeAll { reference in
+                    guard cells.contains(where: { self.occurrence(of: reference.url, in: $0) != nil }) else {
+                        return false
+                    }
+                    result.append(.text(self.reference(reference, style: style)))
+                    return true
+                }
+            }
+        }
+        for reference in pending {
+            result.append(.text(self.reference(reference, style: style)))
+        }
+        return result
+    }
+
+    /// Where `url` first is in `string`, as a link (its text may be anything) or written out (in code): the block that
+    /// has it, and whether that block is the link and nothing else.
+    private static func occurrence(of url: String, in string: NSAttributedString) -> (block: NSRange, linkOnly: Bool, at: Int)? {
+        let target = URL(string: url)?.absoluteString ?? url
+        let whole = NSRange(location: 0, length: string.length)
+        func isTarget(_ value: Any?) -> Bool {
+            if let value = value as? String {
+                return (URL(string: value)?.absoluteString ?? value) == target
+            }
+            if let value = value as? URL {
+                return value.absoluteString == target
+            }
+            return false
+        }
+        var at: Int?
+        string.enumerateAttribute(self.urlKey, in: whole, options: []) { value, range, stop in
+            if isTarget(value) {
+                at = range.location
+                stop.pointee = true
+            }
+        }
+        let written = (string.string as NSString).range(of: url)
+        if written.location != NSNotFound, at.map({ written.location < $0 }) ?? true {
+            at = written.location
+        }
+        guard let location = at else {
+            return nil
+        }
+        var block = NSRange(location: 0, length: 0)
+        if string.attribute(self.blockKey, at: location, longestEffectiveRange: &block, in: whole) == nil {
+            // No blocks marked (a card's own text): the line.
+            let nsString = string.string as NSString
+            block = nsString.lineRange(for: NSRange(location: location, length: 0))
+            if block.length > 0, nsString.character(at: block.location + block.length - 1) == 0x0a {
+                block.length -= 1
+            }
+        }
+        var quote = NSRange(location: 0, length: 0)
+        let inQuote = string.attribute(self.blockQuoteKey, at: location, longestEffectiveRange: &quote, in: whole) != nil
+        if inQuote {
+            block = NSUnionRange(block, quote)
+        }
+        var linkOnly = !inQuote && string.attribute(self.indentKey, at: location, effectiveRange: nil) == nil
+        if linkOnly {
+            let nsString = string.string as NSString
+            string.enumerateAttribute(self.urlKey, in: block, options: []) { value, range, stop in
+                if !isTarget(value), nsString.substring(with: range).contains(where: { !$0.isWhitespace }) {
+                    linkOnly = false
+                    stop.pointee = true
+                }
+            }
+        }
+        return (block, linkOnly, location)
+    }
+
+    /// The whole message as one attributed string, tables included as plain rows; its links' cards where the links are.
+    static func render(_ text: String, style: MarkdownStyle, references: [LinkReference] = []) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        for block in self.blocks(text, style: style) {
+        for block in self.placingCards(self.blocks(text, style: style), references: references, style: style) {
             if result.length > 0 {
                 result.append(self.gap(style.fontSize * Spacing.paragraph, style: style))
             }
@@ -428,6 +577,17 @@ enum MarkdownText {
         }
         var previousBlock: PresentationIntent?
         var currentBlockQuote: (kind: TextNodeBlockQuoteData.Kind, start: Int, identity: Int)?
+        /// The block being built (its start), and the next block's identity.
+        var blockStart: Int?
+        var blockSerial = 0
+
+        func closeBlock() {
+            if let start = blockStart, current.length > start {
+                current.addAttribute(blockKey, value: blockSerial, range: NSRange(location: start, length: current.length - start))
+                blockSerial += 1
+            }
+            blockStart = nil
+        }
 
         func closeBlockQuote() {
             guard let quote = currentBlockQuote else {
@@ -480,6 +640,7 @@ enum MarkdownText {
         }
 
         func flushText() {
+            closeBlock()
             closeIndent()
             closeBlockQuote()
             if current.length > 0 {
@@ -572,6 +733,7 @@ enum MarkdownText {
             }
 
             if intent != previousBlock {
+                closeBlock()
                 closeIndent()
                 let blockQuote = blockQuoteKind(intent)
                 if let quote = currentBlockQuote, blockQuote?.identity != quote.identity {
@@ -583,6 +745,7 @@ enum MarkdownText {
                 if let blockQuote, currentBlockQuote == nil {
                     currentBlockQuote = (blockQuote.kind, current.length, blockQuote.identity)
                 }
+                blockStart = current.length
                 previousBlock = intent
                 if isThematicBreak(intent) {
                     // `---`: a hairline across the column, instead of the parser's "⸻".
@@ -1318,7 +1481,10 @@ enum MarkdownText {
     static func copiedText(_ string: NSAttributedString) -> String {
         let plain = NSMutableString(string: string.string)
         string.enumerateAttributes(in: NSRange(location: 0, length: string.length), options: [.reverse]) { attributes, range, _ in
-            if let latex = attributes[MathText.latexKey] as? String {
+            if attributes[cardKey] != nil {
+                // A link's card is not what the message says.
+                plain.replaceCharacters(in: range, with: "")
+            } else if let latex = attributes[MathText.latexKey] as? String {
                 plain.replaceCharacters(in: range, with: "$\(latex)$")
             } else if let original = attributes[originalKey] as? String {
                 // Each character was one; equal neighbours make one range.

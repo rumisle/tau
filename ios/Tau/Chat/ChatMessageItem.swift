@@ -638,23 +638,22 @@ final class ChatMessageItemNode: ListViewItemNode {
     }
 
     /// The parts of the message a selection runs through, in order (MessageTextSurface): its text nodes and tables,
-    /// not its links' cards under it.
+    /// not its links' cards.
     private func selectionParts() -> [MessageTextSurface.Part] {
-        guard let item = self.item else {
+        guard self.item != nil else {
             return []
         }
         if self.laidOutBlocks.isEmpty {
             return self.textNodes.filter { $0.supernode != nil && !$0.isHidden }.map { .text($0) }
         }
-        let textCount = self.laidOutBlocks.filter { if case .text = $0 { return true } else { return false } }.count
-        let ownTextCount = textCount - (item.isStreaming ? 0 : min(textCount, item.references.count))
         var parts: [MessageTextSurface.Part] = []
         var textCursor = 0
         var tableCursor = 0
         for block in self.laidOutBlocks {
             switch block {
-            case .text:
-                if textCursor < ownTextCount, textCursor < self.textNodes.count, self.textNodes[textCursor].supernode != nil {
+            case let .text(_, _, layout, _):
+                let isCard = (layout.attributedString.map { $0.length > 0 && $0.attribute(MarkdownText.cardKey, at: 0, effectiveRange: nil) != nil }) ?? false
+                if !isCard, textCursor < self.textNodes.count, self.textNodes[textCursor].supernode != nil {
                     parts.append(.text(self.textNodes[textCursor]))
                 }
                 textCursor += 1
@@ -1091,7 +1090,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 style.math = false
                 let textNode = existingTextNodes.first
                 let hasText = !message.text.isEmpty
-                let (textLayout, textApply) = InteractiveTextNode.asyncLayout(textNode)(InteractiveTextNodeLayoutArguments(attributedString: withReferences(MarkdownText.render(message.text, style: style), item.references, style: style), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
+                let (textLayout, textApply) = InteractiveTextNode.asyncLayout(textNode)(InteractiveTextNodeLayoutArguments(attributedString: MarkdownText.render(message.text, style: style, references: item.references), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
                 let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: messageTimeString(message.date), font: dateFont(item.theme), textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 200.0, height: 40.0)))
                 let fileLayouts = files.map { FileAttachmentNode.measure($0, fontSize: item.theme.fontSize, maxWidth: maxTextWidth) }
 
@@ -1299,7 +1298,20 @@ final class ChatMessageItemNode: ListViewItemNode {
                 style.lineSpacing = MarkdownStyle.answerLineSpacing
                 // Reasoning shows whole, as the answer does.
                 let sourceText = message.text
-                let blocks = MarkdownText.blocks(sourceText, style: style, wrapCode: item.wrapCode) + (item.isStreaming ? [] : item.references.map { .text(MarkdownText.reference($0, style: style)) })
+                // Its links' cards where the links are, once it is whole (docs/links.md).
+                let parsedBlocks = MarkdownText.blocks(sourceText, style: style, wrapCode: item.wrapCode)
+                let blocks = item.isStreaming ? parsedBlocks : MarkdownText.placingCards(parsedBlocks, references: item.references, style: style)
+                // For the UI tests: the blocks in order, cards told apart ("text card text").
+                let blockSummary = blocks.map { block -> String in
+                    switch block {
+                    case let .text(string):
+                        return string.length > 0 && string.attribute(MarkdownText.cardKey, at: 0, effectiveRange: nil) != nil ? "card" : "text"
+                    case .code:
+                        return "code"
+                    case .table:
+                        return "table"
+                    }
+                }.joined(separator: " ")
                 let tableStyle = ChatTableStyle(borderColor: theme.tableBorderColor, headerBackgroundColor: theme.tableHeaderBackgroundColor)
 
                 var laidOut: [LaidOutBlock] = []
@@ -1483,6 +1495,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.isAccessibilityElement = true
                         self.accessibilityIdentifier = "assistantMessage"
                         self.accessibilityLabel = message.text
+                        self.accessibilityValue = blockSummary
                     }
                     self.updateReveal(item: item, totalLength: totalLength)
                     self.layoutContainers(size: layout.contentSize)
@@ -3275,16 +3288,4 @@ private final class CodeScrollFade: NSObject, UIScrollViewDelegate {
     }
 }
 
-/// A message's text with its tau links' cards under it (docs/links.md).
-private func withReferences(_ text: NSAttributedString, _ references: [LinkReference], style: MarkdownStyle) -> NSAttributedString {
-    guard !references.isEmpty else {
-        return text
-    }
-    let result = NSMutableAttributedString(attributedString: text)
-    for reference in references {
-        result.append(NSAttributedString(string: "\n", font: Font.regular(style.fontSize), textColor: style.textColor))
-        result.append(MarkdownText.reference(reference, style: style))
-    }
-    return result
-}
 
