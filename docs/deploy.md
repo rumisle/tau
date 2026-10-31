@@ -40,5 +40,14 @@ An agent of the server may run `tau upgrade` in a chat: the restart would stop t
 inside the service it hands the switch to a transient unit (`systemd-run`, `tau-switch-*`), which outlives the restart;
 the chat resumes on the new version.
 
+**Rolling back across a pi bump.** A rollback only changes code, so it works as long as the older version reads what
+the newer one stored: durable's SQLite schema, its document versions (`pi.live`, `pi.agent`, ...) and its task
+versions (`pi.generation`, `pi.tool`, ...), and tau's own documents. A bump that moves any of them forward makes the
+rollback one-way (the older durable leaves a newer task blocked, `task_too_old`, and cannot migrate a newer document).
+Before releasing a bump, run the new server on a `.backup` copy of a real database, write to it (a chat, a run with a
+tool call), then the old server on the same copy, and open every chat (`server/bench/runs.ts check`, `write`). From
+4b535d57 to 35dfa757 nothing moved: the old server opened all 212 chats of a copy of chorus's after the new one had
+written to it, and ran new chats.
+
 Collection: after a switch that stays up, every version but `current` and `previous` is removed, and with it any
 download a failure left. Two versions are kept, one to run and one to roll back to; `tau gc` does the same by hand.
