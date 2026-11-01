@@ -471,5 +471,6 @@ struct WatchView: View {
 struct TauWidgetsBundle: WidgetBundle {
     var body: some Widget {
         TauLiveActivity()
+        NewChatControl()
     }
 }

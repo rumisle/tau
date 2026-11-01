@@ -75,6 +75,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         self.mainWindow.viewController = navigationController
         self.navigationController = navigationController
+        // The intents' links (NewChatIntent: the Action button, a control, Siri), an intent that launched the app's too.
+        TauIntents.handler = { [weak self] url in
+            _ = self?.application(UIApplication.shared, open: url)
+        }
 
         // Telegram's in-app notifications: banners over everything, in the window's top level.
         let notificationController = NotificationContainerController(context: context.telegram)

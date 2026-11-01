@@ -127,6 +127,7 @@ targets:
     sources:
       - path: TauWidgets
       - path: Tau/LiveActivity/TauActivityAttributes.swift
+      - path: Tau/Intents/NewChatIntent.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID).widgets
