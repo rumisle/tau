@@ -1,7 +1,9 @@
-# Command isolation (design notes, not built)
+# Command isolation (design notes, steps 1 to 3 built)
 
 Where the discussion of the agents' commands, memory and the server got to, so it can be picked up without starting
-over. Nothing here is implemented. The research behind it (sources, file and line references, measurements on chorus)
+over. Built: the reproduction (`scripts/oom-repro.sh`), `OOMPolicy=continue` in the unit `tau setup` writes, and what
+the model reads of a command killed by a signal, an OOM kill in the server's cgroup, and a restart
+(`server/src/commands.ts`); see Order of work. Scopes, the slice and bgjob are not built. The research behind it (sources, file and line references, measurements on chorus)
 is kept outside the repository, in `~/research/isolation-research.md` on chorus.
 
 ## The problem
@@ -71,7 +73,44 @@ command.
 
 ### What the model reads
 
-Killed by the OOM killer:
+**Built (step 3)**, before commands have scopes: tau's `afterTool` hook on bash (`server/src/commands.ts`, durable's
+bash tool given a `prepare` that notes the OOM kill count when the command starts) says what the server can see:
+
+```
+Killed by SIGKILL (exit 137).
+The kernel's OOM killer acted in tau-server.service while it ran.
+```
+
+- **A signal**: a shell reports a command killed by signal n as exit status 128 + n, as node does the shell's own
+  death; tau names the signal in place of "Command exited with code 137", and the structured output has `signal`.
+  An exit status above 128 that a program chose itself reads the same; nothing else can tell them apart.
+- **The OOM killer**: the server's own cgroup (`/proc/self/cgroup`), its `memory.events` `oom_kill` counter, when the
+  command started and when it ended. A rise is said as that and only that (`oomKill: true`): in the shared cgroup it
+  may have killed another process than this command's.
+- **A restart**: the server keeps the machine's boot ID beside its database (`tau.boot`) and reads the previous run's
+  at start, so a call that durable settles as interrupted says that the machine rebooted (the boot IDs differ) or that
+  the tau server restarted. Per server run rather than per call: a call is interrupted only by the run it started in
+  ending. Without a previous run's ID (in memory, or the first start that keeps one) nothing is added.
+
+`scripts/oom-repro.sh -p OOMPolicy=continue`, with step 3:
+
+```
+[driver] server restarts seen by the driver: 0
+[driver] tool result (isError true):
+    [error] Killed by SIGKILL (exit 137).
+    [error] The kernel's OOM killer acted in tau-oomtest.service while it ran.
+```
+
+and without `OOMPolicy=continue`, where the server goes down with the command:
+
+```
+[driver] server restarts seen by the driver: 1
+[driver] tool result (isError true):
+    [error] Tool bash was interrupted and may have partially run
+    [info] The tau server restarted while this command ran.
+```
+
+**With scopes (step 5, not built)**, killed by the OOM killer:
 
 ```
 Killed by the out-of-memory killer (exit 137).
@@ -174,10 +213,12 @@ Only python died; the other runs went on. The model reads an exit code, still no
 
 Each step ships and reverts alone.
 
-1. **Reproduce.** On chorus, a dev tau server inside a transient unit with a small `MemoryMax`, an agent running a
+1. **Reproduce** (built: `scripts/oom-repro.sh`, Reproduction). On chorus, a dev tau server inside a transient unit with a small `MemoryMax`, an agent running a
    memory hog: record what the server, the unit and the model see today. The same script checks every later step.
-2. **`OOMPolicy=continue`** in the unit `tau setup` writes (and in the other servers' units).
-3. **The model reads what happened**: exit by signal reported as such, the boot ID check. tau code only.
+2. **`OOMPolicy=continue`** in the unit `tau setup` writes (and in the other servers' units). Built: `scripts/tau`,
+   `server/contrib/tau-server.service`; the servers set up before need the line added by hand (docs/deploy.md).
+3. **The model reads what happened**: exit by signal reported as such, the boot ID check. tau code only. Built, with
+   the OOM kill count of the server's cgroup (What the model reads); `server/test/commands.test.ts`.
 4. **bgjob on transient services**, beside the old one until it has been used for a while.
 5. **Commands in scopes**, behind a flag, on chorus first; then the default, with `tau setup` installing the slice and
    checking the user manager (linger, delegated memory controller).

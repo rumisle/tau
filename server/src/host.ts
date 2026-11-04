@@ -21,7 +21,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { createCodingTools, type ImageProcessor } from "@earendil-works/pi-durable/tools";
+import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
@@ -33,6 +33,7 @@ import { Serial } from "./serial.ts";
 import { skillsSection } from "./skills.ts";
 import { Subagent, SubagentFailures, SubagentReports } from "./subagent.ts";
 import { History, historyExtension } from "./history.ts";
+import { CommandFacts, codingTools } from "./commands.ts";
 import { FileStore } from "./files.ts";
 import { sendFileExtension } from "./send-file.ts";
 
@@ -195,7 +196,9 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const registry = createRegistry();
 	// Without one, the read tool refuses an image past 2000 pixels or 4.5 MB instead of shrinking it, as pi's does.
 	const images = await createNodePhotonImages();
-	registry.install(createCodingTools({ images }));
+	// durable's coding tools, a command's end explained by what the server saw of it (src/commands.ts).
+	const commandFacts = new CommandFacts(options.database === undefined ? {} : { bootFile: `${options.database.replace(/\.db$/, "")}.boot` });
+	registry.install(codingTools(images, commandFacts));
 	registry.install(Subagent);
 	registry.install(SubagentReports);
 	registry.install(sendFileExtension(files));
