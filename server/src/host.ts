@@ -34,6 +34,7 @@ import { skillsSection } from "./skills.ts";
 import { Subagent, SubagentFailures, SubagentReports } from "./subagent.ts";
 import { History, historyExtension } from "./history.ts";
 import { CommandFacts, codingTools } from "./commands.ts";
+import { CommandScopes } from "./scopes.ts";
 import { FileStore } from "./files.ts";
 import { sendFileExtension } from "./send-file.ts";
 
@@ -125,6 +126,8 @@ export type HostOptions = {
 	files?: string;
 	/** The largest file a message or `send_file` may carry; default 1 GB. */
 	maxFileBytes?: number;
+	/** Each bash command in its own systemd scope, in this slice (src/scopes.ts, docs/command-isolation.md); off when omitted. */
+	commandScopes?: { slice?: string; partOf?: string };
 };
 
 export type Host = {
@@ -197,7 +200,11 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	// Without one, the read tool refuses an image past 2000 pixels or 4.5 MB instead of shrinking it, as pi's does.
 	const images = await createNodePhotonImages();
 	// durable's coding tools, a command's end explained by what the server saw of it (src/commands.ts).
-	const commandFacts = new CommandFacts(options.database === undefined ? {} : { bootFile: `${options.database.replace(/\.db$/, "")}.boot` });
+	const scopes = options.commandScopes === undefined ? undefined : await CommandScopes.open(options.commandScopes);
+	const commandFacts = new CommandFacts({
+		...(options.database === undefined ? {} : { bootFile: `${options.database.replace(/\.db$/, "")}.boot` }),
+		...(scopes === undefined ? {} : { scopes }),
+	});
 	registry.install(codingTools(images, commandFacts));
 	registry.install(Subagent);
 	registry.install(SubagentReports);
@@ -247,7 +254,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 			models: cache.wrap(models),
 			registry,
 			settings: () => settings,
-			env: ({ cwd: conversationCwd }) => new NodeExecutionEnv({ cwd: conversationCwd ?? cwd }),
+			env: ({ cwd: conversationCwd }) => new NodeExecutionEnv({ cwd: conversationCwd ?? cwd, ...(scopes === undefined ? {} : { shellPath: scopes.shellPath }) }),
 			conversationCreated: async (tx, conversation) => {
 				const meta = await tx.doc(MetaDoc, conversation.id);
 				meta.createdAt ??= Date.now();
@@ -341,6 +348,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 			await harness.close(context);
 			await sandbox.close();
 			files.close();
+			scopes?.close();
 		},
 	};
 }

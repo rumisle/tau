@@ -4,6 +4,8 @@
 //   charge as a costly model, to try cache warming)
 //   [--token-file path] [--no-auth] [--apns-key path --apns-team id [--apns-key-id id]]
 //   [--push-relay url --push-relay-token-file path]
+//   [--command-scopes [--command-slice name.slice]] (each bash command in its own systemd scope, in tau-cmd.slice or the
+//   slice named: src/scopes.ts, docs/command-isolation.md; off by default)
 // Clients must give the server's token (`Authorization: Bearer <token>`) when it has one: TAU_TOKEN, or else the
 // --token-file's (by convention ~/.config/tau/token), which must be readable by its owner only. Without one the server
 // listens on loopback only, unless --no-auth: anyone who reaches it can run commands as this user.
@@ -42,6 +44,8 @@ const { values } = parseArgs({
 		"apns-team": { type: "string" },
 		"push-relay": { type: "string" },
 		"push-relay-token-file": { type: "string" },
+		"command-scopes": { type: "boolean", default: false },
+		"command-slice": { type: "string" },
 		version: { type: "boolean", default: false },
 	},
 });
@@ -49,6 +53,11 @@ if (values.version) {
 	// A release's version (scripts/build-release.sh); from the source, "dev".
 	console.log(typeof TAU_VERSION === "string" ? TAU_VERSION : "dev");
 	process.exit(0);
+}
+
+if (values["command-slice"] !== undefined && !values["command-scopes"]) {
+	console.error("--command-slice names the slice of --command-scopes, which is off.");
+	process.exit(1);
 }
 
 const token = readToken();
@@ -69,6 +78,7 @@ const host = await openHost({
 	...(values["dev-tps"] === undefined ? {} : { devTokensPerSecond: Number(values["dev-tps"]) }),
 	...(values["dev-cache-ttl"] === undefined ? {} : { devCacheTtl: Number(values["dev-cache-ttl"]) }),
 	credentials,
+	...(values["command-scopes"] ? { commandScopes: values["command-slice"] === undefined ? {} : { slice: values["command-slice"] } } : {}),
 });
 if (host.models.getModel(model.provider, model.modelId) === undefined) {
 	console.error(`Unknown model ${model.provider}/${model.modelId}`);
