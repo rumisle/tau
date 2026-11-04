@@ -1,9 +1,10 @@
 // The driver of scripts/oom-repro.sh: a chat on the dev model runs `command` through bash, and this prints what the
 // model got back, following the server across a restart (its data is on disk, so the interrupted call settles there).
-//   node --no-warnings scripts/oom-repro.ts <ws-url> <command>
+// With a neighbor command, another chat runs that one first, to its end, and prints its result.
+//   node --no-warnings scripts/oom-repro.ts <ws-url> <command> [<neighbor command>]
 import { ConversationReplica, type Entry, TauClient } from "../server/src/client.ts";
 
-const [url, command] = process.argv.slice(2) as [string, string];
+const [url, command, neighbor] = process.argv.slice(2) as [string, string, string | undefined];
 const log = (line: string) => console.log(`[driver] ${line}`);
 
 async function connect(deadline: number): Promise<TauClient> {
@@ -28,6 +29,18 @@ const answered = (replica: ConversationReplica) => {
 };
 
 let client = await connect(Date.now() + 30_000);
+if (neighbor !== undefined) {
+	const { dialog } = await client.request("conversation.create", { title: "OOM repro neighbor", agent: { model: { provider: "dev", modelId: "echo" } } });
+	const replica = new ConversationReplica(dialog.conversation.id as number);
+	await replica.sync(client);
+	await client.request("conversation.submit", { conversationId: replica.id, requestId: "neighbor", content: `$ ${neighbor}` });
+	log(`chat ${replica.id}: sent "$ ${neighbor}"`);
+	await new Promise<void>((resolve) => {
+		if (answered(replica)) resolve();
+		const stop = replica.onChange(() => answered(replica) && (stop(), resolve()));
+	});
+	log(`its tool result: ${text(result(replica)).trim()}`);
+}
 const { dialog } = await client.request("conversation.create", { title: "OOM repro", agent: { model: { provider: "dev", modelId: "echo" } } });
 const id = dialog.conversation.id as number;
 let replica = new ConversationReplica(id);
