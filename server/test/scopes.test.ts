@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { after, before, describe, test } from "node:test";
 import { ConversationReplica, type Entry, TauClient } from "../src/client.ts";
 import { type Host, openHost } from "../src/host.ts";
-import { CommandScopes, escapeUnitPart, formatBytes, scopeUnit } from "../src/scopes.ts";
+import { CommandScopes, describeOomd, escapeUnitPart, formatBytes, scopeUnit } from "../src/scopes.ts";
 import { type Server, serve } from "../src/server.ts";
 
 function until(predicate: () => boolean | Promise<boolean>, timeoutMs = 20_000): Promise<void> {
@@ -70,6 +70,11 @@ test("unit names: a call ID's characters past letters, digits, _ and - escaped, 
 	assert.equal(formatBytes(300 << 20), "300 MiB");
 	assert.equal(formatBytes(2.5 * 2 ** 30), "2.5 GiB");
 	assert.equal(formatBytes(26 * 2 ** 30), "26 GiB");
+	assert.equal(
+		describeOomd("Killed /user.slice/user-1000.slice/user@1000.service/tau.slice/tau-cmd.slice/tau-cmd-3-x.scope due to memory pressure for /user.slice/user-1000.slice/user@1000.service/tau.slice/tau-cmd.slice being 31.99% > 10.00% for > 2s with reclaim activity"),
+		"memory pressure in tau-cmd.slice 31.99% > 10.00% for over 2s",
+	);
+	assert.equal(describeOomd("Killed /a/b.scope due to something new"), undefined);
 });
 
 // The rest needs the user's systemd with scopes and the memory controller delegated; skipped elsewhere.
@@ -157,6 +162,7 @@ describe("commands in scopes", { skip: scopes ? false : "no systemd user scopes 
 		const scripted = await run(client, replica, "!code const r = await tools.bash({ command: \"python3 -c 'a = bytearray(600 << 20)'\" }); const { output, ...rest } = r; return JSON.stringify(rest);");
 		const value = JSON.parse(/\{.*\}/.exec(text(scripted))![0]) as Record<string, unknown>;
 		assert.equal(value.oomKilled, true);
+		assert.equal(value.oomKiller, "kernel");
 		assert.equal(value.memoryLimit, 300 << 20);
 		assert.equal(value.memoryLimitUnit, slice);
 		assert.equal(typeof value.memoryPeak, "number");
@@ -181,6 +187,36 @@ describe("commands in scopes", { skip: scopes ? false : "no systemd user scopes 
 		pid = await background();
 		systemctl("stop", owner);
 		await until(() => !alive(pid));
+	});
+
+	// systemd-oomd, not the kernel: a slice it watches with a low pressure limit, a hog thrashing under its MemoryHigh.
+	const oomd = spawnSync("systemctl", ["is-active", "--quiet", "systemd-oomd"]).status === 0;
+	test("killed by systemd-oomd for memory pressure: said so, with what oomd logged", { skip: oomd ? false : "systemd-oomd does not run here" }, async () => {
+		const watched = `tau-t${process.pid}o-cmd.slice`;
+		systemctl("set-property", "--runtime", watched, "MemoryHigh=200M", "MemoryMax=1G", "MemorySwapMax=0", "ManagedOOMMemoryPressure=kill", "ManagedOOMMemoryPressureLimit=10%", "ManagedOOMMemoryPressureDurationSec=2s");
+		const other = await openHost({ devTokensPerSecond: 4_000, cwd: tmpdir(), commandScopes: { slice: watched } });
+		const otherServer = await serve(other);
+		const otherClient = await TauClient.connect(otherServer.url);
+		try {
+			const replica = await chat(otherClient);
+			// Touches 400 MB again and again past MemoryHigh=200M with no swap; ends by itself after a minute.
+			const hog = "import time\na = bytearray(400 << 20)\nend = time.time() + 60\nwhile time.time() < end:\n    for i in range(0, len(a), 4096): a[i] = (a[i] + 1) % 256";
+			const count = await submit(otherClient, replica, `!tool bash ${JSON.stringify({ command: `python3 -c '${hog}'` })}`);
+			await until(() => results(replica).length > count && idle(replica), 90_000);
+			const said = text(results(replica).at(-1));
+			// The reason is oomd's log line, there where the user may read the system journal.
+			const journal = spawnSync("journalctl", ["--quiet", "-n", "1", "-o", "cat", "_SYSTEMD_UNIT=systemd-oomd.service"], { encoding: "utf8" }).stdout.trim() !== "";
+			assert.match(said, new RegExp(`Killed by systemd-oomd \\(exit 137\\)(: memory pressure in ${watched} [\\d.]+% > 10\\.00% for over 2s)${journal ? "" : "?"}\\.`));
+			assert.match(said, /This command's peak: \d+ MiB\./);
+			assert.doesNotMatch(said, /out-of-memory killer|Memory limit reached/);
+			assert.deepEqual(units(`tau-t${process.pid}o-cmd-`), []);
+		} finally {
+			await otherClient.close();
+			await otherServer.close();
+			await other.close();
+			systemctl("stop", `tau-t${process.pid}o.slice`);
+			systemctl("revert", watched);
+		}
 	});
 
 	test("systemd-run failing: the command fails, saying so, and does not run outside a scope", async () => {

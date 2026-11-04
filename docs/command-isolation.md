@@ -161,7 +161,28 @@ the memory events, so tau looks again for up to a second). The limit named is th
 machine's. A scope's own `MemoryMax=` would be named instead (tau sets none). Neither: no limit is named, the peak
 only. When the OOM killer killed one of the command's processes but the shell exited otherwise: "The out-of-memory
 killer killed a process of this command." beside the exit code. The structured output carries the same:
-`oomKilled`, `memoryLimit` (bytes), `memoryLimitUnit`, `memoryPeak` (bytes). Then tau resets the scope's failed state.
+`oomKilled`, `oomKiller` (`kernel` or `systemd-oomd`), `memoryLimit` (bytes), `memoryLimitUnit`, `memoryPeak` (bytes).
+Then tau resets the scope's failed state.
+
+Killed by systemd-oomd instead (measured on chorus, systemd 259: a test slice with `ManagedOOMMemoryPressure=kill`,
+`ManagedOOMMemoryPressureLimit=10%`, `ManagedOOMMemoryPressureDurationSec=2s`, `MemoryHigh=200M`, no swap, and a
+hog touching 400 MB over and over; oomd killed it within 5 to 16 s, every run):
+
+```
+Killed by systemd-oomd (exit 137): memory pressure in tau-t2371361o-cmd.slice 30.69% > 10.00% for over 2s.
+This command's peak: 212 MiB.
+```
+
+systemd records an oomd kill as the kernel's, `Result=oom-kill`, and tells them apart only by count: `OOMKills=0`,
+`ManagedOOMKills=1` (systemd 255 has no `OOMKills`, Notes on hosts; where neither is shown tau says "Killed by an
+out-of-memory kill"; where only `ManagedOOMKills` is, a kill it does not count is said to be the kernel's). The slice's own
+`oom` count does not rise, as no limit was reached, so no limit is named. Why oomd killed, which watched cgroup's
+pressure over what limit for how long, is only in oomd's log line ("Killed <scope> due to memory pressure for <slice>
+being 31.99% > 10.00% for > 2s with reclaim activity"), which tau reads from the system journal (`journalctl
+_SYSTEMD_UNIT=systemd-oomd.service`, readable by the systemd-journal group, chorus's user included) and gives with the
+paths as unit names; without access to it, or for a line it does not know (oomd also kills for swap use), the first
+sentence ends at the exit code. The watched cgroup need not be the command's slice: an ancestor's limit
+(`user@UID.service` has Fedora's 80% for 20 s) may be the one passed.
 Sizes in binary units (GiB), as systemd's are.
 
 Interrupted by a restart (as designed; built per server run, above): the call records
@@ -189,7 +210,8 @@ reserve of a tenth and at least 2 GiB (chorus: 27864M of 30960M), the policy in 
 `/proc/swaps` lists zram. Setup warns when the user has no linger or `user@UID.service`'s `cgroup.controllers` lacks
 `memory`; `tau status` shows the slice and whether the flags have `--command-scopes`. Fedora's
 `slice.d/10-oomd-per-slice-defaults.conf` gives every user slice, this one too, `ManagedOOMMemoryPressure=kill` at
-80%: systemd-oomd may kill a command's scope under memory pressure before the kernel does (not measured).
+80%: systemd-oomd may kill a command's scope under memory pressure before the kernel does (what the model then reads:
+What the model reads).
 
 In a shared pool the kernel kills the process with the highest badness (mostly the largest), which need not be the one
 whose allocation crossed the limit. The message says which limit was reached and this command's peak, nothing more.

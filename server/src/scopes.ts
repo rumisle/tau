@@ -67,7 +67,7 @@ export type CommandScopesOptions = {
 	dir?: string;
 };
 
-type Running = { unit: string; started: string; sliceOoms: number; stopOnAbort: () => void; signal: AbortSignal | undefined };
+type Running = { since: number; unit: string; started: string; sliceOoms: number; stopOnAbort: () => void; signal: AbortSignal | undefined };
 
 /** `systemctl --user <args>`: its output, or the error it failed with. */
 function systemctl(args: readonly string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
@@ -82,6 +82,42 @@ async function show(unit: string, properties: readonly string[]): Promise<Record
 		const at = line.indexOf("=");
 		return at === -1 ? [] : [[line.slice(0, at), line.slice(at + 1)]];
 	}));
+}
+
+const SCOPE_FACTS = ["ActiveState", "Result", "MemoryPeak", "MemoryMax", "OOMKills", "ManagedOOMKills"] as const;
+
+/**
+ * What systemd-oomd logged of why it killed `unit`'s cgroup, from the system journal where the user may read it
+ * (journalctl, the systemd-journal group): "memory pressure in tau-cmd.slice 32% > 10% for over 2s", or swap use.
+ */
+export async function oomdReason(unit: string, since: number): Promise<string | undefined> {
+	// The journal may not have the line yet when the scope has failed.
+	for (let tries = 0; tries < 3; tries++) {
+		const reason = await oomdLine(unit, since);
+		if (reason !== null) return reason;
+		await new Promise((resolve) => setTimeout(resolve, 200));
+	}
+	return undefined;
+}
+
+/** The reason of oomd's kill line for `unit`: undefined when it says none tau reads, null when there is no line. */
+function oomdLine(unit: string, since: number): Promise<string | undefined | null> {
+	return new Promise((resolve) => {
+		const args = ["--quiet", "--no-pager", "-o", "cat", "_SYSTEMD_UNIT=systemd-oomd.service", `--since=@${Math.floor(since / 1000) - 1}`];
+		execFile("journalctl", args, { timeout: 5_000, maxBuffer: 1 << 20 }, (_error, stdout) => {
+			const line = stdout.split("\n").findLast((text) => text.startsWith("Killed ") && text.includes(`/${unit} due to `));
+			resolve(line === undefined ? null : describeOomd(line));
+		});
+	});
+}
+
+/** An oomd kill line, its cgroup paths as unit names. */
+export function describeOomd(line: string): string | undefined {
+	const pressure = /due to memory pressure for (\S+) being ([\d.]+)% > ([\d.]+)% for > (\S+?) with reclaim activity/.exec(line);
+	if (pressure !== null) return `memory pressure in ${basename(pressure[1]!)} ${pressure[2]}% > ${pressure[3]}% for over ${pressure[4]}`;
+	const swap = /due to swap used \((\d+)\) \/ total \((\d+)\) being more than ([\d.]+)%/.exec(line);
+	if (swap !== null) return `swap used ${formatBytes(Number(swap[1]))} of ${formatBytes(Number(swap[2]))}, over ${swap[3]}%`;
+	return undefined;
 }
 
 /** A byte count as the model reads it: `26.0 GiB`, `512 MiB`. */
@@ -194,7 +230,7 @@ export class CommandScopes {
 		const signal = context.abortSignal;
 		const stopOnAbort = () => void systemctl(["stop", unit]);
 		signal?.addEventListener("abort", stopOnAbort, { once: true });
-		this.#running.set(key, { unit, started, sliceOoms: await this.#sliceOoms(), stopOnAbort, signal });
+		this.#running.set(key, { since: Date.now(), unit, started, sliceOoms: await this.#sliceOoms(), stopOnAbort, signal });
 		execution.env.TAU_CMD_UNIT = unit;
 		execution.env.TAU_CMD_SLICE = this.slice;
 		execution.env.TAU_CMD_BOUND_TO = this.boundTo ?? "";
@@ -232,11 +268,11 @@ export class CommandScopes {
 		}
 		if (exitCode === 0) return result;
 
-		let state = await show(unit, ["ActiveState", "Result", "MemoryPeak", "MemoryMax"]);
+		let state = await show(unit, SCOPE_FACTS);
 		// The OOM killer's SIGKILL may reach the shell before systemd has seen the scope's memory events.
 		for (let tries = 0; exitCode === 137 && state.Result !== "oom-kill" && state.ActiveState === "active" && tries < 10; tries++) {
 			await new Promise((resolve) => setTimeout(resolve, 100));
-			state = await show(unit, ["ActiveState", "Result", "MemoryPeak", "MemoryMax"]);
+			state = await show(unit, SCOPE_FACTS);
 		}
 		if (state.ActiveState === "failed") await systemctl(["reset-failed", unit]);
 		if (state.Result !== "oom-kill") return result;
@@ -247,10 +283,15 @@ export class CommandScopes {
 		const sliceLimit = sliceReached ? bytes((await show(this.slice, ["MemoryMax"])).MemoryMax) : undefined;
 		const [limit, limitUnit] = sliceReached && sliceLimit !== undefined ? [sliceLimit, this.slice] : scopeLimit !== undefined ? [scopeLimit, unit] : [undefined, undefined];
 
+		// Who killed: the kernel (OOMKills) or systemd-oomd (ManagedOOMKills); systemd records both as Result=oom-kill, and
+		// one without these counts (before 256) as that only.
+		const oomd = Number(state.ManagedOOMKills ?? 0) > 0 && !(Number(state.OOMKills ?? 0) > 0);
+		const killer = oomd ? "systemd-oomd" : state.OOMKills === undefined && state.ManagedOOMKills === undefined ? "an out-of-memory kill" : "the out-of-memory killer";
+		const why = oomd ? await oomdReason(unit, running.since) : undefined;
 		const exited = diagnostics.findIndex((diagnostic) => diagnostic.code === "exit_code");
-		const killed = { severity: "error", code: "oom_kill", message: `Killed by the out-of-memory killer (exit ${exitCode}).` } as const;
+		const killed = { severity: "error", code: "oom_kill", message: `Killed by ${killer} (exit ${exitCode})${why === undefined ? "" : `: ${why}`}.` } as const;
 		if (exitCode === 137 && exited !== -1) diagnostics[exited] = killed;
-		else diagnostics.push({ severity: "error", code: "oom_kill", message: "The out-of-memory killer killed a process of this command." });
+		else diagnostics.push({ severity: "error", code: "oom_kill", message: `${killer[0]!.toUpperCase()}${killer.slice(1)} killed a process of this command${why === undefined ? "" : `: ${why}`}.` });
 		const parts = [
 			...(limit === undefined ? [] : [`Memory limit reached: ${formatBytes(limit)} (${limitUnit}).`]),
 			...(peak === undefined ? [] : [`This command's peak: ${formatBytes(peak)}.`]),
@@ -262,6 +303,7 @@ export class CommandScopes {
 			structuredOutput: {
 				...structured,
 				oomKilled: true,
+				oomKiller: oomd ? "systemd-oomd" : "kernel",
 				...(limit === undefined ? {} : { memoryLimit: limit, memoryLimitUnit: limitUnit }),
 				...(peak === undefined ? {} : { memoryPeak: peak }),
 			} as never,
