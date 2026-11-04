@@ -130,6 +130,32 @@ systemd-run --user --unit=bgjob-<id> --slice=agent-jobs.slice --collect \
 - No terminal: progress bars and prompts change. Keep a `--tty` mode on tmux for the rare job that needs one.
 - Its directory moves off `/tmp` (on chorus a 16G tmpfs: logs there are memory).
 
+## Reproduction
+
+`scripts/oom-repro.sh [-p Property=Value ...]` (step 1) runs a dev tau server in a transient user unit as
+tau-server.service runs (`MemoryMax=2G`, `MemorySwapMax=0`, `Restart=always`, `RestartSec=2`, and the properties
+given), has a chat on the dev model run `python3 -c 'a = bytearray(3 << 30)'`, and prints what the model got back, the
+unit's state and its journal; then stops the unit and resets that unit's failed state. On chorus, today
+(`OOMPolicy=stop`, systemd's default):
+
+```
+[driver] connection dropped after 1.0 s (the server went away); reconnecting
+[driver] server restarts seen by the driver: 1
+[driver] tool result (isError true):
+    [error] Tool bash was interrupted and may have partially run
+== the unit
+    NRestarts=1  OOMPolicy=stop
+== its journal
+    tau-oomtest.service: The kernel OOM killer killed some processes in this unit.
+    node: stopping...
+    tau-oomtest.service: Failed with result 'oom-kill'.
+    tau-oomtest.service: Consumed 1.307s CPU time over 1.701s wall clock time, 2G memory peak.
+    tau-oomtest.service: Scheduled restart job, restart counter is at 1.
+```
+
+The kernel killed only python; systemd then stopped the whole unit for it, the server with every run, and restarted
+it. The model reads that its command was interrupted, nothing about memory, and would run it again.
+
 ## Order of work
 
 Each step ships and reverts alone.
