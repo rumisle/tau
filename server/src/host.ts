@@ -127,7 +127,7 @@ export type HostOptions = {
 	/** The largest file a message or `send_file` may carry; default 1 GB. */
 	maxFileBytes?: number;
 	/** Each bash command in its own systemd scope, in this slice (src/scopes.ts, docs/command-isolation.md); off when omitted. */
-	commandScopes?: { slice?: string; partOf?: string };
+	commandScopes?: { slice?: string; boundTo?: string };
 };
 
 export type Host = {

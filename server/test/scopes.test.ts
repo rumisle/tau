@@ -85,9 +85,9 @@ describe("commands in scopes", { skip: scopes ? false : "no systemd user scopes 
 	let client: TauClient;
 	before(async () => {
 		systemctl("set-property", "--runtime", slice, "MemoryMax=300M", "MemorySwapMax=0");
-		// The scopes' PartOf=: a service of the test's, standing for the server's.
-		spawnSync("systemd-run", ["--user", "--quiet", `--unit=${owner}`, "--", "sleep", "600"]);
-		host = await openHost({ devTokensPerSecond: 4_000, cwd: tmpdir(), commandScopes: { slice, partOf: owner } });
+		// The scopes' BindsTo=: a service of the test's, standing for the server's, restarted as tau-server.service is.
+		spawnSync("systemd-run", ["--user", "--quiet", `--unit=${owner}`, "-p", "Restart=always", "-p", "RestartSec=1", "--", "sleep", "600"]);
+		host = await openHost({ devTokensPerSecond: 4_000, cwd: tmpdir(), commandScopes: { slice, boundTo: owner } });
 		server = await serve(host);
 		client = await TauClient.connect(server.url);
 	});
@@ -164,11 +164,21 @@ describe("commands in scopes", { skip: scopes ? false : "no systemd user scopes 
 		assert.deepEqual(units(`${prefix}${replica.id}-`), []);
 	});
 
-	test("the scopes are PartOf= the server's unit: stopping it stops them", async () => {
+	test("the scopes are bound to the server's unit: its crash (and restart) stops them, as its stop does", async () => {
 		const replica = await chat(client);
-		const pid = Number(text(await run(client, replica, "$ sleep 303 >/dev/null 2>&1 & echo $!")).trim());
+		const background = async () => Number(text(await run(client, replica, "$ sleep 303 >/dev/null 2>&1 & echo $!")).trim());
+		let pid = await background();
 		const [unit] = units(`${prefix}${replica.id}-`);
-		assert.equal(property(unit!, "PartOf"), owner);
+		assert.equal(property(unit!, "BindsTo"), owner);
+		assert.match(property(unit!, "After"), new RegExp(owner.replaceAll(".", "\\.")));
+		// A crash: the main process killed, systemd restarting the service.
+		const restarts = Number(property(owner, "NRestarts"));
+		systemctl("kill", "-s", "KILL", owner);
+		await until(() => !alive(pid));
+		await until(() => Number(property(owner, "NRestarts")) > restarts && property(owner, "ActiveState") === "active");
+		assert.equal(property(unit!, "ActiveState"), "inactive");
+		// A stop.
+		pid = await background();
 		systemctl("stop", owner);
 		await until(() => !alive(pid));
 	});

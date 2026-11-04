@@ -70,9 +70,9 @@ command.
   `curl` work as today); the scope lasts while they do, and systemd collects it when they end.
 - **Stop and timeout** stop the call's scope instead of killing its process group: the same call's processes, now
   including those that left the group (`setsid`, `nohup`, daemons). Other calls and conversations are untouched.
-- **The server stopping** stops the scopes (`PartOf=`), as stopping the service kills its cgroup now. Commands do not
+- **The server stopping** stops the scopes (`PartOf=`; as built `BindsTo=`, below), as stopping the service kills its cgroup now. Commands do not
   outlive the server: after a restart durable has settled their calls as interrupted and nothing would read them.
-  To verify on chorus: that a transient scope takes `PartOf=`.
+  Verified on chorus: a transient scope takes `PartOf=`, which misses a crash (As built, below).
 - **Results.** When the command ends, tau reads the scope (`systemctl --user show -p Result -p MemoryPeak`); a failed
   scope stays until read, unless `--collect` is given, which tau does not. Then `reset-failed`.
 - **At start** tau lists `tau-cmd-*` and settles what a crash left: reads and resets the failed, stops the running.
@@ -92,11 +92,13 @@ As built:
   `tool:…:…/c1`, gives `tool\x3a…\x3a…\x2fc1`); past 240 characters the ID is hashed. `--command-slice <name>.slice`
   names another slice, and so another prefix: tests and the reproduction use their own, and one server's start does
   not settle another's scopes. systemd nests a slice by its dashes: `tau-cmd.slice` lives in `tau.slice`.
-- **`PartOf=`**, verified on chorus with a throwaway service: a transient scope takes it, and stopping (or
-  restarting) the service stops the scope. A crash does not: with the service's main process killed and
-  `Restart=always`, the scope stayed active (systemd propagates stop and restart jobs, not a failure and its
-  automatic restart). The settling at start covers that. The unit is the server's own (its cgroup's last component)
-  when it runs as a `.service`; otherwise there is none.
+- **`BindsTo=` and `After=`, not `PartOf=`**, measured on chorus with a throwaway `Restart=always` service: a
+  transient scope takes `PartOf=`, and the service's stop (or restart) stops it, but its crash does not: with the
+  main process killed, the scope stayed active through the automatic restart, an orphan (systemd propagates stop and
+  restart jobs, not a failure). With `BindsTo=` and `After=` the scope goes inactive as soon as the service does, a
+  crash included, and stays so after the restart; `After=` orders the scopes' stop before the service's. The settling
+  at start stays as a backstop. The unit is the server's own (its cgroup's last component) when it runs as a
+  `.service`; otherwise there is none.
 - **Systemd-run failing** (a masked slice, no user manager): the start mark the wrapper writes inside the scope is
   missing, and the command fails with "The command did not start: systemd-run could not start its scope <unit>.",
   systemd-run's own error in the output above it. Nothing runs outside a scope.

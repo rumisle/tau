@@ -5,7 +5,8 @@
 // and its kill of that group work as without scopes, and the arguments reach bash as durable gave them, unquoted.
 //
 // - The scope: `<prefix><conversation>-<call>.scope` (`tau-cmd-12-toolu_01….scope`), in the slice (`tau-cmd.slice`,
-//   whose name less `.slice` is the prefix), `PartOf=` the server's unit, its OOM score raised to 500 by the wrapper
+//   whose name less `.slice` is the prefix), `BindsTo=` and `After=` the server's unit (stopped when it stops or
+//   crashes; `PartOf=` misses a crash), its OOM score raised to 500 by the wrapper
 //   (systemd does not take `OOMScoreAdjust=` for a transient scope).
 // - Stop and timeout: the call's scope is stopped, every process in it, those that left its process group too.
 // - Killed by the OOM killer: systemd keeps the failed scope; tau reads its Result and MemoryPeak, and the slice's
@@ -27,14 +28,14 @@ export const COMMAND_OOM_SCORE = 500;
 const WRAPPER = `#!/bin/sh
 # tau's command shell (server/src/scopes.ts, --command-scopes). durable's bash tool runs \`<this> -c <command>\`;
 # this starts it in the transient scope tau named for the call, the arguments passed on as they are.
-unit=$TAU_CMD_UNIT slice=$TAU_CMD_SLICE part_of=$TAU_CMD_PART_OF started=$TAU_CMD_STARTED
-unset TAU_CMD_UNIT TAU_CMD_SLICE TAU_CMD_PART_OF TAU_CMD_STARTED
+unit=$TAU_CMD_UNIT slice=$TAU_CMD_SLICE bound_to=$TAU_CMD_BOUND_TO started=$TAU_CMD_STARTED
+unset TAU_CMD_UNIT TAU_CMD_SLICE TAU_CMD_BOUND_TO TAU_CMD_STARTED
 if [ -z "$unit" ] || [ -z "$slice" ] || [ -z "$started" ]; then
 	echo "tau: this shell runs only the bash tool's commands, each in the scope tau names for it" >&2
 	exit 127
 fi
 set -- --slice="$slice" -- /bin/sh -c 'echo ${COMMAND_OOM_SCORE} > /proc/self/oom_score_adj 2>/dev/null; : > "$0" && exec /bin/bash "$@"' "$started" "$@"
-if [ -n "$part_of" ]; then set -- -p "PartOf=$part_of" "$@"; fi
+if [ -n "$bound_to" ]; then set -- -p "BindsTo=$bound_to" -p "After=$bound_to" "$@"; fi
 # A description of its own: systemd's default, the command line, would put every command in the journal.
 exec systemd-run --user --scope --quiet --unit="$unit" --description="tau command" "$@"
 `;
@@ -59,8 +60,8 @@ export function scopeUnit(prefix: string, conversationId: number, callId: string
 export type CommandScopesOptions = {
 	/** The slice every scope is in; default `tau-cmd.slice`. Its name less `.slice` and a `-` prefix the scopes'. */
 	slice?: string;
-	/** The unit the scopes are `PartOf=`; default the server's own when it runs as a service, else none. */
-	partOf?: string;
+	/** The unit the scopes are `BindsTo=` and `After=`; default the server's own when it runs as a service, else none. */
+	boundTo?: string;
 	/** Where the wrapper and the calls' start marks are kept; default `$XDG_RUNTIME_DIR/tau-commands/<slice>`, one per slice
 	 * so that a server that crashed leaves only the next one's. */
 	dir?: string;
@@ -111,7 +112,7 @@ export class CommandScopes {
 	readonly slice: string;
 	/** Every scope's name starts with it: the slice's name less `.slice`, and `-`. */
 	readonly prefix: string;
-	readonly partOf: string | undefined;
+	readonly boundTo: string | undefined;
 	readonly dir: string;
 	/** The wrapper NodeExecutionEnv runs as its shell. */
 	readonly shellPath: string;
@@ -124,7 +125,7 @@ export class CommandScopes {
 		this.slice = options.slice ?? "tau-cmd.slice";
 		if (!/^[A-Za-z0-9_-]+\.slice$/.test(this.slice)) throw new Error(`Not a slice name: ${this.slice}`);
 		this.prefix = `${this.slice.slice(0, -".slice".length)}-`;
-		this.partOf = options.partOf ?? serverUnit();
+		this.boundTo = options.boundTo ?? serverUnit();
 		this.#ownDir = options.dir === undefined;
 		this.dir = options.dir ?? join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "tau-commands", this.slice);
 		mkdirSync(this.dir, { recursive: true, mode: 0o700 });
@@ -196,7 +197,7 @@ export class CommandScopes {
 		this.#running.set(key, { unit, started, sliceOoms: await this.#sliceOoms(), stopOnAbort, signal });
 		execution.env.TAU_CMD_UNIT = unit;
 		execution.env.TAU_CMD_SLICE = this.slice;
-		execution.env.TAU_CMD_PART_OF = this.partOf ?? "";
+		execution.env.TAU_CMD_BOUND_TO = this.boundTo ?? "";
 		execution.env.TAU_CMD_STARTED = started;
 	};
 
