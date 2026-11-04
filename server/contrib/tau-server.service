@@ -24,6 +24,9 @@ ExecStart=/bin/zsh -lic 'unset INVOCATION_ID JOURNAL_STREAM MANAGERPID MANAGERPI
 StandardInput=null
 Restart=always
 RestartSec=2
+# A command its agents run that the kernel kills for memory does not stop the server with it (systemd's default,
+# OOMPolicy=stop, stops the whole unit; docs/command-isolation.md).
+OOMPolicy=continue
 
 [Install]
 WantedBy=default.target

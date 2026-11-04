@@ -15,7 +15,11 @@ It checks Node, downloads the latest release, checks that it starts, and runs `t
 `~/.config/tau/token`, the server's options in `~/.config/tau/flags`, and the systemd user service `tau-server`
 (started, and from boot with `loginctl enable-linger`). It prints the address (the tailnet name when Tailscale runs) and
 the token for the app. The service runs `tau serve` through a login, interactive shell, so API keys set in the shell's
-startup files reach the server and its agents. Model logins are the pi CLI's (`~/.pi/agent/auth.json`) or the
+startup files reach the server and its agents. The service has `OOMPolicy=continue`: when the kernel kills a
+command an agent ran for memory, the server goes on (systemd's default, `OOMPolicy=stop`, stops the whole unit, every
+run with it; docs/command-isolation.md). A service set up before has the line added by running `tau setup` again, or by
+hand: `OOMPolicy=continue` in `[Service]`, then `systemctl --user daemon-reload` (it applies at the next start).
+Model logins are the pi CLI's (`~/.pi/agent/auth.json`) or the
 providers' API keys. The repository is private for now: give `TAU_GITHUB_TOKEN` (or `GITHUB_TOKEN`) to download.
 
 ## Upgrade, roll back

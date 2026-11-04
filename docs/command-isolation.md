@@ -156,6 +156,20 @@ unit's state and its journal; then stops the unit and resets that unit's failed 
 The kernel killed only python; systemd then stopped the whole unit for it, the server with every run, and restarted
 it. The model reads that its command was interrupted, nothing about memory, and would run it again.
 
+With `OOMPolicy=continue` (step 2, `scripts/oom-repro.sh -p OOMPolicy=continue`) the server stays:
+
+```
+[driver] server restarts seen by the driver: 0
+[driver] tool result (isError true):
+    [error] Command exited with code 137
+== the unit
+    NRestarts=0  OOMPolicy=continue
+== its journal
+    tau-oomtest.service: The kernel OOM killer killed some processes in this unit.
+```
+
+Only python died; the other runs went on. The model reads an exit code, still nothing about memory.
+
 ## Order of work
 
 Each step ships and reverts alone.
