@@ -429,4 +429,21 @@ final class ReadingUITests: XCTestCase {
         XCTAssertEqual(self.reading["bottom"], "Dropped turn 4 paragraph", "the end")
         XCTAssertFalse(self.downButton.exists, "at the end")
     }
+
+    /// A chat previewed from the list (held) is not read: its answers stay unread.
+    func testPreviewDoesNotMarkSeen() throws {
+        let id = try self.chat("Previewed", turns: [(question: "Previewed first", answer: "A first answer.")])
+        try self.script(["Previewed later": "An answer that came while the chat was closed."])
+        self.launch([])
+        _ = try self.server.submit(id, "Previewed later")
+        XCTAssertTrue(self.waitIdle(id))
+        sleep(2)
+        XCTAssertEqual(self.dialog(id)?["unreadCount"] as? Int, 2, "unread before")
+        let row = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'chatTitle' AND label == 'Previewed'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.press(forDuration: 1.0)
+        sleep(3)
+        self.shot("reading-preview-0-held")
+        XCTAssertEqual(self.dialog(id)?["unreadCount"] as? Int, 2, "still unread with the preview on screen")
+    }
 }
