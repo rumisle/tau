@@ -87,6 +87,9 @@ As built:
   execs `/bin/sh` (oom_score_adj, the start mark), which execs `/bin/bash -c <command>`: one process throughout, so
   the tool's pid, pipes and process group are the command's. Without the variables (a command that is not the bash
   tool's) the wrapper refuses, exit 127.
+- **The command line as given.** From systemd 254, systemd-run expands `${NAME}`, `$NAME` and `$$` in its command line
+  as ExecStart= does, `--scope` included, so a command's `"$$"` reached bash as `"$"`. The wrapper passes
+  `--expand-environment=no` where systemd-run has it (checked at start); older ones expand nothing in a scope.
 - **Names.** `<slice less .slice>-<conversation>-<call>.scope`: `tau-cmd-12-toolu_01….scope` for `tau-cmd.slice`. A call
   ID's characters other than letters, digits, `_` and `-` are written `\xHH` (a script's nested call,
   `tool:…:…/c1`, gives `tool\x3a…\x3a…\x2fc1`); past 240 characters the ID is hashed. `--command-slice <name>.slice`
