@@ -1444,7 +1444,16 @@ final class ChatControllerNode: ASDisplayNode {
     private func jump(to index: Int, position: ListViewScrollPosition) {
         self.isJumping = true
         self.updateReadingTestState()
-        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: index, position: position, animated: true, curve: .Spring(duration: 0.4), directionHint: .Down), updateSizeAndInsets: nil, stationaryItemRange: nil, updateOpaqueState: nil, completion: { [weak self] _ in
+        // The way it scrolls when the target is not laid out, from where it is, as Telegram's ChatHistoryViewForLocation
+        // (`sourceIndex > subject.index ? .Down : .Up`): the list is inverted, so a lower index is newer, and `.Up` goes
+        // to newer rows, down the screen. A fixed `.Down` played a far jump back down as a scroll up.
+        let directionHint: ListViewScrollToItemDirectionHint
+        if let visible = self.historyNode.displayedItemRange.visibleRange, index < visible.firstIndex {
+            directionHint = .Up
+        } else {
+            directionHint = .Down
+        }
+        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: index, position: position, animated: true, curve: .Spring(duration: 0.4), directionHint: directionHint), updateSizeAndInsets: nil, stationaryItemRange: nil, updateOpaqueState: nil, completion: { [weak self] _ in
             Queue.mainQueue().after(0.45) {
                 guard let self else {
                     return
