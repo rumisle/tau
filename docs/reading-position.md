@@ -106,3 +106,14 @@ What turned out different from the design above, and why.
   of a second, which the frontier does not wait for.
 - `markSeen(id)` (everything) stays for a reply sent from a notification; the chat itself calls
   `markSeen(id, through: entryId)`.
+- **Opening from the phone's copy.** A chat opens at once with the transcript the phone has, which may lack what
+  finished while it was closed (the answer streaming when the user left): the saved view is put back from it, and
+  whether what follows it is unseen is judged again when the server's transcript is in, unless the user scrolled
+  meanwhile. A saved message not in the copy waits for the server's transcript before it is given up.
+- **What came while away shows as written**: an answer still being revealed when the user left (or catching up, after
+  the background) shows the rest at once when the chat is put back, so the view is judged on its whole height. Revealed
+  in big steps at the list's pace, it moved what was put back.
+- **The down button's count** is the messages and answers after the frontier, rather than those that arrived while the
+  list was not at the end: the same while the chat is open, and right after opening a chat scrolled back.
+- **The agent's waiting row** (the τ) is never the saved view's anchor: it is gone by the time the chat opens again.
+

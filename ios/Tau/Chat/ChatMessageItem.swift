@@ -2617,6 +2617,34 @@ final class ChatMessageItemNode: ListViewItemNode {
 
     // MARK: - Streaming reveal (after ChatMessageTextBubbleContentNode.updateTextRevealAnimation)
 
+    /// The rest of the text that has come, at once: a chat put back on screen after it was away shows what came meanwhile
+    /// as written, not streamed again (docs/reading-position.md). False when nothing was left to reveal.
+    func endReveal() -> Bool {
+        guard let controller = self.revealController, let item = self.item, controller.revealedCount < Double(controller.latestLength) else {
+            return false
+        }
+        let id = item.message.id
+        let length = controller.latestLength
+        if item.isStreaming {
+            self.revealController = TextRevealController(initialRevealedCount: length, initialLength: length)
+            let _ = item.interaction.revealProgress.modify { progress in
+                var progress = progress
+                progress[id] = length
+                return progress
+            }
+        } else {
+            self.revealController = nil
+            self.revealLink = nil
+            let _ = item.interaction.revealProgress.modify { progress in
+                var progress = progress
+                progress.removeValue(forKey: id)
+                return progress
+            }
+            self.applyReveal(nil)
+        }
+        return true
+    }
+
     private func updateReveal(item: ChatMessageItem, totalLength: Int) {
         let now = CACurrentMediaTime()
         if item.isStreaming {

@@ -88,13 +88,40 @@ final class ChatControllerNode: ASDisplayNode {
     var frontierAdvanced: ((SeenFrontier, Int?) -> Void)?
     /// Each row's place in the transcript, larger newer, for the frontier.
     private var orderById: [Int: Int] = [:]
+    /// While a saved view is put back (opening, or the app active again): what shows meanwhile is not seen.
+    private var isRestoring = false
+
+    /// The down button's count: the messages and answers after the frontier, committed, as Telegram counts unread ones.
+    private func updateUnseenCount() {
+        var count = 0
+        if let frontier = self.frontier, let place = self.orderById[frontier.messageId] {
+            for entry in self.entries {
+                guard let order = self.orderById[entry.stableId], order > place else {
+                    break
+                }
+                if !entry.isStreaming && !entry.message.isStreaming && (entry.message.role == .user || entry.message.role == .assistant) && !entry.message.isWaiting {
+                    count += 1
+                }
+            }
+        }
+        if count != self.unseenCount {
+            self.unseenCount = count
+            self.updateDownButton(animated: true)
+        }
+    }
 
     private var state: ConversationState?
     private var entries: [ChatHistoryEntry] = []
     private var validLayout: (layout: ContainerViewLayout, navigationHeight: CGFloat)?
     private var hasAppliedInitialState = false
     /// Where to open the history; consumed by the first transaction.
-    var initialScrollState: ChatScrollState?
+    var initialScrollState: ChatScrollState? {
+        didSet {
+            if oldValue == nil, self.initialScrollState != nil {
+                self.isRestoring = true
+            }
+        }
+    }
     /// A message found by search, to open at; cleared once it is on screen.
     var focus: ChatFocus?
     /// Asks for older history until the entry is loaded, for `focus`.
@@ -160,6 +187,12 @@ final class ChatControllerNode: ASDisplayNode {
         self.historyNode.transform = CATransform3DMakeRotation(CGFloat.pi, 0.0, 0.0, 1.0)
         // Dragging the history away puts the keyboard down, as in Telegram.
         self.historyNode.beganInteractiveDragging = { [weak self] _ in
+            // A saved view whose message has not come yet: the user went on without it.
+            if let self, self.hasAppliedInitialState, self.initialScrollState != nil {
+                self.initialScrollState = nil
+                self.isRestoring = false
+            }
+            self?.pendingSyncReveal = nil
             self?.inputPanelNode.deactivateInput()
             // A selection stays as the text scrolls with it; its menu, which would stay where the text was, steps
             // aside until the list stops.
@@ -185,9 +218,6 @@ final class ChatControllerNode: ASDisplayNode {
             }
             if atBottom != self.isAtBottom {
                 self.isAtBottom = atBottom
-                if atBottom {
-                    self.unseenCount = 0
-                }
                 self.updateDownButton(animated: true)
             }
             self.updateFrontier()
@@ -416,17 +446,6 @@ final class ChatControllerNode: ASDisplayNode {
             self.laidOutPrefix = nil
         }
         self.isMakingRows = true
-        if !self.isAtBottom && !previous.isEmpty {
-            // New rows below the screen: committed answers and messages, counted as Telegram counts unread ones. Not
-            // older ones, which history brings above.
-            let known = Set(previousHead.map(\.stableId))
-            let newestKnown = max(keep - 1, tail.first(where: { known.contains($0.stableId) })?.index ?? -1)
-            let added = tail.filter { $0.index > newestKnown && !known.contains($0.stableId) && !$0.isStreaming && $0.message.role != .thinking }.count
-            if added > 0 {
-                self.unseenCount += added
-                self.updateDownButton(animated: true)
-            }
-        }
         // Only the rows after the kept ones: their indices are the list's, which has the kept rows after them.
         let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: previousHead, rightList: tail)
 
@@ -437,6 +456,14 @@ final class ChatControllerNode: ASDisplayNode {
 
         var options = ListViewDeleteAndInsertOptions()
         var scrollToItem: ListViewScrollToItem?
+        /// The saved view this transaction puts back, finished once it is laid out.
+        var restored: ChatScrollState?
+        /// The server's transcript came after a view put back from the phone's copy.
+        var syncReveal: (anchor: Int, frontier: SeenFrontier)?
+        if state.isSynced, let pending = self.pendingSyncReveal {
+            self.pendingSyncReveal = nil
+            syncReveal = pending
+        }
         if !self.hasAppliedInitialState {
             // The first rows may come in more than one step (cached entries, then the server's); the saved position
             // applies once its message is there.
@@ -448,21 +475,33 @@ final class ChatControllerNode: ASDisplayNode {
             // Reopen where the user left off, as Telegram restores a chat's scroll position.
             if let scrollState = self.initialScrollState, let index = entries.firstIndex(where: { $0.message.id == scrollState.messageId }) {
                 scrollToItem = ListViewScrollToItem(index: index, position: .top(scrollState.offset), animated: false, curve: .Default(duration: nil), directionHint: .Up)
+                restored = scrollState
                 self.initialScrollState = nil
-            } else if self.hasAppliedInitialState && !state.hasOlder {
+            } else if self.hasAppliedInitialState && !state.hasOlder && state.isSynced {
+                // Not in the server's transcript either: gone (the phone's copy may lack a row that streamed when the
+                // chat was left, which the server's brings).
                 self.initialScrollState = nil
+                self.isRestoring = false
             }
         } else if let scrollState = self.initialScrollState, let index = entries.firstIndex(where: { $0.message.id == scrollState.messageId }) {
             // The saved position's message arrived after the first rows.
             options.insert(.Synchronous)
             scrollToItem = ListViewScrollToItem(index: index, position: .top(scrollState.offset), animated: false, curve: .Default(duration: nil), directionHint: .Up)
+            restored = scrollState
             self.initialScrollState = nil
+        } else if self.initialScrollState != nil && !state.hasOlder && state.isSynced {
+            // Its message is not in the server's transcript: gone.
+            self.initialScrollState = nil
+            self.isRestoring = false
+        } else if syncReveal != nil {
+            // The server's transcript after a view put back from the phone's copy: laid out at once, as an opening.
+            options.insert(.Synchronous)
         } else {
             options.insert(.AnimateInsertion)
             // A message the user just sent scrolls the history to the end: one from this phone, on its way or out of
             // its queue. Not one from elsewhere (another device, a script), which comes in as any other row.
             let fromQueue = Set(left.map(\.text))
-            if indicesAndItems.contains(where: { $0.0 <= 1 && $0.1.message.role == .user && ($0.1.message.outgoingId != nil || fromQueue.contains($0.1.message.text)) }) {
+            if syncReveal == nil, indicesAndItems.contains(where: { $0.0 <= 1 && $0.1.message.role == .user && ($0.1.message.delivery == .sending || fromQueue.contains($0.1.message.text)) }) {
                 scrollToItem = ListViewScrollToItem(index: 0, position: .top(0.0), animated: true, curve: .Default(duration: nil), directionHint: .Up)
             }
         }
@@ -471,6 +510,8 @@ final class ChatControllerNode: ASDisplayNode {
             if let index = self.row(of: focus.entryId, kind: focus.kind, in: entries) {
                 self.focus = nil
                 self.initialScrollState = nil
+                self.isRestoring = false
+                restored = nil
                 options.insert(.Synchronous)
                 scrollToItem = ListViewScrollToItem(index: index, position: .center(.top), animated: false, curve: .Default(duration: nil), directionHint: .Up)
             } else if state.hasOlder {
@@ -481,10 +522,23 @@ final class ChatControllerNode: ASDisplayNode {
             } else if state.isLoaded && !entries.isEmpty {
                 self.focus = nil
             }
+            // Search or a link opens at what it names: the saved view waits on it, and goes with it.
+            restored = nil
+            self.isRestoring = false
         }
         self.historyNode.transaction(deleteIndices: deletions, insertIndicesAndItems: insertions, updateIndicesAndItems: updates, options: options, scrollToItem: scrollToItem, updateOpaqueState: nil, completion: { [weak self] _ in
-            self?.updateFrontier()
+            guard let self else {
+                return
+            }
+            if let restored {
+                self.finishRestore(restored)
+            } else if let pending = syncReveal {
+                self.revealUnseen(anchor: pending.anchor, laidOutFrontier: false, frontier: pending.frontier)
+            } else {
+                self.updateFrontier()
+            }
         })
+        self.updateUnseenCount()
         self.isMakingRows = false
         if self.reloadAfterRows {
             self.reloadAfterRows = false
@@ -587,16 +641,19 @@ final class ChatControllerNode: ASDisplayNode {
     private var laidOutPrefix: (prefix: StablePrefix, selectedIds: Set<Int>?, expandedIds: Set<Int>)?
     private var reloadAfterRows = false
 
-    private func reloadItems() {
+    private func reloadItems(completion: (() -> Void)? = nil) {
         if self.isMakingRows {
             self.reloadAfterRows = true
+            completion?()
             return
         }
         self.isMakingRows = true
         let updates = self.entries.enumerated().map { ListViewUpdateItem(index: $0.offset, previousIndex: $0.offset, item: self.item(for: $0.element), directionHint: nil) }
         self.isMakingRows = false
         self.reloadAfterRows = false
-        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: updates, options: [.Synchronous], updateOpaqueState: nil)
+        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: updates, options: [.Synchronous], updateOpaqueState: nil, completion: { _ in
+            completion?()
+        })
     }
 
     private lazy var interaction = ChatMessageItemInteraction(requestRelayout: { [weak self] id in
@@ -650,7 +707,8 @@ final class ChatControllerNode: ASDisplayNode {
     }()
 
     /// For the UI tests: where the reading position is (docs/reading-position.md), as "key=value" pairs a test reads:
-    /// the frontier's row (its first words), how far down it and its height, and the screen's y of its point.
+    /// the frontier's row (its first words), how far down it and its height, the screen's y of its point; the row at the
+    /// bottom of the screen and its offset; the down button's count.
     private lazy var readingTestView: UIView? = {
         guard UserDefaults.standard.bool(forKey: "uiTesting"), !self.isPreview else {
             return nil
@@ -679,7 +737,7 @@ final class ChatControllerNode: ASDisplayNode {
             var height = "?"
             if let node = self.itemNode(messageId: frontier.messageId) {
                 // The list is inverted: its maxY is the row's top on screen.
-                let point = self.historyNode.view.convert(CGPoint(x: 0.0, y: node.frame.maxY - frontier.depth), to: self.view)
+                let point = self.historyNode.view.convert(CGPoint(x: 0.0, y: node.apparentFrame.maxY - frontier.depth), to: self.view)
                 screenY = "\(Int(point.y))"
                 height = "\(Int(node.frame.height))"
             }
@@ -687,6 +745,17 @@ final class ChatControllerNode: ASDisplayNode {
             parts.append("depth=\(Int(frontier.depth))/\(height)")
             parts.append("frontierY=\(screenY)")
         }
+        if let revealed = self.revealedFrontier, let node = self.itemNode(messageId: revealed.messageId) {
+            let point = self.historyNode.view.convert(CGPoint(x: 0.0, y: node.apparentFrame.maxY - revealed.depth), to: self.view)
+            parts.append("revealed=\(self.testName(revealed.messageId))")
+            parts.append("revealY=\(Int(point.y))")
+        }
+        if let anchor = self.bottomAnchor() {
+            parts.append("bottom=\(self.testName(anchor.messageId))")
+            parts.append("bottomOffset=\(Int(anchor.offset))")
+        }
+        parts.append("unseen=\(self.unseenCount)")
+        parts.append("restoring=\(self.isRestoring)")
         view.accessibilityValue = parts.joined(separator: "|")
     }
 
@@ -932,23 +1001,19 @@ final class ChatControllerNode: ASDisplayNode {
         self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [update], options: [.AnimateInsertion], updateOpaqueState: nil)
     }
 
-    /// The message at the bottom of the screen and how far it is scrolled, or nil at the end of the chat.
+    /// What to reopen at: the message at the bottom of the screen, how far it is scrolled and how tall it is, at the end
+    /// of the chat too (docs/reading-position.md: the end has moved on by the time the user is back). Nil with no rows.
     func currentScrollState() -> ChatScrollState? {
-        guard let anchor = self.bottomAnchor() else {
-            return nil
-        }
-        if anchor.messageId == self.entries.first?.message.id && anchor.offset >= -2.0 {
-            return nil
-        }
-        return anchor
+        return self.bottomAnchor()
     }
 
-    /// The message at the bottom of the screen, how far it is scrolled and how tall it is, at the end too.
+    /// The message at the bottom of the screen, how far it is scrolled and how tall it is. Not the agent's waiting row,
+    /// which is gone by the time the chat opens again.
     func bottomAnchor() -> ChatScrollState? {
         let bottom = self.historyNode.insets.top
         var candidate: (node: ChatMessageItemNode, frame: CGRect)?
         self.historyNode.forEachItemNode { node in
-            guard let node = node as? ChatMessageItemNode, node.messageId != nil else {
+            guard let node = node as? ChatMessageItemNode, let id = node.messageId, id != ChatControllerNode.waitingRowId else {
                 return
             }
             let frame = node.frame
@@ -979,28 +1044,114 @@ final class ChatControllerNode: ASDisplayNode {
             return
         }
         self.frozenView = nil
-        self.scroll(to: frozen)
-    }
-
-    /// The view of `state`: its message's bottom that far above the visible bottom, its top where it was when it grew
-    /// at its end since.
-    private func scroll(to state: ChatScrollState) {
-        guard let index = self.entries.firstIndex(where: { $0.message.id == state.messageId }) else {
+        guard let index = self.entries.firstIndex(where: { $0.message.id == frozen.messageId }) else {
             return
         }
-        var offset = state.offset
-        if let height = state.height, let node = self.itemNode(messageId: state.messageId) {
-            offset -= node.frame.height - height
+        self.isRestoring = true
+        self.scroll(index: index, offset: frozen.offset) { [weak self] in
+            self?.finishRestore(frozen)
         }
-        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: index, position: .top(offset), animated: false, curve: .Default(duration: nil), directionHint: .Up), updateSizeAndInsets: nil, stationaryItemRange: nil, updateOpaqueState: nil, completion: { [weak self] _ in
-            self?.updateFrontier()
+    }
+
+    private func scroll(index: Int, offset: CGFloat, completion: @escaping () -> Void) {
+        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: index, position: .top(offset), animated: false, curve: .Default(duration: nil), directionHint: .Up), updateSizeAndInsets: nil, stationaryItemRange: nil, updateOpaqueState: nil, completion: { _ in
+            completion()
         })
+    }
+
+    /// A saved view is laid out: its message's top where it was if it grew at its end since (an answer that streamed
+    /// on), then, if what follows it is unseen, down to it.
+    private func finishRestore(_ state: ChatScrollState) {
+        // What came while away shows as written, at its height, before the view is judged.
+        var ended = false
+        self.historyNode.forEachItemNode { node in
+            if let node = node as? ChatMessageItemNode, node.endReveal() {
+                ended = true
+            }
+        }
+        if ended {
+            self.reloadItems { [weak self] in
+                self?.finishRestoreLaidOut(state)
+            }
+        } else {
+            self.finishRestoreLaidOut(state)
+        }
+    }
+
+    private func finishRestoreLaidOut(_ state: ChatScrollState) {
+        if let height = state.height, let node = self.itemNode(messageId: state.messageId), abs(node.frame.height - height) > 1.0, let index = self.entries.firstIndex(where: { $0.message.id == state.messageId }) {
+            self.scroll(index: index, offset: state.offset - (node.frame.height - height)) { [weak self] in
+                self?.revealUnseen(anchor: state.messageId, laidOutFrontier: false)
+            }
+        } else {
+            self.revealUnseen(anchor: state.messageId, laidOutFrontier: false)
+        }
+    }
+
+    /// A view put back from the phone's copy of the chat, before the server's came: what follows it is judged again
+    /// when it does (the copy may lack the answer that finished meanwhile), unless the user has scrolled.
+    private var pendingSyncReveal: (anchor: Int, frontier: SeenFrontier)?
+
+    /// The frontier the last opening moved down to, for the UI tests.
+    private var revealedFrontier: SeenFrontier?
+
+    /// The line or two of what was seen kept above what was not (docs/reading-position.md).
+    private var revealContext: CGFloat {
+        return round(self.theme.fontSize * 1.45 * 2.0)
+    }
+
+    /// Where a chat opens, after its saved view: as left, or, when what follows the view is unseen (the frontier at the
+    /// view's bottom and more after it), moved down so the last lines seen are near the top of the screen, a line or
+    /// two above them, the unseen content filling the rest.
+    private func revealUnseen(anchor: Int, laidOutFrontier: Bool, frontier givenFrontier: SeenFrontier? = nil) {
+        let done = { [weak self] in
+            guard let self else {
+                return
+            }
+            self.isRestoring = false
+            self.updateFrontier()
+            self.updateUnseenCount()
+        }
+        if givenFrontier == nil, let state = self.state, !state.isSynced, let frontier = self.frontier {
+            self.pendingSyncReveal = (anchor, frontier)
+        }
+        guard let frontier = givenFrontier ?? self.frontier, let frontierIndex = self.entries.firstIndex(where: { $0.message.id == frontier.messageId }), let frontierOrder = self.orderById[frontier.messageId] else {
+            done()
+            return
+        }
+        let node = self.itemNode(messageId: frontier.messageId)
+        let newer = self.entries[..<frontierIndex].contains { $0.message.id != ChatControllerNode.waitingRowId }
+        let hasUnseenAfter = newer || (node.map { frontier.depth < $0.frame.height - 1.0 } ?? false)
+        let frontierY = node.map { ($0.frame.maxY - frontier.depth) - self.historyNode.insets.top }
+        let opening = ReadingPosition.opening(frontierY: frontierY, frontierIsNewerThanView: frontierOrder > (self.orderById[anchor] ?? -1), hasUnseenAfter: hasUnseenAfter)
+        guard opening == .reveal else {
+            done()
+            return
+        }
+        guard let node else {
+            // Its row is not laid out: to it first, then the rest.
+            guard !laidOutFrontier else {
+                done()
+                return
+            }
+            self.scroll(index: frontierIndex, offset: 0.0) { [weak self] in
+                self?.revealUnseen(anchor: anchor, laidOutFrontier: true, frontier: givenFrontier)
+            }
+            return
+        }
+        self.pendingSyncReveal = nil
+        self.revealedFrontier = frontier
+        let visibleHeight = self.historyNode.bounds.height - self.historyNode.insets.top - self.historyNode.insets.bottom
+        let offset = ReadingPosition.revealOffset(visibleHeight: visibleHeight, rowHeight: node.frame.height, depth: frontier.depth, context: self.revealContext)
+        self.scroll(index: frontierIndex, offset: offset) {
+            done()
+        }
     }
 
     /// What is on screen now is seen: the frontier moves to the newest row on screen, as far down as the visible area
     /// reaches into it, if that is past it.
     func updateFrontier() {
-        guard self.isSeeing, !self.isPreview, self.validLayout != nil else {
+        guard self.isSeeing, !self.isPreview, !self.isRestoring, self.validLayout != nil else {
             return
         }
         defer {
@@ -1027,6 +1178,7 @@ final class ChatControllerNode: ASDisplayNode {
             return
         }
         self.frontier = advanced
+        self.updateUnseenCount()
         // The newest entry whose row is at or before the frontier: the server's read marker.
         let frontierPlace = self.orderById[advanced.messageId] ?? 0
         let entryId = self.entries.first(where: { (self.orderById[$0.stableId] ?? 0) <= frontierPlace && $0.message.entryId != nil })?.message.entryId
@@ -1165,6 +1317,10 @@ final class ChatControllerNode: ASDisplayNode {
             self.relayout(.immediate)
         }
         button.badge = self.unseenCount > 0 ? "\(self.unseenCount)" : ""
+        button.view.isAccessibilityElement = true
+        button.view.accessibilityIdentifier = "downButton"
+        button.view.accessibilityLabel = "Scroll to the End"
+        button.view.accessibilityValue = button.badge
         // Search's arrows take its place while the chat is searched.
         let visible = !self.isAtBottom && self.selectedIds == nil && self.searchPanelState == nil
         button.isUserInteractionEnabled = visible
@@ -1186,7 +1342,6 @@ final class ChatControllerNode: ASDisplayNode {
         guard !self.entries.isEmpty else {
             return
         }
-        self.unseenCount = 0
         self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: 0, position: .top(0.0), animated: true, curve: .Spring(duration: 0.4), directionHint: .Up), updateOpaqueState: nil)
     }
 

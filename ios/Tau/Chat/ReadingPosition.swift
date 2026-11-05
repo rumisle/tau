@@ -15,8 +15,8 @@ struct VisibleRowSpan: Equatable {
     var depth: CGFloat
 }
 
-/// The pure part of the reading position: what advances the frontier. ChatControllerNode measures the rows and applies
-/// the answers.
+/// The pure part of the reading position: what advances the frontier, where a chat opens. ChatControllerNode measures
+/// the rows and applies the answers.
 enum ReadingPosition {
     /// The frontier once `visible` has been on screen: the newest visible row, as far down as it is seen, if that is past
     /// the frontier; `frontierOrder` is the frontier row's place now, nil when it is not in the transcript (older than
@@ -35,5 +35,34 @@ enum ReadingPosition {
             return SeenFrontier(messageId: frontier.messageId, depth: newest.depth)
         }
         return frontier
+    }
+
+    /// How a chat opens after its saved view is put back.
+    enum Opening: Equatable {
+        /// As left: what follows the view is seen, or there is nothing after the frontier.
+        case asLeft
+        /// What follows is unseen: down so the frontier's point is near the top, a line or two of context above it.
+        case reveal
+    }
+
+    /// Whether a chat opens as left or moves down to unseen content: the frontier's point `frontierY`, in points up
+    /// from the visible area's bottom edge (the list is inverted; negative is below the screen, nil when its row is not
+    /// laid out), and whether anything comes after it.
+    static func opening(frontierY: CGFloat?, frontierIsNewerThanView: Bool, hasUnseenAfter: Bool, tolerance: CGFloat = 8.0) -> Opening {
+        guard hasUnseenAfter else {
+            return .asLeft
+        }
+        if let frontierY {
+            // Below the screen: the user had read further down than they left the view.
+            return frontierY < -tolerance ? .asLeft : .reveal
+        }
+        // Not laid out: below the view (read further), or above it (everything on screen is past it).
+        return frontierIsNewerThanView ? .asLeft : .reveal
+    }
+
+    /// The offset of the frontier row's bottom above the visible area's bottom (ListView's `.top(offset)` in the inverted
+    /// list) that puts its seen point `context` points under the visible area's top.
+    static func revealOffset(visibleHeight: CGFloat, rowHeight: CGFloat, depth: CGFloat, context: CGFloat) -> CGFloat {
+        return (visibleHeight - context) - (rowHeight - min(depth, rowHeight))
     }
 }

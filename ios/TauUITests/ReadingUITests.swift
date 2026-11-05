@@ -180,4 +180,131 @@ final class ReadingUITests: XCTestCase {
         settle()
         self.shot("reading-inactive-1-back")
     }
+
+    // MARK: - Where a chat opens
+
+    /// The reading state's integer value for `key`.
+    private func readingInt(_ key: String) -> Int? {
+        return self.reading[key].flatMap { Int($0.components(separatedBy: "/").first ?? $0) }
+    }
+
+    /// Near the top of the screen: below the navigation bar, within a few lines of it.
+    private func assertNearTop(_ y: CGFloat?, _ message: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard let y else {
+            return XCTFail("\(message): not on screen (\(self.reading))", file: file, line: line)
+        }
+        XCTAssertGreaterThanOrEqual(y, self.screenTop - 10.0, "\(message): \(self.reading)", file: file, line: line)
+        XCTAssertLessThanOrEqual(y, self.screenTop + 150.0, "\(message): \(self.reading)", file: file, line: line)
+    }
+
+    /// Left at the end right after sending, a long answer finished meanwhile: the chat opens with the user's message near
+    /// the top and the answer below it, not at the end of the answer.
+    func testOpenAfterSending() throws {
+        let id = try self.chat("After sending", turns: [(question: "After sending first", answer: self.answer("After sending first", paragraphs: 4))])
+        // The dev model waits four seconds before it answers (`~4`): the user leaves before the answer starts.
+        try self.script(["~4 After sending long": self.answer("After sending long", paragraphs: 30)])
+        self.launch(["-openChat", "\(id)"])
+        self.type("~4 After sending long")
+        self.send()
+        XCTAssertTrue(self.userMessage("~4 After sending long").waitForExistence(timeout: 5))
+        self.shot("reading-sent-0-sent")
+        self.back()
+        XCTAssertTrue(self.waitIdle(id, timeout: 120))
+        self.open("After sending")
+        self.shot("reading-sent-1-reopened")
+        let message = self.userMessage("~4 After sending long")
+        XCTAssertTrue(message.exists, "the user's message on screen")
+        self.assertNearTop(message.exists ? message.frame.minY : nil, "the user's message near the top")
+        let first = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage' AND label BEGINSWITH 'After sending long paragraph 1:'")).firstMatch
+        XCTAssertTrue(first.exists && first.frame.minY > message.frame.minY, "the answer below it")
+    }
+
+    /// Watching an answer stream past a screen, left in the middle, finished meanwhile: the chat opens with the last
+    /// lines seen near the top, the rest below; nothing seen fills the screen again.
+    func testOpenMidAnswer() throws {
+        let id = try self.chat("Mid answer", turns: [(question: "Mid answer first", answer: "A short first answer.")])
+        try self.script(["Mid answer long": self.answer("Mid answer long", paragraphs: 60)])
+        self.launch(["-openChat", "\(id)"])
+        self.type("Mid answer long")
+        self.send()
+        // Past a screen of it, followed at the end.
+        XCTAssertTrue(waitUntil(30) { (self.readingInt("depth") ?? 0) > Int(self.app.frame.height) })
+        self.shot("reading-mid-0-streaming")
+        let seen = self.reading["frontier"]
+        self.back()
+        XCTAssertTrue(self.waitIdle(id, timeout: 180))
+        self.open("Mid answer")
+        self.shot("reading-mid-1-reopened")
+        XCTAssertEqual(self.reading["revealed"], seen, "moved down to the frontier it left")
+        self.assertNearTop(self.readingInt("revealY").map { CGFloat($0) }, "the last lines seen near the top")
+    }
+
+    /// Scrolled back reading older rows, something arrives: the chat opens exactly where it was left, and the down button
+    /// counts what came.
+    func testOpenScrolledBack() throws {
+        let turns = (1 ... 3).map { (question: "Scrolled back question \($0)", answer: self.answer("Scrolled back turn \($0)", paragraphs: 8)) }
+        let id = try self.chat("Scrolled back", turns: turns)
+        try self.script(["Scrolled back later": "What came while the chat was closed."])
+        self.launch(["-openChat", "\(id)"])
+        for _ in 0 ..< 3 {
+            self.app.swipeDown(velocity: .slow)
+        }
+        settle()
+        let bottom = self.reading["bottom"]
+        let offset = self.readingInt("bottomOffset")
+        self.shot("reading-back-0-left")
+        self.back()
+        _ = try self.server.submit(id, "Scrolled back later")
+        XCTAssertTrue(self.waitIdle(id))
+        self.open("Scrolled back")
+        self.shot("reading-back-1-reopened")
+        XCTAssertEqual(self.reading["bottom"], bottom, "the same row at the bottom")
+        XCTAssertEqual(Double(self.readingInt("bottomOffset") ?? 0), Double(offset ?? 0), accuracy: 3.0, "where it was")
+        let down = self.app.descendants(matching: .any)["downButton"].firstMatch
+        XCTAssertTrue(down.exists, "the down button")
+        XCTAssertEqual(down.value as? String, "2", "counting the message and the answer that came")
+    }
+
+    /// Left at the end with nothing new since: as left.
+    func testOpenAtEndUnchanged() throws {
+        let id = try self.chat("Unchanged", turns: [(question: "Unchanged question", answer: self.answer("Unchanged", paragraphs: 8))])
+        self.launch(["-openChat", "\(id)"])
+        let bottom = self.reading["bottom"]
+        let offset = self.readingInt("bottomOffset")
+        self.back()
+        self.open("Unchanged")
+        self.shot("reading-unchanged-0-reopened")
+        XCTAssertEqual(self.reading["bottom"], bottom)
+        XCTAssertEqual(Double(self.readingInt("bottomOffset") ?? 0), Double(offset ?? 0), accuracy: 3.0)
+        XCTAssertFalse(self.app.descendants(matching: .any)["downButton"].firstMatch.exists, "at the end")
+    }
+
+    /// The app in the background while an answer streams at the end, back once it finished: as reopening, the last
+    /// lines seen near the top.
+    func testBackgroundWhileStreaming() throws {
+        let id = try self.chat("Background", turns: [(question: "Background first", answer: "A short first answer.")])
+        try self.script(["Background long": self.answer("Background long", paragraphs: 60)])
+        self.launch(["-openChat", "\(id)"])
+        self.type("Background long")
+        self.send()
+        XCTAssertTrue(waitUntil(30) { (self.readingInt("depth") ?? 0) > Int(self.app.frame.height) })
+        let seen = self.reading["frontier"]
+        self.shot("reading-background-0-streaming")
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(self.waitIdle(id, timeout: 180))
+        self.app.activate()
+        XCTAssertTrue(waitUntil(5) { self.reading["revealed"] != nil })
+        // The rest of the answer shows as it would have streamed; until it has.
+        self.app.waitForIdle(timeout: 120)
+        var depth = ""
+        _ = waitUntil(60) {
+            let now = self.reading["depth"] ?? ""
+            defer { depth = now }
+            return now == depth
+        }
+        sleep(1)
+        self.shot("reading-background-1-back")
+        XCTAssertEqual(self.reading["revealed"], seen)
+        self.assertNearTop(self.readingInt("revealY").map { CGFloat($0) }, "the last lines seen near the top")
+    }
 }

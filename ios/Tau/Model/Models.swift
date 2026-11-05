@@ -332,6 +332,8 @@ struct ConversationState: Equatable {
     var hasOlder: Bool = false
     /// False until the transcript is known (cached or synced), so a chat can wait before showing it.
     var isLoaded: Bool = true
+    /// The server's transcript is in (not only the phone's copy): what is not in it now is not coming.
+    var isSynced: Bool = true
     /// The model and thinking level, which the title shows.
     var agent: AgentSettings?
     /// The conversation's title, so a rename reaches an open chat.

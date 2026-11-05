@@ -659,6 +659,7 @@ enum TranscriptBuilder {
         let queue = self.queue(replica: replica, items: items)
         // The agent works, or something waits for it: a message on its way is not that.
         var state = ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !queue.isEmpty, queued: queue, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
+        state.isSynced = replica.isSynced
         state.stablePrefix = StablePrefix(token: token, count: stableCount)
         state.compactionBlocksRun = blocksRun
         state.runStartedAt = replica.isBusy ? turnStart : nil
