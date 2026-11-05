@@ -181,6 +181,18 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: YES
+  # The pure logic's unit tests (docs/reading-position.md): its files compiled in, no app to host them.
+  TauTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: TauTests
+      - path: Tau/Chat/ReadingPosition.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID).tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
   TauUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -199,7 +211,9 @@ schemes:
     build:
       targets:
         Tau: all
+        TauTests: [test]
         TauUITests: [test]
     test:
       targets:
+        - TauTests
         - TauUITests

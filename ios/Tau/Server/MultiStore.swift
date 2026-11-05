@@ -381,6 +381,10 @@ final class MultiStore: TauStore {
         self.route(id).map { $0.0.markSeen($0.1) }
     }
 
+    func markSeen(_ id: Int, through entryId: Int) {
+        self.route(id).map { $0.0.markSeen($0.1, through: entryId) }
+    }
+
     func setUnread(_ id: Int, _ unread: Bool) {
         self.route(id).map { $0.0.setUnread($0.1, unread) }
     }
@@ -551,6 +555,17 @@ final class MultiStore: TauStore {
 
     func setScrollState(_ state: ChatScrollState?, for id: Int) {
         self.route(id).map { $0.0.setScrollState(state, for: $0.1) }
+    }
+
+    func seenFrontier(_ id: Int) -> SeenFrontier? {
+        guard let (store, local) = self.route(id) else {
+            return nil
+        }
+        return store.seenFrontier(local)
+    }
+
+    func setSeenFrontier(_ frontier: SeenFrontier?, for id: Int) {
+        self.route(id).map { $0.0.setSeenFrontier(frontier, for: $0.1) }
     }
 
     func mintAttachmentId() -> Int {

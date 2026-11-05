@@ -176,9 +176,6 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 self.pendingEditDraft = nil
                 self.beginEditing(message, text: pending.editText ?? message.text, focus: false)
             }
-            if self.isOnScreen && UIApplication.shared.applicationState == .active {
-                self.context.store.markSeen(self.conversationId)
-            }
             self.controllerNode.inputPanelNode.isBusy = state.busy
             self.updateTitle(busy: state.busy)
             self.updateTitleTimer()
@@ -359,6 +356,16 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         self.displayNode = ChatControllerNode(theme: self.theme, isPreview: self.isPreview)
         let node = self.controllerNode
         node.initialScrollState = self.context.store.scrollState(self.conversationId)
+        if !self.isPreview {
+            // What is seen is what is on screen (docs/reading-position.md): the read marker follows the frontier.
+            node.frontier = self.context.store.seenFrontier(self.conversationId)
+            node.frontierAdvanced = { [weak self] _, entryId in
+                guard let self, let entryId else {
+                    return
+                }
+                self.context.store.markSeen(self.conversationId, through: entryId)
+            }
+        }
         if let focus = self.focus {
             node.focus = focus
             node.searchHighlight = (entryIds: [focus.entryId], terms: focus.terms)
@@ -375,6 +382,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         // The position also survives the app being suspended and killed with the chat open.
         NotificationCenter.default.addObserver(self, selector: #selector(self.saveScrollState), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(self.applicationDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.applicationWillResignActive), name: UIApplication.willResignActiveNotification, object: nil)
         node.sendMessage = { [weak self] text in
             self?.send(text: text, attachments: [])
         }
@@ -636,10 +644,23 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
     }
 
-    @objc private func applicationDidBecomeActive() {
-        if self.isOnScreen {
-            self.context.store.markSeen(self.conversationId)
+    /// Leaving the app is as leaving the chat: nothing is seen while away, and the list does not follow the end meanwhile
+    /// (it comes back to the view it left).
+    @objc private func applicationWillResignActive() {
+        guard self.isOnScreen, self.isNodeLoaded else {
+            return
         }
+        self.controllerNode.isSeeing = false
+        self.controllerNode.freezeView()
+        self.saveFrontier()
+    }
+
+    @objc private func applicationDidBecomeActive() {
+        guard self.isOnScreen, self.isNodeLoaded else {
+            return
+        }
+        self.controllerNode.restoreFrozenView()
+        self.controllerNode.isSeeing = true
     }
 
     /// On screen and not a preview: what arrives is read, as Telegram reads the messages a chat shows.
@@ -658,7 +679,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
         if !self.isPreview {
             self.isOnScreen = true
-            self.context.store.markSeen(self.conversationId)
+            self.controllerNode.isSeeing = UIApplication.shared.applicationState == .active
             let id = (self.context.store as? MultiStore)?.realId(self.conversationId) ?? self.conversationId
             LiveActivityController.shared.seen(id)
             // Its notifications have been read now, as Telegram clears a chat's on opening it.
@@ -671,12 +692,22 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         self.isOnScreen = false
+        if self.isNodeLoaded {
+            self.controllerNode.isSeeing = false
+        }
         self.saveScrollState()
     }
 
     @objc private func saveScrollState() {
         if !self.isPreview && self.isNodeLoaded {
             self.context.store.setScrollState(self.controllerNode.currentScrollState(), for: self.conversationId)
+            self.saveFrontier()
+        }
+    }
+
+    private func saveFrontier() {
+        if !self.isPreview && self.isNodeLoaded, let frontier = self.controllerNode.frontier {
+            self.context.store.setSeenFrontier(frontier, for: self.conversationId)
         }
     }
 

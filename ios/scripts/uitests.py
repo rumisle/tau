@@ -34,9 +34,11 @@ DERIVED = os.environ.get("TAU_DERIVED_DATA", "/tmp/tau-dd")
 SIMULATOR = os.environ.get("TAU_SIMULATOR", "iPhone 17 Pro")
 DURATIONS = Path("/tmp/tau-ui-durations.json")
 SCREENSHOTS = Path("/tmp/tau-ui")
-CLASSES = ["TauUITests", "SendingUITests"]
-# Shard 0 keeps the ports the single-simulator scripts use.
-DEV_PORTS = [7979, 7991, 7992, 7993, 7994, 7995]
+CLASSES = ["TauUITests", "SendingUITests", "ReadingUITests"]
+# Shard 0 keeps the ports the single-simulator scripts use. TAU_DEV_PORTS (comma-separated) and TAU_DEV_DB (shard 0's
+# database; the others' beside it, by port) give a checkout its own, so a run there leaves another's dev servers alone.
+DEV_PORTS = [int(port) for port in os.environ.get("TAU_DEV_PORTS", "7979,7991,7992,7993,7994,7995").split(",")]
+DEV_DB = os.environ.get("TAU_DEV_DB", "/tmp/tau-dev.db")
 CACHE_PORT = 7982
 
 
@@ -131,7 +133,7 @@ def balance(tests: list[str], count: int) -> list[list[str]]:
 
 
 def dev_env(port: int) -> dict[str, str]:
-    db = "/tmp/tau-dev.db" if port == DEV_PORTS[0] else f"/tmp/tau-dev-{port}.db"
+    db = DEV_DB if port == DEV_PORTS[0] else DEV_DB.removesuffix(".db") + f"-{port}.db"
     return {**os.environ, "TAU_DEV_PORT": str(port), "TAU_DEV_DB": db}
 
 

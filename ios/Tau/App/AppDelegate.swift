@@ -112,7 +112,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             guard let self, UIApplication.shared.applicationState == .active, InAppNotificationSettings.banners else {
                 return
             }
-            if let chat = self.navigationController?.topViewController as? ChatController, chat.conversationId == answer.conversationId {
+            // Not for the chat on screen, a new one too (its draft ID until the server made it). It may have the answer
+            // as unread for a moment: what is seen is marked read as it shows, throttled (docs/reading-position.md).
+            if let chat = self.navigationController?.topViewController as? ChatController, ((context.store as? MultiStore)?.realId(chat.conversationId) ?? chat.conversationId) == answer.conversationId {
                 return
             }
             if InAppNotificationSettings.vibrate {

@@ -72,6 +72,23 @@ final class ChatControllerNode: ASDisplayNode {
     private var unseenCount = 0
     private let isPreview: Bool
 
+    // MARK: - Seen (docs/reading-position.md)
+
+    /// On screen with the app active: only then is what the list lays out seen, and the frontier moves.
+    var isSeeing = false {
+        didSet {
+            if self.isSeeing && !oldValue {
+                self.updateFrontier()
+            }
+        }
+    }
+    /// The newest point seen: set by the controller from the store, advanced here.
+    var frontier: SeenFrontier?
+    /// The frontier moved, and with it the newest entry whose row has been seen (nil: none committed yet).
+    var frontierAdvanced: ((SeenFrontier, Int?) -> Void)?
+    /// Each row's place in the transcript, larger newer, for the frontier.
+    private var orderById: [Int: Int] = [:]
+
     private var state: ConversationState?
     private var entries: [ChatHistoryEntry] = []
     private var validLayout: (layout: ContainerViewLayout, navigationHeight: CGFloat)?
@@ -150,6 +167,7 @@ final class ChatControllerNode: ASDisplayNode {
         }
         self.historyNode.didEndScrolling = { [weak self] _ in
             self?.inlineSelectionNode?.setInlineSelectionMenuHidden(false)
+            self?.updateFrontier()
         }
         // The list is inverted, so its top offset is the distance from the end of the chat.
         self.historyNode.visibleContentOffsetChanged = { [weak self] offset, _ in
@@ -172,6 +190,7 @@ final class ChatControllerNode: ASDisplayNode {
                 }
                 self.updateDownButton(animated: true)
             }
+            self.updateFrontier()
         }
         // The list is inverted: the highest visible index is the oldest message on screen.
         self.historyNode.displayedItemRangeChanged = { [weak self] range, _ in
@@ -386,6 +405,12 @@ final class ChatControllerNode: ASDisplayNode {
         let previousHead = Array(previous[..<(previous.count - keep)])
         let entries = tail + previous[(previous.count - keep)...]
         self.entries = entries
+        var orderById: [Int: Int] = [:]
+        orderById.reserveCapacity(entries.count)
+        for (index, entry) in entries.enumerated() {
+            orderById[entry.stableId] = entries.count - 1 - index
+        }
+        self.orderById = orderById
         self.laidOutPrefix = state.stablePrefix.map { (prefix: $0, selectedIds: selectedIds, expandedIds: expanded) }
         if firstDuplicate != nil {
             self.laidOutPrefix = nil
@@ -434,8 +459,10 @@ final class ChatControllerNode: ASDisplayNode {
             self.initialScrollState = nil
         } else {
             options.insert(.AnimateInsertion)
-            // A message the user just sent scrolls the history to the end.
-            if indicesAndItems.contains(where: { $0.0 <= 1 && $0.1.message.role == .user }) {
+            // A message the user just sent scrolls the history to the end: one from this phone, on its way or out of
+            // its queue. Not one from elsewhere (another device, a script), which comes in as any other row.
+            let fromQueue = Set(left.map(\.text))
+            if indicesAndItems.contains(where: { $0.0 <= 1 && $0.1.message.role == .user && ($0.1.message.outgoingId != nil || fromQueue.contains($0.1.message.text)) }) {
                 scrollToItem = ListViewScrollToItem(index: 0, position: .top(0.0), animated: true, curve: .Default(duration: nil), directionHint: .Up)
             }
         }
@@ -455,7 +482,9 @@ final class ChatControllerNode: ASDisplayNode {
                 self.focus = nil
             }
         }
-        self.historyNode.transaction(deleteIndices: deletions, insertIndicesAndItems: insertions, updateIndicesAndItems: updates, options: options, scrollToItem: scrollToItem, updateOpaqueState: nil)
+        self.historyNode.transaction(deleteIndices: deletions, insertIndicesAndItems: insertions, updateIndicesAndItems: updates, options: options, scrollToItem: scrollToItem, updateOpaqueState: nil, completion: { [weak self] _ in
+            self?.updateFrontier()
+        })
         self.isMakingRows = false
         if self.reloadAfterRows {
             self.reloadAfterRows = false
@@ -619,6 +648,47 @@ final class ChatControllerNode: ASDisplayNode {
         self.view.addSubview(view)
         return view
     }()
+
+    /// For the UI tests: where the reading position is (docs/reading-position.md), as "key=value" pairs a test reads:
+    /// the frontier's row (its first words), how far down it and its height, and the screen's y of its point.
+    private lazy var readingTestView: UIView? = {
+        guard UserDefaults.standard.bool(forKey: "uiTesting"), !self.isPreview else {
+            return nil
+        }
+        let view = UIView(frame: CGRect(x: 1.0, y: 0.0, width: 1.0, height: 1.0))
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = "chatReading"
+        self.view.addSubview(view)
+        return view
+    }()
+
+    /// A row's first words, as the reading test state names it.
+    private func testName(_ messageId: Int) -> String {
+        let text = self.entries.first(where: { $0.message.id == messageId })?.message.text ?? ""
+        return String(text.replacingOccurrences(of: "\n", with: " ").prefix(24))
+    }
+
+    func updateReadingTestState() {
+        guard let view = self.readingTestView else {
+            return
+        }
+        var parts: [String] = []
+        if let frontier = self.frontier {
+            var screenY = "?"
+            var height = "?"
+            if let node = self.itemNode(messageId: frontier.messageId) {
+                // The list is inverted: its maxY is the row's top on screen.
+                let point = self.historyNode.view.convert(CGPoint(x: 0.0, y: node.frame.maxY - frontier.depth), to: self.view)
+                screenY = "\(Int(point.y))"
+                height = "\(Int(node.frame.height))"
+            }
+            parts.append("frontier=\(self.testName(frontier.messageId))")
+            parts.append("depth=\(Int(frontier.depth))/\(height)")
+            parts.append("frontierY=\(screenY)")
+        }
+        view.accessibilityValue = parts.joined(separator: "|")
+    }
 
     private func updateTestState(_ state: ConversationState) {
         guard let view = self.testStateView else {
@@ -864,6 +934,17 @@ final class ChatControllerNode: ASDisplayNode {
 
     /// The message at the bottom of the screen and how far it is scrolled, or nil at the end of the chat.
     func currentScrollState() -> ChatScrollState? {
+        guard let anchor = self.bottomAnchor() else {
+            return nil
+        }
+        if anchor.messageId == self.entries.first?.message.id && anchor.offset >= -2.0 {
+            return nil
+        }
+        return anchor
+    }
+
+    /// The message at the bottom of the screen, how far it is scrolled and how tall it is, at the end too.
+    func bottomAnchor() -> ChatScrollState? {
         let bottom = self.historyNode.insets.top
         var candidate: (node: ChatMessageItemNode, frame: CGRect)?
         self.historyNode.forEachItemNode { node in
@@ -881,10 +962,75 @@ final class ChatControllerNode: ASDisplayNode {
         guard let (node, frame) = candidate, let id = node.messageId else {
             return nil
         }
-        if id == self.entries.first?.message.id && frame.minY >= bottom - 2.0 {
-            return nil
+        return ChatScrollState(messageId: id, offset: frame.minY - bottom, height: frame.height)
+    }
+
+    /// The view as it was when the app went inactive: it does not follow the end while nothing is seen.
+    private var frozenView: ChatScrollState?
+
+    /// The app is going inactive: what is on screen now is where it comes back to.
+    func freezeView() {
+        self.frozenView = self.bottomAnchor()
+    }
+
+    /// The app is active again: back to the view it left, however far the list followed what arrived meanwhile.
+    func restoreFrozenView() {
+        guard let frozen = self.frozenView else {
+            return
         }
-        return ChatScrollState(messageId: id, offset: frame.minY - bottom)
+        self.frozenView = nil
+        self.scroll(to: frozen)
+    }
+
+    /// The view of `state`: its message's bottom that far above the visible bottom, its top where it was when it grew
+    /// at its end since.
+    private func scroll(to state: ChatScrollState) {
+        guard let index = self.entries.firstIndex(where: { $0.message.id == state.messageId }) else {
+            return
+        }
+        var offset = state.offset
+        if let height = state.height, let node = self.itemNode(messageId: state.messageId) {
+            offset -= node.frame.height - height
+        }
+        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: index, position: .top(offset), animated: false, curve: .Default(duration: nil), directionHint: .Up), updateSizeAndInsets: nil, stationaryItemRange: nil, updateOpaqueState: nil, completion: { [weak self] _ in
+            self?.updateFrontier()
+        })
+    }
+
+    /// What is on screen now is seen: the frontier moves to the newest row on screen, as far down as the visible area
+    /// reaches into it, if that is past it.
+    func updateFrontier() {
+        guard self.isSeeing, !self.isPreview, self.validLayout != nil else {
+            return
+        }
+        defer {
+            self.updateReadingTestState()
+        }
+        // The list is inverted: its y runs up the screen, a row's minY is its bottom.
+        let visibleBottom = self.historyNode.insets.top
+        let visibleTop = self.historyNode.bounds.height - self.historyNode.insets.bottom
+        var spans: [VisibleRowSpan] = []
+        self.historyNode.forEachItemNode { node in
+            guard let node = node as? ChatMessageItemNode, let id = node.messageId, id != ChatControllerNode.waitingRowId, let order = self.orderById[id] else {
+                return
+            }
+            // Seen from its top down to the visible area's bottom, or its own.
+            let frame = node.apparentFrame
+            guard frame.maxY > visibleBottom + 1.0, frame.minY < visibleTop - 1.0 else {
+                return
+            }
+            spans.append(VisibleRowSpan(messageId: id, order: order, depth: frame.maxY - max(frame.minY, visibleBottom)))
+        }
+        let frontierOrder = self.frontier.flatMap { self.orderById[$0.messageId] }
+        let advanced = ReadingPosition.advanced(self.frontier, frontierOrder: frontierOrder, visible: spans)
+        guard let advanced, advanced != self.frontier else {
+            return
+        }
+        self.frontier = advanced
+        // The newest entry whose row is at or before the frontier: the server's read marker.
+        let frontierPlace = self.orderById[advanced.messageId] ?? 0
+        let entryId = self.entries.first(where: { (self.orderById[$0.stableId] ?? 0) <= frontierPlace && $0.message.entryId != nil })?.message.entryId
+        self.frontierAdvanced?(advanced, entryId)
     }
 
     // MARK: - Layout

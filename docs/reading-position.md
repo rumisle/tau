@@ -90,3 +90,19 @@ UI tests with the dev model (and `/tmp/tau-dev-answers.json` for long answers):
 - Status bar taps: turn by turn up; down button back point by point; a jump within one screen leaves the down button
   going to the end; scrolling by hand past a point drops it.
 - The list's unread count after half-seeing a chat counts the unseen answers only.
+
+## As built
+
+What turned out different from the design above, and why.
+
+- **Seen while inactive, the list not following.** The list goes on laying out what arrives while the app is inactive
+  (holding it still would mean holding a streaming row's growth and every insertion still, which the list does only by
+  following its end), and the view is put back when the app is active again: as it was left, and then as reopening
+  (below). What arrives meanwhile is not seen: the frontier moves only while the chat is on screen and the app active.
+- **A user message from elsewhere** (another device, a script through the protocol) no longer scrolls to the end: only
+  one sent from this phone, on its way or leaving its queue, does. One from elsewhere comes in as any other row, so a
+  chat scrolled back stays there.
+- **A streaming row's frontier** is how far down its laid-out height is on screen: its reveal trails that by a fraction
+  of a second, which the frontier does not wait for.
+- `markSeen(id)` (everything) stays for a reply sent from a notification; the chat itself calls
+  `markSeen(id, through: entryId)`.

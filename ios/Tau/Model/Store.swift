@@ -99,8 +99,11 @@ protocol ConversationStore: AnyObject {
     func forkBefore(entryId: Int, in id: Int) -> Int?
     /// Its background subagents' conversations, oldest first.
     func subagents(of id: Int) -> [DialogModel]
-    /// The chat is on screen: everything in it so far is read.
+    /// Everything in the chat so far is read (a reply from a notification).
     func markSeen(_ id: Int)
+    /// The user has seen the chat through `entryId`, its row on screen (docs/reading-position.md): the read marker goes
+    /// that far, and the unread count counts the answers after it.
+    func markSeen(_ id: Int, through entryId: Int)
     /// Mark as Read / Mark as Unread.
     func setUnread(_ id: Int, _ unread: Bool)
     func setArchived(_ id: Int, _ archived: Bool)
@@ -158,6 +161,9 @@ protocol ConversationStore: AnyObject {
 
     func scrollState(_ id: Int) -> ChatScrollState?
     func setScrollState(_ state: ChatScrollState?, for id: Int)
+    /// The newest point of the chat the user has seen, kept on the phone (docs/reading-position.md).
+    func seenFrontier(_ id: Int) -> SeenFrontier?
+    func setSeenFrontier(_ frontier: SeenFrontier?, for id: Int)
     func mintAttachmentId() -> Int
 }
 
@@ -331,21 +337,47 @@ final class ScrollStateStorage {
     private let key: String
     private var states: [String: [String: Double]]
 
+    /// Each chat's seen frontier (docs/reading-position.md): its row and how far down it.
+    private let frontierKey: String
+    private var frontiers: [String: [String: Double]]
+
     init(namespace: String) {
         self.key = "scroll.\(namespace)"
         self.states = UserDefaults.standard.dictionary(forKey: self.key) as? [String: [String: Double]] ?? [:]
+        self.frontierKey = "frontier.\(namespace)"
+        self.frontiers = UserDefaults.standard.dictionary(forKey: self.frontierKey) as? [String: [String: Double]] ?? [:]
+    }
+
+    func frontier(_ id: Int) -> SeenFrontier? {
+        guard let value = self.frontiers["\(id)"], let messageId = value["m"], let depth = value["d"] else {
+            return nil
+        }
+        return SeenFrontier(messageId: Int(messageId), depth: CGFloat(depth))
+    }
+
+    func setFrontier(_ frontier: SeenFrontier?, for id: Int) {
+        if let frontier {
+            self.frontiers["\(id)"] = ["m": Double(frontier.messageId), "d": Double(frontier.depth)]
+        } else {
+            self.frontiers.removeValue(forKey: "\(id)")
+        }
+        UserDefaults.standard.set(self.frontiers, forKey: self.frontierKey)
     }
 
     func get(_ id: Int) -> ChatScrollState? {
         guard let value = self.states["\(id)"], let messageId = value["m"], let offset = value["o"] else {
             return nil
         }
-        return ChatScrollState(messageId: Int(messageId), offset: CGFloat(offset))
+        return ChatScrollState(messageId: Int(messageId), offset: CGFloat(offset), height: value["h"].map { CGFloat($0) })
     }
 
     func set(_ state: ChatScrollState?, for id: Int) {
         if let state {
-            self.states["\(id)"] = ["m": Double(state.messageId), "o": Double(state.offset)]
+            var value = ["m": Double(state.messageId), "o": Double(state.offset)]
+            if let height = state.height {
+                value["h"] = Double(height)
+            }
+            self.states["\(id)"] = value
         } else {
             self.states.removeValue(forKey: "\(id)")
         }

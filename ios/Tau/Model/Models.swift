@@ -406,4 +406,6 @@ struct ChatScrollState: Equatable {
     var messageId: Int
     /// Distance from the bottom of the visible area to the bottom of that message.
     var offset: CGFloat
+    /// The message's height then: a row that grew at its end since (an answer streaming) keeps its top where it was.
+    var height: CGFloat?
 }

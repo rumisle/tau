@@ -1579,18 +1579,35 @@ final class ServerStore: ConversationStore, TauServer {
         guard let realId = self.resolve(id) else {
             return
         }
-        let latest = max(self.replicas[realId]?.maxId ?? 0, self.dialogs[realId]?.last?.id ?? 0)
-        let isUnread = self.dialogs[realId]?.isUnread ?? false
-        guard latest > 0, isUnread || (self.readSent[realId] ?? 0) < latest else {
+        self.markRead(realId, at: max(self.replicas[realId]?.maxId ?? 0, self.dialogs[realId]?.last?.id ?? 0))
+    }
+
+    func markSeen(_ id: Int, through entryId: Int) {
+        guard let realId = self.resolve(id) else {
             return
         }
-        self.readSent[realId] = latest
-        if isUnread {
-            self.dialogs[realId]?.unreadCount = 0
+        self.markRead(realId, at: entryId)
+    }
+
+    /// The read marker at `latest` (`conversation.read`, throttled): the list's unread count goes at once when it reaches
+    /// the chat's newest message; short of it, the server counts what is after it.
+    private func markRead(_ realId: Int, at latest: Int) {
+        let newest = self.dialogs[realId]?.last?.id ?? 0
+        let reachesEnd = latest >= newest
+        let isUnread = self.dialogs[realId]?.isUnread ?? false
+        let markedUnread = self.dialogs[realId]?.markedUnread ?? false
+        guard latest > 0, (reachesEnd && isUnread) || markedUnread || (self.readSent[realId] ?? 0) < latest else {
+            return
+        }
+        self.readSent[realId] = max(self.readSent[realId] ?? 0, latest)
+        if (reachesEnd && isUnread) || markedUnread {
+            if reachesEnd {
+                self.dialogs[realId]?.unreadCount = 0
+            }
             self.dialogs[realId]?.markedUnread = false
             self.publishDialogs()
         }
-        self.readPending[realId] = latest
+        self.readPending[realId] = max(self.readPending[realId] ?? 0, latest)
         if self.readTimers[realId] == nil {
             let wait = (self.readSentAt[realId] ?? 0.0) + ServerStore.readInterval - CFAbsoluteTimeGetCurrent()
             if wait <= 0.0 {
@@ -1967,6 +1984,16 @@ final class ServerStore: ConversationStore, TauServer {
     func setScrollState(_ state: ChatScrollState?, for id: Int) {
         if let realId = self.resolve(id) {
             self.scroll.set(state, for: realId)
+        }
+    }
+
+    func seenFrontier(_ id: Int) -> SeenFrontier? {
+        return self.resolve(id).flatMap { self.scroll.frontier($0) }
+    }
+
+    func setSeenFrontier(_ frontier: SeenFrontier?, for id: Int) {
+        if let realId = self.resolve(id) {
+            self.scroll.setFrontier(frontier, for: realId)
         }
     }
 

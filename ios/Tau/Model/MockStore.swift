@@ -506,6 +506,20 @@ final class MockStore: TauStore, TauServer {
         self.scrollStates[id] = state
     }
 
+    private var frontiers: [Int: SeenFrontier] = [:]
+
+    func seenFrontier(_ id: Int) -> SeenFrontier? {
+        return self.frontiers[id]
+    }
+
+    func setSeenFrontier(_ frontier: SeenFrontier?, for id: Int) {
+        self.frontiers[id] = frontier
+    }
+
+    func markSeen(_ id: Int, through entryId: Int) {
+        self.markSeen(id)
+    }
+
     func setHidden(_ id: Int, _ hidden: Bool) {
         self.dialogs[id]?.hidden = hidden
         self.publishDialogs()
