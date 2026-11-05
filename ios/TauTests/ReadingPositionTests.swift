@@ -95,4 +95,37 @@ final class ReadingPositionTests: XCTestCase {
         // The first rows are no turn's (a chat that started with the agent): nothing above either.
         XCTAssertNil(ReadingPosition.previousTurnStart(rows: [row(0, false, -20), row(1, true)], topOrder: 0))
     }
+
+    // MARK: - The return stack
+
+    func testTheStackGoesBackLastFirst() {
+        var stack = ReturnStack()
+        stack.push(ReturnPoint(messageId: 40, offset: 0))
+        stack.push(ReturnPoint(messageId: 30, offset: -120))
+        XCTAssertEqual(stack.pop(), ReturnPoint(messageId: 30, offset: -120))
+        XCTAssertEqual(stack.pop(), ReturnPoint(messageId: 40, offset: 0))
+        XCTAssertNil(stack.pop())
+        XCTAssertTrue(stack.isEmpty)
+    }
+
+    func testAPointSeenAgainIsDropped() {
+        let order: (Int) -> Int? = { [40: 9, 30: 6, 20: 3][$0] }
+        var stack = ReturnStack()
+        for id in [40, 30, 20] {
+            stack.push(ReturnPoint(messageId: id, offset: 0))
+        }
+        // Scrolled down by hand to the row at 6: its point goes, and the one before it; the newer stays.
+        stack.filterOut(notNewerThan: 6, order: order)
+        XCTAssertEqual(stack.points.map(\.messageId), [40])
+        // A point whose row is gone goes too.
+        stack.filterOut(notNewerThan: 0, order: { _ in nil })
+        XCTAssertTrue(stack.isEmpty)
+    }
+
+    func testPointsNewerThanTheScreenStay() {
+        var stack = ReturnStack()
+        stack.push(ReturnPoint(messageId: 40, offset: 0))
+        stack.filterOut(notNewerThan: 5, order: { _ in 9 })
+        XCTAssertEqual(stack.points.count, 1)
+    }
 }

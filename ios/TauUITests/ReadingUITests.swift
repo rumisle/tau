@@ -345,4 +345,88 @@ final class ReadingUITests: XCTestCase {
         self.tapStatusBar()
         self.assertAtTop("Turns question 1", "at the first turn")
     }
+
+    // MARK: - The return stack
+
+    private var downButton: XCUIElement {
+        return self.app.descendants(matching: .any)["downButton"].firstMatch
+    }
+
+    /// Until a jump is over (the reading state says so).
+    private func waitJump() {
+        _ = waitUntil(5) { self.reading["jumping"] == "false" }
+        settle()
+    }
+
+    /// Up turn by turn, then the down button back point by point to where each jump left from, then the end. The
+    /// first jump's point, the end, shows again where it lands (the last answer's start under its question) and goes:
+    /// so three jumps up from the end leave two points, and the down button retraces the jumps.
+    func testDownButtonReturns() throws {
+        let id = try self.turnsChat("Returns", count: 4)
+        self.launch(["-openChat", "\(id)"])
+        for _ in 0 ..< 3 {
+            self.tapStatusBar()
+            self.waitJump()
+        }
+        self.assertAtTop("Returns question 2", "three turns up")
+        XCTAssertEqual(self.reading["stack"], "2", "a point for each jump but the first, seen again")
+        self.shot("reading-returns-0-up")
+        for (turn, left) in [(3, "1"), (4, "0")] {
+            self.downButton.tap()
+            self.waitJump()
+            self.shot("reading-returns-\(5 - turn)-down")
+            self.assertAtTop("Returns question \(turn)", "back where the jump left from")
+            XCTAssertEqual(self.reading["stack"], left)
+        }
+        // No point left: to the end.
+        self.downButton.tap()
+        self.waitJump()
+        sleep(1)
+        self.shot("reading-returns-3-end")
+        XCTAssertEqual(self.reading["bottom"], "Returns turn 4 paragraph")
+        XCTAssertFalse(self.downButton.exists, "at the end")
+    }
+
+    /// A jump to a turn on the same screen keeps nothing: the down button goes to the end.
+    func testJumpWithinScreenKeepsNothing() throws {
+        let turns = (1 ... 4).map { (question: "Short question \($0)", answer: "Short answer \($0).") }
+        let id = try self.chat("Short turns", turns: turns)
+        self.launch(["-openChat", "\(id)"])
+        // Scrolled up a little, so the down button shows.
+        self.tapStatusBar()
+        self.waitJump()
+        self.shot("reading-short-0-up")
+        XCTAssertEqual(self.reading["stack"], "0", "the turn was on the screen")
+        if self.downButton.exists {
+            self.downButton.tap()
+            self.waitJump()
+        }
+        self.shot("reading-short-1-down")
+        XCTAssertEqual(self.reading["bottom"], "Short answer 4.", "at the end")
+    }
+
+    /// Scrolling down by hand past a return point drops it; holding the down button goes to the end past the rest.
+    func testScrollingPastAPointDropsIt() throws {
+        let id = try self.turnsChat("Dropped", count: 4)
+        self.launch(["-openChat", "\(id)"])
+        for _ in 0 ..< 3 {
+            self.tapStatusBar()
+            self.waitJump()
+        }
+        XCTAssertEqual(self.reading["stack"], "2")
+        // Down by hand until the third answer shows: the point of the jump from there goes.
+        XCTAssertTrue(waitUntil(60) {
+            self.app.swipeUp(velocity: .slow)
+            usleep(800_000)
+            return self.reading["stack"] == "1"
+        }, "the point seen again dropped: \(self.reading)")
+        self.shot("reading-dropped-0-scrolled")
+        self.downButton.press(forDuration: 0.8)
+        self.waitJump()
+        sleep(1)
+        self.shot("reading-dropped-1-held")
+        XCTAssertEqual(self.reading["stack"], "0")
+        XCTAssertEqual(self.reading["bottom"], "Dropped turn 4 paragraph", "the end")
+        XCTAssertFalse(self.downButton.exists, "at the end")
+    }
 }

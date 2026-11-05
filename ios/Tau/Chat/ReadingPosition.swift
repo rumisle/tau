@@ -89,3 +89,45 @@ enum ReadingPosition {
         return nil
     }
 }
+
+/// A return point: the view a jump left from, as the scroll memory keeps one (the row at the bottom of the screen, the
+/// newest visible, and how far its bottom is above the screen's).
+struct ReturnPoint: Equatable {
+    var messageId: Int
+    var offset: CGFloat
+}
+
+/// Telegram's ChatHistoryNavigationStack: where jumps left from, newest pushed last; the down button goes back to the
+/// last. A point the user sees again is dropped: whenever the newest visible row changes, the points whose row is not
+/// newer than it go (`filterOutIndicesLessThan`). A row's order is the transcript's, asked of `order` (rows load above as
+/// history comes, so a place is not kept).
+struct ReturnStack: Equatable {
+    private(set) var points: [ReturnPoint] = []
+
+    var isEmpty: Bool {
+        return self.points.isEmpty
+    }
+
+    mutating func push(_ point: ReturnPoint) {
+        self.points.append(point)
+    }
+
+    mutating func pop() -> ReturnPoint? {
+        return self.points.popLast()
+    }
+
+    mutating func removeAll() {
+        self.points.removeAll()
+    }
+
+    /// The newest visible row is at `newestVisible`: points at or before it are seen, and go. A point whose row is no
+    /// longer in the transcript goes too.
+    mutating func filterOut(notNewerThan newestVisible: Int, order: (Int) -> Int?) {
+        self.points.removeAll { point in
+            guard let place = order(point.messageId) else {
+                return true
+            }
+            return place <= newestVisible
+        }
+    }
+}

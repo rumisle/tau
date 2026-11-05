@@ -119,4 +119,14 @@ What turned out different from the design above, and why.
 - **The status bar did nothing in a chat** before (not UIKit's scroll to top, as the design's "now" says: the list's
   own scroll view does not take it, and Telegram's navigation controller asks the top controller's `scrollToTop`,
   which the chat had not set). Now it goes to the previous turn, animated, with `UIImpactFeedbackGenerator(.light)`.
+- **A return point is a view**, the row at the bottom of the screen and its offset, as the scroll memory keeps one,
+  not a message: answers are often taller than the screen, and Telegram's message index would bring back the row,
+  not where the user was in it. It is dropped, as designed, when its row is on screen again. So the first jump up from
+  the end of a long answer keeps nothing (the answer's start shows under its question where it lands), and the down
+  button retraces the jumps: three up from the end, two points, then the end.
+- **A jump to a turn on the same screen** pushes nothing (rather than pushing and dropping it as its row is on screen
+  during the scroll): the same as designed, without the stack changing mid-animation. The stack keeps still while a
+  jump animates.
+- **The down button held** goes to the end through Telegram's context gesture on the button (its tap recognizer would
+  take a plain long press as a tap), with a light haptic; the return points are left behind.
 

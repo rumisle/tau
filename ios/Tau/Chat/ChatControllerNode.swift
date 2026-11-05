@@ -201,6 +201,7 @@ final class ChatControllerNode: ASDisplayNode {
         self.historyNode.didEndScrolling = { [weak self] _ in
             self?.inlineSelectionNode?.setInlineSelectionMenuHidden(false)
             self?.updateFrontier()
+            self?.updateReturnStack()
         }
         // The list is inverted, so its top offset is the distance from the end of the chat.
         self.historyNode.visibleContentOffsetChanged = { [weak self] offset, _ in
@@ -221,6 +222,7 @@ final class ChatControllerNode: ASDisplayNode {
                 self.updateDownButton(animated: true)
             }
             self.updateFrontier()
+            self.updateReturnStack()
         }
         // The list is inverted: the highest visible index is the oldest message on screen.
         self.historyNode.displayedItemRangeChanged = { [weak self] range, _ in
@@ -755,6 +757,8 @@ final class ChatControllerNode: ASDisplayNode {
             parts.append("bottomOffset=\(Int(anchor.offset))")
         }
         parts.append("unseen=\(self.unseenCount)")
+        parts.append("stack=\(self.returnStack.points.count)")
+        parts.append("jumping=\(self.isJumping)")
         parts.append("restoring=\(self.isRestoring)")
         view.accessibilityValue = parts.joined(separator: "|")
     }
@@ -1309,7 +1313,12 @@ final class ChatControllerNode: ASDisplayNode {
             self.downButtonContainer.alpha = 0.0
             button.isUserInteractionEnabled = false
             button.tapped = { [weak self] in
-                self?.scrollToBottom()
+                self?.scrollDown()
+            }
+            // Held: to the end directly, past the return points (its context gesture, as Telegram's buttons are held).
+            button.activated = { [weak self] gesture, _ in
+                gesture.cancel()
+                self?.scrollToEndPastReturnPoints()
             }
             self.downButton = button
             self.view.insertSubview(self.downButtonContainer, belowSubview: self.inputPanelNode.view)
@@ -1339,6 +1348,47 @@ final class ChatControllerNode: ASDisplayNode {
     }
 
     // MARK: - Turns (docs/reading-position.md)
+
+    /// Where the status bar's jumps left from (Telegram's ChatHistoryNavigationStack): the down button goes back to
+    /// them, the last first.
+    private var returnStack = ReturnStack()
+    /// While a jump moves the list: the point it left from is still on screen, and is not dropped for it.
+    private var isJumping = false
+    /// The newest row on screen when the stack last looked.
+    private var newestVisibleOrder: Int?
+
+    /// The rows on screen: the newest's place and ID, and whether `id` is among them.
+    private func visibleRows() -> [(id: Int, order: Int)] {
+        let visibleTop = self.historyNode.bounds.height - self.historyNode.insets.bottom
+        let visibleBottom = self.historyNode.insets.top
+        var rows: [(id: Int, order: Int)] = []
+        self.historyNode.forEachItemNode { node in
+            guard let node = node as? ChatMessageItemNode, let id = node.messageId, id != ChatControllerNode.waitingRowId, let order = self.orderById[id] else {
+                return
+            }
+            let frame = node.apparentFrame
+            if frame.maxY > visibleBottom + 1.0, frame.minY < visibleTop - 1.0 {
+                rows.append((id, order))
+            }
+        }
+        return rows
+    }
+
+    /// A return point the user sees again goes: whenever the newest visible row changes, the points not newer than it
+    /// (Telegram's maxVisibleMessageIndexUpdated, filterOutIndicesLessThan).
+    private func updateReturnStack() {
+        guard !self.isJumping, let newest = self.visibleRows().map(\.order).max() else {
+            return
+        }
+        guard newest != self.newestVisibleOrder else {
+            return
+        }
+        self.newestVisibleOrder = newest
+        if !self.returnStack.isEmpty {
+            self.returnStack.filterOut(notNewerThan: newest) { self.orderById[$0] }
+        }
+        self.updateReadingTestState()
+    }
 
     /// The status bar's tap: to the start of the previous turn, the user's message at the top of the screen; at the
     /// first turn, the top of the chat. A light haptic for each jump.
@@ -1380,10 +1430,54 @@ final class ChatControllerNode: ASDisplayNode {
         guard index >= 0, index < self.entries.count else {
             return
         }
+        // The jump pushes where it left from, the view with its newest row at the bottom; not for a turn on the same
+        // screen, which would show that point again.
+        let visible = self.visibleRows()
+        if !visible.contains(where: { $0.id == self.entries[index].stableId }), let anchor = self.bottomAnchor() {
+            self.returnStack.push(ReturnPoint(messageId: anchor.messageId, offset: anchor.offset))
+        }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: index, position: .bottom(0.0), animated: true, curve: .Spring(duration: 0.4), directionHint: .Down), updateSizeAndInsets: nil, stationaryItemRange: nil, updateOpaqueState: nil, completion: { [weak self] _ in
-            self?.updateFrontier()
+        self.jump(to: index, position: .bottom(0.0))
+    }
+
+    /// An animated scroll that keeps the return stack as it is until it is over.
+    private func jump(to index: Int, position: ListViewScrollPosition) {
+        self.isJumping = true
+        self.updateReadingTestState()
+        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: index, position: position, animated: true, curve: .Spring(duration: 0.4), directionHint: .Down), updateSizeAndInsets: nil, stationaryItemRange: nil, updateOpaqueState: nil, completion: { [weak self] _ in
+            Queue.mainQueue().after(0.45) {
+                guard let self else {
+                    return
+                }
+                self.isJumping = false
+                // Where it landed: a point it shows again goes.
+                self.newestVisibleOrder = nil
+                self.updateReturnStack()
+                self.updateFrontier()
+                self.updateReadingTestState()
+            }
         })
+    }
+
+    /// The down button: back to the last return point, without pushing; with none, to the end.
+    func scrollDown() {
+        while let point = self.returnStack.pop() {
+            guard let index = self.entries.firstIndex(where: { $0.stableId == point.messageId }) else {
+                continue
+            }
+            // The view it left: its newest row at the bottom of the screen, as far up as it was.
+            self.jump(to: index, position: .top(point.offset))
+            return
+        }
+        self.scrollToBottom()
+    }
+
+    /// The down button held: the end, the return points left behind.
+    private func scrollToEndPastReturnPoints() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        self.returnStack.removeAll()
+        self.scrollToBottom()
+        self.updateReadingTestState()
     }
 
     func scrollToBottom() {
