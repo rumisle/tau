@@ -14,7 +14,7 @@
 // - systemd-run failing: the command did not start, which its result says; there is no fallback to running it
 //   outside a scope.
 // - At start tau stops what a crash left running of its scopes and resets the failed.
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,7 +25,16 @@ import type { BashPrepare } from "@earendil-works/pi-durable/tools";
 /** The OOM score commands get: the kernel prefers them to the server (which cannot lower its own). */
 export const COMMAND_OOM_SCORE = 500;
 
-const WRAPPER = `#!/bin/sh
+/**
+ * systemd-run's option that leaves its command line as it is: from systemd 254 it expands `$NAME`, `${NAME}` and `$$` in
+ * it as ExecStart= does, in --scope too (systemd-run(1), --expand-environment=), which would rewrite a command's own
+ * `$`s before its shell saw them, quoted or not. Older systemd-run has no such option, and expands nothing in a scope.
+ */
+function keepCommandLine(): string {
+	return spawnSync("systemd-run", ["--expand-environment=no", "--help"], { stdio: "ignore" }).status === 0 ? " --expand-environment=no" : "";
+}
+
+const wrapper = (keep: string) => `#!/bin/sh
 # tau's command shell (server/src/scopes.ts, --command-scopes). durable's bash tool runs \`<this> -c <command>\`;
 # this starts it in the transient scope tau named for the call, the arguments passed on as they are.
 unit=$TAU_CMD_UNIT slice=$TAU_CMD_SLICE bound_to=$TAU_CMD_BOUND_TO started=$TAU_CMD_STARTED
@@ -37,7 +46,7 @@ fi
 set -- --slice="$slice" -- /bin/sh -c 'echo ${COMMAND_OOM_SCORE} > /proc/self/oom_score_adj 2>/dev/null; : > "$0" && exec /bin/bash "$@"' "$started" "$@"
 if [ -n "$bound_to" ]; then set -- -p "BindsTo=$bound_to" -p "After=$bound_to" "$@"; fi
 # A description of its own: systemd's default, the command line, would put every command in the journal.
-exec systemd-run --user --scope --quiet --unit="$unit" --description="tau command" "$@"
+exec systemd-run --user --scope --quiet${keep} --unit="$unit" --description="tau command" "$@"
 `;
 
 /** A unit name's part for `text`: characters other than letters, digits, `_` and `-` as `\xHH` of their UTF-8 bytes. */
@@ -157,6 +166,8 @@ export class CommandScopes {
 	/** The slice's cgroup, once it has one (it is created with its first scope). */
 	#sliceCgroup: string | undefined;
 
+	readonly #wrapper = wrapper(keepCommandLine());
+
 	private constructor(options: CommandScopesOptions) {
 		this.slice = options.slice ?? "tau-cmd.slice";
 		if (!/^[A-Za-z0-9_-]+\.slice$/.test(this.slice)) throw new Error(`Not a slice name: ${this.slice}`);
@@ -178,7 +189,7 @@ export class CommandScopes {
 	}
 
 	#writeWrapper(): void {
-		writeFileSync(this.shellPath, WRAPPER);
+		writeFileSync(this.shellPath, this.#wrapper);
 		chmodSync(this.shellPath, 0o755);
 	}
 

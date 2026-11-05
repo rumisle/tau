@@ -116,6 +116,9 @@ describe("commands in scopes", { skip: scopes ? false : "no systemd user scopes 
 		assert.match(cgroup!, new RegExp(`/${parent}/${slice}/${prefix}${replica.id}-[^/]+\\.scope$`));
 		assert.equal(score, "500");
 		assert.equal(rest, `[] a  "b`);
+		// The command's `$`s are its shell's: systemd-run (254 on) would expand `$NAME`, `${NAME}` and `$$` itself.
+		const dollars = await run(client, replica, `$ printf '%s|' '$HOME' '\${HOME}' "$$"`);
+		assert.match(text(dollars), /^\$HOME\|\$\{HOME\}\|\d+\|$/);
 		// A script's nested call: its ID has a '/', escaped.
 		const nested = await run(client, replica, "!code const r = await tools.bash({ command: 'cat /proc/self/cgroup' }); return r.output;");
 		assert.match(text(nested), new RegExp(`${prefix}${replica.id}-[^/]*\\\\x2f[^/]*\\.scope`));
