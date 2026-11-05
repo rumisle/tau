@@ -357,6 +357,10 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         let node = self.controllerNode
         node.initialScrollState = self.context.store.scrollState(self.conversationId)
         if !self.isPreview {
+            // The status bar goes to the previous turn (docs/reading-position.md).
+            self.scrollToTop = { [weak self] in
+                self?.controllerNode.scrollToPreviousTurn()
+            }
             // What is seen is what is on screen (docs/reading-position.md): the read marker follows the frontier.
             node.frontier = self.context.store.seenFrontier(self.conversationId)
             node.frontierAdvanced = { [weak self] _, entryId in

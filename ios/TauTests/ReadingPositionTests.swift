@@ -66,4 +66,33 @@ final class ReadingPositionTests: XCTestCase {
         // A short row seen whole: its bottom 650 above.
         XCTAssertEqual(ReadingPosition.revealOffset(visibleHeight: 700.0, rowHeight: 40.0, depth: 40.0, context: 50.0), 650.0)
     }
+
+    // MARK: - Turns
+
+    private func row(_ order: Int, _ startsTurn: Bool, _ top: CGFloat? = nil) -> ReadingPosition.TurnRow {
+        return ReadingPosition.TurnRow(order: order, startsTurn: startsTurn, topBelowScreenTop: top)
+    }
+
+    func testPreviousTurnIsTheStartAboveTheScreensTop() {
+        // Turns start at 0, 3 and 6; the top of the screen is in the answer at 7.
+        let rows = [row(0, true), row(1, false), row(2, false), row(3, true), row(4, false), row(5, false), row(6, true, -300), row(7, false, -40), row(8, false, 200)]
+        XCTAssertEqual(ReadingPosition.previousTurnStart(rows: rows, topOrder: 7), 6)
+    }
+
+    func testAStartAtTheTopGoesToTheOneBefore() {
+        let rows = [row(0, true), row(3, true), row(6, true, 1.0), row(7, false, 60)]
+        XCTAssertEqual(ReadingPosition.previousTurnStart(rows: rows, topOrder: 6), 3)
+    }
+
+    func testAStartCutByTheTopIsWhereItGoes() {
+        let rows = [row(0, true), row(3, true), row(6, true, -30), row(7, false, 60)]
+        XCTAssertEqual(ReadingPosition.previousTurnStart(rows: rows, topOrder: 6), 6)
+    }
+
+    func testTheFirstTurnHasNothingAbove() {
+        let rows = [row(0, true, 2.0), row(1, false, 80)]
+        XCTAssertNil(ReadingPosition.previousTurnStart(rows: rows, topOrder: 0))
+        // The first rows are no turn's (a chat that started with the agent): nothing above either.
+        XCTAssertNil(ReadingPosition.previousTurnStart(rows: [row(0, false, -20), row(1, true)], topOrder: 0))
+    }
 }

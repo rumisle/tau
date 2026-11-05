@@ -307,4 +307,42 @@ final class ReadingUITests: XCTestCase {
         XCTAssertEqual(self.reading["revealed"], seen)
         self.assertNearTop(self.readingInt("revealY").map { CGFloat($0) }, "the last lines seen near the top")
     }
+
+    // MARK: - Turns
+
+    /// A tap on the status bar, as the system takes it: scroll to top.
+    private func tapStatusBar() {
+        self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.0)).withOffset(CGVector(dx: 0.0, dy: 12.0)).tap()
+        usleep(900_000)
+    }
+
+    /// The user's message at the top of the screen: its top just under the navigation bar.
+    private func assertAtTop(_ text: String, _ message: String, file: StaticString = #filePath, line: UInt = #line) {
+        let element = self.userMessage(text)
+        XCTAssertTrue(element.exists, "\(message): \(text) on screen", file: file, line: line)
+        if element.exists {
+            XCTAssertEqual(Double(element.frame.minY), Double(self.screenTop), accuracy: 40.0, "\(message): \(text) at the top", file: file, line: line)
+        }
+    }
+
+    /// Turns, each answered past a screen.
+    private func turnsChat(_ title: String, count: Int, paragraphs: Int = 14) throws -> Int {
+        let turns = (1 ... count).map { (question: "\(title) question \($0)", answer: self.answer("\(title) turn \($0)", paragraphs: paragraphs)) }
+        return try self.chat(title, turns: turns)
+    }
+
+    /// The status bar goes up turn by turn, the user's message at the top each time; at the first turn, the top of the
+    /// chat, which it stays at.
+    func testStatusBarTurns() throws {
+        let id = try self.turnsChat("Turns", count: 4)
+        self.launch(["-openChat", "\(id)"])
+        self.shot("reading-turns-0-end")
+        for turn in [4, 3, 2, 1] {
+            self.tapStatusBar()
+            self.shot("reading-turns-\(5 - turn)-turn\(turn)")
+            self.assertAtTop("Turns question \(turn)", "tap \(5 - turn)")
+        }
+        self.tapStatusBar()
+        self.assertAtTop("Turns question 1", "at the first turn")
+    }
 }

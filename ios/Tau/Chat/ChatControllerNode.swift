@@ -1338,6 +1338,54 @@ final class ChatControllerNode: ASDisplayNode {
         }
     }
 
+    // MARK: - Turns (docs/reading-position.md)
+
+    /// The status bar's tap: to the start of the previous turn, the user's message at the top of the screen; at the
+    /// first turn, the top of the chat. A light haptic for each jump.
+    func scrollToPreviousTurn() {
+        guard !self.entries.isEmpty, self.validLayout != nil else {
+            return
+        }
+        // The list is inverted: its y runs up the screen, the screen's top is its far edge.
+        let visibleTop = self.historyNode.bounds.height - self.historyNode.insets.bottom
+        let visibleBottom = self.historyNode.insets.top
+        var tops: [Int: CGFloat] = [:]
+        var topOrder: Int?
+        self.historyNode.forEachItemNode { node in
+            guard let node = node as? ChatMessageItemNode, let id = node.messageId, let order = self.orderById[id] else {
+                return
+            }
+            let frame = node.apparentFrame
+            tops[id] = visibleTop - frame.maxY
+            if frame.maxY > visibleBottom, frame.minY < visibleTop, order < (topOrder ?? Int.max) {
+                topOrder = order
+            }
+        }
+        guard let topOrder else {
+            return
+        }
+        let rows = self.entries.map { entry in
+            ReadingPosition.TurnRow(order: self.orderById[entry.stableId] ?? 0, startsTurn: entry.message.role == .user, topBelowScreenTop: tops[entry.stableId])
+        }
+        let index: Int
+        if let target = ReadingPosition.previousTurnStart(rows: rows, topOrder: topOrder) {
+            index = self.entries.count - 1 - target
+        } else {
+            // The first turn: the top of the chat, and the history before it if there is more.
+            index = self.entries.count - 1
+            if self.state?.hasOlder == true {
+                self.loadOlder?()
+            }
+        }
+        guard index >= 0, index < self.entries.count else {
+            return
+        }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        self.historyNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: ListViewScrollToItem(index: index, position: .bottom(0.0), animated: true, curve: .Spring(duration: 0.4), directionHint: .Down), updateSizeAndInsets: nil, stationaryItemRange: nil, updateOpaqueState: nil, completion: { [weak self] _ in
+            self?.updateFrontier()
+        })
+    }
+
     func scrollToBottom() {
         guard !self.entries.isEmpty else {
             return

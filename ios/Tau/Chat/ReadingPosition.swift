@@ -15,8 +15,8 @@ struct VisibleRowSpan: Equatable {
     var depth: CGFloat
 }
 
-/// The pure part of the reading position: what advances the frontier, where a chat opens. ChatControllerNode measures
-/// the rows and applies the answers.
+/// The pure part of the reading position: what advances the frontier, where a chat opens, which turn the status bar
+/// goes to. ChatControllerNode measures the rows and applies the answers.
 enum ReadingPosition {
     /// The frontier once `visible` has been on screen: the newest visible row, as far down as it is seen, if that is past
     /// the frontier; `frontierOrder` is the frontier row's place now, nil when it is not in the transcript (older than
@@ -64,5 +64,28 @@ enum ReadingPosition {
     /// list) that puts its seen point `context` points under the visible area's top.
     static func revealOffset(visibleHeight: CGFloat, rowHeight: CGFloat, depth: CGFloat, context: CGFloat) -> CGFloat {
         return (visibleHeight - context) - (rowHeight - min(depth, rowHeight))
+    }
+
+    /// A row as the status bar's turn navigation sees it: its place in the transcript, whether a turn starts at it (the
+    /// user's message), and the distance of its top below the visible area's top (negative: above it).
+    struct TurnRow: Equatable {
+        var order: Int
+        var startsTurn: Bool
+        var topBelowScreenTop: CGFloat?
+    }
+
+    /// The turn start the status bar goes to: the start of the turn above the one at the top of the screen. `topOrder` is
+    /// the place of the row at the top of the screen; `rows` are the transcript's, in any order. Nil: no turn above (the
+    /// top of the chat).
+    static func previousTurnStart(rows: [TurnRow], topOrder: Int, tolerance: CGFloat = 4.0) -> Int? {
+        let starts = rows.filter { $0.startsTurn && $0.order <= topOrder }.sorted { $0.order > $1.order }
+        for start in starts {
+            // A turn already at the top of the screen (the last jump's) is where the user is: the one before it.
+            if start.order == topOrder, let top = start.topBelowScreenTop, top >= -tolerance {
+                continue
+            }
+            return start.order
+        }
+        return nil
     }
 }

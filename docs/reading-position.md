@@ -116,4 +116,7 @@ What turned out different from the design above, and why.
 - **The down button's count** is the messages and answers after the frontier, rather than those that arrived while the
   list was not at the end: the same while the chat is open, and right after opening a chat scrolled back.
 - **The agent's waiting row** (the τ) is never the saved view's anchor: it is gone by the time the chat opens again.
+- **The status bar did nothing in a chat** before (not UIKit's scroll to top, as the design's "now" says: the list's
+  own scroll view does not take it, and Telegram's navigation controller asks the top controller's `scrollToTop`,
+  which the chat had not set). Now it goes to the previous turn, animated, with `UIImpactFeedbackGenerator(.light)`.
 
