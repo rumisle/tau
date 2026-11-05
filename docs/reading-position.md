@@ -1,0 +1,92 @@
+# Reading position and turns (design)
+
+Where a chat opens, what counts as seen, and moving through a long transcript by turns. Agreed with the user; to be
+built. The code today: `ChatControllerNode` (`isAtBottom`, `currentScrollState`, the transaction's `scrollToItem`),
+`ChatController.saveScrollState` and `markSeen`, `ServerStore.markSeen` (the server's `MetaDoc.read`, which counts
+`unreadCount`).
+
+## What there is now
+
+- Leaving a chat (or the app going to the background) saves the message at the bottom of the screen and its offset,
+  or **nil when at the end**; opening restores it, nil opening at the end.
+- At the end (within 120 pt) the list follows what arrives, a streaming answer included; scrolled back it stays, and
+  the down button counts committed rows that arrived below.
+- A message the user sends scrolls to the end.
+- Opening a chat, or anything arriving while it is on screen with the app active, marks **everything** read
+  (`markSeen` sends the newest entry), whatever was on screen.
+- Tapping the status bar scrolls to the top (UIKit's default for the list's scroll view).
+
+The trouble: leave right after sending, or while the answer streams, and the saved position is "the end"; the end has
+moved on by the time the user is back, so the chat opens at the end of a long answer and the user scrolls up to find
+where it started, or where they were.
+
+## Terms
+
+- **A turn** starts at a message of the user's and holds everything until the next one: thinking, tool calls, subagent
+  cards, answers. Its start is the user's message. (Compaction cards are not turn starts for now.)
+- **Seen** means it was on screen, the chat in front and the app active. Not "the chat was opened".
+- **The seen frontier**: the newest point the user has seen, a row and how far down it (a long answer may be seen half
+  way). It only moves forward.
+
+## Seen, precisely
+
+- The frontier advances as rows (or, for a tall row, its lines) are laid out inside the visible area while the chat is
+  on screen and the app is active. A streaming row moves it as its text appears on screen, not as it arrives.
+- Leaving the chat and the app leaving the foreground are the same: nothing is seen while away, and the list does not
+  follow the end while the app is inactive.
+- The server's read marker (`conversation.read { at }`) is the newest entry whose row has been seen (at all), so the
+  list's unread count is what the user has not looked at. Reads stay throttled as now (`readInterval`).
+- The frontier within a row is kept on the phone with the scroll state (`ChatScrollState` grows a frontier); the
+  server keeps only the entry.
+
+## Where a chat opens
+
+One mechanism, the scroll memory, without the "end" case:
+
+1. Leaving saves what is on screen (the row at the bottom and its offset), at the end too. No nil for the end.
+2. Opening restores it.
+3. If what directly follows the restored view is unseen (the frontier is at the view's bottom and there is more below),
+   the view moves down so the last seen lines sit near the top of the screen, a line or two of context above them, and
+   the unseen content fills the rest.
+
+| Left | New content since | Opens |
+|---|---|---|
+| At the end, right after sending | yes | the user's message near the top, the response below |
+| At the end, in the middle of the response | yes | the last lines seen near the top, the rest below |
+| At the end | no | as left |
+| Scrolled back reading older rows | yes | as left (what follows is already seen); the down button shows, with its count |
+
+No "new messages" divider.
+
+While the chat stays on screen and the app active, at the end, the list follows what arrives, as now. A message the
+user sends still scrolls to the end.
+
+## Turn navigation and the down button
+
+- **Tapping the status bar** goes to the start of the previous turn: the start of the turn above the one at the top of
+  the screen (the user's message at the top). Repeated taps go up turn by turn; a light haptic per jump. At the first
+  turn it scrolls to the top, as now.
+- **A return stack**, Telegram's `ChatHistoryNavigationStack`
+  (TelegramUI/Sources/ChatHistoryNavigationStack.swift, ChatControllerNavigateToMessage.swift,
+  ChatControllerLoadDisplayNode.swift):
+  - A jump pushes where it left from: the newest row visible before it.
+  - **A return point that becomes visible is dropped**: whenever the newest visible row changes, points not newer than
+    it are removed (`maxVisibleMessageIndexUpdated` → `filterOutIndicesLessThan`). So a jump to a turn on the same
+    screen keeps nothing; scrolling down by hand past a point drops it; there is no distance threshold.
+  - **The down button** goes to the last return point (without pushing), and with none to the end, as now. Long press:
+    to the end directly.
+- No up button, no second down arrow, no list of turns (add when needed).
+- Opening a chat that moves the view down to unseen content (above) pushes nothing; the down button goes to the end.
+
+## Tests
+
+UI tests with the dev model (and `/tmp/tau-dev-answers.json` for long answers):
+
+- Leave right after sending, let a long answer finish, reopen: the user's message is near the top.
+- Watch an answer stream past a screen, leave in the middle, let it finish, reopen: the last lines seen are near the
+  top, nothing seen is above the fold twice.
+- Scroll back, leave, let something arrive, reopen: exactly where left; the down button with its count.
+- Background the app while at the end of a streaming chat, let it finish, return: as reopening.
+- Status bar taps: turn by turn up; down button back point by point; a jump within one screen leaves the down button
+  going to the end; scrolling by hand past a point drops it.
+- The list's unread count after half-seeing a chat counts the unseen answers only.
