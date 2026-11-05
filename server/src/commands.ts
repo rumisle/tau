@@ -8,11 +8,14 @@
 //   rose. Said as that, `oomKill: true`: in a shared cgroup it need not have been this command's process it killed.
 // - Interrupted by a restart: the boot ID the previous server run wrote beside the database, against the machine's
 //   now. The machine rebooted, or the tau server restarted.
+// - With commands in scopes (src/scopes.ts, --command-scopes), what the call's scope says: killed by the OOM killer,
+//   the limit reached and the command's peak; or that systemd-run could not start it.
 import { readFileSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import { basename } from "node:path";
 import { defineExtension, type Extension, hook, type HookRegistration, type ToolDiagnostic, type ToolExecutionResult, ToolTask } from "@earendil-works/pi-durable";
 import { createBashTool, createEditTool, createReadTool, createWriteTool, type BashPrepare, type ImageProcessor } from "@earendil-works/pi-durable/tools";
+import type { CommandScopes } from "./scopes.ts";
 
 export type CommandFactsOptions = {
 	/** Where this server run's boot ID is kept for the next one: beside the database; none in memory. */
@@ -22,6 +25,8 @@ export type CommandFactsOptions = {
 	/** The server's own cgroup, as `/proc/self/cgroup` names it, and where cgroups are mounted (tests fake both). */
 	procCgroup?: string;
 	cgroupRoot?: string;
+	/** Each command in its own scope (--command-scopes). */
+	scopes?: CommandScopes;
 };
 
 const NAMES = new Map(Object.entries(constants.signals).map(([name, number]) => [number, name]));
@@ -48,8 +53,10 @@ export class CommandFacts {
 	readonly unit: string | undefined;
 	/** The OOM kill count when each running call started, by conversation and call. */
 	readonly #started = new Map<string, number>();
+	readonly scopes: CommandScopes | undefined;
 
 	constructor(options: CommandFactsOptions = {}) {
+		this.scopes = options.scopes;
 		this.boot = read(options.bootIdPath ?? process.env.TAU_BOOT_ID_PATH ?? "/proc/sys/kernel/random/boot_id");
 		if (options.bootFile !== undefined) {
 			this.previousBoot = read(options.bootFile);
@@ -77,9 +84,10 @@ export class CommandFacts {
 	}
 
 	/** durable's bash `prepare`: notes the count as the command starts. */
-	readonly prepare: BashPrepare = (_execution, api) => {
+	readonly prepare: BashPrepare = async (execution, api, context) => {
 		const count = this.oomKills();
 		if (count !== undefined) this.#started.set(`${api.conversationId}/${api.callId}`, count);
+		await this.scopes?.prepare(execution, api, context);
 	};
 
 	/** The facts of a finished bash call, added to its result. */
@@ -113,8 +121,14 @@ export class CommandFacts {
 		return { ...result, diagnostics, ...(structured === undefined ? {} : { structuredOutput: structured as never }) };
 	}
 
+	/** `explain`, then what the call's scope says, when commands have scopes. */
+	async finish(conversationId: number, callId: string, result: ToolExecutionResult): Promise<ToolExecutionResult> {
+		const explained = this.explain(conversationId, callId, result);
+		return this.scopes === undefined ? explained : this.scopes.finish(conversationId, callId, explained);
+	}
+
 	readonly hook: HookRegistration = hook(ToolTask, {
-		afterTool: (call, result, api) => (call.name === "bash" ? this.explain(api.conversationId, call.id, result) : undefined),
+		afterTool: (call, result, api) => (call.name === "bash" ? this.finish(api.conversationId, call.id, result) : undefined),
 	});
 }
 

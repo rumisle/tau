@@ -19,6 +19,11 @@ startup files reach the server and its agents. The service has `OOMPolicy=contin
 command an agent ran for memory, the server goes on (systemd's default, `OOMPolicy=stop`, stops the whole unit, every
 run with it; docs/command-isolation.md). A service set up before has the line added by running `tau setup` again, or by
 hand: `OOMPolicy=continue` in `[Service]`, then `systemctl --user daemon-reload` (it applies at the next start).
+Setup also writes `~/.config/systemd/user/tau-cmd.slice`, the memory pool of the agents' commands when the server runs
+each in its own scope (`--command-scopes` in the flags, off by default; docs/command-isolation.md): `MemoryMax=` the
+machine's memory less a reserve (a tenth, at least 2 GiB), and `MemorySwapMax=0` where swap is zram. It is written once
+and then yours to edit; setup keeps it, and warns when the user has no linger or the user manager has no memory
+controller. `tau status` shows the slice and whether the flags turn scopes on.
 Model logins are the pi CLI's (`~/.pi/agent/auth.json`) or the
 providers' API keys. The repository is private for now: give `TAU_GITHUB_TOKEN` (or `GITHUB_TOKEN`) to download.
 

@@ -2,9 +2,10 @@
 # tau: runs, sets up, upgrades and rolls back a release of tau's server (docs/deploy.md). It ships in each release, so
 # ~/.local/bin/tau, a link to the current release's, upgrades with it.
 #
-#   tau setup              Linux: the token, ~/.config/tau/flags, the systemd user unit; started, and kept from boot
+#   tau setup              Linux: the token, ~/.config/tau/flags, the systemd user unit and tau-cmd.slice; started,
+#                          and kept from boot
 #   tau serve [args]       the server with ~/.config/tau/flags, then args (what the unit runs)
-#   tau status             the running version, the one to roll back to, the service
+#   tau status             the running version, the one to roll back to, the service, the commands' slice
 #   tau upgrade [version]  installs the latest release (or that one), checks it starts, switches, restarts; if the
 #                          service does not come up, switches back
 #   tau rollback           back to the version before
@@ -170,6 +171,51 @@ gc() {
 	done
 }
 
+cmd_slice="tau-cmd.slice"
+
+# The slice of the agents' commands when the server runs them in scopes (--command-scopes,
+# docs/command-isolation.md): written once, then the user's to edit; setup keeps an existing one.
+write_cmd_slice() { # units-dir
+	local file="$1/$cmd_slice" total reserve max swap
+	if [ -f "$file" ]; then say "kept $file"; return; fi
+	total=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo)
+	# The reserve for the host and the server: a tenth of the memory, at least 2 GiB.
+	reserve=$((total / 10 > 2048 ? total / 10 : 2048))
+	max=$((total - reserve > 512 ? total - reserve : 512))
+	swap=""
+	if awk 'NR > 1 && $1 ~ /zram/ { found = 1 } END { exit !found }' /proc/swaps 2>/dev/null; then
+		swap="# Swap here is zram, compressed memory charged to no cgroup: what the commands swap out would escape
+# MemoryMax=, so they get none.
+MemorySwapMax=0"
+	fi
+	cat >"$file" <<SLICE
+# Every command tau's agents run, each in its own scope, when the server has --command-scopes
+# (docs/command-isolation.md). Written by tau setup; yours to edit, setup keeps it. After a change:
+#   systemctl --user daemon-reload
+[Unit]
+Description=tau's agents' commands
+
+[Slice]
+# The pool all commands share: the machine's memory ($total MiB when written) less a reserve for the host and the
+# server, a tenth of it and at least 2 GiB ($reserve MiB). One command may use all of it; past it the kernel's OOM
+# killer kills inside this slice, not the server.
+MemoryMax=${max}M
+$swap
+SLICE
+	say "wrote $file (MemoryMax=${max}M${swap:+, MemorySwapMax=0})"
+}
+
+# What the scopes need of the user's systemd: a manager that outlives logins, and the memory controller.
+check_user_manager() {
+	local uid controllers
+	uid=$(id -u)
+	[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ] ||
+		say "warning: no linger for $USER: the user manager, the server and its commands end at logout (sudo loginctl enable-linger $USER)"
+	controllers="/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service/cgroup.controllers"
+	grep -qw memory "$controllers" 2>/dev/null ||
+		say "warning: the memory controller is not delegated to the user manager ($controllers): $cmd_slice's MemoryMax= has no effect"
+}
+
 serve() {
 	need_node
 	local flags=()
@@ -226,11 +272,13 @@ OOMPolicy=continue
 [Install]
 WantedBy=default.target
 UNIT
+	write_cmd_slice "$units"
 	mkdir -p "$bin" && ln -sfn "$self" "$bin/tau"
 	systemctl --user daemon-reload
 	systemctl --user enable --now "$unit" >/dev/null 2>&1
 	systemctl --user restart "$unit"
 	loginctl enable-linger "$USER" 2>/dev/null || say "could not keep it running after logout: sudo loginctl enable-linger $USER"
+	check_user_manager
 	sleep 3
 	systemctl --user is-active --quiet "$unit" || { journalctl --user -u "$unit" -n 20 --no-pager >&2; die "$unit did not start"; }
 	local name port
@@ -268,6 +316,14 @@ status)
 	say "previous  $(previous_version)"
 	say "installed $(ls "$lib/versions" 2>/dev/null | tr '\n' ' ')"
 	has_unit && say "service   $(systemctl --user is-active "$unit")" || say "service   none ($unit)"
+	# Every slice loads (a distribution's slice.d drop-ins), so the test is for a file of its own.
+	if command -v systemctl >/dev/null && [ -n "$(systemctl --user show "$cmd_slice" -p FragmentPath --value 2>/dev/null)" ]; then
+		scopes="not in scopes"
+		grep -q -- '^[^#]*--command-scopes' "$config/flags" 2>/dev/null && scopes="in scopes (--command-scopes)"
+		say "commands  $scopes; $cmd_slice $(systemctl --user show "$cmd_slice" -p ActiveState -p MemoryMax -p MemorySwapMax -p MemoryCurrent | sed 's/=\[not set\]/=-/' | tr '\n' ' ')"
+	else
+		say "commands  no $cmd_slice (tau setup writes it)"
+	fi
 	;;
 version | --version) current_version ;;
 *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;

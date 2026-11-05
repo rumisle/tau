@@ -1,9 +1,10 @@
-# Command isolation (design notes, steps 1 to 3 built)
+# Command isolation (design notes, steps 1 to 3 built, step 5 behind a flag)
 
 Where the discussion of the agents' commands, memory and the server got to, so it can be picked up without starting
 over. Built: the reproduction (`scripts/oom-repro.sh`), `OOMPolicy=continue` in the unit `tau setup` writes, and what
 the model reads of a command killed by a signal, an OOM kill in the server's cgroup, and a restart
-(`server/src/commands.ts`); see Order of work. Scopes, the slice and bgjob are not built. The research behind it (sources, file and line references, measurements on chorus)
+(`server/src/commands.ts`); and, behind `--command-scopes` (off by default), each command in its own scope
+(`server/src/scopes.ts`) with the slice `tau setup` writes. bgjob is not changed. See Order of work. The research behind it (sources, file and line references, measurements on chorus)
 is kept outside the repository, in `~/research/isolation-research.md` on chorus.
 
 ## The problem
@@ -44,10 +45,14 @@ has no OOM kill, and the last one came while idle. The first step below is to fi
 ### The server's unit
 
 - `OOMPolicy=continue`: a command killed for memory does not stop the server.
-- The server cannot lower its own OOM score without privileges; the commands' scopes raise theirs
-  (`OOMScoreAdjust=`, e.g. 500), so the kernel prefers them.
+- The server cannot lower its own OOM score without privileges; the commands raise theirs to 500, so the kernel
+  prefers them. Measured on chorus (systemd 259): a transient scope does not take `OOMScoreAdjust=` ("Unknown
+  assignment"; it is an exec setting, and a scope execs nothing), so the wrapper writes `/proc/self/oom_score_adj`
+  before it execs bash, which raising needs no privilege for; every process of the command inherits it.
 
 ### Each command in a scope
+
+Built behind `--command-scopes` (`server/src/scopes.ts`, `server/test/scopes.test.ts`); as built, below the design.
 
 The bash tool starts its command as
 
@@ -56,7 +61,8 @@ systemd-run --user --scope --quiet --unit=tau-cmd-<conversation>-<call> --slice=
   -p PartOf=tau-server.service -p OOMScoreAdjust=500 -- bash -c <command>
 ```
 
-as an argument list, with no shell quoting. A scope inherits the caller's environment, working directory, standard
+as an argument list, with no shell quoting (as built, without `OOMScoreAdjust=`, which a scope does not take: As
+built, below). A scope inherits the caller's environment, working directory, standard
 streams and process group, so the tool's pipes and its `kill(-pid)` keep working. Measured on chorus: about 3 ms per
 command.
 
@@ -64,12 +70,44 @@ command.
   `curl` work as today); the scope lasts while they do, and systemd collects it when they end.
 - **Stop and timeout** stop the call's scope instead of killing its process group: the same call's processes, now
   including those that left the group (`setsid`, `nohup`, daemons). Other calls and conversations are untouched.
-- **The server stopping** stops the scopes (`PartOf=`), as stopping the service kills its cgroup now. Commands do not
+- **The server stopping** stops the scopes (`PartOf=`; as built `BindsTo=`, below), as stopping the service kills its cgroup now. Commands do not
   outlive the server: after a restart durable has settled their calls as interrupted and nothing would read them.
-  To verify on chorus: that a transient scope takes `PartOf=`.
+  Verified on chorus: a transient scope takes `PartOf=`, which misses a crash (As built, below).
 - **Results.** When the command ends, tau reads the scope (`systemctl --user show -p Result -p MemoryPeak`); a failed
   scope stays until read, unless `--collect` is given, which tau does not. Then `reset-failed`.
 - **At start** tau lists `tau-cmd-*` and settles what a crash left: reads and resets the failed, stops the running.
+
+As built:
+
+- **The hook: durable's `shellPath`.** `NodeExecutionEnv({ cwd, shellPath })` spawns a string command as
+  `<shellPath> -c <command>` (argv, no quoting; the path must exist) with the environment the bash tool's `prepare`
+  set, and on stop or timeout kills the child's process group. So tau needs no change to durable: its shellPath is a
+  fixed wrapper (in `$XDG_RUNTIME_DIR/tau-commands/<slice>`, put back if a cleaner removes it), and `prepare` names the call's
+  scope in `TAU_CMD_*` variables, which the wrapper unsets. The wrapper execs `systemd-run --user --scope`, which
+  execs `/bin/sh` (oom_score_adj, the start mark), which execs `/bin/bash -c <command>`: one process throughout, so
+  the tool's pid, pipes and process group are the command's. Without the variables (a command that is not the bash
+  tool's) the wrapper refuses, exit 127.
+- **Names.** `<slice less .slice>-<conversation>-<call>.scope`: `tau-cmd-12-toolu_01….scope` for `tau-cmd.slice`. A call
+  ID's characters other than letters, digits, `_` and `-` are written `\xHH` (a script's nested call,
+  `tool:…:…/c1`, gives `tool\x3a…\x3a…\x2fc1`); past 240 characters the ID is hashed. `--command-slice <name>.slice`
+  names another slice, and so another prefix: tests and the reproduction use their own, and one server's start does
+  not settle another's scopes. systemd nests a slice by its dashes: `tau-cmd.slice` lives in `tau.slice`.
+- **`BindsTo=` and `After=`, not `PartOf=`**, measured on chorus with a throwaway `Restart=always` service: a
+  transient scope takes `PartOf=`, and the service's stop (or restart) stops it, but its crash does not: with the
+  main process killed, the scope stayed active through the automatic restart, an orphan (systemd propagates stop and
+  restart jobs, not a failure). With `BindsTo=` and `After=` the scope goes inactive as soon as the service does, a
+  crash included, and stays so after the restart; `After=` orders the scopes' stop before the service's. The settling
+  at start stays as a backstop. The unit is the server's own (its cgroup's last component) when it runs as a
+  `.service`; otherwise there is none.
+- **Systemd-run failing** (a masked slice, no user manager): the start mark the wrapper writes inside the scope is
+  missing, and the command fails with "The command did not start: systemd-run could not start its scope <unit>.",
+  systemd-run's own error in the output above it. Nothing runs outside a scope.
+- **Stop and timeout**: the scope is stopped on the call's abort signal and again when a call ends without an exit
+  code (stopped, timed out, failed in the tool), so `setsid`'s escapees go with it.
+- **Results** are read only for a nonzero exit; a scope whose processes all ended without failing is collected by
+  systemd at once. The scope's description is "tau command": systemd's default, the command line, would put every
+  command in the journal.
+- Cost: a `systemd-run` per command (about 3 ms) and, for a nonzero exit, a `systemctl show`.
 
 ### What the model reads
 
@@ -110,18 +148,45 @@ and without `OOMPolicy=continue`, where the server goes down with the command:
     [info] The tau server restarted while this command ran.
 ```
 
-**With scopes (step 5, not built)**, killed by the OOM killer:
+**With scopes (step 5, behind `--command-scopes`)**, killed by the OOM killer (`scripts/oom-repro.sh -s`):
 
 ```
 Killed by the out-of-memory killer (exit 137).
-Memory limit reached: 26 GB (tau-cmd.slice). This command's peak: 20 GB.
+Memory limit reached: 2.0 GiB (tau-oomtest-cmd.slice). This command's peak: 2.0 GiB.
 ```
 
-The limit named is the unit whose limit was reached (the command's own scope if it had one, else the slice). The
-structured output carries the same: `oomKilled`, `memoryLimit`, `memoryLimitUnit`, `memoryPeak`.
+The scope's `Result=oom-kill` says the OOM killer acted in it (a SIGKILL may reach the shell before systemd has read
+the memory events, so tau looks again for up to a second). The limit named is the slice's when the slice's own
+`memory.events.local` `oom` count rose while the command ran: its limit was reached, not a descendant's or the
+machine's. A scope's own `MemoryMax=` would be named instead (tau sets none). Neither: no limit is named, the peak
+only. When the OOM killer killed one of the command's processes but the shell exited otherwise: "The out-of-memory
+killer killed a process of this command." beside the exit code. The structured output carries the same:
+`oomKilled`, `oomKiller` (`kernel` or `systemd-oomd`), `memoryLimit` (bytes), `memoryLimitUnit`, `memoryPeak` (bytes).
+Then tau resets the scope's failed state.
 
-Interrupted by a restart: the call records `/proc/sys/kernel/random/boot_id` when it starts; if it differs after the
-restart,
+Killed by systemd-oomd instead (measured on chorus, systemd 259: a test slice with `ManagedOOMMemoryPressure=kill`,
+`ManagedOOMMemoryPressureLimit=10%`, `ManagedOOMMemoryPressureDurationSec=2s`, `MemoryHigh=200M`, no swap, and a
+hog touching 400 MB over and over; oomd killed it within 5 to 16 s, every run):
+
+```
+Killed by systemd-oomd (exit 137): memory pressure in tau-t2371361o-cmd.slice 30.69% > 10.00% for over 2s.
+This command's peak: 212 MiB.
+```
+
+systemd records an oomd kill as the kernel's, `Result=oom-kill`, and tells them apart only by count: `OOMKills=0`,
+`ManagedOOMKills=1` (systemd 255 has no `OOMKills`, Notes on hosts; where neither is shown tau says "Killed by an
+out-of-memory kill"; where only `ManagedOOMKills` is, a kill it does not count is said to be the kernel's). The slice's own
+`oom` count does not rise, as no limit was reached, so no limit is named. Why oomd killed, which watched cgroup's
+pressure over what limit for how long, is only in oomd's log line ("Killed <scope> due to memory pressure for <slice>
+being 31.99% > 10.00% for > 2s with reclaim activity"), which tau reads from the system journal (`journalctl
+_SYSTEMD_UNIT=systemd-oomd.service`, readable by the systemd-journal group, chorus's user included) and gives with the
+paths as unit names; without access to it, or for a line it does not know (oomd also kills for swap use), the first
+sentence ends at the exit code. The watched cgroup need not be the command's slice: an ancestor's limit
+(`user@UID.service` has Fedora's 80% for 20 s) may be the one passed.
+Sizes in binary units (GiB), as systemd's are.
+
+Interrupted by a restart (as designed; built per server run, above): the call records
+`/proc/sys/kernel/random/boot_id` when it starts; if it differs after the restart,
 
 ```
 The machine rebooted while this command ran (boot ID changed).
@@ -139,6 +204,14 @@ else that the tau server restarted while it ran.
   (`MemorySwapMax=`).
 - Hosts with no swap: `MemoryMax=` alone gives a prompt OOM kill inside the slice.
 - Page cache counts toward `memory.current` and is reclaimed before an OOM kill; judge a slice by its working set.
+
+As `tau setup` writes it (`~/.config/systemd/user/tau-cmd.slice`, once, then the user's): `MemoryMax=` MemTotal less a
+reserve of a tenth and at least 2 GiB (chorus: 27864M of 30960M), the policy in its comments; `MemorySwapMax=0` where
+`/proc/swaps` lists zram. Setup warns when the user has no linger or `user@UID.service`'s `cgroup.controllers` lacks
+`memory`; `tau status` shows the slice and whether the flags have `--command-scopes`. Fedora's
+`slice.d/10-oomd-per-slice-defaults.conf` gives every user slice, this one too, `ManagedOOMMemoryPressure=kill` at
+80%: systemd-oomd may kill a command's scope under memory pressure before the kernel does (what the model then reads:
+What the model reads).
 
 In a shared pool the kernel kills the process with the highest badness (mostly the largest), which need not be the one
 whose allocation crossed the limit. The message says which limit was reached and this command's peak, nothing more.
@@ -168,6 +241,12 @@ systemd-run --user --unit=bgjob-<id> --slice=agent-jobs.slice --collect \
   (`declare -px`, `cd`).
 - No terminal: progress bars and prompts change. Keep a `--tty` mode on tmux for the rare job that needs one.
 - Its directory moves off `/tmp` (on chorus a 16G tmpfs: logs there are memory).
+
+**Known issue while `--command-scopes` is on** (step 4 not built, bgjob unchanged): bgjob's tmux server lands in the
+scope of whichever call first starts it, and every later job of every conversation is forked into that scope. Stopping
+that call while it runs, or its timeout, stops the tmux server and all jobs; their memory, and an OOM kill among them,
+count to that call's scope (its peak, its `Result`); the scope lives as long as the tmux server does. A tmux server
+started before the flag was turned on stays in the server's cgroup, outside the slice.
 
 ## Reproduction
 
@@ -209,6 +288,32 @@ With `OOMPolicy=continue` (step 2, `scripts/oom-repro.sh -p OOMPolicy=continue`)
 
 Only python died; the other runs went on. The model reads an exit code, still nothing about memory.
 
+With commands in scopes (step 5, `scripts/oom-repro.sh -s`: the server with `--command-scopes --command-slice
+tau-oomtest-cmd.slice`, that slice limited to `MemoryMax=2G MemorySwapMax=0` at runtime, a neighbor chat's background
+`sleep` first), even with `OOMPolicy=stop`:
+
+```
+[driver] its tool result: pid 2358732
+0::/user.slice/user-1000.slice/user@1000.service/tau.slice/tau-oomtest.slice/tau-oomtest-cmd.slice/tau-oomtest-cmd-3-tool\x3a1793797171243\x3athmcd79jkks.scope
+[driver] server restarts seen by the driver: 0
+[driver] tool result (isError true):
+    [error] Killed by the out-of-memory killer (exit 137).
+    [error] Memory limit reached: 2.0 GiB (tau-oomtest-cmd.slice). This command's peak: 2.0 GiB.
+== the unit
+    ActiveState=active  NRestarts=0  OOMPolicy=stop  MemoryPeak=122642432
+== the server's own cgroup
+    oom_kill 0
+== the commands' scopes left
+    tau-oomtest-cmd-3-tool\x3a1793797171243\x3athmcd79jkks.scope ActiveState=active Result=success
+== their journal
+    tau-oomtest-cmd-19-tool\x3a…scope: The kernel OOM killer killed some processes in this unit.
+    tau-oomtest-cmd-19-tool\x3a…scope: Failed with result 'oom-kill'.
+    tau-oomtest-cmd-19-tool\x3a…scope: Consumed 281ms CPU time over 282ms wall clock time, 1.9G memory peak.
+```
+
+The server's cgroup saw no OOM kill and did not restart; the neighbor's scope and its `sleep` live on; the hog's scope
+failed alone, was read, and was reset.
+
 ## Order of work
 
 Each step ships and reverts alone.
@@ -221,7 +326,8 @@ Each step ships and reverts alone.
    the OOM kill count of the server's cgroup (What the model reads); `server/test/commands.test.ts`.
 4. **bgjob on transient services**, beside the old one until it has been used for a while.
 5. **Commands in scopes**, behind a flag, on chorus first; then the default, with `tau setup` installing the slice and
-   checking the user manager (linger, delegated memory controller).
+   checking the user manager (linger, delegated memory controller). Built behind `--command-scopes` (off by default),
+   before step 4 (the bgjob known issue); `tau setup` writes the slice and checks the user manager already.
 
 ## Not part of this
 
