@@ -18,6 +18,18 @@ curl -fsSL https://github.com/rumisle/tau/releases/latest/download/install.sh | 
 
 Installs a systemd user service and prints the address and token. Options: `~/.config/tau/flags`.
 
+Setup's options, at install (`| sh -s -- <options>`) or later (`tau setup <options>`, which changes only those):
+
+```bash
+curl -fsSL https://github.com/rumisle/tau/releases/latest/download/install.sh | sh -s -- --data /var/tmp/$USER/tau
+tau setup --command-memory 24G
+```
+
+- `--data DIR`: where the database is; it moves along with a later `--data`. It must be on a local filesystem: with the
+  default (`~/.local/share/tau`) on an NFS home, setup stops and says what to run instead.
+- `--command-memory SIZE`: the memory all the agents' commands share (`tau-cmd.slice`'s `MemoryMax=`).
+- `--command-scopes` (`--no-command-scopes`): each command in its own systemd scope, in that slice.
+
 Models use [pi](https://github.com/earendil-works/pi)'s logins (`pi`, then `/login`) or provider API keys in the
 shell environment.
 

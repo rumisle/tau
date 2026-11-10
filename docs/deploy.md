@@ -24,6 +24,28 @@ each in its own scope (`--command-scopes` in the flags, off by default; docs/com
 machine's memory less a reserve (a tenth, at least 2 GiB), and `MemorySwapMax=0` where swap is zram. It is written once
 and then yours to edit; setup keeps it, and warns when the user has no linger or the user manager has no memory
 controller. `tau status` shows the slice and whether the flags turn scopes on.
+
+`tau setup` takes options (and install.sh passes its own to it: `curl ... | sh -s -- --data /var/tmp/$USER/tau`); run
+again, it changes only what it is given, and keeps the token, the other flags, their lines and comments:
+
+- `--data DIR`: the data directory, absolute, in the flags (made, mode 700). When the data directory changes and only
+  the old one has a database, setup stops the service (the server closes the database, SQLite folds the WAL in), checks
+  nothing still has `tau.db` open, moves every `tau.*` there (the database, its `-wal`/`-shm`, the search index,
+  `tau.files`, `tau.boot`), then writes the flags and starts it. Both with a database: it refuses. A `--db` in the flags
+  it leaves to the user.
+- The data must be on a local filesystem: SQLite's WAL needs every user of the database on one host
+  (https://sqlite.org/wal.html). The server refuses to start on NFS, SMB/CIFS, Ceph, Lustre, AFS, 9p, GPFS, GlusterFS
+  and the like (statfs's magic; a FUSE mount by its subtype; Linux only) with that reason, and setup asks it first
+  (`tau-server.js --check-data`): with the data on one, the default directory on an NFS home included, setup changes
+  nothing, starts nothing, and prints the command to rerun with `--data /var/tmp/$USER/tau` (when that is local).
+- `--command-memory SIZE` (`32G`, `24000M`, `80%`, `infinity`): `MemoryMax=` in tau-cmd.slice, the rest of the file as it
+  is, a comment above it saying setup set it.
+- `--command-scopes`, `--no-command-scopes`: the flag in the flags.
+
+Each run rewrites the service unit, reloads systemd and restarts the server. `tau upgrade` and `tau rollback` do not
+run setup, so they change none of this. For a throwaway setup beside a real one: `TAU_LIB`, `TAU_CONFIG`, `TAU_BIN`,
+`TAU_UNIT`, `TAU_UNITS` (a units directory such as `$XDG_RUNTIME_DIR/systemd/user`, enabled until reboot only) and
+`TAU_COMMAND_SLICE` (written into the flags with `--command-scopes`), and flags with a `--data` and `--port` of its own.
 Model logins are the pi CLI's (`~/.pi/agent/auth.json`) or the
 providers' API keys. The repository is private for now: give `TAU_GITHUB_TOKEN` (or `GITHUB_TOKEN`) to download.
 

@@ -2,8 +2,13 @@
 # tau: runs, sets up, upgrades and rolls back a release of tau's server (docs/deploy.md). It ships in each release, so
 # ~/.local/bin/tau, a link to the current release's, upgrades with it.
 #
-#   tau setup              Linux: the token, ~/.config/tau/flags, the systemd user unit and tau-cmd.slice; started,
-#                          and kept from boot
+#   tau setup [options]    Linux: the token, ~/.config/tau/flags, the systemd user unit and tau-cmd.slice; started,
+#                          and kept from boot. Run again to change the options below, nothing else:
+#     --data DIR             the data directory (the database), written into flags; a database in the old one is
+#                            moved there with the server stopped. It must be local: on a network filesystem (NFS,
+#                            SMB, ...) setup stops before it starts the server, the default directory included.
+#     --command-memory SIZE  MemoryMax= of tau-cmd.slice, the pool of the agents' commands (32G, 24000M, 80%)
+#     --command-scopes       each command in its own scope (written into flags); --no-command-scopes takes it out
 #   tau serve [args]       the server with ~/.config/tau/flags, then args (what the unit runs)
 #   tau status             the running version, the one to roll back to, the service, the commands' slice
 #   tau upgrade [version]  installs the latest release (or that one), checks it starts, switches, restarts; if the
@@ -11,6 +16,8 @@
 #   tau rollback           back to the version before
 #   tau gc                 removes every version but the current and the one before (upgrade does it)
 #   tau version
+#
+# install.sh passes its arguments to tau setup: curl -fsSL .../install.sh | sh -s -- --data /var/tmp/$USER/tau
 #
 # Layout: ~/.local/lib/tau/versions/<version>, `current` and `previous` links to two of them. The data stays in
 # ~/.local/share/tau, the settings in ~/.config/tau; a version is only code, replaced freely. Releases come from
@@ -23,6 +30,10 @@ unit="${TAU_UNIT:-tau-server}"
 repo="${TAU_REPO:-rumisle/tau}"
 bin="${TAU_BIN:-$HOME/.local/bin}"
 self="$lib/current/bin/tau"
+# Where setup writes the units; the user manager's own directory. Another of its search path (such as
+# $XDG_RUNTIME_DIR/systemd/user) for a throwaway setup, with TAU_UNIT and TAU_COMMAND_SLICE, so that it touches no
+# one else's.
+units="${TAU_UNITS:-${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user}"
 
 say() { printf '%s\n' "$*" >&2; }
 die() { say "tau: $*"; exit 1; }
@@ -171,7 +182,7 @@ gc() {
 	done
 }
 
-cmd_slice="tau-cmd.slice"
+cmd_slice="${TAU_COMMAND_SLICE:-tau-cmd.slice}"
 
 # The slice of the agents' commands when the server runs them in scopes (--command-scopes,
 # docs/command-isolation.md): written once, then the user's to edit; setup keeps an existing one.
@@ -216,17 +227,146 @@ check_user_manager() {
 		say "warning: the memory controller is not delegated to the user manager ($controllers): $cmd_slice's MemoryMax= has no effect"
 }
 
+# The flags file's words into the array `flags`: shell words, a line or several; # starts a comment.
+read_flags() { # file
+	flags=()
+	if [ -f "$1" ]; then eval "flags=($(sed 's/#.*//' "$1" | tr '\n' ' '))"; fi
+}
+
 serve() {
 	need_node
-	local flags=()
-	if [ -f "$config/flags" ]; then
-		# Shell words, a line or several; # starts a comment.
-		eval "flags=($(sed 's/#.*//' "$config/flags" | tr '\n' ' '))"
-	fi
+	read_flags "$config/flags"
 	exec node --no-warnings "$lib/current/tau-server.js" ${flags[@]+"${flags[@]}"} "$@"
 }
 
+# The server's own answer for a flags file: the database's path on stdout, and its status (2: on a network
+# filesystem, the reason on stderr). One list of filesystems, the server's (server/src/localfs.ts).
+check_data() { # flags-file [more args]
+	local file="$1"
+	shift
+	read_flags "$file"
+	node --no-warnings "$lib/current/tau-server.js" ${flags[@]+"${flags[@]}"} "$@" --check-data
+}
+
+# Edits a flags file in place for the options setup manages, and only those: every occurrence of each option named
+# is taken out of its line (an option with a value takes the next word, or its =value), a line left with no words and
+# no comment goes, and the words to add are appended on a line of their own. Other words, lines and comments stay.
+#   edit_flags FILE [-v name]... [-b name]... [-- word...]   -v an option with a value, -b one without
+edit_flags() {
+	node -e '
+const fs = require("node:fs");
+const [file, ...args] = process.argv.slice(1);
+const valued = new Set(), bare = new Set(), add = [];
+for (let i = 0; i < args.length; i++) {
+	if (args[i] === "-v") valued.add(args[++i]);
+	else if (args[i] === "-b") bare.add(args[++i]);
+	else if (args[i] === "--") { add.push(...args.slice(i + 1)); break; }
+}
+// Words as tau serve reads them: split at blanks outside quotes, a # anywhere starting a comment.
+function words(line) {
+	const out = [];
+	let i = 0;
+	while (i < line.length && line[i] !== "#") {
+		if (/\s/.test(line[i])) { i++; continue; }
+		const start = i;
+		let value = "";
+		while (i < line.length && !/\s/.test(line[i]) && line[i] !== "#") {
+			const c = line[i];
+			if (c === "\x27") { const end = line.indexOf("\x27", i + 1); value += line.slice(i + 1, end < 0 ? line.length : end); i = end < 0 ? line.length : end + 1; }
+			else if (c === "\x22") { i++; while (i < line.length && line[i] !== "\x22") { if (line[i] === "\\" && i + 1 < line.length) i++; value += line[i++]; } i++; }
+			else if (c === "\\" && i + 1 < line.length) { value += line[i + 1]; i += 2; }
+			else { value += c; i++; }
+		}
+		out.push({ start, end: i, value });
+	}
+	return out;
+}
+const lines = fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n") : [];
+if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+const all = lines.flatMap((line, n) => words(line).map((word) => ({ ...word, n })));
+const drop = new Set();
+for (let k = 0; k < all.length; k++) {
+	const { value } = all[k];
+	const name = value.split("=")[0];
+	if (bare.has(value)) drop.add(k);
+	else if (valued.has(value)) { drop.add(k); if (k + 1 < all.length) drop.add(++k); }
+	else if (value.includes("=") && valued.has(name)) drop.add(k);
+}
+const out = [];
+lines.forEach((line, n) => {
+	const mine = all.map((word, k) => ({ ...word, k })).filter((word) => word.n === n);
+	if (!mine.some((word) => drop.has(word.k))) return out.push(line);
+	let text = line;
+	for (const word of mine.filter((word) => drop.has(word.k)).reverse()) text = text.slice(0, word.start) + text.slice(word.end);
+	text = text.replace(/[ \t]+(?=[ \t])/g, "").replace(/^[ \t]+|[ \t]+$/g, "");
+	if (text !== "") out.push(text);
+});
+const quote = (word) => (/^[A-Za-z0-9_.\/~:@%+=,-]+$/.test(word) ? word : "\x27" + word.replace(/\x27/g, "\x27\\\x27\x27") + "\x27");
+if (add.length > 0) out.push(add.map(quote).join(" "));
+fs.writeFileSync(file, out.map((line) => line + "\n").join(""));
+' "$@"
+}
+
+# A size systemd's MemoryMax= takes, as setup accepts it: bytes with K, M, G or T (1024-based), a percentage of the
+# machine's memory, or infinity.
+valid_memory() { # size
+	[[ "$1" =~ ^[1-9][0-9]*(\.[0-9]+)?[KMGT]?$ ]] || [[ "$1" =~ ^([1-9][0-9]?|100)%$ ]] || [ "$1" = infinity ]
+}
+
+# MemoryMax= of the slice file set to `size`, the rest of the file as it is; a comment above it says who set it.
+set_command_memory() { # file size
+	local file="$1" size="$2"
+	awk -v size="$size" '
+		/^# Set by tau setup --command-memory/ { next }
+		/^MemoryMax=/ && !done { print "# Set by tau setup --command-memory " size "."; print "MemoryMax=" size; done = 1; next }
+		{ print }
+		/^\[Slice\]/ { slice = 1 }
+		END { if (!done) exit 1 }
+	' "$file" >"$file.new" || { rm -f "$file.new"; die "$file has no MemoryMax= line to set: add one under [Slice]"; }
+	mv "$file.new" "$file"
+	local total bytes
+	total=$(awk '/^MemTotal:/ { print $2 * 1024 }' /proc/meminfo)
+	bytes=$(awk -v s="$size" 'BEGIN { n = s + 0; u = substr(s, length(s)); m = u == "K" ? 1024 : u == "M" ? 1048576 : u == "G" ? 1073741824 : u == "T" ? 1099511627776 : 1; if (s ~ /%$|infinity/) n = 0; printf "%d", n * m }')
+	[ "$bytes" -gt "$total" ] && say "warning: --command-memory $size is more than this machine's memory ($((total / 1073741824)) GiB)"
+	say "set MemoryMax=$size in $file"
+}
+
+# The processes of this user that have `file` open.
+holders() { # file
+	local fd
+	for fd in /proc/[0-9]*/fd/*; do
+		if [ "$(readlink "$fd" 2>/dev/null)" = "$1" ]; then echo "${fd#/proc/}" | cut -d/ -f1; fi
+	done | sort -u | tr '\n' ' '
+	return 0
+}
+
+setup_help() {
+	sed -n '/^#   tau setup/,/^#   tau serve/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2
+}
+
 setup() {
+	local data="" memory="" scopes="" arg
+	local given=("$@")
+	while [ $# -gt 0 ]; do
+		arg="$1"
+		shift
+		case "$arg" in
+		--data) [ $# -gt 0 ] || die "--data needs a directory"; data="$1"; shift ;;
+		--data=*) data="${arg#--data=}" ;;
+		--command-memory) [ $# -gt 0 ] || die "--command-memory needs a size"; memory="$1"; shift ;;
+		--command-memory=*) memory="${arg#--command-memory=}" ;;
+		--command-scopes) scopes=on ;;
+		--no-command-scopes) scopes=off ;;
+		-h | --help) setup_help; return 0 ;;
+		*) setup_help; die "setup: unknown option $arg" ;;
+		esac
+	done
+	if [ -n "$data" ]; then
+		[ "$data" = "~" ] && data="$HOME"
+		[[ "$data" == "~/"* ]] && data="$HOME/${data#\~/}"
+		data="$(realpath -m -- "$data")"
+	fi
+	[ -z "$memory" ] || valid_memory "$memory" || die "--command-memory $memory: give bytes with K, M, G or T (32G, 24000M), a percentage (80%), or infinity"
 	[ "$(uname -s)" = Linux ] || die "tau setup is for Linux (systemd) for now"
 	command -v systemctl >/dev/null || die "no systemctl: tau setup needs systemd"
 	need_node
@@ -248,7 +388,57 @@ setup() {
 FLAGS
 		say "wrote $config/flags"
 	fi
-	local units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user" shell="${SHELL:-/bin/bash}"
+
+	# The flags as they will be, in a copy until the data is where they say.
+	local next="$config/flags.setup"
+	cp "$config/flags" "$next"
+	setup_next="$next"
+	trap 'rm -f "$setup_next"' EXIT
+	if [ -n "$data" ]; then edit_flags "$next" -v --data -- --data "$data"; fi
+	if [ "$scopes" = on ]; then
+		local words=(--command-scopes)
+		[ "$cmd_slice" = tau-cmd.slice ] || words+=(--command-slice "$cmd_slice")
+		edit_flags "$next" -b --command-scopes -v --command-slice -- "${words[@]}"
+	fi
+	if [ "$scopes" = off ]; then edit_flags "$next" -b --command-scopes -v --command-slice; fi
+
+	# The database where the flags say, on a local filesystem, before anything starts.
+	local old_db new_db status=0 reason
+	old_db="$(check_data "$config/flags" 2>/dev/null)" || true
+	reason="$(check_data "$next" 2>&1 >/dev/null)" || status=$?
+	new_db="$(check_data "$next" 2>/dev/null)" || true
+	if [ "$status" = 2 ]; then
+		say "tau: $reason"
+		# The same setup again, with a local directory in place of --data's.
+		local suggested="/var/tmp/$USER/tau" rerun=() skip=""
+		for arg in ${given[@]+"${given[@]}"}; do
+			if [ -n "$skip" ]; then skip=""; continue; fi
+			case "$arg" in --data) skip=1 ;; --data=*) ;; *) rerun+=("$arg") ;; esac
+		done
+		edit_flags "$next" -v --data -- --data "$suggested"
+		check_data "$next" >/dev/null 2>&1 || suggested=""
+		if [ -n "$suggested" ]; then
+			say "Nothing changed, and the server was not started or restarted. Run setup again with a local data directory, such as:"
+			say "  $bin/tau setup --data $suggested${rerun[@]+$(printf ' %q' "${rerun[@]}")}"
+		else
+			say "Nothing changed, and the server was not started or restarted. Run setup again with --data and a local directory."
+		fi
+		exit 1
+	fi
+	[ "$status" = 0 ] || die "the server does not take these flags: $reason"
+
+	# A new data directory: the database moves along when only the old one has one.
+	local move=""
+	if [ -n "$old_db" ] && [ "$new_db" != "$old_db" ] && [ -e "$old_db" ]; then
+		[ "$(basename "$old_db")" = tau.db ] || die "the database is $old_db (--db in $config/flags): move it yourself, or take --db out"
+		[ -e "$new_db" ] && die "both $old_db and $new_db exist: tau will not choose between two databases. Move one away, then run setup again."
+		move=1
+	fi
+	if [ -n "$data" ]; then
+		mkdir -p "$data" && chmod 700 "$data"
+	fi
+
+	local shell="${SHELL:-/bin/bash}"
 	mkdir -p "$units"
 	# Through a login, interactive shell, so the server and every command its agents run have a terminal's
 	# environment (API keys set in the shell's startup files), less systemd's own variables.
@@ -273,9 +463,29 @@ OOMPolicy=continue
 WantedBy=default.target
 UNIT
 	write_cmd_slice "$units"
+	[ -z "$memory" ] || set_command_memory "$units/$cmd_slice" "$memory"
 	mkdir -p "$bin" && ln -sfn "$self" "$bin/tau"
+	if [ -n "$move" ]; then
+		local from to
+		from="$(dirname "$old_db")"
+		to="$(dirname "$new_db")"
+		# A clean stop first: the server closes the database (and SQLite folds its WAL in) as it stops.
+		systemctl --user stop "$unit" 2>/dev/null || true
+		local open
+		open="$(holders "$old_db")"
+		[ -z "$open" ] || die "$old_db is still open (processes $open): stop them, then run setup again ($unit is stopped)"
+		for file in "$from"/tau.*; do
+			[ -e "$file" ] || continue
+			mv -n -- "$file" "$to/" || die "could not move $file to $to: the rest is still in $from"
+		done
+		say "moved the data from $from to $to"
+	fi
+	cmp -s "$next" "$config/flags" || { mv "$next" "$config/flags"; say "updated $config/flags"; }
 	systemctl --user daemon-reload
-	systemctl --user enable --now "$unit" >/dev/null 2>&1
+	# Units in the runtime directory (a throwaway setup) are enabled until reboot only.
+	local runtime=()
+	[[ "$units" == "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/"* ]] && runtime=(--runtime)
+	systemctl --user enable ${runtime[@]+"${runtime[@]}"} "$unit" >/dev/null 2>&1
 	systemctl --user restart "$unit"
 	loginctl enable-linger "$USER" 2>/dev/null || say "could not keep it running after logout: sudo loginctl enable-linger $USER"
 	check_user_manager
@@ -296,7 +506,7 @@ command="${1:-}"
 [ $# -gt 0 ] && shift
 case "$command" in
 serve) serve "$@" ;;
-setup) setup ;;
+setup) setup "$@" ;;
 upgrade)
 	need_node
 	version="${1:-$(latest_version)}"
@@ -310,12 +520,16 @@ rollback)
 	activate "$previous"
 	;;
 _switch) switch "$1" ;;
+# setup's pieces on their own, for its tests (server/test/setup-script.test.ts).
+_edit-flags) edit_flags "$@" ;;
+_set-command-memory) valid_memory "$2" || die "not a size: $2"; set_command_memory "$@" ;;
 gc) gc ;;
 status)
 	say "current   ${current:-$(current_version)}"
 	say "previous  $(previous_version)"
 	say "installed $(ls "$lib/versions" 2>/dev/null | tr '\n' ' ')"
 	has_unit && say "service   $(systemctl --user is-active "$unit")" || say "service   none ($unit)"
+	[ -n "$(current_version)" ] && command -v node >/dev/null && say "data      $(check_data "$config/flags" 2>&1 | tr '\n' ' ')"
 	# Every slice loads (a distribution's slice.d drop-ins), so the test is for a file of its own.
 	if command -v systemctl >/dev/null && [ -n "$(systemctl --user show "$cmd_slice" -p FragmentPath --value 2>/dev/null)" ]; then
 		scopes="not in scopes"
@@ -326,5 +540,5 @@ status)
 	fi
 	;;
 version | --version) current_version ;;
-*) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
+*) sed -n '2,/^# Layout/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
 esac

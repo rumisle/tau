@@ -208,6 +208,7 @@ else that the tau server restarted while it ran.
 - Hosts with no swap: `MemoryMax=` alone gives a prompt OOM kill inside the slice.
 - Page cache counts toward `memory.current` and is reclaimed before an OOM kill; judge a slice by its working set.
 
+`tau setup --command-memory SIZE` sets its `MemoryMax=` later, the rest of the file kept (docs/deploy.md).
 As `tau setup` writes it (`~/.config/systemd/user/tau-cmd.slice`, once, then the user's): `MemoryMax=` MemTotal less a
 reserve of a tenth and at least 2 GiB (chorus: 27864M of 30960M), the policy in its comments; `MemorySwapMax=0` where
 `/proc/swaps` lists zram. Setup warns when the user has no linger or `user@UID.service`'s `cgroup.controllers` lacks
@@ -353,5 +354,6 @@ Each step ships and reverts alone.
   Kubernetes node running storage daemons, so a runaway command endangers the cluster, not only the user; no swap,
   overcommit on, home on NFS (hard mounts). tau's database must be on local disk: SQLite's WAL needs shared memory and
   every user of the file on one host, which NFS does not give; `/var/tmp` is local and not cleaned there, `/tmp` is
-  emptied at boot. Transient scopes and services work for the user without root; the CPU controller is not enabled
-  below `app.slice`.
+  emptied at boot (the server refuses a data directory on NFS and `tau setup` stops before starting it there:
+  `tau setup --data /var/tmp/$USER/tau`, docs/deploy.md). Transient scopes and services work for the user without
+  root; the CPU controller is not enabled below `app.slice`.

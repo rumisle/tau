@@ -2,6 +2,7 @@
 # Installs tau's server on Linux (docs/deploy.md): the latest release in ~/.local/lib/tau, `tau` in ~/.local/bin, and
 # the systemd user service, started.
 #   curl -fsSL https://github.com/rumisle/tau/releases/latest/download/install.sh | sh
+#   ... | sh -s -- --data /var/tmp/$USER/tau --command-memory 32G --command-scopes   (tau setup's options, scripts/tau)
 # Needs Node 22.18 or later, curl, tar, and systemd. TAU_REPO, TAU_GITHUB_TOKEN as for tau (scripts/tau).
 set -eu
 repo="${TAU_REPO:-rumisle/tau}"
@@ -31,5 +32,5 @@ else
 	curl -fsSL "https://github.com/$repo/releases/download/$tag/tau-server-$version.tar.gz" | tar -xz -C "$work"
 fi
 "$work/tau-server-$version/bin/tau" upgrade "$version"
-"${TAU_BIN:-$HOME/.local/bin}/tau" setup
+"${TAU_BIN:-$HOME/.local/bin}/tau" setup "$@"
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "Add ~/.local/bin to your PATH to run tau." ;; esac
