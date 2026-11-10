@@ -6,6 +6,8 @@
 //   [--push-relay url --push-relay-token-file path]
 //   [--command-scopes [--command-slice name.slice]] (each bash command in its own systemd scope, in tau-cmd.slice or the
 //   slice named: src/scopes.ts, docs/command-isolation.md; off by default)
+//   [--check-data] (prints the database's path, then makes the check every start makes, the data on a local
+//   filesystem (src/localfs.ts), and exits: 2 with the reason when it fails; `tau setup` asks it before it starts)
 // Clients must give the server's token (`Authorization: Bearer <token>`) when it has one: TAU_TOKEN, or else the
 // --token-file's (by convention ~/.config/tau/token), which must be readable by its owner only. Without one the server
 // listens on loopback only, unless --no-auth: anyone who reaches it can run commands as this user.
@@ -16,12 +18,13 @@
 // ~/.local/share/tau, which only its owner may enter; --db names a database file instead, as the tests do.
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { FileCredentialStore } from "./credentials.ts";
 import { DEV_MODEL } from "./dev-model.ts";
 import { directory } from "./fs.ts";
 import { openHost } from "./host.ts";
+import { storageRefusal } from "./localfs.ts";
 import { Apns } from "./apns.ts";
 import { PushRelay } from "./relay.ts";
 import { serve } from "./server.ts";
@@ -46,6 +49,7 @@ const { values } = parseArgs({
 		"push-relay-token-file": { type: "string" },
 		"command-scopes": { type: "boolean", default: false },
 		"command-slice": { type: "string" },
+		"check-data": { type: "boolean", default: false },
 		version: { type: "boolean", default: false },
 	},
 });
@@ -58,6 +62,19 @@ if (values.version) {
 if (values["command-slice"] !== undefined && !values["command-scopes"]) {
 	console.error("--command-slice names the slice of --command-scopes, which is off.");
 	process.exit(1);
+}
+
+if (values["check-data"]) {
+	// Before anything is made: the database's path, and then why it cannot be there, if so (exit 2).
+	if (values.memory) {
+		console.log("memory");
+		process.exit(0);
+	}
+	const path = databasePath({ make: false, refuse: false });
+	console.log(path);
+	const refusal = storageRefusal(dirname(path), values.db === undefined ? "--data" : "--db");
+	if (refusal !== undefined) console.error(refusal);
+	process.exit(refusal === undefined ? 0 : 2);
 }
 
 const token = readToken();
@@ -112,15 +129,30 @@ const stop = async (): Promise<void> => {
 process.on("SIGINT", () => void stop());
 process.on("SIGTERM", () => void stop());
 
-/** --db's file, or tau.db in the data directory, made (only its owner may enter it, whatever the umask) if need be. */
-function databasePath(): string {
+/**
+ * --db's file, or tau.db in the data directory, made (only its owner may enter it, whatever the umask) if need be and
+ * `make`. Refuses, and exits, when it is on a network filesystem.
+ */
+function databasePath({ make = true, refuse: check = true }: { make?: boolean; refuse?: boolean } = {}): string {
 	if (values.db !== undefined && values.data !== undefined) {
 		console.error("--db and --data both name the database: give one");
 		process.exit(1);
 	}
-	if (values.db !== undefined) return resolve(expandHome(values.db));
+	const refuse = (dir: string, option: "--data" | "--db") => {
+		const refusal = check ? storageRefusal(dir, option) : undefined;
+		if (refusal === undefined) return;
+		console.error(refusal);
+		process.exit(2);
+	};
+	if (values.db !== undefined) {
+		const file = resolve(expandHome(values.db));
+		refuse(dirname(file), "--db");
+		return file;
+	}
 	const given = values.data ?? join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "tau");
 	const dir = resolve(expandHome(given));
+	refuse(dir, "--data");
+	if (!make) return join(dir, "tau.db");
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	// Not the umask: the agents' commands inherit it, and the files they make in the user's projects must not change.
 	if ((statSync(dir).mode & 0o077) !== 0) chmodSync(dir, 0o700);
