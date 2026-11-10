@@ -43,6 +43,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/files.md` | Files: kept beside the database, named to the model by path, sent back with `send_file`, shown as Telegram's documents |
 | `docs/search.md` | Search: the index each server keeps as entries are written (`server/src/search`), matching and ranking, and the benchmark |
 | `docs/history.md` | history_search and history_read: an agent searches and reads the server's chats by tau link, its own past compaction, its subagents', its owner's; tool calls and output in the index; the cards |
+| `docs/later.md` | Laters (design, not built): something a conversation puts off, picked up on its own thread when its time comes, a short card in the original |
 | `docs/command-isolation.md` | Design notes, not built: the agents' commands in systemd scopes under a slice, the server surviving their OOM kills, what the model reads, bgjob first, and the order of work |
 | `docs/reading-position.md` | Where a chat opens (the scroll memory without its end case, unseen content revealed), seen as on screen, turns, the status bar to the previous turn, Telegram's return stack for the down button |
 | `docs/links.md` | tau's links to chats and messages: copying, opening, the cards they show |
