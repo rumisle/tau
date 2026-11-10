@@ -6,7 +6,7 @@ servers. What is shared (text, a link, up to ten photos, up to ten files) shows 
 chat picked, with a count on the button when it is more than one.
 
 - **New Chat** starts a chat on the server of the latest chat, or one picked while there are several ("New chat on
-  nest ▾"), titled by the server after its first answer.
+  my-mac ▾"), titled by the server after its first answer.
 - **A chat whose agent is working** gets the share as a follow-up: something shared should not turn a run aside.
 - **It sends itself**: its own WebSocket to each server (`hello`, `conversation.create`, `conversation.submit`), without
   the app. What it cannot send (the server out of reach) it leaves for the app, which sends it through its outbox the

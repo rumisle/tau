@@ -4,8 +4,8 @@ Where the discussion of the agents' commands, memory and the server got to, so i
 over. Built: the reproduction (`scripts/oom-repro.sh`), `OOMPolicy=continue` in the unit `tau setup` writes, and what
 the model reads of a command killed by a signal, an OOM kill in the server's cgroup, and a restart
 (`server/src/commands.ts`); and, behind `--command-scopes` (off by default), each command in its own scope
-(`server/src/scopes.ts`) with the slice `tau setup` writes. bgjob is not changed. See Order of work. The research behind it (sources, file and line references, measurements on chorus)
-is kept outside the repository, in `~/research/isolation-research.md` on chorus.
+(`server/src/scopes.ts`) with the slice `tau setup` writes. bgjob is not changed. See Order of work. The research behind it (sources, file and line references, measurements on the development machine)
+is kept outside the repository.
 
 ## The problem
 
@@ -19,10 +19,10 @@ server, in the server's cgroup, with no limit. One command that eats the machine
   run", or "exited with code 137" if only the command died, and the natural next step is to run it as it was.
   durable ends this after `settings.restartLimit` (5) crashes, so a machine can go down about five times.
 
-**Evidence.** A comparable agent server on a large shared machine (a systemd user service, agents' jobs in its cgroup,
-`OOMPolicy=stop`, `MemoryMax=1200G`) hit its limit, had 77 kernel OOM kills and restarted 49 times, 35 of them in one
-half hour, each run peaking at 1.1T. On chorus the freezes are **not** shown to come from tau's commands: the journal
-has no OOM kill, and the last one came while idle. The first step below is to find out.
+**Evidence.** An agent server run this way (a systemd user service, agents' jobs in its cgroup, `OOMPolicy=stop`) is
+restarted by every OOM kill of a job, and with automatic continuation can restart many times in a short while. On the
+development machine the freezes are **not** shown to come from tau's commands: the journal has no OOM kill, and the
+last one came while idle. The first step below is to find out.
 
 ## Principles
 
@@ -46,7 +46,7 @@ has no OOM kill, and the last one came while idle. The first step below is to fi
 
 - `OOMPolicy=continue`: a command killed for memory does not stop the server.
 - The server cannot lower its own OOM score without privileges; the commands raise theirs to 500, so the kernel
-  prefers them. Measured on chorus (systemd 259): a transient scope does not take `OOMScoreAdjust=` ("Unknown
+  prefers them. Measured on the development machine (systemd 259): a transient scope does not take `OOMScoreAdjust=` ("Unknown
   assignment"; it is an exec setting, and a scope execs nothing), so the wrapper writes `/proc/self/oom_score_adj`
   before it execs bash, which raising needs no privilege for; every process of the command inherits it.
 
@@ -63,7 +63,7 @@ systemd-run --user --scope --quiet --unit=tau-cmd-<conversation>-<call> --slice=
 
 as an argument list, with no shell quoting (as built, without `OOMScoreAdjust=`, which a scope does not take: As
 built, below). A scope inherits the caller's environment, working directory, standard
-streams and process group, so the tool's pipes and its `kill(-pid)` keep working. Measured on chorus: about 3 ms per
+streams and process group, so the tool's pipes and its `kill(-pid)` keep working. Measured on the development machine: about 3 ms per
 command.
 
 - **Lifetime, as now.** A command's background processes keep running after it returns (`npm run dev &` and a later
@@ -72,7 +72,7 @@ command.
   including those that left the group (`setsid`, `nohup`, daemons). Other calls and conversations are untouched.
 - **The server stopping** stops the scopes (`PartOf=`; as built `BindsTo=`, below), as stopping the service kills its cgroup now. Commands do not
   outlive the server: after a restart durable has settled their calls as interrupted and nothing would read them.
-  Verified on chorus: a transient scope takes `PartOf=`, which misses a crash (As built, below).
+  Verified on the development machine: a transient scope takes `PartOf=`, which misses a crash (As built, below).
 - **Results.** When the command ends, tau reads the scope (`systemctl --user show -p Result -p MemoryPeak`); a failed
   scope stays until read, unless `--collect` is given, which tau does not. Then `reset-failed`.
 - **At start** tau lists `tau-cmd-*` and settles what a crash left: reads and resets the failed, stops the running.
@@ -95,7 +95,7 @@ As built:
   `tool:…:…/c1`, gives `tool\x3a…\x3a…\x2fc1`); past 240 characters the ID is hashed. `--command-slice <name>.slice`
   names another slice, and so another prefix: tests and the reproduction use their own, and one server's start does
   not settle another's scopes. systemd nests a slice by its dashes: `tau-cmd.slice` lives in `tau.slice`.
-- **`BindsTo=` and `After=`, not `PartOf=`**, measured on chorus with a throwaway `Restart=always` service: a
+- **`BindsTo=` and `After=`, not `PartOf=`**, measured on the development machine with a throwaway `Restart=always` service: a
   transient scope takes `PartOf=`, and the service's stop (or restart) stops it, but its crash does not: with the
   main process killed, the scope stayed active through the automatic restart, an orphan (systemd propagates stop and
   restart jobs, not a failure). With `BindsTo=` and `After=` the scope goes inactive as soon as the service does, a
@@ -167,7 +167,7 @@ killer killed a process of this command." beside the exit code. The structured o
 `oomKilled`, `oomKiller` (`kernel` or `systemd-oomd`), `memoryLimit` (bytes), `memoryLimitUnit`, `memoryPeak` (bytes).
 Then tau resets the scope's failed state.
 
-Killed by systemd-oomd instead (measured on chorus, systemd 259: a test slice with `ManagedOOMMemoryPressure=kill`,
+Killed by systemd-oomd instead (measured on the development machine, systemd 259: a test slice with `ManagedOOMMemoryPressure=kill`,
 `ManagedOOMMemoryPressureLimit=10%`, `ManagedOOMMemoryPressureDurationSec=2s`, `MemoryHigh=200M`, no swap, and a
 hog touching 400 MB over and over; oomd killed it within 5 to 16 s, every run):
 
@@ -182,7 +182,7 @@ out-of-memory kill"; where only `ManagedOOMKills` is, a kill it does not count i
 `oom` count does not rise, as no limit was reached, so no limit is named. Why oomd killed, which watched cgroup's
 pressure over what limit for how long, is only in oomd's log line ("Killed <scope> due to memory pressure for <slice>
 being 31.99% > 10.00% for > 2s with reclaim activity"), which tau reads from the system journal (`journalctl
-_SYSTEMD_UNIT=systemd-oomd.service`, readable by the systemd-journal group, chorus's user included) and gives with the
+_SYSTEMD_UNIT=systemd-oomd.service`, readable by the systemd-journal group, the user included) and gives with the
 paths as unit names; without access to it, or for a line it does not know (oomd also kills for swap use), the first
 sentence ends at the exit code. The watched cgroup need not be the command's slice: an ancestor's limit
 (`user@UID.service` has Fedora's 80% for 20 s) may be the one passed.
@@ -203,14 +203,14 @@ else that the tau server restarted while it ran.
 
 - `MemoryMax=`: the pool all commands share, the machine's memory less a reserve for the host and the server. One
   command may use the whole pool; there is no per-command limit by default (a large build may need it all).
-- Hosts with zram swap (chorus): zram's compressed memory is charged to no cgroup, so the pool's swap is bounded too
+- Hosts with zram swap: zram's compressed memory is charged to no cgroup, so the pool's swap is bounded too
   (`MemorySwapMax=`).
 - Hosts with no swap: `MemoryMax=` alone gives a prompt OOM kill inside the slice.
 - Page cache counts toward `memory.current` and is reclaimed before an OOM kill; judge a slice by its working set.
 
 `tau setup --command-memory SIZE` sets its `MemoryMax=` later, the rest of the file kept (docs/deploy.md).
 As `tau setup` writes it (`~/.config/systemd/user/tau-cmd.slice`, once, then the user's): `MemoryMax=` MemTotal less a
-reserve of a tenth and at least 2 GiB (chorus: 27864M of 30960M), the policy in its comments; `MemorySwapMax=0` where
+reserve of a tenth and at least 2 GiB (27864M of 30960M on the development machine), the policy in its comments; `MemorySwapMax=0` where
 `/proc/swaps` lists zram. Setup warns when the user has no linger or `user@UID.service`'s `cgroup.controllers` lacks
 `memory`; `tau status` shows the slice and whether the flags have `--command-scopes`. Fedora's
 `slice.d/10-oomd-per-slice-defaults.conf` gives every user slice, this one too, `ManagedOOMMemoryPressure=kill` at
@@ -244,7 +244,7 @@ systemd-run --user --unit=bgjob-<id> --slice=agent-jobs.slice --collect \
 - A transient service does not inherit the caller's environment or directory: `start` writes them into `run`
   (`declare -px`, `cd`).
 - No terminal: progress bars and prompts change. Keep a `--tty` mode on tmux for the rare job that needs one.
-- Its directory moves off `/tmp` (on chorus a 16G tmpfs: logs there are memory).
+- Its directory moves off `/tmp` (on the development machine a 16G tmpfs: logs there are memory).
 
 **Known issue while `--command-scopes` is on** (step 4 not built, bgjob unchanged): bgjob's tmux server lands in the
 scope of whichever call first starts it, and every later job of every conversation is forked into that scope. Stopping
@@ -257,7 +257,7 @@ started before the flag was turned on stays in the server's cgroup, outside the 
 `scripts/oom-repro.sh [-p Property=Value ...]` (step 1) runs a dev tau server in a transient user unit as
 tau-server.service runs (`MemoryMax=2G`, `MemorySwapMax=0`, `Restart=always`, `RestartSec=2`, and the properties
 given), has a chat on the dev model run `python3 -c 'a = bytearray(3 << 30)'`, and prints what the model got back, the
-unit's state and its journal; then stops the unit and resets that unit's failed state. On chorus, today
+unit's state and its journal; then stops the unit and resets that unit's failed state. On the development machine, today
 (`OOMPolicy=stop`, systemd's default):
 
 ```
@@ -322,14 +322,14 @@ failed alone, was read, and was reset.
 
 Each step ships and reverts alone.
 
-1. **Reproduce** (built: `scripts/oom-repro.sh`, Reproduction). On chorus, a dev tau server inside a transient unit with a small `MemoryMax`, an agent running a
+1. **Reproduce** (built: `scripts/oom-repro.sh`, Reproduction). On the development machine, a dev tau server inside a transient unit with a small `MemoryMax`, an agent running a
    memory hog: record what the server, the unit and the model see today. The same script checks every later step.
 2. **`OOMPolicy=continue`** in the unit `tau setup` writes (and in the other servers' units). Built: `scripts/tau`,
    `server/contrib/tau-server.service`; the servers set up before need the line added by hand (docs/deploy.md).
 3. **The model reads what happened**: exit by signal reported as such, the boot ID check. tau code only. Built, with
    the OOM kill count of the server's cgroup (What the model reads); `server/test/commands.test.ts`.
 4. **bgjob on transient services**, beside the old one until it has been used for a while.
-5. **Commands in scopes**, behind a flag, on chorus first; then the default, with `tau setup` installing the slice and
+5. **Commands in scopes**, behind a flag, on the development machine first; then the default, with `tau setup` installing the slice and
    checking the user manager (linger, delegated memory controller). Built behind `--command-scopes` (off by default),
    before step 4 (the bgjob known issue); `tau setup` writes the slice and checks the user manager already.
 
@@ -342,18 +342,16 @@ Each step ships and reverts alone.
 - Commands surviving a server restart (reattaching to them is durable's matter).
 - A token or spending budget, CPU and IO weights (the CPU controller is not always enabled for user slices),
   filesystem and network sandboxing.
-- Host settings tau cannot make without root: swap (chorus's 64G swap is a file on btrfs behind a loop device, which
+- Host settings tau cannot make without root: swap (the development machine's 64G swap is a file on btrfs behind a loop device, which
   btrfs no longer needs), systemd-oomd, kernel parameters. A `tau doctor` may point them out.
 - Temporary files: a `TMPDIR` per conversation, cleaned with it, off tmpfs and NFS (a separate note).
 
 ## Notes on hosts
 
-- **chorus**: Fedora, 30G RAM, zram 8G plus the 64G loop swap, `/tmp` a 16G tmpfs (5.4G used, mostly agents' leftovers),
+- **The development machine**: Fedora, 30G RAM, zram 8G plus the 64G loop swap, `/tmp` a 16G tmpfs (5.4G used, mostly agents' leftovers),
   systemd-oomd present (pressure policy only), the user manager delegates `cpu io memory pids`.
-- **A shared Ubuntu 24.04 machine** (systemd 255: `MemoryPeak` and `Result=oom-kill`, no `OOMKills` property): a
-  Kubernetes node running storage daemons, so a runaway command endangers the cluster, not only the user; no swap,
-  overcommit on, home on NFS (hard mounts). tau's database must be on local disk: SQLite's WAL needs shared memory and
-  every user of the file on one host, which NFS does not give; `/var/tmp` is local and not cleaned there, `/tmp` is
-  emptied at boot (the server refuses a data directory on NFS and `tau setup` stops before starting it there:
-  `tau setup --data /var/tmp/$USER/tau`, docs/deploy.md). Transient scopes and services work for the user without
-  root; the CPU controller is not enabled below `app.slice`.
+- **A machine with its home on NFS** (Ubuntu 24.04, systemd 255: `MemoryPeak` and `Result=oom-kill`, no `OOMKills`
+  property; no swap, overcommit on). tau's database must be on local disk: SQLite's WAL needs shared memory and every
+  user of the file on one host, which NFS does not give (the server refuses a data directory on NFS and `tau setup`
+  stops before starting it there: `tau setup --data /var/tmp/$USER/tau`, docs/deploy.md). Transient scopes and
+  services work for the user without root.

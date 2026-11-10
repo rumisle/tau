@@ -77,7 +77,7 @@ versions (`pi.generation`, `pi.tool`, ...), and tau's own documents. A bump that
 rollback one-way (the older durable leaves a newer task blocked, `task_too_old`, and cannot migrate a newer document).
 Before releasing a bump, run the new server on a `.backup` copy of a real database, write to it (a chat, a run with a
 tool call), then the old server on the same copy, and open every chat (`server/bench/runs.ts check`, `write`). From
-4b535d57 to 35dfa757 nothing moved: the old server opened all 212 chats of a copy of chorus's after the new one had
+4b535d57 to 35dfa757 nothing moved: the old server opened all 212 chats of a copy of a real server's after the new one had
 written to it, and ran new chats.
 
 Collection: after a switch that stays up, every version but `current` and `previous` is removed, and with it any

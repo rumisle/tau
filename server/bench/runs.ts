@@ -8,7 +8,7 @@
 //                                                           in one chat: what the scheduler's work per commit costs
 //                                                           as conversations grow
 //
-// On a copy of chorus's database (211 chats), 32 cores, Node 24, dev/echo at 4,000 tokens a second:
+// On a copy of a real database (211 chats), 32 cores, Node 24, dev/echo at 4,000 tokens a second:
 //
 //   | pi       | runs in one chat, 211 chats | 2,000 more chats with a run | then a run   | 4,000 more   | then a run   |
 //   |----------|-----------------------------|-----------------------------|--------------|--------------|--------------|

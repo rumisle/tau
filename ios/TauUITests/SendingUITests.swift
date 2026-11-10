@@ -2534,7 +2534,7 @@ final class SendingUITests: XCTestCase {
     }
 
     /// The accent picked is the app's in every theme: with Auto-Night following the phone, the night theme of a
-    /// phone in dark mode has it too, not tau's pink (Raya's yellow that went pink for a while).
+    /// phone in dark mode has it too, not tau's pink.
     func testAccentFollowsNight() {
         self.launch(["-theme", "classic", "-appearance", "YES"])
         self.addTeardownBlock { [weak self] in

@@ -316,7 +316,7 @@ the newest entry whose tool calls and output are indexed. New entries are indexe
 migrated at start (a column and an index on the parts' time, at once) and its tools cursors start at 0: the start's
 backfill first indexes the tool calls and output of each conversation's entries up to its entries' cursor, in the
 backfill's worker thread, then goes on as before. A tool's result in a fork whose call is in its origin is linked to
-the origin's entry. On a copy of chorus's database (160 MB, 202 chats) that pass indexed the tool calls and output of
+the origin's entry. On a copy of a real database (160 MB, 202 chats) that pass indexed the tool calls and output of
 12,041 entries in 1.2 s, and the index grew from 9 to 25 MB.
 
 The user's search does not show them (its `kinds` default stays as it is); ranked by relevance with words in a
@@ -423,7 +423,7 @@ rare command, the research case, is a few hundred.
 
 `server/bench/search.ts` indexes the pi sessions with their tool calls and the edges of tool output, as the server
 does, and times `hits()` (32 cores, Node 24; 1,370 sessions, 322k entries, 346M characters, a 412 MB index; texts from
-memory). Reading an entry from the server's SQLite costs more: about 87,000 a second on a copy of chorus's database.
+memory). Reading an entry from the server's SQLite costs more: about 87,000 a second on a copy of a real database.
 
 | | hits | relevance, 20 | newest, 20 | all, relevance | all, newest | all, no text | all, no cap |
 |---|---|---|---|---|---|---|---|

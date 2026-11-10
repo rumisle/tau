@@ -2,7 +2,7 @@
 // memory beside the database (`-shm`), so every connection to the database has to be on one host
 // (https://sqlite.org/wal.html), which a network filesystem does not give, and its locks are not to be trusted there.
 // Linux only: statfs's f_type is the filesystem's magic number there; macOS gives an index into its own table instead
-// (26 for every APFS volume on nest), and `local` mounts are the rule on a Mac, so nothing is checked.
+// (26 for every APFS volume on a Mac), and `local` mounts are the rule on a Mac, so nothing is checked.
 import { readFileSync, statfsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 

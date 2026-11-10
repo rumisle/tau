@@ -422,7 +422,7 @@ final class ServerStore: ConversationStore, TauServer {
         if let name = self.configuredName, !name.isEmpty {
             return name
         }
-        // The name it was added by, "nest" for nest.example.ts.net; for an IP address, the computer's own name.
+        // The name it was added by, "my-mac" for my-mac.example.ts.net; for an IP address, the computer's own name.
         let host = self.connection.url.host ?? self.connection.url.absoluteString
         let isAddress = host.first?.isNumber == true || host.contains(":") || host == "localhost"
         if !isAddress {

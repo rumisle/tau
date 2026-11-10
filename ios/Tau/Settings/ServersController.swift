@@ -127,7 +127,7 @@ final class ServersController: SettingsListController {
     /// Telegram's alert with fields: the help on what to enter, then the address and the token.
     private func addServer() {
         let alert = fieldsAlertController(context: self.context.telegram, presentationData: self.theme.presentationData, title: "Add Server", text: "The address of a computer running tau's server, and its token: on that computer, ~/.config/tau/token.", fields: [
-            AlertField(placeholder: "nest.example.ts.net:7878", value: nil, keyboardType: .URL, isVerbatim: true),
+            AlertField(placeholder: "my-mac.example.ts.net:7878", value: nil, keyboardType: .URL, isVerbatim: true),
             AlertField(placeholder: "Token (optional)", value: nil, isSecure: true, isVerbatim: true),
         ], doneTitle: "Add", apply: { [weak self] values in
             guard let self, let address = normalizedServerAddress(values[0]) else {
@@ -277,7 +277,7 @@ final class ServerController: SettingsListController {
         let slot = self.slot
         let name = (server as? ServerStore)?.configuredName
         let alert = fieldsAlertController(context: self.context.telegram, presentationData: self.theme.presentationData, title: "Address", text: "Where tau's server runs, and its token: on that computer, ~/.config/tau/token. Changing them reconnects.", fields: [
-            AlertField(placeholder: "nest.example.ts.net:7878", value: server.address, keyboardType: .URL, isVerbatim: true),
+            AlertField(placeholder: "my-mac.example.ts.net:7878", value: server.address, keyboardType: .URL, isVerbatim: true),
             AlertField(placeholder: "Token (optional)", value: store.serverToken(slot), isSecure: true, isVerbatim: true),
         ], apply: { values in
             guard let address = normalizedServerAddress(values[0]) else {

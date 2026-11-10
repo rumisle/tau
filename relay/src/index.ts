@@ -7,7 +7,7 @@ export interface Env {
 	APNS_KEY: string;
 	APNS_KEY_ID: string;
 	APNS_TEAM: string;
-	/** The servers' tokens, one per line or comma (a name before a colon, for the log: `nest:abc…`). */
+	/** The servers' tokens, one per line or comma (a name before a colon, for the log: `my-mac:abc…`). */
 	RELAY_TOKENS: string;
 	TOPIC: string;
 }
