@@ -330,6 +330,15 @@ struct AgentSettings: Equatable {
     var provider: String?
     var modelId: String?
     var thinkingLevel: String?
+
+    /// As `conversation.fork`'s `agent`: the model and the thinking level, "off" too, since a fork would otherwise
+    /// keep what the original had at the fork entry. Nil without a model.
+    var forkPatch: JSONObject? {
+        guard let provider = self.provider, let modelId = self.modelId else {
+            return nil
+        }
+        return ["model": ["provider": provider, "modelId": modelId], "thinkingLevel": self.thinkingLevel ?? "off"]
+    }
 }
 
 /// Scroll positions survive restarts, as Telegram keeps each chat's position.

@@ -338,6 +338,11 @@ final class ServerStore: ConversationStore, TauServer {
             for (draftId, var draft) in self.drafts where draft.createRequestId == create.requestId {
                 draft.realId = dialog.id
                 self.drafts[draftId] = draft
+                // The model chosen in the draft stands until the agent doc has it: one chosen after the create went
+                // out follows it as a configure.
+                if let agent = draft.agent, self.dialogAgents[dialog.id] != agent {
+                    self.holdAgent(agent, in: dialog.id)
+                }
                 if self.statePromises[draftId] != nil {
                     self.watch(dialog.id)
                 }
@@ -1316,7 +1321,7 @@ final class ServerStore: ConversationStore, TauServer {
                 let title = draft.titleIsManual ? (draft.title ?? "") : (trimmed.isEmpty ? attachmentsTitle(attachments) : String(trimmed.prefix(48)))
                 if let forkOf = draft.forkOf, let forkAt = draft.forkAt {
                     // A copy made before its message (Continue with Full Context): the fork, then the message.
-                    self.outbox.enqueueCreate(requestId: createRequestId, title: draft.title ?? title, agent: nil, forkOf: forkOf, forkAt: forkAt)
+                    self.outbox.enqueueCreate(requestId: createRequestId, title: draft.title ?? title, agent: draft.agent, forkOf: forkOf, forkAt: forkAt)
                 } else {
                     self.outbox.enqueueCreate(requestId: createRequestId, title: title, agent: draft.agent)
                 }
@@ -1524,7 +1529,8 @@ final class ServerStore: ConversationStore, TauServer {
         draft.title = parent?.title ?? "Edited"
         draft.createRequestId = createRequestId
         self.drafts[draftId] = draft
-        self.outbox.enqueueCreate(requestId: createRequestId, title: draft.title ?? "Edited", agent: nil, forkOf: realId, forkAt: at)
+        // With the model and thinking level the chat shows: a fork would start with the agent the original had at `at`.
+        self.outbox.enqueueCreate(requestId: createRequestId, title: draft.title ?? "Edited", agent: draft.agent, forkOf: realId, forkAt: at)
         self.outbox.enqueue(text: text, attachments: attachments, conversationId: nil, createRequestId: createRequestId, mode: .followUp, showsInQueue: false)
         completion(draftId)
     }
@@ -1556,7 +1562,12 @@ final class ServerStore: ConversationStore, TauServer {
         guard let realId = self.resolve(id), let dialog = self.dialogs[realId], let at = dialog.last?.id else {
             return
         }
-        self.connection.request("conversation.fork", ["conversationId": realId, "at": at, "title": "\(dialog.title) (copy)"]) { [weak self] result in
+        var params: JSONObject = ["conversationId": realId, "at": at, "title": "\(dialog.title) (copy)"]
+        // The model and thinking level the chat shows, a change not yet applied included.
+        if let agent = self.agent(realId).forkPatch {
+            params["agent"] = agent
+        }
+        self.connection.request("conversation.fork", params) { [weak self] result in
             guard let self, case let .success(value) = result, let raw = value.object("dialog"), let dialog = self.takeDialog(raw) else {
                 return
             }
@@ -1846,6 +1857,19 @@ final class ServerStore: ConversationStore, TauServer {
             }
         }
         return ConversationUsage(models: models, contextTokens: contextTokens, contextWindow: contextWindow, cache: self.promptCaches[realId])
+    }
+
+    /// `agent` shown for `realId` until the agent doc has it, or for five seconds.
+    private func holdAgent(_ agent: AgentSettings, in realId: Int) {
+        self.nextAgentToken += 1
+        let token = self.nextAgentToken
+        self.agentOverrides[realId] = (agent, token, true)
+        Queue.mainQueue().after(5.0) { [weak self] in
+            if let self, self.agentOverrides[realId]?.token == token {
+                self.agentOverrides[realId] = nil
+                self.publish(realId)
+            }
+        }
     }
 
     func configure(_ id: Int, model: ModelInfo?, thinkingLevel: String?) {

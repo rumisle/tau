@@ -1079,10 +1079,18 @@ final class Outbox {
             return
         }
         if let forkOf = create.forkOf, let forkAt = create.forkAt {
-            // An edit: the conversation up to the edited message, under the same title.
+            // An edit or Continue with Full Context: the conversation up to the edited message, under the same title.
             self.inFlight.insert(key)
             self.sendingCreate = create.requestId
-            self.connection.request("conversation.fork", ["conversationId": forkOf, "at": forkAt, "title": create.title, "requestId": create.requestId]) { [weak self] result in
+            var params: JSONObject = ["conversationId": forkOf, "at": forkAt, "title": create.title, "requestId": create.requestId]
+            // The model and thinking level the draft showed (configureCreate keeps them current until the fork goes
+            // out); a fork would otherwise keep the original's at `forkAt`.
+            if let agent = AgentSettings(provider: create.provider, modelId: create.modelId, thinkingLevel: create.thinkingLevel == "off" ? nil : create.thinkingLevel).forkPatch {
+                params["agent"] = agent
+            } else if let thinkingLevel = create.thinkingLevel {
+                params["agent"] = ["thinkingLevel": thinkingLevel]
+            }
+            self.connection.request("conversation.fork", params) { [weak self] result in
                 guard let self else {
                     return
                 }

@@ -94,6 +94,11 @@ same way). The fork is a create in the outbox: on disk, sent with a request ID t
 idempotent, and the edited message waits for it like any first message. Until the fork exists and its transcript has
 arrived, the chat shows the original up to the edit, then the new message with the clock.
 
+The model and thinking level the chat shows are the ones that answer. A fork alone would start with the agent the
+original had at the fork entry, so a model picked since would be lost: the create carries the chat's agent, a change
+not yet confirmed included, and a model picked in the fork before it goes out changes the create
+(`Outbox.configureCreate`), after that a configure follows it. Continue with Full Context and Duplicate do the same.
+
 What is written and not sent is a draft (`Model/InputDrafts.swift`), as Telegram keeps a chat's input state: the
 message being written and, beside it while an edit is open, the edit's text and the message it edits. Drafts are on
 disk, written a moment after each change and when the app leaves the foreground, so a crash loses at most the last
