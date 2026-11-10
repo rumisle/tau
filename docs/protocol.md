@@ -226,7 +226,12 @@ With `autoTitle`, the server names the conversation in a few words after its fir
 model) and pushes the new title as a `dialog` event; `title` stands in until then.
 
 ### `conversation.fork`
-`{ conversationId, at: EntryId, title?, requestId? }` -> `{ dialog: Dialog }`
+`{ conversationId, at: EntryId, title?, requestId?, agent?: AgentPatch }` -> `{ dialog: Dialog }`
+
+The fork starts with the agent the conversation had at `at`. `agent` changes it in the commit that creates the fork,
+as for `conversation.create`: a model or thinking level it leaves out is the conversation's current one, and the
+thinking level is fitted to the model. A client sends the model and thinking level it shows, so an edit (a fork before
+the edited message) answers with the model picked last, not the one the original had back then.
 
 The fork starts read up to `at`, and in the main list. With `requestId`, a repeated fork returns the conversation the
 first one made, as for `conversation.create` (the two share their request IDs).

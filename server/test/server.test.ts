@@ -855,6 +855,46 @@ describe("tau server", () => {
 		assert.notEqual(a.dialog.conversation.id, id);
 		await client.close();
 	});
+
+	test("a fork takes the agent the client shows, not the one the original had at the fork entry", async () => {
+		const client = await TauClient.connect(server.url);
+		const { dialog } = await client.request("conversation.create", { title: "Switched", agent: { model: { provider: "dev", modelId: "echo" } } });
+		const replica = new ConversationReplica(dialog.conversation.id);
+		await replica.sync(client);
+		await chat(client, replica, "first", "switch-1");
+		const at = replica.ordered().findLast((entry) => entry.kind === "pi.assistant")!.id;
+		await chat(client, replica, "second", "switch-2");
+		// The model and thinking level change after the entry an edit of "second" forks at.
+		await client.request("conversation.configure", { conversationId: replica.id, agent: { model: { provider: "dev", modelId: "parrot" }, thinkingLevel: "high" } });
+
+		// Without an agent, the fork has the original's as it was at the entry.
+		const plain = (await client.request("conversation.fork", { conversationId: replica.id, at })).dialog.conversation.id;
+		const plainView = await client.request("conversation.subscribe", { conversationId: plain });
+		assert.deepEqual(plainView.docs["pi.agent"]?.model, { provider: "dev", modelId: "echo" });
+		assert.equal(plainView.docs["pi.agent"]?.thinkingLevel, undefined);
+
+		const { dialog: edited } = await client.request("conversation.fork", {
+			conversationId: replica.id,
+			at,
+			agent: { model: { provider: "dev", modelId: "parrot" }, thinkingLevel: "high" },
+		});
+		const fork = new ConversationReplica(edited.conversation.id);
+		await fork.sync(client);
+		const agent = fork.docs["pi.agent"] as { model?: unknown; thinkingLevel?: string } | undefined;
+		assert.deepEqual(agent?.model, { provider: "dev", modelId: "parrot" });
+		assert.equal(agent?.thinkingLevel, "high");
+		await chat(client, fork, "second, edited", "switch-3");
+		assert.match(assistantText(fork.ordered().at(-1)), /as dev\/parrot, thinking high \(turn 2\)/);
+
+		// Thinking alone: the model is the original's current one, the level fitted to it; "off" clears it.
+		const thinking = (await client.request("conversation.fork", { conversationId: replica.id, at, agent: { thinkingLevel: "max" } })).dialog.conversation.id;
+		const thinkingView = await client.request("conversation.subscribe", { conversationId: thinking });
+		assert.deepEqual(thinkingView.docs["pi.agent"]?.model, { provider: "dev", modelId: "parrot" });
+		assert.equal(thinkingView.docs["pi.agent"]?.thinkingLevel, "high");
+		const off = (await client.request("conversation.fork", { conversationId: replica.id, at, agent: { thinkingLevel: "off" } })).dialog.conversation.id;
+		assert.equal((await client.request("conversation.subscribe", { conversationId: off })).docs["pi.agent"]?.thinkingLevel, undefined);
+		await client.close();
+	});
 });
 
 describe("durability", () => {

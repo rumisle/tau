@@ -131,7 +131,7 @@ Telegram's sending, with the agent's two ways of reading a message.
 ## Testing
 
 `ios/TauUITests/SendingUITests.swift` runs these against the dev server (`ios/scripts/devserver.sh start`: the dev/echo
-model on port 7979, where `$ sleep N` keeps the agent busy). The offline, kill and refusal cases need the server
+model, and dev/parrot that answers alike, on port 7979; an echo names the model and thinking level that answered, where `$ sleep N` keeps the agent busy). The offline, kill and refusal cases need the server
 stopped, started and wiped on cue, which the test asks for through files in `/tmp/tau-ui` and
 `ios/scripts/sending-tests.sh` answers.
 `server/test/server.test.ts` covers ordering, withdraw races, refusals, and idempotent creates.

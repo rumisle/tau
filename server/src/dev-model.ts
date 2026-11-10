@@ -1,4 +1,5 @@
-// A free scripted model for development: streams an echo of each message, runs `$ <command>` through bash, and starts
+// A free scripted model for development (dev/echo, and dev/parrot that answers alike): streams an echo of each message
+// naming the model and thinking level that answered, runs `$ <command>` through bash, and starts
 // a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`,
 // fails as an overloaded provider would `!overloaded <times> <text>` before answering, fails for good `!fatal <text>`,
 // and fails for good once `!flaky <text>` (then answers, as a continue after it finds).
@@ -24,6 +25,8 @@ import { FOLLOW_UP_OPENING } from "./compaction.ts";
 export const DEV_MODEL = { provider: "dev", modelId: "echo" } as const;
 /** With `--dev-cache-ttl`, the dev model's twin without a declared cache lifetime. */
 export const DEV_UNCACHED_MODEL_ID = "echo-uncached";
+/** A second dev model, answering as the echo does, so that a test can tell which model answered. */
+export const DEV_SECOND_MODEL_ID = "parrot";
 
 /** `!tool`'s arguments that are lists, so one value is a list of one. */
 const LIST_ARGUMENTS = new Set(["kinds", "paths"]);
@@ -39,13 +42,14 @@ export function devProvider(options: { tokensPerSecond?: number; cacheTtl?: numb
 		provider: DEV_MODEL.provider,
 		models: [
 			{ id: DEV_MODEL.modelId, name: "Dev echo", reasoning: true, contextWindow: 200_000, maxTokens: 8_192, ...(options.cacheTtl === undefined ? {} : { cost: CACHED_COST }) },
+			{ id: DEV_SECOND_MODEL_ID, name: "Dev parrot", reasoning: true, contextWindow: 200_000, maxTokens: 8_192 },
 			// With a cache lifetime, a second model that declares none, as pi-ai's models other than Anthropic's.
 			...(options.cacheTtl === undefined ? [] : [{ id: DEV_UNCACHED_MODEL_ID, name: "Dev echo, no cache lifetime", reasoning: true, contextWindow: 200_000, maxTokens: 8_192, cost: CACHED_COST }]),
 		],
 		tokensPerSecond: options.tokensPerSecond ?? 80,
 	});
 	// Faux responses are consumed one per request; this one queues itself again so the model never runs dry.
-	const respond: FauxResponseFactory = async (context) => {
+	const respond: FauxResponseFactory = async (context, streamOptions, _state, model) => {
 		faux.appendResponses([respond]);
 		// `~<seconds> ` first: a model slow to start answering.
 		const last = context.messages.findLast((message) => (message.role as string) !== "system");
@@ -91,7 +95,7 @@ export function devProvider(options: { tokensPerSecond?: number; cacheTtl?: numb
 		if (text.startsWith("!fatal ")) {
 			return fauxAssistantMessage([fauxText("Let me look")], { stopReason: "error", errorMessage: '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}' });
 		}
-		return reply(context.messages);
+		return reply(context.messages, `${model.provider}/${model.id}, thinking ${streamOptions?.reasoning ?? "off"}`);
 	};
 	faux.setResponses([respond]);
 	if (options.cacheTtl === undefined) return { ...faux, provider: buffering(faux.provider) };
@@ -173,7 +177,8 @@ function expiringCache(base: Provider, ttl: number): Provider {
 	};
 }
 
-function reply(messages: readonly Message[]) {
+/** `who`: the model that answered and its thinking level, which the echo names (so a test can tell). */
+function reply(messages: readonly Message[], who: string) {
 	// System messages carry prompt changes; the request is about the message before them.
 	const last = messages.findLast((message) => (message.role as string) !== "system");
 	if (last?.role === "toolResult" && last.toolName === "codemode") return fauxAssistantMessage([fauxText(last.isError ? "The script failed." : "Ran the script.")]);
@@ -248,7 +253,7 @@ function reply(messages: readonly Message[]) {
 	const turns = messages.filter((message) => message.role === "user").length;
 	return fauxAssistantMessage([
 		fauxThinking(`The user said ${JSON.stringify(text)}. Turn ${turns}.`),
-		fauxText(`You said: ${text}\n\nThis is the dev echo model (turn ${turns}). Start a message with \`$ \` to run a shell command.`),
+		fauxText(`You said: ${text}\n\nThis is the dev echo model as ${who} (turn ${turns}). Start a message with \`$ \` to run a shell command.`),
 	]);
 }
 

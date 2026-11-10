@@ -364,10 +364,22 @@ export class Connection {
 					const existing = (await harness.snapshot(CreatesDoc, context))?.requests[requestId];
 					if (existing !== undefined) return { dialog: await this.#dialogOf(existing as ConversationId) };
 				}
+				// `agent` as for a create: the model and thinking level the client shows, which may have changed since the fork
+				// entry (an edit answers with the model picked last, not the one the original had there).
+				const patch = obj(params, "agent");
+				let agent: AgentChange | undefined;
+				if (patch !== undefined) {
+					const current = await harness.snapshot(AgentDoc, conversation.id, context);
+					const model = (patch.model as ModelRef | null | undefined) ?? current?.model ?? this.#host.defaultModel;
+					const asked = patch.thinkingLevel === undefined ? (current?.thinkingLevel ?? "off") : ((patch.thinkingLevel as ModelThinkingLevel | null) ?? "off");
+					const thinkingLevel = this.#fitThinking(model, asked);
+					agent = await agentChange({ ...patch, model, thinkingLevel: thinkingLevel === "off" ? null : thinkingLevel });
+				}
 				const fork = await conversation.fork(
 					int(params, "at") as EntryId,
 					{
 						ownership: { kind: "ownerless" },
+						...(agent === undefined ? {} : { agent }),
 						init: async (tx, id) => {
 							const meta = await tx.doc(MetaDoc, id);
 							if (title !== undefined) meta.title = title;
