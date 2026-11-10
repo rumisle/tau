@@ -622,6 +622,155 @@ final class SendingUITests: XCTestCase {
         self.shot("editoff-3-online")
     }
 
+    /// The answer to `text`, which the dev model's echo ends with the model and thinking level that answered.
+    private func answer(to text: String) -> XCUIElement {
+        return self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'assistantMessage' AND label BEGINSWITH %@", "You said: \(text)\n")).firstMatch
+    }
+
+    private func pickThinking(_ level: String) {
+        self.openChatMenu()
+        settle()
+        self.app.descendants(matching: .any)["Thinking"].firstMatch.tap()
+        settle()
+        self.app.descendants(matching: .any)[level].firstMatch.tap()
+    }
+
+    /// The chat menu's Model and Thinking rows, as the chat shows them, then the menu closed.
+    private func assertMenuShows(model: String, thinking: String, _ message: String) {
+        self.openChatMenu()
+        settle()
+        let any = self.app.descendants(matching: .any)
+        let modelRow = any.matching(NSPredicate(format: "label == 'Model'")).firstMatch
+        XCTAssertTrue(modelRow.waitForExistence(timeout: 3), "the menu: \(message)")
+        XCTAssertEqual(modelRow.value as? String, model, "the menu's model: \(message)")
+        XCTAssertEqual(any.matching(NSPredicate(format: "label == 'Thinking'")).firstMatch.value as? String, thinking, "the menu's thinking: \(message)")
+    }
+
+    /// Two messages to the echo model, its second ready to edit.
+    private func twoMessages(_ first: String, _ second: String) {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type(first)
+        self.send()
+        self.app.waitForIdle()
+        settle()
+        self.type(second)
+        self.send()
+        self.app.waitForIdle()
+        settle()
+        XCTAssertTrue(self.answer(to: second).label.contains("as dev/echo, thinking off"), "the original answers with dev/echo")
+    }
+
+    /// The model and thinking level the chat shows are the ones that answer: an edit after switching both forks with
+    /// them, not with the ones the original had before the edited message (docs/protocol.md, conversation.fork).
+    func testEditAnswersWithPickedModel() {
+        self.twoMessages("model one", "model two")
+        self.pickModel("parrot")
+        settle()
+        self.pickThinking("High")
+        settle()
+        self.shot("editmodel-0-switched")
+        self.pressMessage("model two")
+        settle()
+        self.app.descendants(matching: .any)["Edit"].firstMatch.tap()
+        settle()
+        self.type(" b")
+        self.send()
+        let answer = self.answer(to: "model two b")
+        XCTAssertTrue(answer.waitForExistence(timeout: 20), "the edit is answered")
+        self.app.waitForIdle()
+        settle()
+        self.shot("editmodel-1-answered")
+        XCTAssertTrue(answer.label.contains("as dev/parrot, thinking high"), "answered by the model picked before the edit: \(answer.label)")
+        self.assertMenuShows(model: "Dev parrot", thinking: "High", "the fork")
+        self.shot("editmodel-2-menu")
+    }
+
+    /// Editing the first message makes a fresh chat, with the model the chat shows.
+    func testEditFirstMessageModel() {
+        self.twoMessages("first one", "first two")
+        self.pickModel("parrot")
+        settle()
+        self.pressMessage("first one")
+        settle()
+        self.app.descendants(matching: .any)["Edit"].firstMatch.tap()
+        settle()
+        self.type(" b")
+        self.send()
+        let answer = self.answer(to: "first one b")
+        XCTAssertTrue(answer.waitForExistence(timeout: 20), "the edit is answered")
+        self.app.waitForIdle()
+        settle()
+        self.shot("editfirst-0-answered")
+        XCTAssertTrue(answer.label.contains("as dev/parrot, thinking off"), "answered by the model the chat showed: \(answer.label)")
+    }
+
+    /// A model and thinking level picked in the edit's fork while it waits offline are the ones it is created with,
+    /// and the picker shows them before and after the server's docs arrive.
+    func testEditThenPickModelOffline() {
+        self.twoMessages("held one", "held two")
+        self.server("stop")
+        sleep(2)
+        self.pressMessage("held two")
+        settle()
+        self.app.descendants(matching: .any)["Edit"].firstMatch.tap()
+        settle()
+        self.type(" b")
+        self.send()
+        sleep(1)
+        // In the fork, not created yet.
+        self.pickModel("parrot")
+        settle()
+        self.pickThinking("Low")
+        settle()
+        self.assertMenuShows(model: "Dev parrot", thinking: "Low", "the fork while offline")
+        self.shot("editheld-0-offline")
+        // The menu closed, by a tap beside it.
+        self.point(0.1, 0.6).tap()
+        settle()
+        self.server("start")
+        let answer = self.answer(to: "held two b")
+        XCTAssertTrue(answer.waitForExistence(timeout: 30), "the edit is answered once the server is back")
+        self.app.waitForIdle()
+        settle()
+        self.shot("editheld-1-online")
+        XCTAssertTrue(answer.label.contains("as dev/parrot, thinking low"), "answered by the model picked in the fork: \(answer.label)")
+        self.assertMenuShows(model: "Dev parrot", thinking: "Low", "the fork with the server's docs")
+        self.shot("editheld-2-menu")
+    }
+
+    /// Duplicate from the list copies the chat with the model it shows, picked after its last message.
+    func testDuplicateKeepsModel() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("duplicate me")
+        self.send()
+        self.app.waitForIdle()
+        settle()
+        self.pickModel("parrot")
+        settle()
+        self.point(0.1, 0.08).tap()
+        settle()
+        let row = self.app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'chatTitle' AND label BEGINSWITH[c] 'duplicate me' AND NOT (label CONTAINS '(copy)')")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "the chat in the list")
+        row.press(forDuration: 1.2)
+        settle()
+        self.app.descendants(matching: .any)["Duplicate"].firstMatch.tap()
+        self.app.waitForChat()
+        settle()
+        self.focusInput()
+        self.type("in the copy")
+        self.send()
+        let answer = self.answer(to: "in the copy")
+        XCTAssertTrue(answer.waitForExistence(timeout: 20), "the copy answers")
+        self.app.waitForIdle()
+        settle()
+        self.shot("duplicate-0-answered")
+        XCTAssertTrue(answer.label.contains("as dev/parrot"), "the copy answers with the model the chat showed: \(answer.label)")
+        self.assertMenuShows(model: "Dev parrot", thinking: "Off", "the copy")
+        self.shot("duplicate-1-menu")
+    }
+
     /// Rename from the title menu: Telegram's alert, the title changes at once, the toast offers Undo; the list follows.
     func testRename() {
         self.launch(["-newChat", "YES"])

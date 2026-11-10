@@ -91,6 +91,7 @@ public final class ContextControllerActionsListActionItemNode: HighlightTracking
         
         self.isAccessibilityElement = true
         self.accessibilityLabel = item.text
+        self.accessibilityValue = contextItemAccessibilityValue(item)
         self.accessibilityTraits = [.button]
         
         self.addSubnode(self.titleLabelNode)
@@ -207,6 +208,7 @@ public final class ContextControllerActionsListActionItemNode: HighlightTracking
     public func setItem(item: ContextMenuActionItem) {
         self.item = item
         self.accessibilityLabel = item.text
+        self.accessibilityValue = contextItemAccessibilityValue(item)
     }
     
     public func update(presentationData: PresentationData, constrainedSize: CGSize) -> (minSize: CGSize, apply: (_ size: CGSize, _ transition: ContainedViewLayoutTransition) -> Void) {
@@ -2248,5 +2250,17 @@ public final class ContextControllerActionsStackNodeImpl: ASDisplayNode, Context
             }
             alongsideAnimations()
         }, completion: completion)
+    }
+}
+
+/// tau: an item's second line (a chat's Model and Thinking), read as its value.
+private func contextItemAccessibilityValue(_ item: ContextMenuActionItem) -> String? {
+    switch item.textLayout {
+    case let .secondLineWithValue(value):
+        return value
+    case let .secondLineWithAttributedValue(value):
+        return value.string
+    default:
+        return nil
     }
 }
