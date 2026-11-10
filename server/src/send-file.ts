@@ -3,8 +3,8 @@
 // See docs/files.md.
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import type { Context } from "@earendil-works/chord";
-import { Type } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
+import { arr, obj, str } from "@earendil-works/pi-schema";
 import { defineExtension, defineTool, type Extension } from "@earendil-works/pi-durable";
 import { callFileId, FileError, type FileStore, formatBytes, type StoredFile } from "./files.ts";
 import { appendShownOnce, FilesEntry, isNested } from "./shown.ts";
@@ -22,9 +22,9 @@ export function sendFileExtension(store: FileStore): Extension {
 			`or save. paths: up to ${MAX_FILES} files, absolute or relative to the working directory. Each is copied as it ` +
 			"is now, so later changes do not reach the user; a directory cannot be sent (archive it first). Send what the " +
 			"user asked for or should see, such as a chart, a report or a build; the user's own attachments are theirs already.",
-		parameters: Type.Object({
-			paths: Type.Array(Type.String({ description: "A file to send" }), { minItems: 1, maxItems: MAX_FILES }),
-		}),
+		parameters: obj({
+			paths: arr(str({ description: "A file to send" }), { minItems: 1, maxItems: MAX_FILES }),
+		}, { open: true }),
 		// Each file's copy is named by the call, so a run again finds the one made and makes no other.
 		replay: "safe",
 		execute: async (args, api, context: Context) => {

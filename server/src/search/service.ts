@@ -1,6 +1,6 @@
 // The search index kept current: entries are indexed as the Session commits them, and on start whatever was written
 // before the index caught up (src/search/index.ts).
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationId, ConversationRecord, Cursor, EntryId, EntryRecord } from "@earendil-works/pi-durable";

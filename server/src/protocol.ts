@@ -1,5 +1,5 @@
 // Wire types of docs/protocol.md.
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type { ConversationRecord, EntryId } from "@earendil-works/pi-durable";
 
 export const PROTOCOL_VERSION = 1;

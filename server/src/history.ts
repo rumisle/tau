@@ -1,8 +1,9 @@
 // history_read and history_search (docs/history.md): an agent reads and searches the server's conversations, its own
 // past its compaction, its subagents', its owner's, and any the user links to. Both name everything by tau's links
 // (docs/links.md) and return the same JSON to the model and to a code mode script.
-import type { Context } from "@earendil-works/chord";
-import { type AssistantMessage, type Message, Type } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
+import { arr, bool, int, lit, obj, opt, str, union, unknown } from "@earendil-works/pi-schema";
+import { type AssistantMessage, type Message } from "@earendil-works/pi-ai";
 import {
 	type ConversationId,
 	type Cursor,
@@ -463,7 +464,7 @@ export function iso(time: number): string {
 	return new Date(time).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-const KIND = Type.Union(HISTORY_KINDS.map((kind) => Type.Literal(kind)));
+const KIND = union(HISTORY_KINDS.map((kind) => lit(kind)));
 
 const READ_DESCRIPTION =
 	"Read a chat of this server, yours included: past your compaction, a subagent's, your owner's (the chat that started " +
@@ -489,16 +490,16 @@ export function historyExtension(history: History): Extension {
 	const read = defineTool({
 		name: "history_read",
 		description: READ_DESCRIPTION,
-		parameters: Type.Object({
-			link: Type.Optional(Type.String({ description: 'A tau:// link to a chat or an entry, "this" or "owner"' })),
-			kinds: Type.Optional(Type.Array(KIND)),
-			older: Type.Optional(Type.Integer({ minimum: 0 })),
-			newer: Type.Optional(Type.Integer({ minimum: 0 })),
-			part: Type.Optional(Type.Integer({ minimum: 0, description: "With older: 0, newer: 0: only this part of the entry" })),
-			offset: Type.Optional(Type.Integer({ minimum: 1, description: "With older: 0, newer: 0: the line to start at" })),
-			truncate: Type.Optional(Type.Boolean({ description: "false: every part whole" })),
-		}),
-		structuredOutputSchema: Type.Unknown(),
+		parameters: obj({
+			link: opt(str({ description: 'A tau:// link to a chat or an entry, "this" or "owner"' })),
+			kinds: opt(arr(KIND)),
+			older: opt(int({ minimum: 0 })),
+			newer: opt(int({ minimum: 0 })),
+			part: opt(int({ minimum: 0, description: "With older: 0, newer: 0: only this part of the entry" })),
+			offset: opt(int({ minimum: 1, description: "With older: 0, newer: 0: the line to start at" })),
+			truncate: opt(bool({ description: "false: every part whole" })),
+		}, { open: true }),
+		structuredOutputSchema: unknown(),
 		replay: "safe",
 		execute: async (args, api, context: Context) => {
 			try {
@@ -513,18 +514,18 @@ export function historyExtension(history: History): Extension {
 	const search = defineTool({
 		name: "history_search",
 		description: SEARCH_DESCRIPTION,
-		parameters: Type.Object({
-			query: Type.Optional(Type.String({ description: 'Every word must appear; "a phrase" as written; -word leaves a hit out. Omitted: the newest first' })),
-			in: Type.Optional(Type.String({ description: 'A tau:// link to a chat, "this", "owner" or "subagents"; omitted: every chat' })),
-			kinds: Type.Optional(Type.Array(KIND)),
-			exact: Type.Optional(Type.Boolean({ description: "Default true: words as written. false: prefixes and typos too, as the user's search" })),
-			sort: Type.Optional(Type.Union([Type.Literal("relevance"), Type.Literal("newest"), Type.Literal("oldest")], { description: "Default relevance; newest without a query" })),
-			limit: Type.Optional(Type.Integer({ description: "Hits, default 20; -1: all of them" })),
-			cursor: Type.Optional(Type.String({ description: "From next only" })),
-			truncate: Type.Optional(Type.Boolean({ description: "false: each hit's whole text instead of an excerpt" })),
-			text: Type.Optional(Type.Boolean({ description: "false: hits without text (links only), much faster for many" })),
-		}),
-		structuredOutputSchema: Type.Unknown(),
+		parameters: obj({
+			query: opt(str({ description: 'Every word must appear; "a phrase" as written; -word leaves a hit out. Omitted: the newest first' })),
+			in: opt(str({ description: 'A tau:// link to a chat, "this", "owner" or "subagents"; omitted: every chat' })),
+			kinds: opt(arr(KIND)),
+			exact: opt(bool({ description: "Default true: words as written. false: prefixes and typos too, as the user's search" })),
+			sort: opt(union([lit("relevance"), lit("newest"), lit("oldest")], { description: "Default relevance; newest without a query" })),
+			limit: opt(int({ description: "Hits, default 20; -1: all of them" })),
+			cursor: opt(str({ description: "From next only" })),
+			truncate: opt(bool({ description: "false: each hit's whole text instead of an excerpt" })),
+			text: opt(bool({ description: "false: hits without text (links only), much faster for many" })),
+		}, { open: true }),
+		structuredOutputSchema: unknown(),
 		replay: "safe",
 		execute: async (args, api, context: Context) => {
 			try {

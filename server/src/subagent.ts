@@ -9,8 +9,9 @@
 // `afterRun`): created with the run's end, resumed after a crash, and sent under a request ID of its answer, so it
 // arrives once. A run that fails sends the leader a short note instead (`SubagentFailures`, from `pi.live.runFailure`);
 // one stopped sends nothing.
-import type { Context } from "@earendil-works/chord";
-import { type AssistantMessage, clampThinkingLevel, type ModelThinkingLevel, Type } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
+import { bool, lit, obj, opt, str, union } from "@earendil-works/pi-schema";
+import { type AssistantMessage, clampThinkingLevel, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
 	AssistantEntry,
@@ -351,15 +352,15 @@ const subagentTool = defineTool({
 		"for independent investigations that would fill this conversation with tool output; start several to work in " +
 		"parallel. A spawn can take fork: true to start from a copy of this conversation, for work that needs what was " +
 		"said so far; model (provider/id) and thinking to run on another model or effort, such as a fast one for search.",
-	parameters: Type.Object({
-		action: Type.Union([Type.Literal("spawn"), Type.Literal("send"), Type.Literal("stop"), Type.Literal("status")]),
-		name: Type.Optional(Type.String({ description: "A short name, such as reader or tests" })),
-		message: Type.Optional(Type.String({ description: "The task for spawn, or the message for send" })),
-		followUp: Type.Optional(Type.Boolean()),
-		fork: Type.Optional(Type.Boolean({ description: "spawn: start from a copy of this conversation instead of empty" })),
-		model: Type.Optional(Type.String({ description: 'spawn: provider/id of the model to run on; yours when omitted. The ones available: models.getAvailableOfType("chat") in code mode' })),
-		thinking: Type.Optional(Type.Union(THINKING_LEVELS.map((level) => Type.Literal(level)))),
-	}),
+	parameters: obj({
+		action: union([lit("spawn"), lit("send"), lit("stop"), lit("status")]),
+		name: opt(str({ description: "A short name, such as reader or tests" })),
+		message: opt(str({ description: "The task for spawn, or the message for send" })),
+		followUp: opt(bool()),
+		fork: opt(bool({ description: "spawn: start from a copy of this conversation instead of empty" })),
+		model: opt(str({ description: 'spawn: provider/id of the model to run on; yours when omitted. The ones available: models.getAvailableOfType("chat") in code mode' })),
+		thinking: opt(union(THINKING_LEVELS.map((level) => lit(level)))),
+	}, { open: true }),
 	// A call cut off by a crash is not run again: a repeated stop could stop newer work. The model sees the call was
 	// interrupted and can ask with status.
 	replay: "unsafe",

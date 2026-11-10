@@ -10,7 +10,7 @@
 // kept, places the summary entry, and owns the task. Anything that does not give a summary (no cached context to
 // follow, a reply with a tool call or no text, an error that persists) declines to decide, and durable's own
 // summarization runs: the fallback is the default.
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { AssistantMessage, Message, Models, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
 import { isRetryableAssistantError, retryDelayMs } from "@earendil-works/pi-ai/utils/retry";
 import {

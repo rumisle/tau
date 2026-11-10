@@ -21,7 +21,7 @@ cd "$pi"
 npm ci --ignore-scripts --no-audit --no-fund --loglevel=error
 npm run --silent hydrate:model-data > /dev/null
 # Durable and what it depends on, in dependency order.
-for package in telemetry chord codemode; do
+for package in telemetry schema chord codemode; do
 	(cd "packages/$package" && npm run --silent build)
 done
 (cd packages/ai && npm run --silent build:offline)

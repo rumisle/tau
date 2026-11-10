@@ -1,7 +1,7 @@
 // The chat list: one Dialog per conversation, computed once and kept current from the Session's commit stream, each
 // change numbered so a client that reconnects gets only what changed since it last heard (docs/protocol.md).
 import { randomUUID } from "node:crypto";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Message } from "@earendil-works/pi-ai";
 import {

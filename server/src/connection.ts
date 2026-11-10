@@ -1,5 +1,6 @@
 // One client connection: request dispatch, conversation subscriptions, and pushes. See docs/protocol.md.
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context";
 import type { Op } from "@earendil-works/chord/delta";
 import { clampThinkingLevel, getSupportedThinkingLevels, type ImageContent, type ModelThinkingLevel, type TextContent } from "@earendil-works/pi-ai";
