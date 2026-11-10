@@ -113,6 +113,10 @@ What turned out different from the design above, and why.
 - **What came while away shows as written**: an answer still being revealed when the user left (or catching up, after
   the background) shows the rest at once when the chat is put back, so the view is judged on its whole height. Revealed
   in big steps at the list's pace, it moved what was put back.
+- **A height animation left running.** Telegram's list let a row's height animation from an earlier animated update
+  go on after an update without animation, setting the row back toward its old height: back while the answer still
+  streamed, the rest shown in full shrank under the view, and when it shrank by more than lay below the screen the list
+  went to the end and followed it. An update without animation now ends a running one (Display's `ListView`).
 - **The down button's count** is the messages and answers after the frontier, rather than those that arrived while the
   list was not at the end: the same while the chat is open, and right after opening a chat scrolled back.
 - **The agent's waiting row** (the τ) is never the saved view's anchor: it is gone by the time the chat opens again.

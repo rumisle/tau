@@ -308,6 +308,29 @@ final class ReadingUITests: XCTestCase {
         self.assertNearTop(self.readingInt("revealY").map { CGFloat($0) }, "the last lines seen near the top")
     }
 
+    /// Back while the answer still streams: what came meanwhile shows in full under the last lines seen, and the rest
+    /// streams on below without moving them (a height animation left running from before put the view at the end).
+    func testBackWhileStillStreaming() throws {
+        let id = try self.chat("Still streaming", turns: [(question: "Still streaming first", answer: "A short first answer.")])
+        try self.script(["Still streaming long": self.answer("Still streaming long", paragraphs: 60)])
+        self.launch(["-openChat", "\(id)"])
+        self.type("Still streaming long")
+        self.send()
+        XCTAssertTrue(waitUntil(30) { (self.readingInt("depth") ?? 0) > Int(self.app.frame.height) })
+        let seen = self.reading["frontier"]
+        XCUIDevice.shared.press(.home)
+        // Back halfway through the answer.
+        sleep(16)
+        XCTAssertFalse(self.waitIdle(id, timeout: 0.5), "still streaming")
+        self.app.activate()
+        XCTAssertTrue(waitUntil(5) { self.reading["revealed"] != nil })
+        self.app.waitForIdle(timeout: 120)
+        sleep(1)
+        self.shot("reading-still-0-back")
+        XCTAssertEqual(self.reading["revealed"], seen)
+        self.assertNearTop(self.readingInt("revealY").map { CGFloat($0) }, "the last lines seen near the top")
+    }
+
     // MARK: - Turns
 
     /// A tap on the status bar, as the system takes it: scroll to top.

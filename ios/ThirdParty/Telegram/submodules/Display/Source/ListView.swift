@@ -3083,6 +3083,17 @@ open class ListViewImpl: ASDisplayNode, ListView, ASScrollViewDelegate, ASGestur
                             }
                         }
                     } else {
+                        // tau: an update without animation lands at once. A height animation still running from an
+                        // earlier animated update went on after it, setting the row back toward the old height (a chat
+                        // put back after the background: what came meanwhile shown in full, then shrunk under the view).
+                        if node.animationForKey("apparentHeight") != nil {
+                            node.removeApparentHeightAnimation()
+                            node.animateFrameTransition(1.0, updatedApparentHeight)
+                        }
+                        if node.animationForKey("transitionOffset") != nil {
+                            node.setAnimationForKey("transitionOffset", animation: nil)
+                            node.transitionOffset = 0.0
+                        }
                         node.apparentHeight = updatedApparentHeight
                         
                         let apparentHeightDelta = updatedApparentHeight - previousApparentHeight
