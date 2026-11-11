@@ -135,3 +135,10 @@
     }
   }
 }
+
+// tau's modals in a short window: the header and the margins above and below fit too (Web A's slim modal is 92vh
+// of content alone, which ran past the window's bottom)
+.Modal.tau-model-picker .modal-content,
+.Modal.tau-servers .modal-content {
+  max-height: calc(100vh - 9rem);
+}
