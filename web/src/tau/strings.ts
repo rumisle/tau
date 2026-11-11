@@ -9,4 +9,10 @@ export const STRINGS = {
   ConnectUnreachable: 'The server does not answer. It may be restarting.',
   ConnectConnecting: 'Connecting…',
   NewChat: 'New Chat',
+  MenuSearch: 'Search',
+  MenuModel: 'Model',
+  MenuThinking: 'Thinking',
+  MenuCompact: 'Compact Context',
+  MenuLoading: 'Loading…',
+  ThinkingOff: 'Thinking turned off',
 } as const;

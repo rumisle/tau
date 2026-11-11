@@ -129,6 +129,9 @@ web/src/tau/
 - **Stop is Web A's Stop for a bot's streamed answer.** The chat's typing status carries `tauRun` while its own run
   works; the composer shows Stop for it unless the field has text (Send steers then); Stop withdraws the queued
   messages back to the field and aborts the run.
+- **The chat's ⋯ menu is tau's** (`components/ChatMenu.tsx`, in Web A's header menu, with its nested submenus): the
+  model and thinking level (`api/agent.ts`: shown at once, sent in order with the chat's messages, believed until the
+  `pi.agent` doc agrees, as iOS's `ServerStore.agent`), and Compact Context, never repeated after a lost connection.
 - **IDs.** A private chat is keyed by its peer, so each conversation is a user of its own. Several servers are told
   apart as in iOS's MultiStore: the server's slot in the high bits of a conversation's ID, under Telegram's 2^52.
 - **Removed vs dormant.** Nothing of Web A's source is deleted.

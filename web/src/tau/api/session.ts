@@ -67,8 +67,10 @@ const subagentCalls = new Map<number, { parentId: number; callId: string }>();
 // Messages on their way as Web A has them: their local message and the state it shows, by request ID
 const shown = new Map<string, { chatId: string; localId: number; state: string }>();
 let outbox: Outbox | undefined;
-// New Chat's create, until it is sent
+// New Chat's create, until it is sent, and the agent picked in it (an AgentPatch)
 let draftRequestId: string | undefined;
+let draftAgent: JsonObject | undefined;
+const changeListeners = new Set<(conversationId?: number) => void>();
 
 dialogs.onChange((changed) => {
   for (const dialog of changed) applyDialog(dialog);
@@ -176,6 +178,7 @@ function scheduleReconnect(status: AuthStatus) {
 
 function applyDialog(dialog: Dialog) {
   const id = dialog.conversation.id;
+  emitChange(id);
   refreshTyping();
   if (dialog.conversation.owner) refreshSubagentCard(id);
   if (!isListed(dialog) || !wasConnected) return;
@@ -318,6 +321,7 @@ function applyReplica(each: Opened) {
     for (const entry of fresh) emitEntry(each, entry);
   }
   updateDraft(each);
+  emitChange(each.replica.id);
 }
 
 function index(each: Opened, entry: Entry) {
@@ -608,7 +612,7 @@ export function draftHistory() {
 function sendToDraft(text: string) {
   draftRequestId ??= crypto.randomUUID();
   // Named after its first answer; the server's default model, as iOS's New Chat without a pick
-  outbox!.enqueueCreate({ requestId: draftRequestId, autoTitle: true });
+  outbox!.enqueueCreate({ requestId: draftRequestId, autoTitle: true, agent: draftAgent });
   outbox!.enqueue({ text, createRequestId: draftRequestId, mode: 'steer' });
 }
 
@@ -620,6 +624,7 @@ function refreshDraft() {
 function onCreated(create: PendingCreate, conversationId: number) {
   if (create.requestId !== draftRequestId) return;
   draftRequestId = undefined;
+  draftAgent = undefined;
   const wasOpen = Object.values(getGlobal().byTabId)
     .some(({ id: tabId }) => selectCurrentMessageList(getGlobal(), tabId)?.chatId === DRAFT_CHAT_ID);
   const gone = [...shown].filter(([, local]) => local.chatId === DRAFT_CHAT_ID);
@@ -658,6 +663,40 @@ function restoreToField(conversationId: number, text: string) {
     });
   }
   restoring.get(conversationId)!.push(text);
+}
+
+// MARK: For tau's own UI (agent.ts, the chat menu)
+
+/** A conversation's Dialog or replica changed; undefined for New Chat's draft */
+export function onConversationChange(listener: (conversationId?: number) => void) {
+  changeListeners.add(listener);
+  return () => changeListeners.delete(listener);
+}
+
+function emitChange(conversationId?: number) {
+  for (const listener of changeListeners) listener(conversationId);
+}
+
+export function currentClient() {
+  return client;
+}
+
+export function getOutbox() {
+  return outbox!;
+}
+
+/** A conversation's docs while it is open (`pi.agent`, `pi.usage`, ...) */
+export function docsOf(conversationId: number) {
+  return opened.get(conversationId)?.replica.docs;
+}
+
+export function draftState() {
+  return { requestId: draftRequestId, agent: draftAgent };
+}
+
+export function setDraftAgent(agent: JsonObject) {
+  draftAgent = { ...draftAgent, ...agent };
+  emitChange(undefined);
 }
 
 function send(update: object) {

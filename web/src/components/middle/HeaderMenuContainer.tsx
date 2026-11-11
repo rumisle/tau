@@ -49,6 +49,7 @@ import {
 } from '../../global/selectors';
 import { isUserId } from '../../util/entities/ids';
 import { disableScrolling } from '../../util/scrollLock';
+import { IS_TAU } from '../../tau/config'; // tau: tau's chat menu (model, thinking, compact)
 import { buildAutoDeletePeriodOptions, DEFAULT_AUTO_DELETE_PERIODS } from '../common/helpers/autoDeletePeriods';
 
 import useAppLayout from '../../hooks/useAppLayout';
@@ -58,6 +59,7 @@ import useLastCallback from '../../hooks/useLastCallback';
 import usePrevDuringAnimation from '../../hooks/usePrevDuringAnimation';
 import useShowTransitionDeprecated from '../../hooks/useShowTransitionDeprecated';
 
+import ChatMenu from '../../tau/components/ChatMenu'; // tau: tau's chat menu (model, thinking, compact)
 import DeleteChatModal from '../common/DeleteChatModal';
 import AutoDeleteOutlinedIcon from '../common/icons/AutoDeleteOutlinedIcon';
 import Icon from '../common/icons/Icon';
@@ -632,6 +634,25 @@ const HeaderMenuContainer = ({
 
     return lang('GroupLeaveGroup');
   }, [canDeleteChat, chat, isChannel, isPrivate, savedDialog, lang]);
+
+  if (IS_TAU) { // tau: tau's chat menu (model, thinking, compact)
+    return (
+      <Portal>
+        <div className="HeaderMenuContainer">
+          <ChatMenu
+            chatId={chatId}
+            isOpen={isMenuOpen}
+            x={x}
+            y={y}
+            shouldCloseFast={shouldCloseFast}
+            canSearch={isMobile && canSearch}
+            onSearch={handleSearch}
+            onClose={closeMenu}
+          />
+        </div>
+      </Portal>
+    );
+  }
 
   return (
     <Portal>
