@@ -10,6 +10,7 @@ import {
   summarizeUsage, thinkingLevels, thinkingTitle,
   usageOf,
 } from '../api/agent';
+import { slotOfChat } from '../api/session';
 import { STRINGS } from '../strings';
 
 import Menu from '../../components/ui/Menu';
@@ -48,8 +49,8 @@ const ChatMenu = ({
 
   // Names and thinking levels come with the models; their load is an agent change
   useEffect(() => {
-    void loadModels();
-  }, []);
+    void loadModels(slotOfChat(chatId));
+  }, [chatId]);
 
   const pick = (change: Parameters<typeof configureAgent>[1], toast: string) => {
     configureAgent(chatId, change);
@@ -74,11 +75,11 @@ const ChatMenu = ({
         }}
       >
         <MenuItemTitle>{STRINGS.MenuModel}</MenuItemTitle>
-        <MenuItemSubtitle>{modelName(agent.model)}</MenuItemSubtitle>
+        <MenuItemSubtitle>{modelName(agent.model, slotOfChat(chatId))}</MenuItemSubtitle>
       </MenuItem>
       <NestedMenuItem
         icon="timer"
-        submenu={thinkingLevels(agent).map((level) => (
+        submenu={thinkingLevels(agent, slotOfChat(chatId)).map((level) => (
           <MenuItem
             key={level}
             icon={level === agent.thinkingLevel ? 'check' : 'placeholder'}

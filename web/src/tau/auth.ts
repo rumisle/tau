@@ -14,7 +14,12 @@ export function serverOrigin() {
 }
 
 export function socketUrl() {
-  const { protocol, host } = window.location;
+  return socketUrlOf(window.location.origin);
+}
+
+/** A server's socket: `wss:` for an `https:` origin */
+export function socketUrlOf(origin: string) {
+  const { protocol, host } = new URL(origin);
   return `${protocol === 'https:' ? 'wss:' : 'ws:'}//${host}${SOCKET_PATH}`;
 }
 

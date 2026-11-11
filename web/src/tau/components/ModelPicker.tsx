@@ -11,6 +11,7 @@ import type { ModelInfo } from '../api/agent';
 import {
   agentOf, cachedModels, configureAgent, loadModels, recentModels, rememberModel,
 } from '../api/agent';
+import { slotOfChat } from '../api/session';
 import { STRINGS } from '../strings';
 
 import useLastCallback from '../../hooks/useLastCallback';
@@ -39,13 +40,15 @@ export function orderModels(models: ModelInfo[], recent: string[], filter: strin
 }
 
 const ModelPicker = ({ chatId, isOpen, onClose }: OwnProps) => {
-  const [models, setModels] = useState<ModelInfo[] | undefined>(cachedModels);
+  // The chat's server's
+  const slot = slotOfChat(chatId);
+  const [models, setModels] = useState<ModelInfo[] | undefined>(() => cachedModels(slot));
   const [filter, setFilter] = useState('');
   const current = agentOf(chatId).model;
 
   useEffect(() => {
-    void loadModels().then(setModels);
-  }, []);
+    void loadModels(slot).then(setModels);
+  }, [slot]);
 
   const ordered = useMemo(() => orderModels(models ?? [], recentModels(), filter), [models, filter]);
   const items: ItemPickerOption[] = ordered.map((model) => ({

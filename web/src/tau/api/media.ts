@@ -3,9 +3,9 @@
 // loads in the Cache API by its hash, which never changes: files and entries are immutable.
 import { ApiMediaFormat } from '../../api/types';
 
-import { serverOrigin } from '../auth';
 import { mediaSource } from './attachments';
-import { authHeaders, currentClient } from './session';
+import { slotOf } from './servers';
+import { authHeaders, clientOf, originOf } from './session';
 
 // Web A's hashes: `photo<id>?size=x`, `document<id>`
 const HASH = /^(?:photo|document)([^?]+)/;
@@ -17,11 +17,14 @@ export async function downloadMedia(url: string, mediaFormat: ApiMediaFormat) {
   let blob: Blob;
   try {
     if ('fileId' in source) {
-      const response = await fetch(`${serverOrigin()}/files/${source.fileId}`, { headers: authHeaders() });
+      // From the server that keeps it
+      const response = await fetch(`${originOf(source.slot)}/files/${source.fileId}`, {
+        headers: authHeaders(source.slot),
+      });
       if (!response.ok) return undefined;
       blob = await response.blob();
     } else {
-      const client = currentClient();
+      const client = clientOf(slotOf(source.conversationId));
       if (!client) return undefined;
       const { mimeType, data } = await client.request<{ mimeType: string; data: string }>('media.get', source);
       blob = new Blob([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))], { type: mimeType });

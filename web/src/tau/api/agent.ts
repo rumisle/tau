@@ -4,7 +4,8 @@
 import type { Entry, JsonObject } from 'tau-client/protocol';
 
 import {
-  currentClient, dialogs, docsOf, draftState, entriesOf, getOutbox, isDraftChat, onConversationChange, setDraftAgent,
+  clientOf, dialogs, docsOf, draftState, entriesOf, getOutbox, isDraftChat, onConversationChange, setDraftAgent,
+  slotOfChat,
 } from './session';
 
 export type ModelRef = { provider: string; modelId: string };
@@ -22,8 +23,9 @@ const FALLBACK_LEVELS = ['off', 'low', 'medium', 'high'];
 // How long a confirmed choice waits for the doc to say the same before the doc is believed again
 const CONFIRMED_TTL_MS = 5000;
 
-let models: ModelInfo[] | undefined;
-let modelsRequest: Promise<ModelInfo[] | undefined> | undefined;
+// Each server's models, by slot: a chat's are its server's
+const modelsBySlot = new Map<number, ModelInfo[]>();
+const modelsRequests = new Map<number, Promise<ModelInfo[] | undefined>>();
 const overrides = new Map<number, { agent: Agent; token: number; confirmed: boolean }>();
 let nextToken = 0;
 const listeners = new Set<() => void>();
@@ -39,35 +41,38 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
-/** The models the server has credentials for, asked once per page */
-export function loadModels() {
-  if (models) return Promise.resolve(models);
-  const client = currentClient();
+/** The models a server has credentials for, asked once per page */
+export function loadModels(slot = 0) {
+  const known = modelsBySlot.get(slot);
+  if (known) return Promise.resolve(known);
+  const client = clientOf(slot);
   if (!client) return Promise.resolve(undefined);
-  modelsRequest ??= client.request<{ models: ModelInfo[] }>('models.list')
-    .then((result) => {
-      models = result.models;
-      emit();
-      return models;
-    })
-    .catch(() => undefined)
-    .finally(() => {
-      modelsRequest = undefined;
-    });
-  return modelsRequest;
+  if (!modelsRequests.has(slot)) {
+    modelsRequests.set(slot, client.request<{ models: ModelInfo[] }>('models.list')
+      .then((result) => {
+        modelsBySlot.set(slot, result.models);
+        emit();
+        return result.models;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        modelsRequests.delete(slot);
+      }));
+  }
+  return modelsRequests.get(slot)!;
 }
 
-export function cachedModels() {
-  return models;
+export function cachedModels(slot = 0) {
+  return modelsBySlot.get(slot);
 }
 
-export function modelInfo(model?: ModelRef) {
-  return model && models?.find((each) => each.provider === model.provider && each.id === model.modelId);
+export function modelInfo(model?: ModelRef, slot = 0) {
+  return model && modelsBySlot.get(slot)?.find((each) => each.provider === model.provider && each.id === model.modelId);
 }
 
-export function modelName(model?: ModelRef) {
+export function modelName(model?: ModelRef, slot = 0) {
   if (!model) return 'Default';
-  return modelInfo(model)?.name ?? model.modelId;
+  return modelInfo(model, slot)?.name ?? model.modelId;
 }
 
 // Models picked lately, newest first, on this device (iOS keeps its recent models so)
@@ -88,16 +93,16 @@ export function rememberModel(key: string) {
 }
 
 /** The levels the chat's model has, `off` first (pi-ai's getSupportedThinkingLevels) */
-export function thinkingLevels(agent: Agent) {
-  return modelInfo(agent.model)?.thinkingLevels ?? FALLBACK_LEVELS;
+export function thinkingLevels(agent: Agent, slot = 0) {
+  return modelInfo(agent.model, slot)?.thinkingLevels ?? FALLBACK_LEVELS;
 }
 
 export function thinkingTitle(level: string) {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
-function defaults(): Agent {
-  const hello = currentClient()?.hello as { defaultModel?: ModelRef; defaultThinkingLevel?: string } | undefined;
+function defaults(slot = 0): Agent {
+  const hello = clientOf(slot)?.hello as { defaultModel?: ModelRef; defaultThinkingLevel?: string } | undefined;
   return { model: hello?.defaultModel, thinkingLevel: hello?.defaultThinkingLevel ?? 'off' };
 }
 
@@ -122,7 +127,7 @@ export function agentPatchOf(chatId: string): JsonObject {
 }
 
 export function agentOf(chatId: string): Agent {
-  if (isDraftChat(chatId)) return fromPatch(defaults(), draftState(chatId).agent);
+  if (isDraftChat(chatId)) return fromPatch(defaults(slotOfChat(chatId)), draftState(chatId).agent);
   const conversationId = Number(chatId);
   const doc = docsOf(conversationId)?.['pi.agent'] as { model?: ModelRef; thinkingLevel?: string } | undefined;
   const stored = doc?.model ? { model: doc.model, thinkingLevel: doc.thinkingLevel ?? 'off' } : undefined;
@@ -133,7 +138,7 @@ export function agentOf(chatId: string): Agent {
   }
   if (stored) return stored;
   const dialog = dialogs.dialogs.get(conversationId);
-  return { ...defaults(), ...(dialog?.agent.model && { model: dialog.agent.model }) };
+  return { ...defaults(slotOfChat(chatId)), ...(dialog?.agent.model && { model: dialog.agent.model }) };
 }
 
 function sameAgent(a: Agent, b: Agent) {
@@ -151,10 +156,10 @@ export function configureAgent(chatId: string, change: { model?: ModelRef; think
   const next = fromPatch(agentOf(chatId), patch);
   if (change.model && !change.thinkingLevel) {
     // Fitted to the model, as the server fits it (pi's clampThinkingLevel), so the menu does not show a level it lacks
-    const levels = thinkingLevels(next);
+    const levels = thinkingLevels(next, slotOfChat(chatId));
     if (!levels.includes(next.thinkingLevel)) next.thinkingLevel = levels.at(-1) ?? 'off';
   }
-  const outbox = getOutbox();
+  const outbox = getOutbox(chatId);
   if (isDraftChat(chatId)) {
     // Not created yet: the create asks for it, or, already on its way, a configure follows it
     setDraftAgent(chatId, patch);
@@ -191,7 +196,8 @@ export function configureAgent(chatId: string, change: { model?: ModelRef; think
 /** Compact Context: not repeated after a lost connection, as two in a row would summarize the summary */
 export function compact(chatId: string) {
   if (isDraftChat(chatId)) return Promise.resolve();
-  return getOutbox().request('conversation.compact', { conversationId: Number(chatId) }, {}, { repeatable: false });
+  return getOutbox(chatId)
+    .request('conversation.compact', { conversationId: Number(chatId) }, {}, { repeatable: false });
 }
 
 export type TokenUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
@@ -252,7 +258,7 @@ export function computeUsage(
 
 export function usageOf(chatId: string): Usage {
   const agent = agentOf(chatId);
-  const window = modelInfo(agent.model)?.contextWindow;
+  const window = modelInfo(agent.model, slotOfChat(chatId))?.contextWindow;
   if (isDraftChat(chatId)) return computeUsage([], undefined, undefined, window);
   const conversationId = Number(chatId);
   const { entries, head } = entriesOf(conversationId);

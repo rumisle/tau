@@ -7,8 +7,9 @@ import type {
 } from '../../api/types';
 import { ApiMessageEntityTypes } from '../../api/types';
 
-import { buildMediaRows } from './attachments';
+import { buildMediaRows, mediaIdOf } from './attachments';
 import { buildChatId, ME_ID } from './builders';
+import { slotOf } from './servers';
 
 // Photos are sent at most this many pixels on the long side, as JPEG at 0.8 (docs/media.md "In the app")
 const MAX_PHOTO_SIDE = 2000;
@@ -77,7 +78,8 @@ export function buildOutgoingRows(
       photos.push({
         mediaType: 'photo',
         // Without the bytes here (a kept file an edit carries again), the server's
-        id: !blobUrls.has(upload.key) && upload.serverId ? upload.serverId : `local-${upload.key}`,
+        id: !blobUrls.has(upload.key) && upload.serverId ? mediaIdOf(upload.serverId, slotOf(Number(chatId)))
+          : `local-${upload.key}`,
         date: base.date,
         sizes: [{ type: 'x', width: upload.width ?? 1000, height: upload.height ?? 750 }],
         blobUrl: blobUrls.get(upload.key),
@@ -85,7 +87,7 @@ export function buildOutgoingRows(
     } else {
       documents.push({
         mediaType: 'document',
-        id: upload.serverId ?? `local-${upload.key}`,
+        id: upload.serverId ? mediaIdOf(upload.serverId, slotOf(Number(chatId))) : `local-${upload.key}`,
         fileName: upload.name,
         size: upload.size,
         mimeType: upload.mimeType,

@@ -1,5 +1,6 @@
-// The connection to this origin's tau server and what Web A's state is built from: the chat list by version and a
-// replica per opened chat (tau-client), turned into `apiUpdate`s as GramJS's update handler sends them.
+// The connections to tau's servers (this origin's first, and those added: docs/web.md "Several servers") and what
+// Web A's state is built from: their chat lists by version and a replica per opened chat (tau-client), turned into
+// `apiUpdate`s as GramJS's update handler sends them.
 import { TauClient } from 'tau-client/connection';
 import { DialogList } from 'tau-client/dialogs';
 import type { OutgoingMessage, PendingCreate, SendMode, Upload } from 'tau-client/outbox';
@@ -11,13 +12,14 @@ import { getActions, getGlobal } from '../../global';
 import type { ApiAttachment, ApiMessage, ApiUpdate } from '../../api/types';
 import type { MessageContext } from './builders';
 import type { QueuedMessage } from './queue';
+import type { ServerConfig } from './servers';
 import { MAIN_THREAD_ID } from '../../api/types';
 
 import { ALL_FOLDER_ID, ARCHIVED_FOLDER_ID } from '../../config';
 import { selectCurrentMessageList } from '../../global/selectors';
 import { isLocalMessageId } from '../../util/keys/messageKey';
 import {
-  probe, readToken, saveToken, serverOrigin, socketProtocols, socketUrl,
+  probe, readToken, saveToken, serverOrigin, socketProtocols, socketUrlOf,
 } from '../auth';
 import { whenLinkTokenStored } from '../boot';
 import { draftsOf } from '../db/drafts';
@@ -33,6 +35,7 @@ import {
 } from './builders';
 import { buildOutgoingRows, outgoingRowCount, prepareUploads } from './outgoing';
 import { buildQueue, isInQueue } from './queue';
+import { mappedSocket, readServers, slotOf, writeServers } from './servers';
 
 // The PoC reads a transcript whole, in pages of the server's largest
 const PAGE = 500;
@@ -66,16 +69,40 @@ type Opened = {
   answered: number;
 };
 
+export type ServerStatus = 'connecting' | 'ready' | 'refused' | 'unreachable';
+
+/** A server and what this app keeps of it: its connection, its chat list, its outbox */
+type ServerLink = {
+  slot: number;
+  origin: string;
+  token?: string;
+  client?: TauClient;
+  dialogs: DialogList;
+  outbox: Outbox;
+  status: ServerStatus;
+  attempt: number;
+  isRemoved?: boolean;
+};
+
 let onUpdate: (update: ApiUpdate) => void = () => undefined;
-let client: TauClient | undefined;
-let token: string | undefined;
+const links = new Map<number, ServerLink>();
+// The first server, this origin's, was ready once: Web A has its state, and takes changes as updates
 let wasConnected = false;
-let attempt = 0;
 let typingTimer: number | undefined;
 let authStatus: AuthStatus = 'connecting';
 const authListeners = new Set<(status: AuthStatus) => void>();
+const serverListeners = new Set<() => void>();
 
-export const dialogs = new DialogList();
+/** Every server's chat list as one, by global conversation IDs (src/tau/api/servers.ts) */
+export const dialogs = {
+  dialogs: {
+    get: (id: number) => links.get(slotOf(id))?.dialogs.dialogs.get(id),
+    values: () => [...links.values()].flatMap((link) => [...link.dialogs.dialogs.values()]),
+  },
+  /** Newest first: by the last entry's time, as entry IDs are each server's own */
+  ordered: () => dialogs.dialogs.values()
+    .sort((a, b) => (b.last?.timestamp ?? 0) - (a.last?.timestamp ?? 0) || (b.last?.id ?? 0) - (a.last?.id ?? 0)),
+};
 const opened = new Map<number, Opened>();
 // Reads sent for chats on screen in the last two seconds, with the newest entry to read once they pass
 const reading = new Map<number, { at: number }>();
@@ -87,28 +114,39 @@ const subagentCalls = new Map<number, { parentId: number; callId: string }>();
 const shown = new Map<string, { chatId: string; localIds: number[]; state: string }>();
 // Object URLs of the bytes of the outbox's photos and files, by upload key, while a message has them
 const blobUrls = new Map<string, string>();
-let outbox: Outbox | undefined;
-// New Chat's create, until it is sent, and the agent picked in it (an AgentPatch)
 const changeListeners = new Set<(conversationId?: number) => void>();
-
-dialogs.onChange((changed) => {
-  for (const dialog of changed) applyDialog(dialog);
-});
 
 export async function start(callback: (update: ApiUpdate) => void) {
   onUpdate = callback;
   await whenLinkTokenStored();
-  token = await readToken(serverOrigin());
-  const { state, persist } = await openOutboxState(serverOrigin());
+  const others = await readServers();
+  await addLink({ slot: 0, origin: serverOrigin() });
+  for (const config of others) await addLink(config);
+  for (const config of others) void connect(links.get(config.slot)!);
+  await connect(links.get(0)!);
+}
+
+/** A server's link: its token, its outbox as the last page left it, its chat list */
+async function addLink(config: ServerConfig) {
+  const { state, persist } = await openOutboxState(config.origin);
   // The bytes of what a reload left unsent, for its bubbles
   for (const upload of state.items.flatMap((item) => item.uploads ?? [])) {
     const blob = await readOutboxFile(upload.key);
     if (blob) blobUrls.set(upload.key, URL.createObjectURL(blob));
   }
-  outbox = new Outbox({
+  const link: ServerLink = {
+    slot: config.slot,
+    origin: config.origin,
+    token: await readToken(config.origin),
+    dialogs: new DialogList(),
+    status: 'connecting',
+    attempt: 0,
+    outbox: undefined as unknown as Outbox,
+  };
+  link.outbox = new Outbox({
     state,
     persist,
-    upload: uploadFile,
+    upload: (upload) => uploadFile(link, upload),
     events: {
       removed: (_item, keys) => dropUploads(keys),
       changed: (conversationId) => {
@@ -121,7 +159,29 @@ export async function start(callback: (update: ApiUpdate) => void) {
       restored: restoreToField,
     },
   });
-  await connect();
+  link.dialogs.onChange((changed) => {
+    for (const dialog of changed) applyDialog(dialog);
+  });
+  links.set(config.slot, link);
+  return link;
+}
+
+function linkOf(conversationId: number) {
+  return links.get(slotOf(conversationId));
+}
+
+/** The outbox of a conversation's server */
+function outboxOf(conversationId: number) {
+  return linkOf(conversationId)!.outbox;
+}
+
+/** A message on its way, on whichever server's outbox has it */
+function findOutgoing(requestId: string) {
+  for (const link of links.values()) {
+    const item = link.outbox.item(requestId);
+    if (item) return { outbox: link.outbox, item };
+  }
+  return undefined;
 }
 
 /** The connect screen's token: kept when the server takes it */
@@ -131,9 +191,10 @@ export async function submitToken(given: string) {
     setAuthStatus(result === 'token' ? 'wrongToken' : 'unreachable');
     return false;
   }
-  token = given;
+  const link = links.get(0)!;
+  link.token = given;
   await saveToken(serverOrigin(), given);
-  await connect();
+  await connect(link);
   return true;
 }
 
@@ -155,53 +216,81 @@ function setAuthStatus(status: AuthStatus) {
   }
 }
 
-async function connect() {
-  const result = await probe(serverOrigin(), token);
+async function connect(link: ServerLink) {
+  if (link.isRemoved) return;
+  const isFirst = link.slot === 0;
+  const result = await probe(link.origin, link.token);
   if (result !== 'ok') {
-    if (result === 'token') setAuthStatus(token ? 'wrongToken' : 'needsToken');
-    else scheduleReconnect('unreachable');
+    if (result === 'token') {
+      setStatus(link, 'refused');
+      if (isFirst) setAuthStatus(link.token ? 'wrongToken' : 'needsToken');
+    } else {
+      scheduleReconnect(link, 'unreachable');
+    }
     return;
   }
+  let client: TauClient;
   try {
-    client = await TauClient.open(new WebSocket(socketUrl(), socketProtocols(token)));
+    const socket = new WebSocket(socketUrlOf(link.origin), socketProtocols(link.token));
+    client = await TauClient.open(mappedSocket(socket, link.slot));
   } catch {
-    scheduleReconnect('unreachable');
+    scheduleReconnect(link, 'unreachable');
     return;
   }
-  attempt = 0;
-  const current = client;
-  current.on((push) => {
-    if (push.event === 'submission') outbox!.apply(push.record as JsonObject);
+  if (link.isRemoved) {
+    void client.close();
+    return;
+  }
+  link.client = client;
+  link.attempt = 0;
+  client.on((push) => {
+    if (push.event === 'submission') link.outbox.apply(push.record as JsonObject);
   });
   void client.closed.then(() => {
-    if (client === current) outbox!.disconnected();
-    for (const each of opened.values()) each.isSynced = false;
-    client = undefined;
-    send({ '@type': 'updateConnectionState', connectionState: 'connectionStateConnecting' });
-    scheduleReconnect('connecting');
+    if (link.client === client) link.outbox.disconnected();
+    for (const each of opened.values()) {
+      if (slotOf(each.replica.id) === link.slot) each.isSynced = false;
+    }
+    link.client = undefined;
+    if (link.isRemoved) return;
+    if (isFirst) send({ '@type': 'updateConnectionState', connectionState: 'connectionStateConnecting' });
+    scheduleReconnect(link, 'connecting');
   });
-  await dialogs.sync(client);
+  await link.dialogs.sync(client);
   // After the chat list's subscribe, which brings every conversation's submission pushes
-  outbox!.connected(client, String(client.hello?.serverId));
-  if (!wasConnected) {
-    wasConnected = true;
-    send({ '@type': 'updateApiReady' });
-    send({ '@type': 'updateAuthorizationState', authorizationState: 'authorizationStateReady' });
-    send({ '@type': 'updateCurrentUser', currentUser: buildMe(), currentUserFullInfo: {} });
-  } else {
-    // Back after a dropped socket: open chats subscribe again from their newest entry
-    for (const each of opened.values()) void syncReplica(each);
+  link.outbox.connected(client, String(client.hello?.serverId));
+  // Back after a dropped socket: its open chats subscribe again from their newest entry
+  for (const each of opened.values()) {
+    if (slotOf(each.replica.id) === link.slot && each.isLoaded) void syncReplica(each);
   }
-  setAuthStatus('ready');
-  // Web A syncs (`loadAllChats`, then `fetchChats`) once connected and authorized
-  send({ '@type': 'updateConnectionState', connectionState: 'connectionStateReady' });
+  setStatus(link, 'ready');
+  if (isFirst) {
+    if (!wasConnected) {
+      wasConnected = true;
+      send({ '@type': 'updateApiReady' });
+      send({ '@type': 'updateAuthorizationState', authorizationState: 'authorizationStateReady' });
+      send({ '@type': 'updateCurrentUser', currentUser: buildMe(), currentUserFullInfo: {} });
+    }
+    setAuthStatus('ready');
+    // Web A syncs (`loadAllChats`, then `fetchChats`) once connected and authorized
+    send({ '@type': 'updateConnectionState', connectionState: 'connectionStateReady' });
+  } else if (wasConnected) {
+    // Another server's chats, into the list Web A has already
+    for (const dialog of link.dialogs.dialogs.values()) applyDialog(dialog);
+  }
   refreshTyping();
 }
 
-function scheduleReconnect(status: AuthStatus) {
-  if (!wasConnected) setAuthStatus(status);
-  const delay = RECONNECT_MS[Math.min(attempt++, RECONNECT_MS.length - 1)];
-  window.setTimeout(() => void connect(), delay);
+function scheduleReconnect(link: ServerLink, status: AuthStatus & ServerStatus) {
+  setStatus(link, status);
+  if (link.slot === 0 && !wasConnected) setAuthStatus(status);
+  const delay = RECONNECT_MS[Math.min(link.attempt++, RECONNECT_MS.length - 1)];
+  window.setTimeout(() => void connect(link), delay);
+}
+
+function setStatus(link: ServerLink, status: ServerStatus) {
+  link.status = status;
+  for (const listener of serverListeners) listener();
 }
 
 function applyDialog(dialog: Dialog) {
@@ -321,21 +410,29 @@ function open(conversationId: number) {
 /** Subscribes a replica on the current connection; the outbox learns what became of the messages it has */
 async function syncReplica(each: Opened) {
   const { replica } = each;
-  await replica.sync(client!, { limit: PAGE });
+  const link = linkOf(replica.id)!;
+  const { client, outbox } = link;
+  if (!client) return;
+  await replica.sync(client, { limit: PAGE });
   each.isSynced = true;
   const unsettled = new Set<number>();
   for (const record of replica.submissions.values()) {
     if (record.status === 'queued' || record.status === 'placed') unsettled.add(record.id as number);
-    outbox!.apply(record);
+    outbox.apply(record);
   }
-  outbox!.refreshSettled(replica.id, unsettled);
+  outbox.refreshSettled(replica.id, unsettled);
 }
 
 async function load(each: Opened) {
   const { replica } = each;
-  await syncReplica(each);
-  while (replica.hasOlder) await replica.loadOlder(client!, PAGE);
-  while (replica.holes.length > 0) await replica.fillHole(client!, PAGE);
+  const link = linkOf(replica.id)!;
+  // A server not connected yet: its chats load once it is
+  while (!link.client || !each.isSynced) {
+    if (!link.client) await new Promise((resolve) => window.setTimeout(resolve, RECONNECT_MS[0]));
+    else await syncReplica(each);
+  }
+  while (replica.hasOlder) await replica.loadOlder(link.client, PAGE);
+  while (replica.holes.length > 0) await replica.fillHole(link.client, PAGE);
   each.isLoaded = true;
   // Web A keeps a message it has over the history's: what stood for entries as the Dialog's summary, and what its own
   // cache kept from an earlier visit (a tool card before its result), is replaced by the entry's message, or removed
@@ -373,7 +470,7 @@ function applyReplica(each: Opened) {
     const { text, photos, documents } = readUserContent(content, entry.conversationId, entry.id, 0);
     return { id: entry.id, text, files: photos.length + documents.length };
   });
-  if (users.length > 0) outbox?.matchPlacements(each.replica.id, users);
+  if (users.length > 0) linkOf(each.replica.id)?.outbox.matchPlacements(each.replica.id, users);
   if (each.isLoaded) {
     for (const entry of fresh) emitEntry(each, entry);
   }
@@ -413,6 +510,7 @@ function emitEntry(each: Opened, entry: Entry) {
   }
   const rows = buildRows(entry, contextOf(each));
   if (!rows.length) return;
+  const outbox = linkOf(entry.conversationId)?.outbox;
   const sent = entry.kind === 'pi.user' ? outbox?.placedAs(entry.conversationId, entry.id) : undefined;
   const local = sent && shown.get(sent.requestId);
   if (sent) {
@@ -589,12 +687,12 @@ export async function sendText(chatId: string, text: string, attachments: ApiAtt
   if (how === 'stopAndSend') {
     // After the abort in the conversation's order: the run is over, so it goes to the chat, not the queue
     interrupt(conversationId);
-    outbox!.enqueue({
+    outboxOf(conversationId).enqueue({
       text, conversationId, mode: 'steer', showsInQueue: false, uploads,
     });
     return;
   }
-  outbox!.enqueue({
+  outboxOf(conversationId).enqueue({
     text,
     conversationId,
     mode: how ?? 'steer',
@@ -626,11 +724,11 @@ async function keepUploads(attachments: ApiAttachment[]) {
 }
 
 /** `POST /files` for the outbox: the file's ID, or an UploadError when the server refuses it */
-async function uploadFile(upload: Upload) {
+async function uploadFile(link: ServerLink, upload: Upload) {
   const blob = await readOutboxFile(upload.key);
   if (!blob) throw new UploadError(400, `${upload.name} is missing`);
-  const response = await fetch(`${serverOrigin()}/files?name=${encodeURIComponent(upload.name)}`, {
-    method: 'POST', headers: authHeaders(), body: blob,
+  const response = await fetch(`${link.origin}/files?name=${encodeURIComponent(upload.name)}`, {
+    method: 'POST', headers: authHeaders(link.slot), body: blob,
   });
   if (!response.ok) {
     const error = await response.json().catch(() => undefined);
@@ -652,7 +750,7 @@ function dropUploads(keys: string[]) {
 /** The message on its way a local bubble stands for, if any: what its menu offers (Resend, Delete) depends on it */
 export function outgoingForMessage(chatId: string, localId: number) {
   for (const [requestId, local] of shown) {
-    if (local.chatId === chatId && local.localIds.includes(localId)) return outbox!.item(requestId);
+    if (local.chatId === chatId && local.localIds.includes(localId)) return findOutgoing(requestId)?.item;
   }
   return undefined;
 }
@@ -662,17 +760,19 @@ export function outgoingForMessage(chatId: string, localId: number) {
  * or the withdraw says it already did)
  */
 export function deleteOutgoing(requestId: string) {
-  const item = outbox!.item(requestId);
-  if (!item) return;
-  if (item.state.type === 'failed' || !item.wasSent) outbox!.discard(requestId);
-  else outbox!.withdraw(requestId);
+  const found = findOutgoing(requestId);
+  if (!found) return;
+  const { outbox, item } = found;
+  if (item.state.type === 'failed' || !item.wasSent) outbox.discard(requestId);
+  else outbox.withdraw(requestId);
 }
 
 /** Resend a refused message: a new one with its text and files, in its place */
 export function resendOutgoing(requestId: string) {
-  const item = outbox!.item(requestId);
-  if (item?.state.type !== 'failed') return;
-  outbox!.enqueue({
+  const found = findOutgoing(requestId);
+  if (found?.item.state.type !== 'failed') return;
+  const { outbox, item } = found;
+  outbox.enqueue({
     text: item.text,
     conversationId: item.conversationId,
     createRequestId: item.conversationId === undefined ? item.createRequestId : undefined,
@@ -680,7 +780,7 @@ export function resendOutgoing(requestId: string) {
     showsInQueue: Boolean(item.conversationId !== undefined && dialogs.dialogs.get(item.conversationId)?.busy),
     uploads: item.uploads?.map((upload) => ({ ...upload, serverId: undefined })),
   });
-  outbox!.discard(requestId);
+  outbox.discard(requestId);
 }
 
 /** Stop: the run ends, and the messages waiting for it come back to the field (docs/sending.md "Stop") */
@@ -696,11 +796,12 @@ function interrupt(conversationId: number, sendNow?: string) {
   const queue = queueOf(conversationId);
   const own = queue.flatMap((queued) => (queued.outgoingId ? [queued.outgoingId] : []));
   // Pending ones the panel shows, and those it does not yet (a reload before the inbox came)
-  for (const item of outbox!.itemsOf(conversationId)) {
+  const outbox = outboxOf(conversationId);
+  for (const item of outbox.itemsOf(conversationId)) {
     if (isInQueue(item) && !own.includes(item.requestId)) own.push(item.requestId);
   }
   const others = queue.filter((queued) => !queued.outgoingId && queued.text);
-  void outbox!.interrupt(conversationId, { restoring: own, sendNow }).then(() => {
+  void outbox.interrupt(conversationId, { restoring: own, sendNow }).then(() => {
     for (const queued of others) restoreToField(conversationId, queued.text);
   }).catch(() => undefined);
 }
@@ -709,6 +810,7 @@ function interrupt(conversationId: number, sendNow?: string) {
 
 /** The messages waiting for the agent in a conversation, in the panel's order */
 export function queueOf(conversationId: number): QueuedMessage[] {
+  const outbox = linkOf(conversationId)?.outbox;
   if (!outbox) return [];
   const each = opened.get(conversationId);
   const inbox = each?.isSynced ? ((each.replica.docs['pi.inbox'] as JsonObject | undefined)?.items ?? []) : [];
@@ -719,13 +821,13 @@ export function queueOf(conversationId: number): QueuedMessage[] {
 function withdrawOther(conversationId: number, queued: QueuedMessage) {
   if (queued.submissionId === undefined) return Promise.resolve(false);
   const params = { submissionId: queued.submissionId };
-  return outbox!.request<{ result: string }>('submission.abort', { conversationId }, params)
+  return outboxOf(conversationId).request<{ result: string }>('submission.abort', { conversationId }, params)
     .then(({ result }) => result === 'aborted', () => false);
 }
 
 /** Delete, or Edit (`restore`: its text comes back to the field). False when the model has it already. */
 export function withdrawQueued(conversationId: number, queued: QueuedMessage, restore: boolean) {
-  if (queued.outgoingId) return outbox!.withdraw(queued.outgoingId, { restore });
+  if (queued.outgoingId) return outboxOf(conversationId).withdraw(queued.outgoingId, { restore });
   void withdrawOther(conversationId, queued).then((withdrawn) => {
     if (withdrawn && restore) restoreToField(conversationId, queued.text);
   });
@@ -735,12 +837,12 @@ export function withdrawQueued(conversationId: number, queued: QueuedMessage, re
 /** Send as Follow-up, or as Steer: withdrawn, then queued anew */
 export function moveQueued(conversationId: number, queued: QueuedMessage, mode: SendMode) {
   if (queued.outgoingId) {
-    outbox!.move(queued.outgoingId, mode);
+    outboxOf(conversationId).move(queued.outgoingId, mode);
     return;
   }
   void withdrawOther(conversationId, queued).then((withdrawn) => {
     if (withdrawn) {
-      outbox!.enqueue({
+      outboxOf(conversationId).enqueue({
         text: queued.text, conversationId, mode, showsInQueue: true,
       });
     }
@@ -756,7 +858,7 @@ export function sendQueuedNow(conversationId: number, queued: QueuedMessage) {
   void withdrawOther(conversationId, queued).then((withdrawn) => {
     if (!withdrawn) return;
     interrupt(conversationId);
-    outbox!.enqueue({
+    outboxOf(conversationId).enqueue({
       text: queued.text, conversationId, mode: 'steer', showsInQueue: false,
     });
   });
@@ -764,7 +866,7 @@ export function sendQueuedNow(conversationId: number, queued: QueuedMessage) {
 
 /** Bubbles for the messages of a conversation on their way, oldest first, numbered after its entries */
 function outgoingOf(conversationId: number) {
-  return bubblesOf(buildChatId(conversationId), outbox!.itemsOf(conversationId));
+  return bubblesOf(buildChatId(conversationId), outboxOf(conversationId).itemsOf(conversationId));
 }
 
 // A message on its way is a bubble unless it is in the transcript, withdrawn, or waiting in the queue's panel
@@ -802,7 +904,7 @@ function stateOf(item: OutgoingMessage) {
 /** What Web A shows of a conversation's messages on their way follows the outbox: new ones, states, the withdrawn */
 function refreshOutgoing(conversationId: number) {
   if (!opened.get(conversationId)?.isLoaded) return;
-  refreshBubbles(buildChatId(conversationId), outbox!.itemsOf(conversationId));
+  refreshBubbles(buildChatId(conversationId), outboxOf(conversationId).itemsOf(conversationId));
 }
 
 function refreshBubbles(chatId: string, list: OutgoingMessage[]) {
@@ -857,6 +959,8 @@ function refreshBubbles(chatId: string, list: OutgoingMessage[]) {
 type DraftChat = {
   chatId: string;
   title: string;
+  // The server it is created on
+  slot: number;
   requestId?: string;
   // The agent it shows (an AgentPatch), which its create asks for
   agent?: JsonObject;
@@ -874,13 +978,24 @@ let lastForkChat = 0;
 function newChatDraft() {
   let draft = draftChats.get(DRAFT_CHAT_ID);
   if (!draft) {
-    const left = outbox!.state.creates.find((create) => create.forkOf === undefined);
+    // What a reload left unsent, on whichever server
+    const [link, left] = [...links.values()]
+      .map((each) => [each, each.outbox.state.creates.find((create) => create.forkOf === undefined)] as const)
+      .find(([, create]) => create) ?? [undefined, undefined];
     draft = {
-      chatId: DRAFT_CHAT_ID, title: STRINGS.NewChat, requestId: left?.requestId, agent: left?.agent,
+      chatId: DRAFT_CHAT_ID,
+      title: STRINGS.NewChat,
+      slot: link?.slot ?? 0,
+      requestId: left?.requestId,
+      agent: left?.agent,
     };
     draftChats.set(DRAFT_CHAT_ID, draft);
   }
   return draft;
+}
+
+function outboxOfDraft(draft: DraftChat) {
+  return links.get(draft.slot)!.outbox;
 }
 
 /** Web A's chat for a draft, with what was written in it, then opened */
@@ -921,10 +1036,26 @@ function showDraftChat(draft: DraftChat, isEdit = false) {
   window.setTimeout(() => getActions().openChat({ id: draft.chatId, shouldReplaceLast: isEdit }));
 }
 
-export function openNewChat() {
+/** New Chat, on a server (the one used last, or this origin's); a draft that has messages waiting keeps its own */
+export function openNewChat(slot = lastSlot) {
   const draft = newChatDraft();
+  if (!draft.requestId || !outboxOfDraft(draft).create(draft.requestId)) {
+    if (links.has(slot)) draft.slot = slot;
+    draft.title = newChatTitle(draft.slot);
+  }
   draft.requestId ??= crypto.randomUUID();
   showDraftChat(draft);
+}
+
+let lastSlot = 0;
+
+/** New Chat names its server when there are several */
+function newChatTitle(slot: number) {
+  return links.size > 1 ? `${STRINGS.NewChat} · ${hostOf(links.get(slot)!.origin)}` : STRINGS.NewChat;
+}
+
+export function hostOf(origin: string) {
+  return new URL(origin).host;
 }
 
 export function isDraftChat(chatId: string) {
@@ -936,7 +1067,7 @@ export function draftHistory(chatId: string, offsetId: number | undefined, addOf
   const draft = chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId);
   if (!draft?.requestId) return { messages: [], count: 0 };
   draft.isLoaded = true;
-  const messages = bubblesOf(chatId, outbox!.itemsOfCreate(draft.requestId)).reverse();
+  const messages = bubblesOf(chatId, outboxOfDraft(draft).itemsOfCreate(draft.requestId)).reverse();
   const parent = draft.forkOf === undefined ? undefined : opened.get(draft.forkOf);
   if (parent && draft.forkAt !== undefined) {
     const inherited = parent.replica.ordered().filter((entry) => entry.id <= draft.forkAt!)
@@ -955,13 +1086,15 @@ export function draftHistory(chatId: string, offsetId: number | undefined, addOf
 function sendToDraft(chatId: string, text: string, uploads?: Upload[]) {
   const draft = chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId)!;
   draft.requestId ??= crypto.randomUUID();
+  const outbox = outboxOfDraft(draft);
+  if (draft.chatId === DRAFT_CHAT_ID) lastSlot = draft.slot;
   // New Chat: named after its first answer unless renamed; the server's default model, as iOS's New Chat without a pick
-  outbox!.enqueueCreate({
+  outbox.enqueueCreate({
     requestId: draft.requestId,
     ...(draft.isTitleManual ? { title: draft.title, autoTitle: false } : { autoTitle: true }),
     agent: draft.agent,
   });
-  outbox!.enqueue({
+  outbox.enqueue({
     text, createRequestId: draft.requestId, mode: 'steer', uploads,
   });
 }
@@ -985,19 +1118,22 @@ export function editMessage(chatId: string, messageId: number, text: string, age
   let draft: DraftChat;
   if (!Number.isFinite(at)) {
     draft = newChatDraft();
+    // On the chat's server, unless New Chat has messages waiting on another
+    if (!draft.requestId || !outboxOfDraft(draft).create(draft.requestId)) draft.slot = slotOf(conversationId);
     draft.requestId ??= crypto.randomUUID();
     draft.agent = { ...draft.agent, ...agent };
   } else {
     draft = {
       chatId: String(Number(DRAFT_CHAT_ID) - ++lastForkChat),
       title,
+      slot: slotOf(conversationId),
       requestId: crypto.randomUUID(),
       agent,
       forkOf: conversationId,
       forkAt: at,
     };
     draftChats.set(draft.chatId, draft);
-    outbox!.enqueueCreate({
+    outboxOfDraft(draft).enqueueCreate({
       requestId: draft.requestId!, title, agent, forkOf: conversationId, forkAt: at,
     });
   }
@@ -1009,7 +1145,7 @@ export function editMessage(chatId: string, messageId: number, text: string, age
 function refreshDraft() {
   for (const draft of [newChatDraft(), ...draftChats.values()]) {
     if (draft.requestId && (draft.isLoaded || draft.forkOf === undefined)) {
-      refreshBubbles(draft.chatId, outbox!.itemsOfCreate(draft.requestId));
+      refreshBubbles(draft.chatId, outboxOfDraft(draft).itemsOfCreate(draft.requestId));
     }
     listDraft(draft);
   }
@@ -1023,7 +1159,7 @@ function refreshDraft() {
 function listDraft(draft: DraftChat) {
   const { chatId } = draft;
   const [requestId, local] = [...shown.entries()].filter(([, each]) => each.chatId === chatId).at(-1) ?? [];
-  const item = requestId ? outbox!.item(requestId) : undefined;
+  const item = requestId ? outboxOfDraft(draft).item(requestId) : undefined;
   const isWaiting = Boolean(item && local && draft.requestId);
   if (isWaiting && !isInWebAList(chatId)) {
     send({ '@type': 'updateChat', id: chatId, chat: { ...buildDraftChat(chatId, draft.title), isListed: true } });
@@ -1066,7 +1202,7 @@ function onPlaced(item: OutgoingMessage, entryId: number) {
   if (!each?.seen.has(entryId)) return;
   const local = shown.get(item.requestId);
   shown.delete(item.requestId);
-  outbox!.settle(item.requestId);
+  outboxOf(item.conversationId!).settle(item.requestId);
   if (local) send({ '@type': 'deleteMessages', ids: local.localIds, chatId: local.chatId });
 }
 
@@ -1094,7 +1230,8 @@ function restoreToField(conversationId: number, text: string) {
 
 /** The user has seen the chat up to this entry; the server moves `read` forward only */
 export function markRead(chatId: string, entryId: number) {
-  if (isDraftChat(chatId) || !client) return;
+  const client = isDraftChat(chatId) ? undefined : linkOf(Number(chatId))?.client;
+  if (!client) return;
   void client.request('conversation.read', { conversationId: Number(chatId), at: entryId }).catch(() => undefined);
 }
 
@@ -1171,9 +1308,10 @@ export function rename(chatId: string, given: string) {
     draft.isTitleManual = true;
     // Not sent yet: its create takes it, when it goes; on its way: a rename follows it
     const { requestId } = draft;
-    if (!requestId || !outbox!.create(requestId)) return;
-    if (!outbox!.updateCreate(requestId, { title, autoTitle: false })) {
-      void outbox!.request('conversation.rename', { createRequestId: requestId }, { title }).catch(() => {});
+    const outbox = outboxOfDraft(draft);
+    if (!requestId || !outbox.create(requestId)) return;
+    if (!outbox.updateCreate(requestId, { title, autoTitle: false })) {
+      void outbox.request('conversation.rename', { createRequestId: requestId }, { title }).catch(() => {});
     }
     return;
   }
@@ -1182,7 +1320,7 @@ export function rename(chatId: string, given: string) {
   if (!dialog) return;
   titleOverrides.set(conversationId, title);
   sendDialog(dialog);
-  outbox!.request('conversation.rename', { conversationId }, { title }).catch(() => {
+  outboxOf(conversationId).request('conversation.rename', { conversationId }, { title }).catch(() => {
     // Refused: the server's title again
     if (titleOverrides.get(conversationId) !== title) return;
     titleOverrides.delete(conversationId);
@@ -1199,7 +1337,8 @@ export function hide(chatId: string) {
 /** Mark as Unread or as Read, Archive: on every device, from the next Dialog on */
 export function mark(chatId: string, marks: { unread?: boolean; archived?: boolean; hidden?: boolean }) {
   if (isDraftChat(chatId)) return;
-  void outbox!.request('conversation.mark', { conversationId: Number(chatId) }, marks).catch(() => undefined);
+  const conversationId = Number(chatId);
+  void outboxOf(conversationId).request('conversation.mark', { conversationId }, marks).catch(() => undefined);
 }
 
 // MARK: For tau's own UI (agent.ts, the chat menu)
@@ -1214,17 +1353,91 @@ function emitChange(conversationId?: number) {
   for (const listener of changeListeners) listener(conversationId);
 }
 
-export function currentClient() {
-  return client;
+/** A server's connection, while it has one: a conversation's server is its ID's slot (`slotOf`) */
+export function clientOf(slot: number) {
+  return links.get(slot)?.client;
 }
 
-/** The headers a request beside the socket carries (`/files`) */
-export function authHeaders(): Record<string, string> {
+/** A server's address */
+export function originOf(slot: number) {
+  return links.get(slot)?.origin ?? serverOrigin();
+}
+
+/** The headers a request beside a server's socket carries (`/files`) */
+export function authHeaders(slot = 0): Record<string, string> {
+  const token = links.get(slot)?.token;
   return token === undefined ? {} : { authorization: `Bearer ${token}` };
 }
 
-export function getOutbox() {
-  return outbox!;
+/** A conversation's server's outbox; a draft chat's server's */
+export function getOutbox(chatId: string) {
+  if (isDraftChat(chatId)) return outboxOfDraft(chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId)!);
+  return outboxOf(Number(chatId));
+}
+
+/** The server a chat is on: a draft's, or its conversation's */
+export function slotOfChat(chatId: string) {
+  if (isDraftChat(chatId)) return (chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId))?.slot ?? 0;
+  return slotOf(Number(chatId));
+}
+
+// MARK: Servers (src/tau/components/ServersModal.tsx)
+
+export type ServerInfo = { slot: number; origin: string; status: ServerStatus; chats: number };
+
+export function servers(): ServerInfo[] {
+  return [...links.values()].filter((link) => !link.isRemoved).map((link) => ({
+    slot: link.slot,
+    origin: link.origin,
+    status: link.status,
+    chats: [...link.dialogs.dialogs.values()].filter(isListed).length,
+  }));
+}
+
+export function onServersChange(listener: () => void) {
+  serverListeners.add(listener);
+  return () => serverListeners.delete(listener);
+}
+
+/** Adds a server by its address and token, once it takes the token: the reason when it does not */
+export async function addServer(origin: string, token: string): Promise<'ok' | 'token' | 'unreachable' | 'known'> {
+  if ([...links.values()].some((link) => link.origin === origin && !link.isRemoved)) return 'known';
+  const result = await probe(origin, token);
+  if (result !== 'ok') return result;
+  await saveToken(origin, token);
+  const slot = Math.max(...links.keys()) + 1;
+  const configs = (await readServers()).filter((config) => config.origin !== origin);
+  await writeServers([...configs, { slot, origin }]);
+  const link = await addLink({ slot, origin });
+  for (const listener of serverListeners) listener();
+  void connect(link);
+  return 'ok';
+}
+
+/** Removes a server added: its chats leave the list; its token and what it has on its way stay for if it comes back */
+export async function removeServer(slot: number) {
+  const link = links.get(slot);
+  if (!link || slot === 0) return;
+  link.isRemoved = true;
+  await writeServers((await readServers()).filter((config) => config.slot !== slot));
+  for (const dialog of link.dialogs.dialogs.values()) {
+    const chatId = buildChatId(dialog.conversation.id);
+    if (isInWebAList(chatId)) send({ '@type': 'updateChatLeave', id: chatId });
+  }
+  link.dialogs.detach();
+  links.delete(slot);
+  void link.client?.close();
+  if (lastSlot === slot) lastSlot = 0;
+  for (const listener of serverListeners) listener();
+}
+
+/** How long a server takes to answer, in milliseconds: its `/auth`, as the probe asks it */
+export async function pingServer(slot: number) {
+  const link = links.get(slot);
+  if (!link) return undefined;
+  const started = performance.now();
+  const result = await probe(link.origin, link.token);
+  return result === 'unreachable' ? undefined : Math.round(performance.now() - started);
 }
 
 /** A conversation's entries while it is open, and its context's head */

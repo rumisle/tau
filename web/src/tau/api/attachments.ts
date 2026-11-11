@@ -5,6 +5,8 @@ import type { Upload } from 'tau-client/outbox';
 
 import type { ApiDocument, ApiMessage, ApiPhoto } from '../../api/types';
 
+import { slotOf } from './servers';
+
 // server/src/attachments.ts's format
 const OPEN = '<attachments>\n';
 const CLOSE = '\n</attachments>';
@@ -22,7 +24,14 @@ export type AttachmentLine = {
   height?: number;
 };
 
-export type MediaSource = { fileId: string } | { conversationId: number; entryId: number; index: number };
+export type MediaSource = { fileId: string; slot: number } | { conversationId: number; entryId: number; index: number };
+// A kept file's media ID on a server added (src/tau/api/servers.ts): its slot before the file's ID
+const SLOT_FILE_ID = /^s(\d+)-([0-9a-f]{32})$/;
+
+/** A kept file's media ID: the file's ID, after its server's slot when that is not the first server */
+export function mediaIdOf(fileId: string, slot: number) {
+  return slot === 0 ? fileId : `s${slot}-${fileId}`;
+}
 
 /** The files a block names, when it is exactly such a block; undefined for any other text */
 export function parseAttachments(text: string): AttachmentLine[] | undefined {
@@ -59,8 +68,9 @@ export function readUserContent(content: unknown, conversationId: number, entryI
   const documents: ApiDocument[] = [];
   if (lines) {
     for (const line of lines) {
-      const id = fileIdFromPath(line.path);
-      if (!id) continue;
+      const fileId = fileIdFromPath(line.path);
+      if (!fileId) continue;
+      const id = mediaIdOf(fileId, slotOf(conversationId));
       if (line.kind === 'image') {
         photos.push(buildPhoto(id, date, line.width, line.height));
       } else {
@@ -129,7 +139,9 @@ export function buildMediaRows(
 
 /** Where a media ID's bytes are: a kept file, or an entry's image */
 export function mediaSource(id: string): MediaSource | undefined {
-  if (FILE_ID.test(id)) return { fileId: id };
+  if (FILE_ID.test(id)) return { fileId: id, slot: 0 };
+  const onSlot = SLOT_FILE_ID.exec(id);
+  if (onSlot) return { fileId: onSlot[2], slot: Number(onSlot[1]) };
   const match = REFERENCE.exec(id);
   if (!match) return undefined;
   return { conversationId: Number(match[1]), entryId: Number(match[2]), index: Number(match[3]) };

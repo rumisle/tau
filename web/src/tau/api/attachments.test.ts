@@ -45,7 +45,9 @@ describe('attachments', () => {
     const { photos } = readUserContent(content, 4, 9, 100);
     expect(photos[0].id).toBe('m4.9.0');
     expect(mediaSource('m4.9.0')).toEqual({ conversationId: 4, entryId: 9, index: 0 });
-    expect(mediaSource(ID_A)).toEqual({ fileId: ID_A });
+    expect(mediaSource(ID_A)).toEqual({ fileId: ID_A, slot: 0 });
+    // A file on a server added: its slot with it
+    expect(mediaSource(`s2-${ID_A}`)).toEqual({ fileId: ID_A, slot: 2 });
     expect(mediaSource('../etc')).toBeUndefined();
   });
 
