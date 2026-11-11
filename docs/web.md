@@ -140,7 +140,8 @@ web/src/tau/
   first, Enter takes the first match), the thinking level (`api/agent.ts`: shown at once, sent in order with the chat's
   messages, believed until the `pi.agent` doc agrees, as iOS's `ServerStore.agent`), Usage (how full the context is and
   the spend, the numbers a level down, as iOS counts them: `computeUsage`), and Compact Context, never repeated after a
-  lost connection.
+  lost connection. Its changes and notices are Web A's toasts, as iOS's are Telegram's: "Model changed to **…**",
+  "Thinking set to **…**", "Compacting the context".
 - **Photos and files are Web A's media.** A user entry's attachments block names its kept files: one is a message with
   the photo or document and the caption; several an album (a message each, grouped: photos apart from files). Message
   IDs leave room for it: an entry's rows are `entryId * 32 + row`. Web A's media loader asks `downloadMedia` for
@@ -157,6 +158,9 @@ web/src/tau/
   arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web A
   marks a message read only after it has been in view a while, so the server's unread count came back first and the open
   chat's row showed a badge.
+- **The connection's state is Web A's**, in the chat's header (the chat list's without one): "connecting" while the
+  server is away, "waiting for network" when the browser is offline (Web A says the latter for both:
+  `hooks/useConnectionStatus.ts`), "updating" never, since a resubscribe brings what is missing at once.
 - **A message's menu is tau's** (`components/MessageMenu.tsx`), on a right-click, on answers and the user's bubbles
   (Web A's `ContextMenuContainer` is left out: replies, reactions, forwarding are Telegram's): Copy, the answer's
   Markdown, or Copy Selected Text when the selection is in the message; for a message that did not go, its reason,

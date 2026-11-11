@@ -39,7 +39,7 @@ test('the menu picks the thinking level and the model; the next answer comes fro
   await app.keyboard.press('Escape');
 
   await pick(app, 'Thinking', /^High$/);
-  await expect(app.getByText('Thinking set to High')).toBeVisible();
+  await expect(app.locator('.Notification').filter({ hasText: 'Thinking set to High' })).toBeVisible();
   // The model picker: a search, Enter takes the first match
   await app.getByRole('button', { name: 'More options' }).click();
   await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Model' }).click();
@@ -49,7 +49,8 @@ test('the menu picks the thinking level and the model; the next answer comes fro
   await expect(picker.locator('.ItemPickerItem')).toHaveCount(1);
   await app.keyboard.press('Enter');
   await expect(picker).toHaveCount(0);
-  await expect(app.getByText('Model: Dev parrot')).toBeVisible();
+  await expect(app.locator('.Notification').filter({ hasText: 'Model changed to Dev parrot' })).toBeVisible();
+  await expect(app.locator('.Notification strong, .Notification b').filter({ hasText: 'Dev parrot' })).toBeVisible();
   await send(app, 'which model');
   await expect(app.locator(row).filter({ hasText: 'which model' }).last()).toContainText('dev/parrot, thinking high');
 
@@ -64,6 +65,7 @@ test('Compact Context compacts the conversation', async ({ app, api }) => {
   await openChat(app, 'Menu compact');
   await app.getByRole('button', { name: 'More options' }).click();
   await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Compact Context' }).click();
+  await expect(app.locator('.Notification').filter({ hasText: 'Compacting the context' })).toBeVisible();
   await expect.poll(async () => {
     const { entries } = await api.client.request('conversation.history', { conversationId: id, limit: 50 });
     return entries.some((entry: { kind: string }) => entry.kind === 'pi.compaction');

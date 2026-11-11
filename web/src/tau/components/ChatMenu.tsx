@@ -83,7 +83,7 @@ const ChatMenu = ({
             icon={level === agent.thinkingLevel ? 'check' : 'placeholder'}
             onClick={() => pick(
               { thinkingLevel: level },
-              level === 'off' ? STRINGS.ThinkingOff : `Thinking set to ${thinkingTitle(level)}`,
+              level === 'off' ? STRINGS.ThinkingOff : `Thinking set to **${thinkingTitle(level)}**`,
             )}
           >
             {thinkingTitle(level)}
@@ -123,6 +123,7 @@ const ChatMenu = ({
         icon="replace"
         onClick={() => {
           void compact(chatId).catch(() => undefined);
+          getActions().showNotification({ message: STRINGS.Compacting });
           onClose();
         }}
       >

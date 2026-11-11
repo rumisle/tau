@@ -58,7 +58,7 @@ const ModelPicker = ({ chatId, isOpen, onClose }: OwnProps) => {
     if (!model) return;
     configureAgent(chatId, { model: { provider: model.provider, modelId: model.id } });
     rememberModel(key);
-    getActions().showNotification({ message: `Model: ${model.name}` });
+    getActions().showNotification({ message: `Model changed to **${model.name}**` });
     onClose();
   });
 

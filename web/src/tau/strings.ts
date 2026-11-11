@@ -13,6 +13,7 @@ export const STRINGS = {
   MenuModel: 'Model',
   MenuThinking: 'Thinking',
   MenuCompact: 'Compact Context',
+  Compacting: 'Compacting the context',
   MenuLoading: 'Loading…',
   ThinkingOff: 'Thinking turned off',
   MenuResend: 'Resend',

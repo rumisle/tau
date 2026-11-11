@@ -1,6 +1,7 @@
 import type { GlobalState } from '../global/types';
 import type { LangFn } from '../util/localization';
 
+import { IS_TAU } from '../tau/config'; // tau: Connecting apart from no network
 import useBrowserOnline from './window/useBrowserOnline';
 
 export enum ConnectionStatus {
@@ -46,7 +47,8 @@ export default function useConnectionStatus(
 
   let text: string | undefined;
   if (status === ConnectionStatus.waitingForNetwork) {
-    text = lang('WaitingForNetwork');
+    // tau: online, the server is what is not there yet: Connecting, as iOS's title says
+    text = IS_TAU && isBrowserOnline ? lang('Connecting') : lang('WaitingForNetwork');
   } else if (status === ConnectionStatus.syncing) {
     text = lang('Updating');
   }
