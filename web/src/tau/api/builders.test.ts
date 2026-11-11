@@ -26,7 +26,7 @@ describe('buildMessage', () => {
     expect(message.tau).toBeUndefined();
   });
 
-  it('makes an answer tau\'s row: thinking, Markdown, and the run\'s end with how long it took', () => {
+  it('makes an answer tau\'s row: thinking, Markdown, the run\'s end and its time; the preview is the answer', () => {
     const message = buildMessage(entry(2, 'pi.assistant', {
       role: 'assistant',
       stopReason: 'stop',
@@ -37,7 +37,12 @@ describe('buildMessage', () => {
     const blocks = (message.tau!.parts[1] as { blocks: { type: string }[] }).blocks;
     expect(blocks.map((block) => block.type)).toEqual(['heading1', 'paragraph']);
     expect(message.tau!.runEnd).toEqual({ workedForMs: 2500 });
-    expect(message.content.richMessage!.blocks[0].type).toBe('thinking');
+    // The rich message, for the chat list's preview and copy, is the answer; thinking only when there is nothing else
+    expect(message.content.richMessage!.blocks.map((block) => block.type)).toEqual(['heading1', 'paragraph']);
+    const thinking = buildMessage(entry(3, 'pi.assistant', {
+      role: 'assistant', stopReason: 'stop', content: [{ type: 'thinking', thinking: 'Hmm.' }],
+    }), context())!;
+    expect(thinking.content.richMessage!.blocks[0].type).toBe('thinking');
   });
 
   it('makes a bash call a card with its command and, once it came, its result', () => {

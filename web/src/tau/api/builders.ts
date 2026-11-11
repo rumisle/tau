@@ -248,9 +248,12 @@ function shortPath(path: unknown) {
 
 export function buildAssistantRichMessage(message: any, results?: Map<string, any>): ApiRichMessage {
   const blocks: ApiPageBlock[] = [];
+  // Thinking only when there is nothing else: the chat list's preview is the answer, as the Dialog's summary is
+  const hasMore = (message.content as any[]).some((part) => (part.type === 'text' && part.text)
+    || part.type === 'toolCall');
   for (const part of message.content as any[]) {
     if (part.type === 'thinking' && part.thinking) {
-      blocks.push({ type: 'thinking', text: { type: 'plain', text: part.thinking } });
+      if (!hasMore) blocks.push({ type: 'thinking', text: { type: 'plain', text: part.thinking } });
     } else if (part.type === 'text' && part.text) {
       blocks.push(...buildMarkdownBlocks(part.text));
     } else if (part.type === 'toolCall') {
