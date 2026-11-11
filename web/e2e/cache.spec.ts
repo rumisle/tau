@@ -103,3 +103,78 @@ test('a long chat opens with its newest page; scrolled up, the older ones come',
   expect(requests.find((each) => each.method === 'conversation.subscribe')?.params.limit).toBe(100);
   expect(requests.some((each) => each.method === 'conversation.history' && each.params.before > 0)).toBe(true);
 });
+
+test('the top of the list is kept up to date in the background: a chat never opened opens with its messages, away', async ({ app, api }) => {
+  const routes = await awayRoutes(app);
+  const id = await api.chat('Preloaded', ['bring me along']);
+  await app.reload();
+  await expect.poll(() => cachedKeys(app)).toEqual(expect.arrayContaining([expect.stringMatching(new RegExp(` c${id}$`))]));
+  // Its history, without subscribing to it
+  const requests = routes.sent.map((frame) => JSON.parse(frame) as { method: string; params: any });
+  expect(requests.some((each) => each.method === 'conversation.history' && each.params.conversationId === id))
+    .toBe(true);
+  expect(requests.some((each) => each.method === 'conversation.subscribe' && each.params.conversationId === id))
+    .toBe(false);
+  routes.isAway = true;
+  await routes.current!.close();
+  await app.reload();
+  await openChat(app, 'Preloaded');
+  await expect(app.locator('[data-tau-row="assistant"]').filter({ hasText: 'You said: bring me along' })).toBeVisible();
+  // Not from the server: it is away
+  await expect(app.locator('.MiddleHeader')).toContainText('connecting');
+});
+
+test('back on the page, a socket that died without a word is replaced, and what came meanwhile shows', async ({ app, api }) => {
+  // The socket goes through a route that can swallow every frame both ways, as a connection that died silently; the
+  // next socket works
+  let sockets = 0;
+  let deadSocket = -1;
+  await app.routeWebSocket(/\/socket$/, (socket) => {
+    const index = sockets++;
+    const server = socket.connectToServer();
+    socket.onMessage((message) => {
+      if (index !== deadSocket) server.send(message);
+    });
+    server.onMessage((message) => {
+      if (index !== deadSocket) socket.send(message);
+    });
+  });
+  const id = await api.chat('Wake', ['hello']);
+  await app.reload();
+  await openChat(app, 'Wake');
+  await expect(app.locator(field)).toBeVisible();
+  deadSocket = sockets - 1;
+  await api.send(id, 'sent while asleep');
+  // The page hidden a moment, then shown: its socket does not answer within the wait, and is replaced
+  await app.evaluate(() => {
+    const set = (hidden: boolean) => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (hidden ? 'hidden' : 'visible') });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    set(true);
+    set(false);
+  });
+  await expect(app.locator('[data-tau-row="assistant"]').filter({ hasText: 'You said: sent while asleep' }))
+    .toBeVisible({ timeout: 10_000 });
+});
+
+test('a fork starts from what the page has of its original: its subscribe asks only for what came after', async ({ app, api }) => {
+  const routes = await awayRoutes(app);
+  const id = await api.chat('Original', ['the shared part']);
+  await app.reload();
+  await openChat(app, 'Original');
+  await expect(app.locator('[data-tau-row="assistant"]').filter({ hasText: 'You said: the shared part' })).toBeVisible();
+  const { entries } = await api.client.request('conversation.history', { conversationId: id });
+  const at = entries.at(-1).id as number;
+  const { dialog } = await api.client.request('conversation.fork', {
+    conversationId: id, at, title: 'Forked copy', requestId: crypto.randomUUID(),
+  });
+  await openChat(app, 'Forked copy');
+  await expect(app.locator('.MiddleHeader')).toContainText('Forked copy');
+  await expect(app.locator('[data-tau-row="assistant"]').filter({ hasText: 'You said: the shared part' })).toBeVisible();
+  const subscribeOf = () => routes.sent.map((frame) => JSON.parse(frame) as { method: string; params: any })
+    .find((each) => each.method === 'conversation.subscribe' && each.params.conversationId === dialog.conversation.id);
+  await expect.poll(() => subscribeOf()).toBeTruthy();
+  expect(subscribeOf()?.params.after).toBe(at);
+});

@@ -162,6 +162,8 @@ const runThrottledForLoadTopChats = throttle((cb) => cb(), 3000, true);
 const runDebouncedForLoadFullChat = debounce((cb) => cb(), 500, false, true);
 
 addActionHandler('preloadTopChatMessages', async (global, actions): Promise<void> => {
+  // tau: the top of the list is preloaded into tau's cache instead, without subscribing (src/tau/api/session.ts)
+  if (IS_TAU) return;
   const preloadedChatIds = new Set<string>();
 
   for (let i = 0; i < TOP_CHAT_MESSAGES_PRELOAD_LIMIT; i++) {

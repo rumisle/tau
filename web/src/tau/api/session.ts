@@ -24,7 +24,8 @@ import {
 import { whenLinkTokenStored } from '../boot';
 import { draftsOf } from '../db/drafts';
 import {
-  readConversation, readDialogs, readServerId, resetCache, saveConversation, saveDialogs,
+  cachedNewest, mergeConversation, readConversation, readDialogs, readServerId, resetCache, saveConversation,
+  saveDialogs,
 } from '../db/entries';
 import { openOutboxState } from '../db/outbox';
 import { deleteOutboxFile, readOutboxFile, saveOutboxFile } from '../db/outboxFiles';
@@ -113,6 +114,8 @@ type ServerLink = {
   // The database this browser's cache of the server is for (db/entries.ts)
   serverId?: string;
   saveDialogsTimer?: number;
+  // The next try while it waits out a backoff
+  retryTimer?: number;
   outbox: Outbox;
   status: ServerStatus;
   attempt: number;
@@ -226,6 +229,7 @@ async function addLink(config: ServerConfig) {
   });
   link.dialogs.onChange((changed) => {
     scheduleDialogsSave(link);
+    schedulePreload();
     for (const dialog of changed) applyDialog(dialog);
     for (const answer of answers.changed(changed, Boolean(link.isSyncing))) {
       notifyAnswer(answer, buildChatId(answer.conversationId));
@@ -233,6 +237,73 @@ async function addLink(config: ServerConfig) {
   });
   links.set(config.slot, link);
   return link;
+}
+
+// MARK: Preloading
+
+// As Telegram's ChatHistoryPreloadManager keeps the top of its list (docs/chat-open.md "Preloading the top of the
+// list"): the first chats' caches brought up to their newest entry in the background, one at a time, so a chat with
+// new messages opens with them
+const PRELOADED_CHATS = 30;
+const PRELOAD_PAGE = 100;
+const PRELOAD_DELAY_MS = 1000;
+// What each chat's cache was brought up to this run
+const preloadedThrough = new Map<number, number>();
+let preloadTimer: number | undefined;
+let isPreloading = false;
+let preloadAgain = false;
+
+/** A second after the list arrives or changes, at most once a second while it keeps changing */
+function schedulePreload() {
+  if (preloadTimer !== undefined) return;
+  preloadTimer = window.setTimeout(() => {
+    preloadTimer = undefined;
+    void preload();
+  }, PRELOAD_DELAY_MS);
+}
+
+/** The top of the list (pinned first; not archived ones, subagents' or working ones) */
+function preloadedChats() {
+  const listed = dialogs.ordered().filter((dialog) => isListed(dialog) && !dialog.archived && !dialog.busy);
+  const pinned = listed.filter((dialog) => dialog.pinned).sort((a, b) => b.pinned! - a.pinned!);
+  return [...pinned, ...listed.filter((dialog) => !dialog.pinned)].slice(0, PRELOADED_CHATS);
+}
+
+async function preload() {
+  if (isPreloading) {
+    preloadAgain = true;
+    return;
+  }
+  isPreloading = true;
+  try {
+    for (const dialog of preloadedChats()) {
+      const id = dialog.conversation.id;
+      const newest = dialog.last?.id;
+      // Opened: its subscription brings everything
+      if (newest === undefined || opened.has(id) || (preloadedThrough.get(id) ?? 0) >= newest) continue;
+      const link = linkOf(id);
+      if (!link?.client || !link.serverId) continue;
+      const cached = await cachedNewest(link.origin, id);
+      if (cached === undefined || cached < newest) {
+        // Without `before`, so without subscribing; with `after`, more missing than a page is a gap (`hasOlder`)
+        const result = await link.client.request<{ entries: Entry[]; hasOlder: boolean }>('conversation.history', {
+          conversationId: id, ...(cached === undefined ? {} : { after: cached }), limit: PRELOAD_PAGE,
+        }).catch(() => undefined);
+        if (!result) continue;
+        if (opened.has(id)) continue;
+        const replacing = cached === undefined || result.hasOlder;
+        const hasOlder = cached === undefined ? result.hasOlder : true;
+        await mergeConversation(link.origin, id, result.entries, replacing, hasOlder);
+      }
+      preloadedThrough.set(id, newest);
+    }
+  } finally {
+    isPreloading = false;
+    if (preloadAgain) {
+      preloadAgain = false;
+      schedulePreload();
+    }
+  }
 }
 
 /** A server's chat list on disk, with its version, a moment after it last changed */
@@ -339,16 +410,7 @@ async function connect(link: ServerLink) {
   client.on((push) => {
     if (push.event === 'submission') link.outbox.apply(push.record as JsonObject);
   });
-  void client.closed.then(() => {
-    if (link.client === client) link.outbox.disconnected();
-    for (const each of opened.values()) {
-      if (slotOf(each.replica.id) === link.slot) each.isSynced = false;
-    }
-    link.client = undefined;
-    if (link.isRemoved) return;
-    if (isFirst) send({ '@type': 'updateConnectionState', connectionState: 'connectionStateConnecting' });
-    scheduleReconnect(link, 'connecting');
-  });
+  void client.closed.then(() => disconnected(link, client));
   link.isSyncing = true;
   try {
     await link.dialogs.sync(client);
@@ -399,12 +461,81 @@ function onLookChange() {
 for (const event of ['focus', 'blur']) window.addEventListener(event, onLookChange);
 document.addEventListener('visibilitychange', onLookChange);
 
+/** A server's socket closed, or was given up for dead: its chats wait for the next one */
+function disconnected(link: ServerLink, client: TauClient) {
+  if (link.client !== client) return;
+  link.outbox.disconnected();
+  for (const each of opened.values()) {
+    if (slotOf(each.replica.id) === link.slot) each.isSynced = false;
+  }
+  link.client = undefined;
+  if (link.isRemoved) return;
+  if (link.slot === 0) send({ '@type': 'updateConnectionState', connectionState: 'connectionStateConnecting' });
+  scheduleReconnect(link, 'connecting');
+}
+
 function scheduleReconnect(link: ServerLink, status: AuthStatus & ServerStatus) {
   setStatus(link, status);
   if (link.slot === 0 && !wasConnected) setAuthStatus(status);
   const delay = RECONNECT_MS[Math.min(link.attempt++, RECONNECT_MS.length - 1)];
-  window.setTimeout(() => void connect(link), delay);
+  window.clearTimeout(link.retryTimer);
+  link.retryTimer = window.setTimeout(() => {
+    link.retryTimer = undefined;
+    void connect(link);
+  }, delay);
 }
+
+// Back after this long away, a socket is replaced at once: a laptop that slept, a network that changed, have left it
+// dead without a word. After less, it answers within the wait or is replaced (docs/network.md "Waking").
+const WAKE_REPLACE_MS = 40_000;
+const WAKE_PING_MS = 3000;
+let hiddenAt: number | undefined;
+
+/** The page shows again, or the browser is back online: each server's socket checked, a backoff's wait cut short */
+function wake(awayMs: number) {
+  for (const link of links.values()) {
+    if (link.isRemoved) continue;
+    const { client } = link;
+    if (!client) {
+      // Waiting out a backoff: tried now
+      if (link.retryTimer === undefined) continue;
+      window.clearTimeout(link.retryTimer);
+      link.retryTimer = undefined;
+      link.attempt = 0;
+      void connect(link);
+      continue;
+    }
+    if (awayMs >= WAKE_REPLACE_MS) {
+      replaceSocket(link, client);
+      continue;
+    }
+    const timeout = new Promise<'dead'>((done) => {
+      window.setTimeout(() => done('dead'), WAKE_PING_MS);
+    });
+    void Promise.race([client.request('client.presence', { active: isLooking() }).catch(() => 'dead'), timeout])
+      .then((result) => {
+        if (result === 'dead') replaceSocket(link, client);
+      });
+  }
+}
+
+function replaceSocket(link: ServerLink, client: TauClient) {
+  if (link.client !== client) return;
+  link.attempt = 0;
+  disconnected(link, client);
+  void client.close();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    hiddenAt = Date.now();
+    return;
+  }
+  const away = hiddenAt === undefined ? 0 : Date.now() - hiddenAt;
+  hiddenAt = undefined;
+  wake(away);
+});
+window.addEventListener('online', () => wake(Infinity));
 
 function setStatus(link: ServerLink, status: ServerStatus) {
   link.status = status;
@@ -565,6 +696,7 @@ async function load(each: Opened) {
     replica.hasOlder = cached.hasOlder;
     applyReplica(each);
   }
+  if (replica.entries.size === 0) await seedFork(each);
   if (replica.entries.size > 0) {
     show(each);
     // Now if connected; else once it is, as every opened chat
@@ -575,6 +707,25 @@ async function load(each: Opened) {
   while (!link.client) await new Promise((resolve) => window.setTimeout(resolve, RECONNECT_MS[0]));
   await syncReplica(each);
   show(each);
+}
+
+/**
+ * A fork with nothing kept starts from what this browser has of the conversation it was made from (docs/network.md):
+ * the entries up to its point are the same ones, by the same IDs, so its subscribe brings only what comes after them
+ */
+async function seedFork(each: Opened) {
+  const { replica } = each;
+  const parent = (dialogs.dialogs.get(replica.id)?.conversation as { parent?: { conversationId: number; at: number } })
+    ?.parent;
+  if (!parent) return;
+  const loaded = opened.get(parent.conversationId)?.replica;
+  const source = loaded?.entries.size ? { entries: loaded.ordered(), hasOlder: loaded.hasOlder }
+    : await readConversation(linkOf(replica.id)!.origin, parent.conversationId);
+  const inherited = source?.entries.filter((entry) => entry.id <= parent.at) ?? [];
+  if (!inherited.length || replica.entries.size) return;
+  for (const entry of inherited) replica.entries.set(entry.id, entry);
+  replica.hasOlder = source!.hasOlder;
+  applyReplica(each);
 }
 
 /**

@@ -196,6 +196,12 @@ web/src/tau/
   pages (200) come from the server as Web A scrolls up to the oldest entry (`fetchHistory`). The list subscribes with
   `since` its version. Another database (`hello.serverId`) drops everything kept, and a page that showed it reloads.
   Docs (`pi.live`, `tau.compactions`) are never kept: a compaction's note shows once the chat is subscribed.
+  The top 30 chats of the list (pinned first; not archived, subagents' or working ones) are kept up to date in the
+  background, a second after the list changes, one at a time, with `conversation.history` after their newest kept
+  entry, without subscribing; Web A's own preload, which would subscribe 20 chats, is off. **Waking:** the page shown
+  again after 40 seconds or more, or the browser back online, replaces each socket at once; after less, a socket that
+  does not answer within 3 seconds is replaced; a wait for a backoff is cut short. A fork with nothing kept starts
+  from its original's entries up to its point, so its subscribe asks only for what came after (`seedFork`).
 - **The chat's ⋯ menu is tau's** (`components/ChatMenu.tsx`, in Web A's header menu, with its nested submenus): the
   model, in a picker (`components/ModelPicker.tsx`: Web A's searchable picker in a modal of its own root, recent models
   first, Enter takes the first match), the thinking level (`api/agent.ts`: shown at once, sent in order with the chat's
