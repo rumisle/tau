@@ -2,7 +2,7 @@
 // are, without a token (the app holds no data; it asks for the token itself), `index.html` for any other path the app
 // routes itself. Hashed assets are cached for good, the rest revalidated.
 import { createReadStream, existsSync, statSync } from "node:fs";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { type IncomingMessage, request as httpRequest, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
 const TYPES: Record<string, string> = {
@@ -96,4 +96,42 @@ function answer(response: ServerResponse, status: number, text: string): true {
 	response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
 	response.end(text);
 	return true;
+}
+
+/**
+ * The web app from Vite's dev server instead of a build (`--web-dev <url>`, for scripts/web/test.sh e2e --dev): every
+ * request for the app is passed to it as it is, so an edit is in the next page load, while the socket, /auth and /files
+ * stay this server's, same-origin as with a build.
+ */
+export class WebDevProxy {
+	readonly dir: string;
+	readonly #target: URL;
+
+	constructor(url: string) {
+		this.#target = new URL(url);
+		this.dir = this.#target.origin;
+	}
+
+	handle(request: IncomingMessage, response: ServerResponse): boolean {
+		if (request.method !== "GET" && request.method !== "HEAD") return false;
+		const upstream = httpRequest(
+			{
+				host: this.#target.hostname,
+				port: this.#target.port,
+				method: request.method,
+				path: request.url,
+				headers: { ...request.headers, host: this.#target.host },
+			},
+			(answered) => {
+				response.writeHead(answered.statusCode ?? 502, answered.headers);
+				answered.pipe(response);
+			},
+		);
+		upstream.on("error", () => {
+			if (!response.headersSent) answer(response, 502, `No dev server at ${this.dir}`);
+			else response.destroy();
+		});
+		request.pipe(upstream);
+		return true;
+	}
 }

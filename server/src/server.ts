@@ -7,7 +7,7 @@ import { WebSocketServer } from "ws";
 import { Connection } from "./connection.ts";
 import { Dialogs } from "./dialogs.ts";
 import { handleFiles } from "./http-files.ts";
-import type { WebApp } from "./http-web.ts";
+import type { WebApp, WebDevProxy } from "./http-web.ts";
 import type { Host } from "./host.ts";
 import { Notifier, type PushSender } from "./notifier.ts";
 import { Search } from "./search/service.ts";
@@ -22,7 +22,7 @@ export type ServerOptions = {
 	 */
 	token?: string;
 	/** The built web app to serve (src/http-web.ts); none when undefined. */
-	web?: WebApp;
+	web?: WebApp | WebDevProxy;
 	/** Apple's push service, with the account's key (src/apns.ts); without it, no pushes. */
 	apns?: PushSender;
 	/** For tests: how long an activity whose chats are all done stays (half an hour). */

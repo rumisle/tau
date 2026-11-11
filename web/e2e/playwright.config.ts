@@ -6,7 +6,7 @@ export default defineConfig({
   testDir: '.',
   testMatch: '*.spec.ts',
   fullyParallel: true,
-  workers: Number(process.env.TAU_E2E_WORKERS ?? 4),
+  workers: Number(process.env.TAU_E2E_WORKERS ?? 12),
   timeout: 30_000,
   expect: { timeout: 10_000 },
   reporter: process.env.CI ? 'line' : [['list']],

@@ -219,6 +219,9 @@ export default defineConfig(({ mode }): UserConfig => {
       },
       // tau: the dev tau server behind the same origin, as in production; the shared client beside web/
       proxy: buildTauProxy(env.TAU_DEV_SERVER || 'http://127.0.0.1:7990'),
+      // tau: behind the e2e's tau servers (scripts/web/test.sh e2e --dev), which pass the app's requests here: no hot
+      // reload, whose socket would reach them instead (tests load their pages afresh)
+      hmr: env.TAU_DEV_NO_HMR ? false : undefined,
       fs: { allow: [DIR_NAME, resolve(DIR_NAME, '../client')] },
       watch: {
         ignored: DEV_SERVER_WATCH_IGNORES,

@@ -6,13 +6,15 @@
 #   unit     client/ (node:test), web/src/tau (Vitest)
 #   e2e      the built app against dev servers (web/e2e, Playwright); built first when its sources are newer
 #   smoke    e2e's tests tagged @smoke only (open, read, send, steer and stop, files, a new chat), under 15 s
-# Usage: scripts/web/test.sh [static|unit|e2e|smoke]... [-- playwright options]
+#   --dev    e2e and smoke against Vite's dev server instead of a build, so an edit is in the next run at once: it
+#            starts one on 1234 without hot reload when none answers there, and leaves it running for the next run
+# Usage: scripts/web/test.sh [static|unit|e2e|smoke]... [--dev] [-- playwright options, e.g. a spec file]
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 web="$root/web"
-steps=() pass=()
+steps=() pass=() dev=
 while [ $# -gt 0 ]; do
-	case "$1" in --) shift; pass=("$@"); break ;; *) steps+=("$1"); shift ;; esac
+	case "$1" in --) shift; pass=("$@"); break ;; --dev) dev=1; shift ;; *) steps+=("$1"); shift ;; esac
 done
 [ ${#steps[@]} -gt 0 ] || steps=(static unit e2e)
 tsc="$root/server/node_modules/.bin/tsc"
@@ -56,7 +58,26 @@ unit() {
 	(cd "$web" && node_modules/.bin/vitest run --config tau.vitest.config.ts --silent=passed-only)
 }
 
+# Vite's dev server for e2e --dev, on 1234 (its own, without hot reload: the tests' tau servers stand in front of it)
+dev_server() {
+	local url=http://127.0.0.1:1234
+	if ! curl -sf -o /dev/null "$url/"; then
+		# Its own session, holding none of this script's descriptors: a pipe reading this script's output ends with it
+		(cd "$web" && TAU_DEV_NO_HMR=1 APP_ENV=development setsid -f node_modules/.bin/vite --mode development \
+			--host 127.0.0.1 --port 1234) < /dev/null > /tmp/tau-web-e2e-vite.log 2>&1
+		for _ in $(seq 100); do curl -sf -o /dev/null "$url/" && break; sleep 0.2; done
+		# Its first page compiles Web A's modules on demand: once here, not in each test's first page
+		curl -sf -o /dev/null "$url/src/index.tsx" || true
+	fi
+	export TAU_E2E_WEB_DEV="$url"
+}
+
 e2e() {
+	if [ -n "$dev" ]; then
+		dev_server
+		(cd "$web/e2e" && node_modules/.bin/playwright test "${pass[@]}")
+		return
+	fi
 	if [ ! -f "$web/dist/index.html" ] || [ -n "$(find "$web/src" "$web/index.html" "$web/vite.config.ts" "$root/client/src" -newer "$web/dist/index.html" -print -quit)" ]; then
 		timed build "$root/scripts/web/build.sh" > /dev/null
 	fi

@@ -1,14 +1,15 @@
 // The web app on the server's port (src/http-web.ts) and a browser's token, in the WebSocket's subprotocol.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { get } from "node:http";
+import { createServer, get } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { WebSocket } from "ws";
 import { TauClient } from "tau-client/connection";
 import { type Host, openHost } from "../src/host.ts";
-import { WebApp } from "../src/http-web.ts";
+import { WebApp, WebDevProxy } from "../src/http-web.ts";
 import { type Server, serve } from "../src/server.ts";
 
 const TOKEN = "a-token-long-enough-to-pass";
@@ -72,5 +73,37 @@ describe("web app", () => {
 		await client.close();
 		const wrong = new WebSocket(`${server.url}/socket`, ["tau.v1", `tau.token.${Buffer.from("not-the-token").toString("base64url")}`]);
 		await assert.rejects(TauClient.open(wrong), /401/);
+	});
+});
+
+describe("web app from a dev server", () => {
+	test("passes the app's requests to it as they are, and keeps /auth its own", async () => {
+		const seen: string[] = [];
+		const vite = createServer((request, response) => {
+			seen.push(`${request.method} ${request.url}`);
+			response.writeHead(200, { "Content-Type": "text/javascript" });
+			response.end(request.method === "HEAD" ? undefined : "export {}");
+		});
+		await new Promise<void>((done) => vite.listen(0, "127.0.0.1", done));
+		const { port } = vite.address() as AddressInfo;
+		const host = await openHost({ cwd: tmpdir() });
+		const server = await serve(host, { token: TOKEN, web: new WebDevProxy(`http://127.0.0.1:${port}`) });
+		const base = server.url.replace("ws://", "http://");
+		try {
+			const module = await fetch(`${base}/src/index.tsx?t=1`);
+			assert.equal(module.status, 200);
+			assert.equal(module.headers.get("content-type"), "text/javascript");
+			assert.equal(await module.text(), "export {}");
+			assert.equal((await fetch(`${base}/auth`)).status, 401);
+			assert.deepEqual(seen, ["GET /src/index.tsx?t=1"]);
+			// None there: a 502 that says so
+			vite.close();
+			const gone = await fetch(`${base}/`);
+			assert.equal(gone.status, 502);
+		} finally {
+			await server.close();
+			await host.close();
+			if (vite.listening) vite.close();
+		}
 	});
 });

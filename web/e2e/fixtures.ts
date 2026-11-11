@@ -2,7 +2,7 @@
 // simulator one; an API client to set chats up; and a page signed in with a `#token=` link, which fails the test if it
 // asks anything of another origin.
 import { type ChildProcess, spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, type Page, test as base } from '@playwright/test';
@@ -12,10 +12,15 @@ import type { Dialog } from '../../client/src/protocol.ts';
 import { ConversationReplica } from '../../client/src/replica.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
-const PORTS = (process.env.TAU_WEB_PORTS ?? '7960,7961,7962,7963,7964,7965,7966,7967').split(',').map(Number);
+// A port per worker: 7960 to 7975, apart from iOS's 7979 and 7991 to 7995, the dev servers' 7990 and the live 7878
+const PORTS = (process.env.TAU_WEB_PORTS ?? Array.from({ length: 16 }, (_, i) => 7960 + i).join(','))
+  .split(',').map(Number);
+// The app from Vite's dev server (scripts/web/test.sh e2e --dev), else the build in web/dist
+const WEB = process.env.TAU_E2E_WEB_DEV
+  ? ['--web-dev', process.env.TAU_E2E_WEB_DEV] : ['--web', join(ROOT, 'web/dist')];
 export const TOKEN = 'e2e-token-0123456789abcdef';
 
-type Server = { origin: string; port: number };
+type Server = { origin: string; port: number; home: string };
 type Api = {
   client: TauClient;
   /** A new chat with `messages` sent one after another, each answered */
@@ -24,6 +29,11 @@ type Api = {
   send(conversationId: number, content: string, options?: { wait?: boolean; attachments?: Attachment[] }): Promise<void>;
   /** Uploads a file as `POST /files` does for a message: its ID */
   upload(name: string, bytes: Uint8Array): Promise<string>;
+  /**
+   * A command that keeps a run working until `open()`, for a test to act while it works whatever the page's speed
+   * (a fixed `sleep` ends early under a slow load, as Vite's dev server's first one)
+   */
+  gate(): { command: string; open(): void };
 };
 type Attachment = { id: string; as?: 'image' | 'file' };
 
@@ -33,10 +43,10 @@ export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
     const home = mkdtempSync(join(tmpdir(), 'tau-web-e2e-'));
     const child = spawn(process.execPath, [
       '--no-warnings', join(ROOT, 'server/src/main.ts'), '--memory', '--port', String(port), '--host', '127.0.0.1',
-      '--model', 'dev/echo', '--dev-tps', '400', '--web', join(ROOT, 'web/dist'), '--cwd', home,
+      '--model', 'dev/echo', '--dev-tps', '400', ...WEB, '--cwd', home,
     ], { env: { ...process.env, TAU_TOKEN: TOKEN, PI_CODING_AGENT_DIR: home }, stdio: ['ignore', 'pipe', 'pipe'] });
     await listening(child);
-    await use({ origin: `http://127.0.0.1:${port}`, port });
+    await use({ origin: `http://127.0.0.1:${port}`, port, home });
     const exited = new Promise((done) => child.once('exit', done));
     child.kill();
     await exited;
@@ -73,6 +83,13 @@ export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
           method: 'POST', headers: { authorization: `Bearer ${TOKEN}` }, body: new Blob([bytes as Uint8Array<ArrayBuffer>]),
         });
         return ((await response.json()) as { id: string }).id;
+      },
+      gate() {
+        const name = `gate-${crypto.randomUUID().slice(0, 8)}`;
+        return {
+          command: `$ until [ -e ${name} ]; do sleep 0.05; done`,
+          open: () => writeFileSync(join(server.home, name), ''),
+        };
       },
       async chat(title, messages) {
         const { dialog } = await client.request<{ dialog: Dialog }>('conversation.create', {

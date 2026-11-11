@@ -6,8 +6,9 @@
 //   [--push-relay url --push-relay-token-file path]
 //   [--command-scopes [--command-slice name.slice]] (each bash command in its own systemd scope, in tau-cmd.slice or the
 //   slice named: src/scopes.ts, docs/command-isolation.md; off by default)
-//   [--web dir | --no-web] (the built web app it serves on its port: by default web/ beside a release's bundle, or
-//   web/dist in a checkout, when built; docs/web.md)
+//   [--web dir | --web-dev url | --no-web] (the built web app it serves on its port: by default web/ beside a
+//   release's bundle, or web/dist in a checkout, when built; --web-dev passes the app's requests to Vite's dev server
+//   instead; docs/web.md)
 //   [--check-data] (prints the database's path, then makes the check every start makes, the data on a local
 //   filesystem (src/localfs.ts), and exits: 2 with the reason when it fails; `tau setup` asks it before it starts)
 // Clients must give the server's token (`Authorization: Bearer <token>`) when it has one: TAU_TOKEN, or else the
@@ -28,7 +29,7 @@ import { directory } from "./fs.ts";
 import { openHost } from "./host.ts";
 import { storageRefusal } from "./localfs.ts";
 import { Apns } from "./apns.ts";
-import { WebApp } from "./http-web.ts";
+import { WebApp, WebDevProxy } from "./http-web.ts";
 import { PushRelay } from "./relay.ts";
 import { serve } from "./server.ts";
 
@@ -54,6 +55,7 @@ const { values } = parseArgs({
 		"command-slice": { type: "string" },
 		"check-data": { type: "boolean", default: false },
 		web: { type: "string" },
+		"web-dev": { type: "string" },
 		"no-web": { type: "boolean", default: false },
 		version: { type: "boolean", default: false },
 	},
@@ -245,8 +247,10 @@ function openRelay(): PushRelay | undefined {
 }
 
 /** The web app to serve: --web's, else the release's or the checkout's build, when there is one. */
-function openWeb(): WebApp | undefined {
+function openWeb(): WebApp | WebDevProxy | undefined {
 	if (values["no-web"]) return undefined;
+	// Vite's dev server behind this one, for the web app's tests while iterating
+	if (values["web-dev"] !== undefined) return new WebDevProxy(values["web-dev"]);
 	if (values.web !== undefined) {
 		const app = WebApp.at(resolve(expandHome(values.web)));
 		if (app === undefined) {

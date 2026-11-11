@@ -272,18 +272,20 @@ Chat goes to the server used last; the New Message button's right-click picks an
 |---|---|---|---|
 | `client/` | `node:test`, as the server's tests | replica, holes and resume, ops, the dialog list by version, the outbox state machine with a fake connection and store, against the protocol's examples | < 2 s |
 | `web/src/tau` | Vitest (Web A's runner, with its Vite transforms and jsdom) | builders: entries and docs to `Api*` objects (each tool's card, thinking, subagents, the run's end, streaming drafts); the IndexedDB store over `fake-indexeddb` | < 5 s |
-| end to end | Playwright, headless Chromium (WebKit for Safari before a release) | the built app, served by a dev tau server with the dev model, driven as a user: open, read, send, steer, stop, edit, search, files, reconnect | smoke (`@smoke`, `test.sh smoke`) < 15 s, all < 3 min on 4 workers |
+| end to end | Playwright, headless Chromium (WebKit for Safari before a release) | the built app, served by a dev tau server with the dev model, driven as a user: open, read, send, steer, stop, edit, search, files, reconnect | smoke (`@smoke`, `test.sh smoke`) < 15 s, all < 30 s on 12 workers |
 | look | Playwright screenshots | baselines per theme of fixed transcripts; layout assertions in iOS's points | in the e2e run |
 | static | no middle dot in tau's copy (iOS's house style); TypeScript 7 (`tsc` from the server's devDependencies) over all of `web/` and `client/`; ESLint and Stylelint on `src/tau` and the files `upstream.ts diff` lists; `web/e2e` by its own tsconfig | | < 10 s |
 
 - **End to end, isolated.** Each Playwright worker starts its own server, as `ios/scripts/uitests.py` gives each
-  simulator one: `--memory`, a port from `TAU_WEB_PORTS` (default 7960 to 7967, apart from iOS's 7979 and 7991 to
-  7995), `--model dev/echo`, a fast `--dev-tps`, and `TAU_DEV_ANSWERS` for scripted answers. Each serves the same
-  build. Tests make their own conversations, so a worker's tests share a server; a test that stops or wipes it has a
-  worker of its own.
+  simulator one: `--memory`, a port from `TAU_WEB_PORTS` (default 7960 to 7975, apart from iOS's 7979 and 7991 to
+  7995, the dev servers' 7990 and 1234), `--model dev/echo`, a fast `--dev-tps`, and `TAU_DEV_ANSWERS` for scripted
+  answers. 12 workers (`TAU_E2E_WORKERS`). Each serves the same build, or with `--dev` passes the app's requests to
+  one Vite dev server (`--web-dev`). Tests make their own conversations, so a worker's tests share a server; a test
+  that stops or wipes it has a worker of its own.
 - **They wait on state, not time.** As `-uiTesting`'s `chatState` does on iOS, the app marks the open chat
   `data-tau-chat-state="loading|busy|idle"` (in tests only), and helpers wait on it. Web A's animations are turned off
-  in tests (its "no animations" setting).
+  in tests (its "no animations" setting). A run that must still work when the test acts holds on `api.gate()`, a
+  command that waits for a file the test writes, not on a `sleep`, which a slow page load outlasts.
 - **The iOS look is checked in two ways, neither of them a pixel comparison with iOS** (the fonts differ: SF Pro there,
   Roboto here):
   - Layout assertions read the DOM: a 16 px text inset, 17 px answers, line height, a card's radius and padding, the
@@ -303,7 +305,7 @@ One command each, from the repository root:
 | Command | Does |
 |---|---|
 | `scripts/web/dev.sh` | A dev tau server (`--db /tmp/tau-web-dev.db` or `--memory`, port 7990, `dev/echo`, restarted by `node --watch`) and Vite's dev server with hot reload on 1234, which proxies `/socket`, `/auth` and `/files` to the server, so dev is same-origin as production. Ctrl-C stops both. `--port`, `--web-port`, `--db`, `--memory`, `--model`; other options go to the server. |
-| `scripts/web/test.sh` | Static checks, `client/` and `web/src/tau` unit tests, then the e2e tests, building the app first when its sources are newer. `scripts/web/test.sh unit e2e -- -g transcript` runs some steps and passes options to Playwright. Run before every commit that touches `web/` or `client/`. |
+| `scripts/web/test.sh` | Static checks, `client/` and `web/src/tau` unit tests, then the e2e tests, building the app first when its sources are newer. `scripts/web/test.sh unit e2e -- -g transcript` runs some steps and passes options to Playwright. `e2e --dev` (or `smoke --dev`) tests Vite's dev server instead of a build: no build, an edit is in the next run; it starts one on 1234 without hot reload, and leaves it running. |
 | `scripts/web/build.sh [dir]` | `vite build` into `web/dist` (gitignored) or `dir`, without emoji images (the system's are used) or source maps. |
 | `scripts/build-release.sh` | As now, plus the web build copied into the release as `web/`. `check-release.ts` also fetches `/` and an asset from the started server. One tarball (2.3 MB today, about 8 MB with the app), so a server always serves the app built for its protocol. |
 | `scripts/release.sh` | Unchanged: publishes that tarball. |
@@ -311,6 +313,11 @@ One command each, from the repository root:
 | `node scripts/web/upstream.ts diff` | tau's edits to Web A's files as a diff against the pristine commit; `--check` fails on an unmarked hunk, `--stat` lists the files. |
 | `scripts/web/parity.sh` | The history walk's checklist, `web/PARITY.md` (section 6). |
 
+- **The iteration loop.** While working on a change, run the specs it touches against the dev server, and smoke when
+  it touches sending or the chat list: `scripts/web/test.sh e2e --dev -- queue.spec.ts` (9 s for a spec; the whole
+  suite is slower that way, 38 s, as each page loads Web A's modules one by one). Run the whole `scripts/web/test.sh`,
+  on the build, once before a commit series is done or reported, and loop a flaky spec there
+  (`-- --repeat-each 20 <spec>`).
 - **Install.** `scripts/setup-pi.sh` and `npm ci` in `server/` as now (which links `client/`). The web scripts run
   `npm ci` in `web/` themselves when its `package-lock.json` is newer than its `node_modules`, and in `web/e2e`
   when it has none; Playwright's Chromium comes with `npx playwright install chromium` once. `vendor/telegram-tt`
@@ -374,7 +381,8 @@ Timings on the development machine (warm caches; a cold `npm ci` of `web/` downl
 | Workflow | Time |
 |---|---|
 | `scripts/web/dev.sh`: both servers up | 1 s (Vite's first page load compiles Web A's modules on demand: about 10 s once) |
-| `scripts/web/test.sh` | 8 s: static 2 s (with TypeScript's incremental cache; 6 s without), unit 2 s, e2e 5 s on 4 workers; plus the build's 13 s when the sources changed |
+| `scripts/web/test.sh` | 28 s: static 5 s (with TypeScript's incremental cache), unit 2 s, e2e 21 s for 51 tests on 12 workers (47 s on 4); plus the build's 13 s when the sources changed |
+| `scripts/web/test.sh e2e --dev -- <spec>` | 9 s for a spec of 5 tests; Vite starts in 1 s when it is not running |
 | `scripts/web/build.sh` | 13 s; 15 MB unpacked |
 | `scripts/build-release.sh` (server bundle, app, release check) | 6 s; 8.3 MB packed, 2.3 MB before |
 | `node scripts/web/upstream.ts diff --check` | 0.2 s |
