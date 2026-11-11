@@ -36,7 +36,9 @@ export function draftBytes() {
   let bytes = 0;
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (key?.startsWith('tau-drafts:')) bytes += new TextEncoder().encode(localStorage.getItem(key) ?? '').length;
+    const value = key?.startsWith('tau-drafts:') ? localStorage.getItem(key) : undefined;
+    // A server's drafts all sent or cleared leave `{}`: nothing kept
+    if (value && value !== '{}') bytes += new TextEncoder().encode(value).length;
   }
   return bytes;
 }
