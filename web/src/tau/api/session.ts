@@ -7,9 +7,11 @@ import type { OutgoingMessage, PendingCreate, SendMode, Upload } from 'tau-clien
 import { Outbox, UploadError } from 'tau-client/outbox';
 import type { Dialog, Entry, JsonObject } from 'tau-client/protocol';
 import { ConversationReplica } from 'tau-client/replica';
+import { addCallback } from '../../lib/teact/teactn';
 import { getActions, getGlobal } from '../../global';
 
 import type { ApiAttachment, ApiMessage, ApiUpdate } from '../../api/types';
+import type { GlobalState } from '../../global/types';
 import type { MessageContext } from './builders';
 import type { QueuedMessage } from './queue';
 import type { ServerConfig } from './servers';
@@ -621,6 +623,21 @@ export function chatListMessage(dialog: Dialog): ApiMessage | undefined {
 export function sendChatListMessages(messages: ApiMessage[]) {
   for (const message of messages) send({ '@type': 'updateChatLastMessage', id: message.chatId, lastMessage: message });
 }
+
+// Web A's sync, once its first batch of chats is in, drops the messages it had (`resetMessages`, for a Telegram cache
+// gone stale), the chat list's last messages that came with that batch among them: they go again once it is synced
+let wasWebASynced = false;
+addCallback((global: GlobalState) => {
+  if (!global.isSynced) {
+    wasWebASynced = false;
+    return;
+  }
+  if (wasWebASynced) return;
+  wasWebASynced = true;
+  const missing = dialogs.ordered().filter(isListed).map(chatListMessage)
+    .filter((message) => message && !global.messages.byChatId[message.chatId]?.byId[message.id]);
+  sendChatListMessages(missing as ApiMessage[]);
+});
 
 function summaryOf(dialog: Dialog) {
   const message = buildSummaryMessage(dialog);

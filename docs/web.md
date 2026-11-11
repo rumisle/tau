@@ -117,7 +117,8 @@ web/src/tau/
   - tau's own fields go in one optional `ApiMessage.tau`, while `content.richMessage` is still filled for previews,
     copy and search.
   - the chat list's last messages go as `updateChatLastMessage`, not in `fetchChats`' result: `loadAllChats` puts a
-    result's messages over those Web A has, a while after, undoing what a chat that opened meanwhile put there;
+    result's messages over those Web A has, a while after, undoing what a chat that opened meanwhile put there; and
+    again once Web A is synced, as its sync drops the messages it had (`resetMessages`) after its first batch;
   - read states go as `updateThreadReadState` (Web A takes none from `updateChat`): unread counts, and the two checks
     of a user's message, which the agent has read once it is in the transcript.
 - **Sending is the outbox's** (`client/outbox.ts`, docs/sending.md's rules). Web A's `sendMessage` call enqueues; the

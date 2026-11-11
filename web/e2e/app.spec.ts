@@ -165,3 +165,13 @@ test('a chat that comes while the app syncs leaves no syncing spinner, and avata
   await expect(row.locator('.Avatar .inner')).toHaveCSS('background-image', /linear-gradient/);
   await expect(row.locator('.Avatar .inner')).not.toHaveCSS('background-image', /rgb\(0, 0, 0\)\)$/);
 });
+
+test('loaded with no chat open, the list shows each chat\'s last message (Web A\'s sync drops what came with its first batch)', async ({ app, api }) => {
+  await api.chat('Never opened one', ['first words here']);
+  await api.chat('Never opened two', ['second words here']);
+  await app.reload();
+  const row = (title: string) => app.locator('.chat-list .ListItem')
+    .filter({ has: app.locator('.fullName').getByText(title, { exact: true }) });
+  await expect(row('Never opened one')).toContainText('You said: first words here');
+  await expect(row('Never opened two')).toContainText('You said: second words here');
+});
