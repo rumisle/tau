@@ -73,7 +73,9 @@ import resetScroll from '../../util/resetScroll';
 import { debounce, onTickEnd } from '../../util/schedulers';
 import { getServerTime } from '../../util/serverTime';
 import getOffsetToContainer from '../../util/visibility/getOffsetToContainer';
+import { isSentHere } from '../../tau/api/session'; // tau: see above
 import { IS_TAU } from '../../tau/config'; // tau: no unread divider (docs/reading-position.md)
+import { type TailBaseline, tauLiveTailStart } from '../../tau/liveTail'; // tau: where the live tail starts
 import { REM } from '../common/helpers/mediaDimensions';
 import { groupMessages } from './helpers/groupMessages';
 import { requestMessageListReflow } from './helpers/messageListReflow';
@@ -392,14 +394,19 @@ const MessageList = ({
   const withUsers = Boolean((!isPrivate && !isChannelChat)
     || isChatWithSelf || isSystemBotChat || isAnonymousForwards || isChannelWithAvatars);
 
+  const tauTailBaselineRef = useRef<TailBaseline>({}); // tau: the user's message starts the tail (src/tau/liveTail.ts)
   const liveTailStartOriginalId = useMemo(() => {
+    const previousLiveTailStartOriginalId = liveTailStartOriginalIdRef.current;
+    const hasActiveLiveTail = previousLiveTailStartOriginalId !== undefined
+      && previousLiveTailStartOriginalId !== releasedLiveTailStartOriginalId;
+    if (IS_TAU) { // tau: see above
+      return tauLiveTailStart(messageIds, messagesById, hasActiveLiveTail // tau: see above
+        ? previousLiveTailStartOriginalId : undefined, tauTailBaselineRef.current); // tau: see above
+    }
     if (!messageIds?.length || !messagesById) {
       return undefined;
     }
 
-    const previousLiveTailStartOriginalId = liveTailStartOriginalIdRef.current;
-    const hasActiveLiveTail = previousLiveTailStartOriginalId !== undefined
-      && previousLiveTailStartOriginalId !== releasedLiveTailStartOriginalId;
     let renderedLiveTailStartOriginalId: number | undefined;
 
     for (let i = messageIds.length - 1; i >= 0; i--) {
@@ -591,6 +598,8 @@ const MessageList = ({
     currentLastMessage?.isTypingDraft && !currentLastMessage.isOutgoing,
   );
   const isCurrentLastMessageOwnSent = Boolean(currentLastMessage?.isOutgoing);
+  const isTauSentHere = IS_TAU && isCurrentLastMessageOwnSent // tau: a message sent here goes to the top
+    && currentLastMessageId !== undefined && isSentHere(chatId, currentLastMessageId); // tau: see above
 
   useInterval(() => {
     if (!messageIds || !messagesById || type === 'scheduled' || isAccountFrozen || !isActive) return;
@@ -941,7 +950,8 @@ const MessageList = ({
     );
     const hasLiveTail = effectiveLiveTailStartOriginalId !== undefined;
     const shouldRevealLiveTailTypingDraft = Boolean(
-      wasMessageAdded
+      !IS_TAU // tau: the answer grows below the user's message, the view stays (src/tau/liveTail.ts)
+      && wasMessageAdded
       && hasLiveTail
       && !wasLiveTailCreated
       && isCurrentLastMessageIncomingTypingDraft,
@@ -1050,7 +1060,8 @@ const MessageList = ({
         && prevIsViewportNewest
         && scrollHeight - addedTailHeight - scrollTop - offsetHeight <= BOTTOM_THRESHOLD,
       );
-      const shouldFocusLiveTail = wasLiveTailCreated && isAtBottom;
+      const shouldFocusLiveTail = wasLiveTailCreated && (isAtBottom // tau: a message sent here goes to the top
+        || isTauSentHere); // tau: see above
       const shouldRevealTypingDraft = Boolean(
         shouldRevealLiveTailTypingDraft
         && (isAtBottom || wasAtBottomBeforeTypingDraft),
@@ -1059,8 +1070,19 @@ const MessageList = ({
       const isAlreadyFocusing = currentLastMessageId !== undefined
         && memoFocusingIdRef.current === currentLastMessageId;
 
+      // tau: an answer that outgrew the view leaves it where it is, at the user's message (src/tau/liveTail.ts)
+      const isTauRelease = IS_TAU && wasMessageAdded && isAtBottom && shouldReleaseLiveTail; // tau: see above
+      if (isTauRelease && effectiveLiveTailStartOriginalId !== undefined) { // tau: see above
+        const released = effectiveLiveTailStartOriginalId; // tau: see above
+        clearTimeout(liveTailReleaseTimerRef.current); // tau: see above
+        liveTailReleaseTimerRef.current = window.setTimeout(() => { // tau: see above
+          liveTailReleaseTimerRef.current = undefined; // tau: see above
+          setReleasedLiveTailStartOriginalId(released); // tau: see above
+        }, SEND_FOCUS_DURATION); // tau: see above
+      } // tau: see above
+
       // Animate incoming message, but if app is in background mode, scroll to the first unread
-      if (wasMessageAdded && isAtBottom && (!isAlreadyFocusing || shouldReleaseLiveTail) && (
+      if (!isTauRelease && wasMessageAdded && isAtBottom && (!isAlreadyFocusing || shouldReleaseLiveTail) && ( // tau
         !hasLiveTail || shouldReleaseLiveTail
       )) {
         // Break out of `forceLayout`
@@ -1111,8 +1133,8 @@ const MessageList = ({
         ? animateScroll({
           container,
           element: liveTailElement,
-          position: 'end',
-          margin: bottomReserve,
+          position: IS_TAU ? 'start' : 'end', // tau: its start at the top, however long it is already
+          margin: IS_TAU ? getMessageListTopReserve(container) : bottomReserve, // tau: see above
           maxDistance: Number.MAX_SAFE_INTEGER,
           forceDuration: noMessageSendingAnimation ? 0 : undefined,
           shouldReturnMutationFn: true,
@@ -1172,7 +1194,8 @@ const MessageList = ({
       let isParkedForSendCollapse = false;
       if (liveTailElement) {
         const liveTailOffset = getOffsetToContainer(liveTailElement, container).top;
-        newScrollTop = liveTailOffset + liveTailElement.offsetHeight - offsetHeight;
+        newScrollTop = IS_TAU ? liveTailOffset - getMessageListTopReserve(container) // tau: see above
+          : liveTailOffset + liveTailElement.offsetHeight - offsetHeight;
       } else if (shouldFocusLiveTail) {
         newScrollTop = scrollHeight - offsetHeight;
       } else if (typingDraftScrollTop !== undefined) {
@@ -1268,6 +1291,7 @@ const MessageList = ({
     isCurrentLastMessageTypingDraft,
     isCurrentLastMessageIncomingTypingDraft,
     isCurrentLastMessageOwnSent,
+    isTauSentHere, // tau: see above
     getContainerHeight,
     prevContainerHeightRef,
     noMessageSendingAnimation,

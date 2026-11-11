@@ -141,6 +141,15 @@ web/src/tau/
   typing draft whose only part is `waiting`, sent while the run is on and no call runs; the answer then streams in the
   same draft (`streamsIn` maps its generation's draft ID to the τ's), and it is sent again every 5 s against Web A's
   draft expiry. The run is the server's, so the τ shows only once the server has the message.
+- **A message sent goes to the top; the web differs from iOS here, at the user's choice** (`liveTail.ts`, in Web A's
+  `MessageList`). As ChatGPT does, and Web A for a bot's streamed answer: the user's message goes to the top of the
+  view and the answer grows below it, past the screen without moving it; the user scrolls. iOS stays at the bottom
+  and follows the answer (docs/reading-position.md). Web A starts its live tail at an incoming typing draft, which in
+  tau comes late or not at all (a call runs first, the τ waits for the server); tau starts it at the user's message,
+  sent here (focused wherever the view was) or on another device (when the view is at the end), and keeps it through
+  the τ, streaming, calls and reconnects until a newer message is sent. A draft's first frame does not scroll to its
+  end, and an answer that outgrew the view leaves it where it is. A chat opened mid-run opens at its end. The reading
+  position's other parts (where a chat opens, turns, the return stack) apply in their desktop form.
 - **An answer is a system notification** (docs/notifications.md "On the web"): tau's, decided on the chat list when a
   run ends, in place of Web A's per message; Settings > Notifications is tau's (`components/NotificationSettings.tsx`).
 - **Data and Storage is tau's** (`components/DataSettings.tsx`, in place of Web A's auto-download settings): the bytes

@@ -1335,12 +1335,21 @@ function onCreated(create: PendingCreate, conversationId: number) {
 
 /** A message reached the model; when its entry already shows on its own, the bubble that stood for it goes */
 function onPlaced(item: OutgoingMessage, entryId: number) {
+  if (item.conversationId !== undefined) sentHere.add(`${buildChatId(item.conversationId)}:${entryId}`);
   const each = item.conversationId === undefined ? undefined : opened.get(item.conversationId);
   if (!each?.seen.has(entryId)) return;
   const local = shown.get(item.requestId);
   shown.delete(item.requestId);
   outboxOf(item.conversationId!).settle(item.requestId);
   if (local) send({ '@type': 'deleteMessages', ids: local.localIds, chatId: local.chatId });
+}
+
+// The entries this page sent, by chat: a message sent here goes to the top of the view as it lands (src/tau/liveTail.ts)
+const sentHere = new Set<string>();
+
+/** A message the user sent from this page: still on its way, or in the transcript from this page's outbox */
+export function isSentHere(chatId: string, messageId: number) {
+  return isLocalMessageId(messageId) || sentHere.has(`${chatId}:${entryIdOf(messageId)}`);
 }
 
 // Texts withdrawn back to the field, gathered per chat: Stop returns all its queued messages at once
