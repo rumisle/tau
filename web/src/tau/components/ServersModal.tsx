@@ -1,5 +1,5 @@
 // Servers (ios/Tau/Settings/ServersController.swift, after Telegram's proxy list): every server this app talks to, with
-// its status and how long it takes to answer; one is added by its address and token, and one added can be removed
+// its status and how long it takes to answer ("Connected, ping 42 ms"); one is added by its address and token, and one added can be removed
 // (its chats leave the list). From the main menu; its own root, so it outlives the menu.
 import { memo, useEffect, useRef, useState } from '../../lib/teact/teact';
 import TeactDOM from '../../lib/teact/teact-dom';
@@ -25,7 +25,7 @@ type OwnProps = {
 const STATUS: Record<ServerInfo['status'], string> = {
   connecting: STRINGS.ServerConnecting,
   ready: STRINGS.ServerConnected,
-  refused: STRINGS.ServerRefused,
+  refused: STRINGS.ServerTokenRefused,
   unreachable: STRINGS.ServerUnreachable,
 };
 
@@ -99,11 +99,10 @@ const ServersModal = ({ isOpen, onClose }: OwnProps) => {
           >
             <div className="multiline-item">
               <span className="title">{hostOf(server.origin)}</span>
+              {/* As Telegram's proxy list: Connected, ping 42 ms */}
               <span className="subtitle" data-status={server.status}>
                 {STATUS[server.status]}
-                {server.status === 'ready' && ping !== undefined ? ` · ${ping} ms` : ''}
-                {` · ${server.chats} ${server.chats === 1 ? STRINGS.ServerChat : STRINGS.ServerChats}`}
-                {server.slot === 0 ? ` · ${STRINGS.ServerThis}` : ''}
+                {server.status === 'ready' && ping !== undefined ? `, ping ${Math.max(1, ping)} ms` : ''}
               </span>
             </div>
           </ListItem>

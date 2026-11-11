@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The web client's checks and tests (docs/web.md "Tests, fast"), fastest first; stops at the first that fails.
-#   static   TypeScript 7 (the server's) over web/ and client/; ESLint and Stylelint on tau's files and the Web A files tau
-#            edited; every edit to Web A marked `tau:` (scripts/web/upstream.ts diff --check, when vendor/telegram-tt is)
+#   static   no middle dot in tau's copy; TypeScript 7 (the server's) over web/ and client/; ESLint and Stylelint on
+#            tau's files and the Web A files tau edited; every edit to Web A marked `tau:` (scripts/web/upstream.ts diff
+#            --check, when vendor/telegram-tt is)
 #   unit     client/ (node:test), web/src/tau (Vitest)
 #   e2e      the built app against dev servers (web/e2e, Playwright); built first when its sources are newer
 #   smoke    e2e's tests tagged @smoke only (open, read, send, steer and stop, files, a new chat), under 15 s
@@ -30,6 +31,11 @@ edited() {
 }
 
 static() {
+	# tau's copy is terse and never joins parts with a middle dot (as iOS's: "Connected, ping 42 ms", "provider/id")
+	if grep -rn --include='*.ts' --include='*.tsx' --exclude='*.test.ts' '·' "$web/src/tau"; then
+		echo "a middle dot in tau's copy (above): say it as iOS does" >&2
+		exit 1
+	fi
 	"$tsc" -p "$web" --noEmit
 	(cd "$root/client" && "$tsc" --noEmit)
 	if [ -d "$root/vendor/telegram-tt/.git" ]; then

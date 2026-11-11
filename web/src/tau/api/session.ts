@@ -1044,9 +1044,9 @@ export function openNewChat(slot = lastSlot) {
 
 let lastSlot = 0;
 
-/** New Chat names its server when there are several */
+/** New Chat names its server when there are several: New Chat on mac.local */
 function newChatTitle(slot: number) {
-  return links.size > 1 ? `${STRINGS.NewChat} · ${hostOf(links.get(slot)!.origin)}` : STRINGS.NewChat;
+  return links.size > 1 ? `${STRINGS.NewChat} on ${hostOf(links.get(slot)!.origin)}` : STRINGS.NewChat;
 }
 
 export function hostOf(origin: string) {
@@ -1378,14 +1378,13 @@ export function slotOfChat(chatId: string) {
 
 // MARK: Servers (src/tau/components/ServersModal.tsx)
 
-export type ServerInfo = { slot: number; origin: string; status: ServerStatus; chats: number };
+export type ServerInfo = { slot: number; origin: string; status: ServerStatus };
 
 export function servers(): ServerInfo[] {
   return [...links.values()].filter((link) => !link.isRemoved).map((link) => ({
     slot: link.slot,
     origin: link.origin,
     status: link.status,
-    chats: [...link.dialogs.dialogs.values()].filter(isListed).length,
   }));
 }
 

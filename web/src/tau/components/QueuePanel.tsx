@@ -127,7 +127,6 @@ const QueuePanel = ({ chatId }: OwnProps) => {
             <p className="embedded-text-wrapper">{queuedPreview(first)}</p>
             <div className="message-title">
               {titleOf(first)}
-              {queue.length > 1 && <span className="tau-queue-count">{` · ${queue.length}`}</span>}
               <Icon
                 name={first.isSending ? 'message-pending' : 'check'}
                 className="tau-queue-status"

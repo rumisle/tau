@@ -446,7 +446,7 @@ function buildToolBlock(call: any, result: any) {
   const summary = (call.name === 'bash' ? args : firstString ?? '').split('\n')[0].slice(0, 60);
   return {
     type: 'details' as const,
-    title: { type: 'plain' as const, text: `🔧 ${call.name} · ${summary}${status}` },
+    title: { type: 'plain' as const, text: `🔧 ${call.name}: ${summary}${status}` },
     blocks,
   };
 }

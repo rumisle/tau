@@ -45,14 +45,15 @@ async function inboxOf(client: TauClient, conversationId: number) {
   return ((result.docs['pi.inbox'] as { items?: { mode: string }[] } | undefined)?.items ?? []);
 }
 
-test('Send\'s menu sends a follow-up; the panel counts them; × and Delete withdraw them', async ({ app, api }) => {
+test('Send\'s menu sends a follow-up; the panel shows how many; × and Delete withdraw them', async ({ app, api }) => {
   const id = await busyChat(app, api, 'Queue modes');
   await type(app, 'a steer');
   await expect(panel(app)).toContainText('Steer');
   await type(app, 'a follow-up', { send: false });
   await app.getByRole('button', { name: 'Send Message' }).click({ button: 'right' });
   await app.locator('.tau-send-menu .MenuItem').filter({ hasText: 'Send as Follow-up' }).click();
-  await expect(panel(app)).toContainText('· 2');
+  // Two: the pinned bar's segments
+  await expect(panel(app)).toHaveClass(/several/);
   await expect.poll(async () => (await inboxOf(api.client, id)).map((each) => each.mode)).toEqual(['steer', 'followUp']);
   await expect(own(app, 'a follow-up')).toHaveCount(0);
 
@@ -63,7 +64,7 @@ test('Send\'s menu sends a follow-up; the panel counts them; × and Delete withd
   // × withdraws the first; Delete in the menu the other
   await panel(app).getByRole('button', { name: 'Delete' }).click();
   await expect(panel(app)).toContainText('a follow-up');
-  await expect(panel(app)).not.toContainText('· 2');
+  await expect(panel(app)).not.toHaveClass(/several/);
   await queueAction(app, 'Delete');
   await expect(panel(app)).toHaveCount(0);
   await expect.poll(async () => (await inboxOf(api.client, id)).length).toBe(0);

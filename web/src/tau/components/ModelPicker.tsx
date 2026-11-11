@@ -52,7 +52,7 @@ const ModelPicker = ({ chatId, isOpen, onClose }: OwnProps) => {
 
   const ordered = useMemo(() => orderModels(models ?? [], recentModels(), filter), [models, filter]);
   const items: ItemPickerOption[] = ordered.map((model) => ({
-    value: keyOf(model), label: model.name, subLabel: `${model.provider} · ${model.id}`,
+    value: keyOf(model), label: model.name, subLabel: `${model.provider}/${model.id}`,
   }));
 
   const pick = useLastCallback((key: string) => {

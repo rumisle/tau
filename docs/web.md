@@ -254,13 +254,13 @@ to each, cross-origin for all but the one that served it. That needs:
   and `wss:` on a tailnet).
 
 Built so (`api/servers.ts`, `components/ServersModal.tsx`): Servers, in the main menu, lists this page's server and
-those added, with their status, how long `/auth` takes and their chats; Add Server takes an address and a token, which
-`/auth` must take; a right-click removes one (its chats leave the list). The session keeps a link per server: its
-socket, chat list, outbox (in IndexedDB per origin) and models. Conversation IDs become global on each socket (a
-server's slot above bit 40, as iOS's MultiStore; the first server's IDs are its own), so the replicas, the outbox and
-Web A's chat IDs need no server beside them; a kept file's media ID carries its slot. New Chat goes to the server used
-last; the New Message button's right-click picks another. The server answers CORS on `/auth` and `/files`; its CSP
-already lets the page connect anywhere.
+those added, with their status as Telegram's proxy list says it ("Connected, ping 42 ms", the ping `/auth`'s time); Add
+Server takes an address and a token, which `/auth` must take; a right-click removes one (its chats leave the list). The
+session keeps a link per server: its socket, chat list, outbox (in IndexedDB per origin) and models. Conversation IDs
+become global on each socket (a server's slot above bit 40, as iOS's MultiStore; the first server's IDs are its own), so
+the replicas, the outbox and Web A's chat IDs need no server beside them; a kept file's media ID carries its slot. New
+Chat goes to the server used last; the New Message button's right-click picks another. The server answers CORS on
+`/auth` and `/files`; its CSP already lets the page connect anywhere.
 
 ## 4. Tests, fast
 
@@ -270,7 +270,7 @@ already lets the page connect anywhere.
 | `web/src/tau` | Vitest (Web A's runner, with its Vite transforms and jsdom) | builders: entries and docs to `Api*` objects (each tool's card, thinking, subagents, the run's end, streaming drafts); the IndexedDB store over `fake-indexeddb` | < 5 s |
 | end to end | Playwright, headless Chromium (WebKit for Safari before a release) | the built app, served by a dev tau server with the dev model, driven as a user: open, read, send, steer, stop, edit, search, files, reconnect | smoke (`@smoke`, `test.sh smoke`) < 15 s, all < 3 min on 4 workers |
 | look | Playwright screenshots | baselines per theme of fixed transcripts; layout assertions in iOS's points | in the e2e run |
-| static | TypeScript 7 (`tsc` from the server's devDependencies) over all of `web/` and `client/`; ESLint and Stylelint on `src/tau` and the files `upstream.ts diff` lists; `web/e2e` by its own tsconfig | | < 10 s |
+| static | no middle dot in tau's copy (iOS's house style); TypeScript 7 (`tsc` from the server's devDependencies) over all of `web/` and `client/`; ESLint and Stylelint on `src/tau` and the files `upstream.ts diff` lists; `web/e2e` by its own tsconfig | | < 10 s |
 
 - **End to end, isolated.** Each Playwright worker starts its own server, as `ios/scripts/uitests.py` gives each
   simulator one: `--memory`, a port from `TAU_WEB_PORTS` (default 7960 to 7967, apart from iOS's 7979 and 7991 to
