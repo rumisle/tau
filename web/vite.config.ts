@@ -79,13 +79,14 @@ export default defineConfig(({ mode }): UserConfig => {
     HTTPS_KEY_PATH: httpsKeyPath = '',
   } = env;
   const appEnv = env.APP_ENV || (mode === 'development' ? 'development' : 'production');
-  const defaultAppTitle = `Telegram${appEnv !== 'production' ? ' Beta' : ''}`;
+  const defaultAppTitle = IS_TAU ? 'tau' : `Telegram${appEnv !== 'production' ? ' Beta' : ''}`; // tau: its name
   const baseUrl = env.BASE_URL || PRODUCTION_URL;
   const appTitle = env.APP_TITLE || defaultAppTitle;
   const isProductionApp = appEnv === 'production';
-  const appleIcon = isProductionApp ? 'apple-touch-icon' : 'apple-touch-icon-dev';
-  const mainIcon = isProductionApp ? 'icon-192x192' : 'icon-dev-192x192';
-  const manifest = isProductionApp ? 'site.webmanifest' : 'site_dev.webmanifest';
+  // tau: its icons and manifest (public/tau, scripts/web/icons.mjs)
+  const appleIcon = IS_TAU ? 'tau/apple-touch-icon' : isProductionApp ? 'apple-touch-icon' : 'apple-touch-icon-dev';
+  const mainIcon = IS_TAU ? 'tau/icon-192x192' : isProductionApp ? 'icon-192x192' : 'icon-dev-192x192'; // tau
+  const manifest = IS_TAU ? 'tau/tau.webmanifest' : isProductionApp ? 'site.webmanifest' : 'site_dev.webmanifest'; // tau
   const csp = buildCsp(appEnv);
   const isDevelopmentMode = mode === 'development';
   const telegramApiId = env.TELEGRAM_API_ID || '';

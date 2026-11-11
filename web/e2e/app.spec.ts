@@ -16,6 +16,18 @@ test('a #token= link signs in, and leaves the address bar', SMOKE, async ({ app,
   expect(new URL(app.url()).hash).toBe('');
 });
 
+test('the page is tau\'s: its title, its τ icons, its manifest', async ({ app, server }) => {
+  await expect(app).toHaveTitle('tau');
+  const icons = await app.locator('link[rel~="icon"]').evaluateAll((links) => links.map((link) => link.getAttribute('href')));
+  expect(icons.every((href) => href!.includes('/tau/'))).toBe(true);
+  const manifestHref = await app.locator('link[rel="manifest"]').getAttribute('href');
+  const manifest = await (await fetch(new URL(manifestHref!, `${server.origin}/`))).json() as { name: string; icons: { src: string }[] };
+  expect(manifest.name).toBe('tau');
+  for (const icon of manifest.icons) {
+    expect((await fetch(new URL(`tau/${icon.src}`, `${server.origin}/`))).status).toBe(200);
+  }
+});
+
 test('without a token the connect screen asks; a wrong one is refused, the right one opens the list', async ({ page, server, api }) => {
   await api.chat('Connect screen', ['hi']);
   await page.goto(server.origin);

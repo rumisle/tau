@@ -159,6 +159,9 @@ web/src/tau/
   A failure says so once, as a toast.
 - **Subagents** are listed in the ⋯ menu (avatar, working for or worked how long, the task); a row, or a subagent's
   card, opens its conversation: sent to Web A unlisted (`openConversation`), its title and work kept up to date.
+- **The page is tau's**: the title "tau" (Web A's `APP_TITLE` default), the iOS icon's τ on pink as favicons, Apple's
+  touch icon and the manifest's (`public/tau`, made by `scripts/web/icons.mjs`; `tau.webmanifest`), with Web A's
+  unread swap (`favicon` to `favicon-unread`) kept.
 - **An answer is a system notification** (docs/notifications.md "On the web"): tau's, decided on the chat list when a
   run ends, in place of Web A's per message; Settings > Notifications is tau's (`components/NotificationSettings.tsx`).
 - **Data and Storage is tau's** (`components/DataSettings.tsx`, in place of Web A's auto-download settings): the bytes
