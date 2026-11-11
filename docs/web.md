@@ -253,7 +253,14 @@ to each, cross-origin for all but the one that served it. That needs:
 - the serving server's CSP listing the servers added (a `connect-src` the app asks the server to extend, or `https:`
   and `wss:` on a tailnet).
 
-One server comes first; the IDs leave room for several from the start.
+Built so (`api/servers.ts`, `components/ServersModal.tsx`): Servers, in the main menu, lists this page's server and
+those added, with their status, how long `/auth` takes and their chats; Add Server takes an address and a token, which
+`/auth` must take; a right-click removes one (its chats leave the list). The session keeps a link per server: its
+socket, chat list, outbox (in IndexedDB per origin) and models. Conversation IDs become global on each socket (a
+server's slot above bit 40, as iOS's MultiStore; the first server's IDs are its own), so the replicas, the outbox and
+Web A's chat IDs need no server beside them; a kept file's media ID carries its slot. New Chat goes to the server used
+last; the New Message button's right-click picks another. The server answers CORS on `/auth` and `/files`; its CSP
+already lets the page connect anywhere.
 
 ## 4. Tests, fast
 

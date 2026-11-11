@@ -32,12 +32,14 @@ import { getPromptInstall } from '../../../util/installPrompt';
 import { switchPermanentWebVersion } from '../../../util/permanentWebVersion';
 import { getSystemTheme } from '../../../util/systemTheme';
 import { IS_TAU } from '../../../tau/config'; // tau: Telegram-only UI left out
+import { STRINGS } from '../../../tau/strings'; // tau: servers
 
 import useFlag from '../../../hooks/useFlag';
 import { useFolderManagerForUnreadCounters } from '../../../hooks/useFolderManager';
 import useLang from '../../../hooks/useLang';
 import useLastCallback from '../../../hooks/useLastCallback';
 
+import { openServers } from '../../../tau/components/ServersModal'; // tau: servers
 import AttachBotItem from '../../middle/composer/AttachBotItem';
 import ConfirmDialog from '../../ui/ConfirmDialog';
 import MenuItem from '../../ui/MenuItem';
@@ -224,6 +226,7 @@ const LeftSideMenuItems = ({
           onMenuClosed={onBotMenuClosed}
         />
       ))}
+      {IS_TAU && <MenuItem icon="link" onClick={openServers}>{STRINGS.MenuServers}</MenuItem>/* tau: servers */}
       <MenuItem
         icon="settings"
         onClick={onSelectSettings}

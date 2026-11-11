@@ -87,9 +87,11 @@ export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
 
   app: async ({ page, server }, use) => {
     const foreign: string[] = [];
+    secondHosts.clear();
     page.on('request', (request) => {
       const url = new URL(request.url());
-      if (!['http:', 'ws:', 'blob:', 'data:'].includes(url.protocol) || url.host !== `127.0.0.1:${server.port}`) {
+      const isOurs = url.host === `127.0.0.1:${server.port}` || secondHosts.has(url.host);
+      if (!['http:', 'ws:', 'blob:', 'data:'].includes(url.protocol) || !isOurs) {
         if (url.protocol !== 'blob:' && url.protocol !== 'data:') foreign.push(request.url());
       }
     });
@@ -101,18 +103,52 @@ export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
 
 export { expect };
 
+export const SECOND_TOKEN = 'second-token-0123456789abcdef';
+// Servers a test started beside its worker's, which the page may reach
+const secondHosts = new Set<string>();
+
+/**
+ * Another tau server, as a second one the app adds (docs/web.md "Several servers"): its own token, the dev/parrot model,
+ * no web app, on a port of the system's choosing; stopped by the returned function
+ */
+export async function startSecondServer() {
+  const home = mkdtempSync(join(tmpdir(), 'tau-web-e2e-second-'));
+  const child = spawn(process.execPath, [
+    '--no-warnings', join(ROOT, 'server/src/main.ts'), '--memory', '--port', '0', '--host', '127.0.0.1',
+    '--model', 'dev/parrot', '--dev-tps', '400', '--no-web', '--cwd', home,
+  ], { env: { ...process.env, TAU_TOKEN: SECOND_TOKEN, PI_CODING_AGENT_DIR: home }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const url = new URL(await listening(child));
+  secondHosts.add(url.host);
+  const client = await TauClient.open(new WebSocket(`ws://${url.host}/socket`, [
+    'tau.v1', `tau.token.${Buffer.from(SECOND_TOKEN).toString('base64url')}`,
+  ]));
+  return {
+    origin: `http://${url.host}`,
+    host: url.host,
+    client,
+    async stop() {
+      await client.close();
+      const exited = new Promise((done) => child.once('exit', done));
+      child.kill();
+      await exited;
+      rmSync(home, { recursive: true, force: true });
+    },
+  };
+}
+
 // The smoke subset (`scripts/web/test.sh smoke`): open, read, send, steer and stop, files, a new chat; kept under 15 s
 export const SMOKE = { tag: '@smoke' };
 
 function listening(child: ChildProcess) {
-  return new Promise<void>((done, fail) => {
+  return new Promise<string>((done, fail) => {
     let output = '';
     const timer = setTimeout(() => fail(new Error(`the server did not start:\n${output}`)), 20_000);
     const read = (chunk: Buffer) => {
       output += chunk;
-      if (output.includes('tau listening on')) {
+      const url = /tau listening on (\S+)/.exec(output)?.[1];
+      if (url) {
         clearTimeout(timer);
-        done();
+        done(url);
       }
     };
     child.stdout!.on('data', read);

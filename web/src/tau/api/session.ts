@@ -427,10 +427,8 @@ async function load(each: Opened) {
   const { replica } = each;
   const link = linkOf(replica.id)!;
   // A server not connected yet: its chats load once it is
-  while (!link.client || !each.isSynced) {
-    if (!link.client) await new Promise((resolve) => window.setTimeout(resolve, RECONNECT_MS[0]));
-    else await syncReplica(each);
-  }
+  while (!link.client) await new Promise((resolve) => window.setTimeout(resolve, RECONNECT_MS[0]));
+  await syncReplica(each);
   while (replica.hasOlder) await replica.loadOlder(link.client, PAGE);
   while (replica.holes.length > 0) await replica.fillHole(link.client, PAGE);
   each.isLoaded = true;
@@ -1002,12 +1000,14 @@ function outboxOfDraft(draft: DraftChat) {
 function showDraftChat(draft: DraftChat, isEdit = false) {
   send({ '@type': 'updateUser', id: draft.chatId, user: buildDraftUser(draft.chatId, draft.title) });
   send({ '@type': 'updateChat', id: draft.chatId, chat: buildDraftChat(draft.chatId, draft.title) });
+  // Its thread, where Web A keeps the history it loaded (an empty one too: without it the chat shows its spinner)
+  // and a draft written in it
+  send({
+    '@type': 'updateThreadInfo',
+    threadInfo: { isCommentsInfo: false, chatId: draft.chatId, threadId: MAIN_THREAD_ID },
+  });
   // A fork starts read up to the fork, as the server's does: Web A opens a chat at its last read message
   if (draft.forkAt !== undefined) {
-    send({
-      '@type': 'updateThreadInfo',
-      threadInfo: { isCommentsInfo: false, chatId: draft.chatId, threadId: MAIN_THREAD_ID },
-    });
     send({
       '@type': 'updateThreadReadState',
       chatId: draft.chatId,
@@ -1021,13 +1021,8 @@ function showDraftChat(draft: DraftChat, isEdit = false) {
   }
   // What was written in it before, kept as any chat's draft. In place before the chat opens: the composer takes a draft
   // that comes later for the user's own typing, and keeps the field as it is
-  // (Web A keeps a draft in its thread, which the thread's info makes)
   const written = draftsOf([draft.chatId])[draft.chatId];
   if (written) {
-    send({
-      '@type': 'updateThreadInfo',
-      threadInfo: { isCommentsInfo: false, chatId: draft.chatId, threadId: MAIN_THREAD_ID },
-    });
     send({
       '@type': 'draftMessage', chatId: draft.chatId, threadId: MAIN_THREAD_ID, draft: written,
     });

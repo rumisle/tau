@@ -4,7 +4,7 @@ import {
 import { getActions } from '../../global';
 
 import buildClassName from '../../util/buildClassName';
-import { openNewChat } from '../../tau/api/session'; // tau: New Chat is a draft at once
+import { hostOf, openNewChat, servers } from '../../tau/api/session'; // tau: New Chat is a draft at once
 import { IS_TAU } from '../../tau/config'; // tau: New Chat is a draft at once
 
 import useLang from '../../hooks/useLang';
@@ -81,6 +81,10 @@ const NewChatButton = ({
         color="primary"
         className={isMenuOpen ? 'active' : ''}
         onClick={toggleIsMenuOpen}
+        onContextMenu={IS_TAU ? (e) => { // tau: New Chat on another server, with several
+          e.preventDefault(); // tau: see above
+          if (servers().length > 1) setIsMenuOpen(true); // tau: see above
+        } : undefined} // tau: see above
         ariaLabel={lang(isMenuOpen ? 'Close' : 'NewMessageTitle')}
         tabIndex={-1}
       >
@@ -94,7 +98,11 @@ const NewChatButton = ({
         autoClose
         onClose={handleClose}
       >
-        {menuItems}
+        {IS_TAU ? servers().map((server) => ( // tau: the servers, New Chat on one (a right-click, with several)
+          <MenuItem key={server.slot} icon="new-chat-filled" onClick={() => openNewChat(server.slot)}>
+            {hostOf(server.origin)}
+          </MenuItem>
+        )) : menuItems}
       </Menu>
     </div>
   );

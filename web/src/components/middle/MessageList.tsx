@@ -1285,7 +1285,8 @@ const MessageList = ({
   }, [isSelectModeActive]);
 
   const noAvatars = Boolean(!withUsers || (isChannelChat && !isChannelWithAvatars));
-  const shouldRenderGreeting = isUserId(chatId) && !isChatWithSelf && !isBot && !isAnonymousForwards
+  const shouldRenderGreeting = !IS_TAU // tau: an empty chat (New Chat) has no greeting sticker to send
+    && isUserId(chatId) && !isChatWithSelf && !isBot && !isAnonymousForwards
     && type === 'thread'
     && (
       (
