@@ -19,6 +19,7 @@ import { MAIN_THREAD_ID } from '../../api/types';
 
 import { ALL_FOLDER_ID, ARCHIVED_FOLDER_ID } from '../../config';
 import { selectCurrentMessageList } from '../../global/selectors';
+import { selectThreadReadState } from '../../global/selectors/threads';
 import { isLocalMessageId } from '../../util/keys/messageKey';
 import {
   probe, readToken, saveToken, serverOrigin, socketProtocols, socketUrlOf,
@@ -1977,11 +1978,15 @@ export function seenThrough(chatId: string, entryId: number, laidOutThrough: num
   each.judgedThrough = Math.max(each.judgedThrough ?? 0, laidOutThrough);
   readOnScreen(conversationId, entryId);
   const dialog = dialogs.dialogs.get(conversationId);
-  if (dialog && isListed(dialog)) {
-    send({
-      '@type': 'updateThreadReadState', chatId, threadId: MAIN_THREAD_ID, readState: readStateOf(dialog),
-    });
-  }
+  if (!dialog || !isListed(dialog)) return;
+  // Only when Web A's differs (it counts an incoming message itself): a measure comes with each frame of a stream
+  const readState = readStateOf(dialog);
+  const current = selectThreadReadState(getGlobal(), chatId, MAIN_THREAD_ID);
+  if (current?.unreadCount === readState.unreadCount
+    && current?.lastReadInboxMessageId === readState.lastReadInboxMessageId) return;
+  send({
+    '@type': 'updateThreadReadState', chatId, threadId: MAIN_THREAD_ID, readState,
+  });
 }
 
 /** The answers with text after an entry, up to one, as the server counts unread ones (at most 99) */
