@@ -45,3 +45,36 @@ test('Mark as Unread and Archive reach the server; Unarchive brings the chat bac
   await api.client.request('conversation.mark', { conversationId: id, archived: false });
   await expect(listItem(app, 'Marks')).toBeVisible();
 });
+
+test('the open chat reads what arrives: its row never shows a badge, another chat\'s does', async ({ app, api }) => {
+  const open = await api.chat('On screen', ['hello']);
+  const other = await api.chat('Off screen', []);
+  await listItem(app, 'On screen').click();
+  await expect(app.locator('#editable-message-text')).toBeVisible();
+  await expect(listItem(app, 'On screen').getByText('1', { exact: true })).toHaveCount(0);
+  // Each frame from now on: a count in the open chat's row is a failure
+  await app.evaluate(() => {
+    (window as any).tauBadgeSeen = false;
+    const tick = () => {
+      const row = [...document.querySelectorAll('.chat-list .ListItem')]
+        .find((item) => item.querySelector('.fullName')?.textContent === 'On screen');
+      if (row && [...row.querySelectorAll('*')].some((node) => node.childElementCount === 0
+        && /^\d+$/.test(node.textContent ?? '') && !node.closest('.time'))) {
+        (window as any).tauBadgeSeen = true;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await app.locator('#editable-message-text').click();
+  await app.keyboard.type('more please');
+  await app.keyboard.press('Enter');
+  await api.send(open, 'from another device');
+  await api.send(other, 'elsewhere');
+  const answers = app.locator('[data-tau-row="assistant"]:not([data-tau-draft])');
+  await expect(answers.filter({ hasText: 'You said: from another device' })).toBeVisible();
+  await expect(listItem(app, 'Off screen').getByText('1', { exact: true })).toBeVisible();
+  await expect.poll(async () => (await dialogOf(api, open)).unreadCount).toBe(0);
+  await app.waitForTimeout(500);
+  expect(await app.evaluate(() => (window as any).tauBadgeSeen)).toBe(false);
+});

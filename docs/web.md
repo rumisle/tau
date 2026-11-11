@@ -143,7 +143,10 @@ web/src/tau/
   has Photo or Video and File.
 - **Read state and marks** go through Web A's own calls: its debounced `markMessageListRead` is `conversation.read`,
   Mark as Unread and Read are `conversation.mark { unread }`, Archive `{ archived }`. Web A moves a chat between its
-  lists on `updateChatListType`, which a Dialog that changed its `archived` sends.
+  lists on `updateChatListType`, which a Dialog that changed its `archived` sends. A chat open in a visible tab reads
+  what arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web
+  A marks a message read only after it has been in view a while, so the server's unread count came back first and the
+  open chat's row showed a badge.
 - **IDs.** A private chat is keyed by its peer, so each conversation is a user of its own. Several servers are told
   apart as in iOS's MultiStore: the server's slot in the high bits of a conversation's ID, under Telegram's 2^52.
 - **Removed vs dormant.** Nothing of Web A's source is deleted.

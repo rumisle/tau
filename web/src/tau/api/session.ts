@@ -40,6 +40,8 @@ const LOCAL_ID_STEP = 1e-6;
 const REFRESHED_ON_OPEN = 50;
 // When drafts an answer replaced are looked for again in Web A's state
 const DRAFT_SWEEP_MS = 300;
+// A chat on screen tells the server what was read at most this often (docs/protocol.md conversation.read)
+const READ_INTERVAL_MS = 2000;
 
 export type AuthStatus = 'connecting' | 'needsToken' | 'wrongToken' | 'unreachable' | 'ready';
 
@@ -68,6 +70,8 @@ const authListeners = new Set<(status: AuthStatus) => void>();
 
 export const dialogs = new DialogList();
 const opened = new Map<number, Opened>();
+// Reads sent for chats on screen in the last two seconds, with the newest entry to read once they pass
+const reading = new Map<number, { at: number }>();
 // Entries a chat not open has shown as its Dialog's summary, by conversation: replaced or removed once it opens
 const summarized = new Map<number, Set<number>>();
 // The call that started each subagent, by the subagent's conversation
@@ -217,12 +221,12 @@ function sendDialog(dialog: Dialog) {
   send({ '@type': 'updateUser', id: chatId, user: buildUser(dialog) });
   send({ '@type': 'updateThreadInfo', threadInfo: buildThreadInfo(dialog) });
   send({
-    '@type': 'updateChat', id: chatId, chat: buildChat(dialog), readState: buildReadState(dialog),
+    '@type': 'updateChat', id: chatId, chat: buildChat(dialog), readState: readStateOf(dialog),
   });
   // Web A takes a chat's read state from this, not from `updateChat`: unread counts, and the checks of what the
   // agent has read (everything in the transcript)
   send({
-    '@type': 'updateThreadReadState', chatId, threadId: MAIN_THREAD_ID, readState: buildReadState(dialog),
+    '@type': 'updateThreadReadState', chatId, threadId: MAIN_THREAD_ID, readState: readStateOf(dialog),
   });
   if (isMoved) {
     send({
@@ -349,6 +353,7 @@ function applyReplica(each: Opened) {
     for (const entry of fresh) emitEntry(each, entry);
   }
   if (fresh.some((entry) => entry.kind === 'pi.assistant')) endDraft(each);
+  if (fresh.length && each.isLoaded) readOnScreen(each.replica.id, each.replica.maxId);
   updateDraft(each);
   emitChange(each.replica.id);
 }
@@ -767,6 +772,49 @@ function restoreToField(conversationId: number, text: string) {
 export function markRead(chatId: string, entryId: number) {
   if (isDraftChat(chatId) || !client) return;
   void client.request('conversation.read', { conversationId: Number(chatId), at: entryId }).catch(() => undefined);
+}
+
+/** Whether the chat is open in a tab the user sees: what arrives in it is read as it comes */
+function isOnScreen(conversationId: number) {
+  if (document.visibilityState !== 'visible') return false;
+  const global = getGlobal();
+  const chatId = buildChatId(conversationId);
+  return Object.values(global.byTabId)
+    .some(({ id: tabId }) => selectCurrentMessageList(global, tabId)?.chatId === chatId);
+}
+
+/**
+ * A chat on screen reads what arrives, as iOS does (docs/protocol.md conversation.read): the newest entry, at most
+ * every two seconds; meanwhile its Dialogs show it read, so its row never shows a badge for what is on screen
+ */
+function readOnScreen(conversationId: number, newest: number | undefined) {
+  if (!newest || !isOnScreen(conversationId)) return;
+  if ((dialogs.dialogs.get(conversationId)?.read ?? 0) >= newest) return;
+  const pending = reading.get(conversationId);
+  if (pending) {
+    pending.at = Math.max(pending.at, newest);
+    return;
+  }
+  const state = { at: newest };
+  reading.set(conversationId, state);
+  markRead(buildChatId(conversationId), newest);
+  window.setTimeout(() => {
+    reading.delete(conversationId);
+    if (state.at > newest) markRead(buildChatId(conversationId), state.at);
+  }, READ_INTERVAL_MS);
+}
+
+// Back on screen: what came meanwhile is read now
+document.addEventListener('visibilitychange', () => {
+  for (const each of opened.values()) if (each.isLoaded) readOnScreen(each.replica.id, each.replica.maxId);
+});
+
+function readStateOf(dialog: Dialog) {
+  const readState = buildReadState(dialog);
+  if (!dialog.last || !isOnScreen(dialog.conversation.id)) return readState;
+  // Shown read, so it is read: the server hears it too
+  readOnScreen(dialog.conversation.id, dialog.last.id);
+  return { ...readState, unreadCount: 0, lastReadInboxMessageId: lastRowIdOf(dialog.last.id) };
 }
 
 /** Mark as Unread or as Read, Archive: on every device, from the next Dialog on */
