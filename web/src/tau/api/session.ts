@@ -899,6 +899,12 @@ export function getOutbox() {
   return outbox!;
 }
 
+/** A conversation's entries while it is open, and its context's head */
+export function entriesOf(conversationId: number) {
+  const replica = opened.get(conversationId)?.replica;
+  return { entries: replica?.ordered() ?? [], head: replica?.head };
+}
+
 /** A conversation's docs while it is open (`pi.agent`, `pi.usage`, ...) */
 export function docsOf(conversationId: number) {
   return opened.get(conversationId)?.replica.docs;

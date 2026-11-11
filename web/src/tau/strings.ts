@@ -18,4 +18,9 @@ export const STRINGS = {
   MenuResend: 'Resend',
   MenuHide: 'Hide',
   ModelSearch: 'Search models',
+  MenuUsage: 'Usage',
+  UsageContext: 'Context',
+  UsageCost: 'Cost',
+  UsageTokens: 'Tokens',
+  UsageCached: 'Cached',
 } as const;

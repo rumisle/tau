@@ -31,6 +31,11 @@ test('the menu picks the thinking level and the model; the next answer comes fro
   const menu = app.locator('.HeaderMenuContainer');
   await expect(menu.locator('.MenuItem').filter({ hasText: 'Model' })).toContainText('Dev echo');
   await expect(menu.locator('.MenuItem').filter({ hasText: 'Thinking' })).toContainText('Off');
+  // Usage: how full the context is and the spend; the numbers a level down
+  const usage = menu.locator('.MenuItem').filter({ hasText: 'Usage' });
+  await expect(usage).toContainText(/\d+%, \$[\d.]+/);
+  await usage.hover();
+  await expect(app.locator('.tau-usage-row').filter({ hasText: 'Tokens' })).toContainText(/ in, .* out/);
   await app.keyboard.press('Escape');
 
   await pick(app, 'Thinking', /^High$/);

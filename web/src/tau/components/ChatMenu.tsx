@@ -6,8 +6,9 @@ import { getActions } from '../../global';
 import type { Agent } from '../api/agent';
 
 import {
-  agentOf, compact, configureAgent, loadModels, modelName, onAgentChange, thinkingLevels,
-  thinkingTitle,
+  agentOf, compact, configureAgent, describeContext, formatCost, formatTokens, loadModels, modelName, onAgentChange,
+  summarizeUsage, thinkingLevels, thinkingTitle,
+  usageOf,
 } from '../api/agent';
 import { STRINGS } from '../strings';
 
@@ -28,11 +29,21 @@ type OwnProps = {
   onClose: () => void;
 };
 
+function UsageRow({ title, value }: { title: string; value: string }) {
+  return (
+    <MenuItem disabled className="tau-usage-row">
+      <MenuItemTitle>{title}</MenuItemTitle>
+      <MenuItemSubtitle>{value}</MenuItemSubtitle>
+    </MenuItem>
+  );
+}
+
 const ChatMenu = ({
   chatId, isOpen, x, y, shouldCloseFast, canSearch, onSearch, onClose,
 }: OwnProps) => {
   const [agent, setAgent] = useState<Agent>(() => agentOf(chatId));
   useEffect(() => onAgentChange(() => setAgent(agentOf(chatId))), [chatId]);
+  const usage = usageOf(chatId);
 
   // Names and thinking levels come with the models; their load is an agent change
   useEffect(() => {
@@ -83,6 +94,31 @@ const ChatMenu = ({
         <MenuItemSubtitle>{thinkingTitle(agent.thinkingLevel)}</MenuItemSubtitle>
       </NestedMenuItem>
       <MenuSeparator />
+      <NestedMenuItem
+        icon="info"
+        submenu={(
+          <>
+            <UsageRow title={STRINGS.UsageContext} value={describeContext(usage)} />
+            <UsageRow title={STRINGS.UsageCost} value={formatCost(usage.cost)} />
+            <MenuSeparator />
+            <UsageRow
+              title={STRINGS.UsageTokens}
+              value={`${formatTokens(usage.total.input)} in, ${formatTokens(usage.total.output)} out`}
+            />
+            <UsageRow
+              title={STRINGS.UsageCached}
+              value={`${formatTokens(usage.total.cacheRead)} read, ${formatTokens(usage.total.cacheWrite)} written`}
+            />
+            {usage.models.length > 1 && <MenuSeparator />}
+            {usage.models.length > 1 && usage.models.map(({ model, usage: each }) => (
+              <UsageRow key={model} title={model.split('/').at(-1)!} value={formatCost(each.cost)} />
+            ))}
+          </>
+        )}
+      >
+        <MenuItemTitle>{STRINGS.MenuUsage}</MenuItemTitle>
+        <MenuItemSubtitle>{summarizeUsage(usage)}</MenuItemSubtitle>
+      </NestedMenuItem>
       <MenuItem
         icon="replace"
         onClick={() => {

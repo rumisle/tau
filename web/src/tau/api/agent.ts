@@ -1,10 +1,10 @@
 // A chat's agent as the chat menu shows and changes it: its model and thinking level, the server's models, and the
 // requests that change them, in order with the chat's messages (docs/sending.md rule 2). As iOS's ServerStore.agent:
 // a choice shows at once and stands until the conversation's `pi.agent` doc agrees.
-import type { JsonObject } from 'tau-client/protocol';
+import type { Entry, JsonObject } from 'tau-client/protocol';
 
 import {
-  currentClient, dialogs, docsOf, draftState, getOutbox, isDraftChat, onConversationChange, setDraftAgent,
+  currentClient, dialogs, docsOf, draftState, entriesOf, getOutbox, isDraftChat, onConversationChange, setDraftAgent,
 } from './session';
 
 export type ModelRef = { provider: string; modelId: string };
@@ -184,4 +184,103 @@ export function configureAgent(chatId: string, change: { model?: ModelRef; think
 export function compact(chatId: string) {
   if (isDraftChat(chatId)) return Promise.resolve();
   return getOutbox().request('conversation.compact', { conversationId: Number(chatId) }, {}, { repeatable: false });
+}
+
+export type TokenUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
+export type Usage = {
+  // Tokens the model saw in the latest response of the current context, as pi's footer shows
+  contextTokens?: number;
+  contextWindow?: number;
+  // Spend by `provider/modelId`, most expensive first; the whole spend, refreshes that kept the cache warm included
+  models: { model: string; usage: TokenUsage }[];
+  total: TokenUsage;
+  cost: number;
+};
+
+function tokenUsage(object: any): TokenUsage {
+  return {
+    input: object?.input ?? 0,
+    output: object?.output ?? 0,
+    cacheRead: object?.cacheRead ?? 0,
+    cacheWrite: object?.cacheWrite ?? 0,
+    cost: object?.cost?.total ?? 0,
+  };
+}
+
+/**
+ * A conversation's usage (ios/Tau/Server/ServerStore.swift `usage`): `pi.usage`'s ledger by model, and the context's
+ * fill from the latest response since the newest reset or compaction (an aborted or failed one reports nothing)
+ */
+export function computeUsage(
+  entries: Entry[], head: number | undefined, usageDoc: any, contextWindow?: number, cacheCost = 0,
+): Usage {
+  const ledger = (usageDoc?.models ?? {}) as Record<string, unknown>;
+  const byModel = Object.entries(ledger).map(([model, value]) => ({ model, usage: tokenUsage(value) }))
+    .sort((a, b) => b.usage.cost - a.usage.cost);
+  const total = byModel.reduce((sum, { usage }) => ({
+    input: sum.input + usage.input,
+    output: sum.output + usage.output,
+    cacheRead: sum.cacheRead + usage.cacheRead,
+    cacheWrite: sum.cacheWrite + usage.cacheWrite,
+    cost: sum.cost + usage.cost,
+  }), tokenUsage(undefined));
+  let contextTokens: number | undefined;
+  for (const entry of [...entries].sort((a, b) => b.id - a.id)) {
+    if (head !== undefined && entry.id <= head) break;
+    if (entry.kind === 'pi.reset' || entry.kind === 'pi.compaction') break;
+    const usage = entry.kind === 'pi.assistant' ? (entry.model as any[] | undefined)?.[0]?.usage : undefined;
+    if (!usage) continue;
+    const value = tokenUsage(usage);
+    const sum = value.input + value.output + value.cacheRead + value.cacheWrite;
+    if (sum > 0) {
+      contextTokens = sum;
+      break;
+    }
+  }
+  return {
+    contextTokens, contextWindow, models: byModel, total, cost: total.cost + cacheCost,
+  };
+}
+
+export function usageOf(chatId: string): Usage {
+  const agent = agentOf(chatId);
+  const window = modelInfo(agent.model)?.contextWindow;
+  if (isDraftChat(chatId)) return computeUsage([], undefined, undefined, window);
+  const conversationId = Number(chatId);
+  const { entries, head } = entriesOf(conversationId);
+  const cacheCost = (dialogs.dialogs.get(conversationId)?.cache?.cost as number | undefined) ?? 0;
+  return computeUsage(entries, head, docsOf(conversationId)?.['pi.usage'], window, cacheCost);
+}
+
+export function formatTokens(count: number) {
+  if (count < 1_000) return String(count);
+  if (count < 10_000) return `${(count / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
+  if (count < 1_000_000) return `${Math.round(count / 1_000)}k`;
+  return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+}
+
+export function formatCost(cost: number) {
+  if (cost === 0) return '$0';
+  return cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`;
+}
+
+export function contextPercent(usage: Usage) {
+  if (usage.contextTokens === undefined || !usage.contextWindow) return undefined;
+  return Math.round((usage.contextTokens / usage.contextWindow) * 100);
+}
+
+/** "21%, 41k of 200k", or what is known of it */
+export function describeContext(usage: Usage) {
+  if (usage.contextTokens === undefined) return 'Empty';
+  const percent = contextPercent(usage);
+  if (percent === undefined) return `${formatTokens(usage.contextTokens)} tokens`;
+  return `${percent}%, ${formatTokens(usage.contextTokens)} of ${formatTokens(usage.contextWindow!)}`;
+}
+
+/** The Usage row's second line: how full the context is, and the spend */
+export function summarizeUsage(usage: Usage) {
+  const percent = contextPercent(usage);
+  const context = percent !== undefined ? `${percent}%`
+    : usage.contextTokens === undefined ? 'Empty' : `${formatTokens(usage.contextTokens)} tokens`;
+  return `${context}, ${formatCost(usage.cost)}`;
 }

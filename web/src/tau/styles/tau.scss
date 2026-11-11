@@ -101,3 +101,8 @@
     background: rgba(127, 127, 127, 0.15);
   }
 }
+
+// The chat menu's usage numbers: rows to read, not actions, at full strength (ChatMenu.tsx)
+.MenuItem.tau-usage-row.disabled {
+  opacity: 1 !important;
+}
