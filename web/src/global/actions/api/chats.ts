@@ -1254,7 +1254,7 @@ addActionHandler('toggleChatPinned', (global, actions, payload): ActionReturnTyp
     const isPinned = selectIsChatPinned(global, id, listType === 'archived' ? ARCHIVED_FOLDER_ID : undefined);
 
     const resolvedFolderId = listType === 'archived' ? ARCHIVED_FOLDER_ID : ALL_FOLDER_ID;
-    if (getPinnedChatsCount(resolvedFolderId) >= limit && !isPinned) {
+    if (!IS_TAU && getPinnedChatsCount(resolvedFolderId) >= limit && !isPinned) { // tau: no limit on pins
       actions.openLimitReachedModal({
         limit: 'dialogFolderPinned',
         tabId,

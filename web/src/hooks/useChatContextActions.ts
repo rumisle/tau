@@ -240,7 +240,7 @@ const useChatContextActions = ({
     if (IS_TAU) { // tau: the chat list's menu (iOS's ChatListController): what tau's chats have
       return compact<MenuItemContextAction>([
         actionOpenInNewTab, actionQuickPreview, buildTauRenameAction(chat.id), actionMarkAsRead, actionMarkAsUnread,
-        actionArchive, buildTauHideAction(chat.id),
+        actionPin, actionArchive, buildTauHideAction(chat.id),
       ]);
     }
 

@@ -158,9 +158,11 @@ web/src/tau/
 - **Read state and marks** go through Web A's own calls: its debounced `markMessageListRead` is `conversation.read`,
   Mark as Unread and Read are `conversation.mark { unread }`, Archive `{ archived }`. Web A moves a chat between its
   lists on `updateChatListType`, which a Dialog that changed its `archived` sends. The chat list's menu is iOS's in Web
-  A's: Open in New Tab, Quick Preview, Mark as Read or Unread, Archive, Hide (`conversation.mark { hidden }`, which Web
-  A takes as leaving the chat; Telegram's Mute and Delete Chat are left out). A chat open in a visible tab reads what
-  arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web A
+  A's: Open in New Tab, Quick Preview, Rename, Mark as Read or Unread, Pin to Top, Archive, Hide (`conversation.mark {
+  hidden }`, which Web A takes as leaving the chat; Telegram's Mute and Delete Chat are left out), and Pin to Top (`{
+  pinned: <now> }`, so the latest pin is on top across servers; Web A orders a list's pinned chats by
+  `updatePinnedChatIds`, sent as the Dialogs change, and has no limit on them here). A chat open in a visible tab reads
+  what arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web A
   marks a message read only after it has been in view a while, so the server's unread count came back first and the open
   chat's row showed a badge.
 - **An edit forks the chat** (docs/sending.md "Edits and drafts"): Edit in a user message's menu, or Up in an empty

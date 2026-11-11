@@ -92,11 +92,33 @@ test('the chat list\'s menu has tau\'s items; Hide takes the chat out of the lis
   const id = await api.chat('Hide me', ['hello']);
   await listItem(app, 'Hide me').click({ button: 'right' });
   const items = app.locator('.MenuItem:visible');
-  await expect(items).toHaveText(['Open in New Tab', 'Quick Preview', 'Rename', 'Mark as Read', 'Archive', 'Hide']);
+  await expect(items).toHaveText(['Open in New Tab', 'Quick Preview', 'Rename', 'Mark as Read', 'Pin to Top', 'Archive', 'Hide']);
   await items.filter({ hasText: 'Hide' }).click();
   await expect(listItem(app, 'Hide me')).toHaveCount(0);
   await expect.poll(async () => (await dialogOf(api, id)).hidden).toBe(true);
   // Shown again from another device: back in the list
   await api.client.request('conversation.mark', { conversationId: id, hidden: false });
   await expect(listItem(app, 'Hide me')).toBeVisible();
+});
+
+test('Pin puts a chat on top with the pin, on the server too; another device\'s pin and Unpin follow', async ({ app, api }) => {
+  const first = await api.chat('Pin first', ['hello']);
+  const second = await api.chat('Pin second', ['hello']);
+  // Read: Telegram shows the pin where an unread count would be
+  await api.client.request('conversation.mark', { conversationId: first, unread: false });
+  await expect(listItem(app, 'Pin first')).toBeVisible();
+  await menu(app, 'Pin first', 'Pin to Top');
+  const rows = app.locator('.chat-list .ListItem');
+  await expect(rows.first()).toContainText('Pin first');
+  await expect(listItem(app, 'Pin first').locator('.icon-pin-filled')).toBeVisible();
+  await expect.poll(async () => typeof (await dialogOf(api, first)).pinned).toBe('number');
+
+  // Pinned later on another device: above it
+  await api.client.request('conversation.mark', { conversationId: second, pinned: Date.now() });
+  await expect(rows.first()).toContainText('Pin second');
+  await expect(rows.nth(1)).toContainText('Pin first');
+
+  await menu(app, 'Pin second', 'Unpin from Top');
+  await expect(rows.first()).toContainText('Pin first');
+  await expect.poll(async () => (await dialogOf(api, second)).pinned).toBeUndefined();
 });

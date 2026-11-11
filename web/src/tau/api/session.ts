@@ -297,6 +297,7 @@ function applyDialog(dialog: Dialog) {
   const id = dialog.conversation.id;
   emitChange(id);
   refreshTyping();
+  refreshPins();
   if (dialog.conversation.owner) refreshSubagentCard(id);
   if (!wasConnected) return;
   if (!isListed(dialog)) {
@@ -1278,6 +1279,35 @@ function isInWebAList(chatId: string) {
   return Boolean(listIds.active?.includes(chatId) || listIds.archived?.includes(chatId));
 }
 
+// MARK: Pins
+
+// The pinned chats Web A was told of last, by list
+const sentPins = { active: '', archived: '' };
+
+/**
+ * Pinned chats on top of their list, the latest pin first (docs/protocol.md conversation.mark `pinned`: the time it
+ * was pinned, so across servers too); Web A orders a list's pinned chats by these IDs
+ */
+function refreshPins() {
+  if (!wasConnected) return;
+  for (const isArchived of [false, true]) {
+    const ids = dialogs.dialogs.values()
+      .filter((dialog) => dialog.pinned && isListed(dialog) && Boolean(dialog.archived) === isArchived)
+      .sort((a, b) => b.pinned! - a.pinned!)
+      .map((dialog) => buildChatId(dialog.conversation.id));
+    const key = isArchived ? 'archived' : 'active';
+    if (ids.join() === sentPins[key]) continue;
+    sentPins[key] = ids.join();
+    send({ '@type': 'updatePinnedChatIds', ids, folderId: isArchived ? ARCHIVED_FOLDER_ID : ALL_FOLDER_ID });
+  }
+}
+
+/** Pin or Unpin from the chat list's menu: shown at once, kept on the server */
+export function pin(chatId: string, isPinned: boolean) {
+  send({ '@type': 'updateChatPinned', id: chatId, isPinned });
+  mark(chatId, { pinned: isPinned ? Date.now() : false });
+}
+
 // MARK: Rename
 
 const titleOverrides = new Map<number, string>();
@@ -1330,7 +1360,9 @@ export function hide(chatId: string) {
 }
 
 /** Mark as Unread or as Read, Archive: on every device, from the next Dialog on */
-export function mark(chatId: string, marks: { unread?: boolean; archived?: boolean; hidden?: boolean }) {
+export function mark(
+  chatId: string, marks: { unread?: boolean; archived?: boolean; hidden?: boolean; pinned?: number | false },
+) {
   if (isDraftChat(chatId)) return;
   const conversationId = Number(chatId);
   void outboxOf(conversationId).request('conversation.mark', { conversationId }, marks).catch(() => undefined);

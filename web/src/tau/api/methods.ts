@@ -14,7 +14,7 @@ import { downloadMedia } from './media';
 import { toMarkdown } from './outgoing';
 import {
   chatListMessage, dialogs, draftHistory, editMessage, fetchHistory, isDraftChat, isListed, mark, markRead,
-  rename, requestDialog, sendChatListMessages, sendText, stop,
+  pin, rename, requestDialog, sendChatListMessages, sendText, stop,
 } from './session';
 
 // Telegram's seven peer colors, which its server sends with `help.getPeerColors`; without them avatars are black
@@ -114,6 +114,10 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
 
   toggleDialogUnread({ chat, hasUnreadMark }: { chat: ApiChat; hasUnreadMark?: boolean }) {
     mark(chat.id, { unread: Boolean(hasUnreadMark) });
+  },
+
+  toggleChatPinned({ chat, shouldBePinned }: { chat: ApiChat; shouldBePinned: boolean }) {
+    pin(chat.id, shouldBePinned);
   },
 
   toggleChatArchived({ chat, folderId }: { chat: ApiChat; folderId: number }) {
