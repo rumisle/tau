@@ -12,6 +12,8 @@ import {
 } from '../../../global/selectors';
 import buildClassName from '../../../util/buildClassName';
 import { formatStarsAsIcon, formatTonAsIcon } from '../../../util/localization/format';
+import { IS_TAU } from '../../../tau/config'; // tau: Usage, in Privacy's place
+import { STRINGS } from '../../../tau/strings'; // tau: see above
 
 import useFlag from '../../../hooks/useFlag';
 import useHistoryBack from '../../../hooks/useHistoryBack';
@@ -134,14 +136,16 @@ const SettingsMain = ({
           </ListItem>
 
           <ListItem
-            icon="lock-filled"
-            iconBg="gray"
+            icon={IS_TAU ? 'stats' : 'lock-filled'} // tau: Usage, in Privacy's place
+            iconBg={IS_TAU ? 'purple' : 'gray'} // tau: see above
             multiline
             narrow
             onClick={() => openSettingsScreen({ screen: SettingsScreens.Privacy })}
           >
-            <span className="title">{lang('PrivacySettings')}</span>
-            <span className="subtitle">{lang('SettingsPrivacyDesc')}</span>
+            <span className="title">{IS_TAU ? STRINGS.Usage : lang('PrivacySettings')}</span>
+            {/* tau: see above */}
+            <span className="subtitle">{IS_TAU ? STRINGS.UsageDescription : lang('SettingsPrivacyDesc')}</span>
+            {/* tau */}
           </ListItem>
 
           <ListItem

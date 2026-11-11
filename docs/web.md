@@ -199,6 +199,11 @@ web/src/tau/
   chats found before, then the most recently active (`recentChatIds`).
 - **An answer is a system notification** (docs/notifications.md "On the web"): tau's, decided on the chat list when a
   run ends, in place of Web A's per message; Settings > Notifications is tau's (`components/NotificationSettings.tsx`).
+- **Usage** (`components/UsageSettings.tsx`, `api/usageReport.ts`; iOS's UsageController) is Settings' row in place of
+  Web A's Privacy and Security: 7, 30 or 90 days of every server's `usage.report` merged; the overview (spent, tokens,
+  answers with their change from the span before, chats); the days as a stacked bar chart by model in Telegram's
+  series colors, cost or tokens (tokens first when nothing cost anything), a day shown on hover and kept on a click;
+  the models with their share, the costliest chats, which open on a click.
 - **Data and Storage is tau's** (`components/DataSettings.tsx`, in place of Web A's auto-download settings): the bytes
   of unsent messages (the outboxes and their files in IndexedDB) and drafts (localStorage), and Network Usage, the
   socket's frames per server since Reset Statistics (`api/usage.ts`, one count: a browser does not say whether it is on

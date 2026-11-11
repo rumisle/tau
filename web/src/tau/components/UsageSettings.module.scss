@@ -1,0 +1,169 @@
+// Settings > Usage (UsageSettings.tsx): the span as a segmented control, the overview's two by two values, the chart.
+
+.spans {
+  display: flex;
+  gap: 0.25rem;
+
+  margin: 0.5rem;
+  padding: 0.125rem;
+  border-radius: 0.625rem;
+
+  background-color: var(--color-background-secondary);
+}
+
+.span {
+  cursor: var(--custom-cursor, pointer);
+
+  flex: 1;
+
+  padding: 0.375rem 0;
+  border: none;
+  border-radius: 0.5rem;
+
+  font-size: 0.875rem;
+  color: var(--color-text);
+
+  background: none;
+
+  &.selected {
+    font-weight: var(--font-weight-semibold);
+    background-color: var(--color-background);
+    box-shadow: 0 1px 2px var(--color-default-shadow);
+  }
+}
+
+.overview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  row-gap: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+
+.value {
+  font-size: 1.0625rem;
+  font-weight: var(--font-weight-semibold);
+}
+
+.good,
+.bad {
+  font-size: 0.8125rem;
+  font-weight: var(--font-weight-normal);
+}
+
+.good {
+  color: #34C759;
+}
+
+.bad {
+  color: #FF3B30;
+}
+
+.cellTitle {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.chart {
+  padding: 0.75rem 1rem;
+}
+
+.chartHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+}
+
+.chartTitle {
+  font-size: 0.9375rem;
+  font-weight: var(--font-weight-semibold);
+}
+
+.metric {
+  cursor: var(--custom-cursor, pointer);
+
+  padding: 0;
+  border: none;
+
+  font-size: 0.9375rem;
+  color: var(--color-primary);
+
+  background: none;
+}
+
+.plot {
+  position: relative;
+  height: 9rem;
+}
+
+.grid {
+  position: absolute;
+  right: 0;
+  left: 0;
+  border-top: 1px solid var(--color-borders);
+
+  span {
+    position: absolute;
+    bottom: 0.125rem;
+    left: 0;
+
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+  }
+}
+
+.bars {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.dates {
+  position: relative;
+  height: 1.25rem;
+
+  span {
+    position: absolute;
+    top: 0.25rem;
+    transform: translateX(-50%);
+
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+
+    &:first-child {
+      left: 0 !important;
+      transform: none;
+    }
+
+    &:last-child:not(:first-child) {
+      right: 0;
+      left: auto !important;
+      transform: none;
+    }
+  }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+
+  margin-top: 0.5rem;
+
+  font-size: 0.8125rem;
+}
+
+.swatch {
+  flex-shrink: 0;
+
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-inline-end: 1.5rem;
+  border-radius: 0.25rem;
+}
+
+.avatar {
+  margin-inline-end: 1rem;
+}

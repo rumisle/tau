@@ -3,10 +3,13 @@
 // a choice shows at once and stands until the conversation's `pi.agent` doc agrees.
 import type { Entry, JsonObject } from 'tau-client/protocol';
 
+import { formatCost, formatTokens } from './numbers';
 import {
   clientOf, dialogs, docsOf, draftState, entriesOf, getOutbox, isDraftChat, onConversationChange, setDraftAgent,
   slotOfChat,
 } from './session';
+
+export { formatCost, formatTokens };
 
 export type ModelRef = { provider: string; modelId: string };
 export type ModelInfo = {
@@ -264,18 +267,6 @@ export function usageOf(chatId: string): Usage {
   const { entries, head } = entriesOf(conversationId);
   const cacheCost = (dialogs.dialogs.get(conversationId)?.cache?.cost as number | undefined) ?? 0;
   return computeUsage(entries, head, docsOf(conversationId)?.['pi.usage'], window, cacheCost);
-}
-
-export function formatTokens(count: number) {
-  if (count < 1_000) return String(count);
-  if (count < 10_000) return `${(count / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
-  if (count < 1_000_000) return `${Math.round(count / 1_000)}k`;
-  return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-}
-
-export function formatCost(cost: number) {
-  if (cost === 0) return '$0';
-  return cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`;
 }
 
 export function contextPercent(usage: Usage) {

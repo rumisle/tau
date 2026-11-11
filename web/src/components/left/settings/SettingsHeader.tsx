@@ -13,6 +13,8 @@ import {
 import { formatTonShortFromNanos } from '../../../util/formatCurrency';
 import { formatTonAsIcon } from '../../../util/localization/format';
 import { pause } from '../../../util/schedulers';
+import { IS_TAU } from '../../../tau/config'; // tau: Usage, in Privacy's place
+import { STRINGS } from '../../../tau/strings'; // tau: see above
 
 import useSelector from '../../../hooks/data/useSelector';
 import useAppLayout from '../../../hooks/useAppLayout';
@@ -163,7 +165,7 @@ const SettingsHeader = ({
       case SettingsScreens.DataStorage:
         return <h3>{lang('DataSettings')}</h3>;
       case SettingsScreens.Privacy:
-        return <h3>{lang('PrivacySettings')}</h3>;
+        return <h3>{IS_TAU ? STRINGS.Usage : lang('PrivacySettings')}</h3>; // tau: Usage, in Privacy's place
       case SettingsScreens.AutoDeleteMessages:
         return <h3>{lang('AutoDeleteMessages')}</h3>;
       case SettingsScreens.Language:

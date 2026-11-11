@@ -15,6 +15,7 @@ import type { GlobalState } from '../../global/types';
 import type { MessageContext } from './builders';
 import type { QueuedMessage } from './queue';
 import type { ServerConfig } from './servers';
+import type { UsageReport } from './usageReport';
 import { MAIN_THREAD_ID } from '../../api/types';
 
 import { ALL_FOLDER_ID, ARCHIVED_FOLDER_ID } from '../../config';
@@ -48,6 +49,7 @@ import { buildOutgoingRows, outgoingRowCount, prepareUploads } from './outgoing'
 import { buildQueue, isInQueue } from './queue';
 import { mappedSocket, readServers, slotOf, writeServers } from './servers';
 import { countSocket } from './usage';
+import { mergeReports } from './usageReport';
 
 // An opened chat's newest entries, and each older page as the chat scrolls up to it (docs/chat-open.md)
 const PAGE = 100;
@@ -2176,6 +2178,19 @@ export function slotOfChat(chatId: string) {
 // MARK: Servers (src/tau/components/ServersModal.tsx)
 
 export type ServerInfo = { slot: number; origin: string; status: ServerStatus };
+
+// MARK: Usage
+
+/**
+ * Settings > Usage: what the models cost over the last `days` days, each day cut at this browser's midnight, from
+ * every server that answers, merged; undefined when none does (docs/protocol.md `usage.report`)
+ */
+export async function usageReport(days: number) {
+  const tzOffset = -new Date().getTimezoneOffset();
+  const reports = await Promise.all([...links.values()].flatMap((link) => (link.client
+    ? [link.client.request<UsageReport>('usage.report', { days, tzOffset }).catch(() => undefined)] : [])));
+  return mergeReports(reports.filter((report) => report !== undefined));
+}
 
 // MARK: Search
 

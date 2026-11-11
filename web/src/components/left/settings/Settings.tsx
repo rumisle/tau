@@ -20,6 +20,7 @@ import useSettingsHighlight from './hooks/useSettingsHighlight';
 
 import DataSettings from '../../../tau/components/DataSettings'; // tau: its own
 import NotificationSettings from '../../../tau/components/NotificationSettings'; // tau: its own
+import UsageSettings from '../../../tau/components/UsageSettings'; // tau: Usage, in Privacy's place
 import Transition from '../../ui/Transition';
 import SettingsFolders from './folders/SettingsFolders';
 import SettingsPasscode from './passcode/SettingsPasscode';
@@ -344,6 +345,7 @@ const Settings = ({
           <SettingsDataStorage isActive={isScreenActive} onReset={handleReset} />
         );
       case SettingsScreens.Privacy:
+        if (IS_TAU) return <UsageSettings isActive={isScreenActive} onReset={handleReset} />; // tau: Usage
         return (
           <SettingsPrivacy
             isActive={isScreenActive || isPrivacyScreen}
