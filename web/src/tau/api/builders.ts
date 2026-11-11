@@ -210,6 +210,7 @@ export function buildMessage(entry: Entry, context: MessageContext): ApiMessage 
             parts: [{
               type: 'subagent',
               name,
+              conversationId: Number(conversation),
               state: status,
               isFailed: status === 'failed',
               task: context.subagentTask(Number(conversation)) ?? 'Subagent',
@@ -340,6 +341,7 @@ function buildToolPart(call: any, startedAt: number, result: any, context?: Mess
       return {
         type: 'subagent',
         name: String(args.name ?? 'subagent'),
+        conversationId: childId,
         state: args.action === 'spawn' || !args.action ? (isWorking ? 'working' : '') : String(args.action),
         isWorking,
         isFailed: result?.isError,

@@ -248,6 +248,10 @@
 }
 
 // What a spawn runs on, one line under the quote (iOS: 13 pt, 5 pt below it)
+.clickable {
+  cursor: pointer;
+}
+
 .subagentMeta {
   overflow: hidden;
 

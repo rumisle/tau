@@ -38,6 +38,8 @@ export type ApiTauPart =
     isFailed?: boolean;
     isWorking?: boolean;
     task: string;
+    // Its conversation, which a click opens
+    conversationId?: number;
     // What a spawn runs on, when not as its parent: "haiku-4-5, thinking low, forked from this chat"
     meta?: string;
     answer?: ApiPageBlock[];

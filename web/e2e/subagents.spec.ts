@@ -56,3 +56,37 @@ test('a spawn on another model, effort or a fork says so under its task while it
   await expect(card).toContainText('echo, thinking high, forked from this chat');
   gate.open();
 });
+
+test('the ⋯ menu lists the chat\'s subagents, what each does and for how long; a row or a card opens its conversation', async ({ app, api }) => {
+  await api.chat('Subagent list', ['hello']);
+  await listItem(app, 'Subagent list').click();
+  await app.locator(field).click();
+  await app.keyboard.type('& done-one: echo finished');
+  await app.keyboard.press('Enter');
+  await expect(app.locator('[data-tau-part="subagent"]').filter({ hasText: 'answered' })).toBeVisible();
+  const gate = api.gate();
+  await app.keyboard.type(`& busy-one: ${gate.command}`);
+  await app.keyboard.press('Enter');
+  await expect(app.locator('.MiddleHeader')).toContainText('busy-one working');
+
+  await app.getByRole('button', { name: 'More options' }).click();
+  const item = app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Subagents' });
+  await expect(item).toContainText('1 working, 2 in all');
+  await item.hover();
+  const rows = app.locator('.tau-subagent-row');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText('done-one');
+  await expect(rows.nth(0)).toContainText(/worked [\d.]+s, echo finished/);
+  await expect(rows.nth(1)).toContainText(/busy-one.*working( for \d+s)?, \$ until/);
+  await rows.nth(1).click();
+  // Its own conversation, working, not in the chat list
+  await expect(app.locator('.MiddleHeader')).toContainText('busy-one');
+  await expect(app.locator('.MiddleHeader')).toContainText('working');
+  await expect(listItem(app, 'busy-one: $ until')).toHaveCount(0);
+  gate.open();
+
+  await listItem(app, 'Subagent list').click();
+  await app.locator('[data-tau-part="subagent"]').filter({ hasText: 'done-one' }).first().click();
+  await expect(app.locator('.MiddleHeader')).toContainText('done-one');
+  await expect(app.locator('.MessageList').last()).toContainText('finished');
+});

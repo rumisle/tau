@@ -345,6 +345,8 @@ function applyDialog(dialog: Dialog) {
   if (dialog.conversation.owner) refreshSubagentCard(id);
   if (!wasConnected) return;
   if (!isListed(dialog)) {
+    // A subagent's conversation open in Web A: kept up to date, not listed
+    if (dialog.conversation.owner && getGlobal().chats.byId[buildChatId(id)]) sendUnlisted(dialog);
     // Hidden (here or on another device): out of Web A's lists
     if (dialog.hidden && isInWebAList(buildChatId(id))) send({ '@type': 'updateChatLeave', id: buildChatId(id) });
     return;
@@ -768,8 +770,8 @@ function refreshTyping() {
   window.clearTimeout(typingTimer);
   let isAnyBusy = false;
   for (const dialog of dialogs.dialogs.values()) {
-    if (!isListed(dialog)) continue;
     const chatId = buildChatId(dialog.conversation.id);
+    if (!isListed(dialog) && !(dialog.conversation.owner && getGlobal().chats.byId[chatId])) continue;
     const working = workingSubagents(dialog.conversation.id);
     const each = opened.get(dialog.conversation.id);
     const compactingSince = dialog.busy ? undefined : each?.compactingSince;
@@ -803,6 +805,72 @@ function workingSubagents(conversationId: number, depth = 0): string[] {
       ...(dialog.busy ? [(dialog.title ?? '').split(':')[0] || STRINGS.Subagent] : []),
       ...workingSubagents(dialog.conversation.id, depth + 1),
     ]);
+}
+
+/** A subagent as the chat's Subagents list shows it */
+export type SubagentRow = {
+  conversationId: number;
+  name: string;
+  task: string;
+  isBusy: boolean;
+  // Working: since its latest call (spawn or send); done: how long that work took
+  since?: number;
+  workedMs?: number;
+};
+
+/** A chat's subagents, oldest first (iOS's `subagents(of:)`), with the times of their calls in its transcript */
+export function subagentsOf(chatId: string): SubagentRow[] {
+  const parentId = Number(chatId);
+  const calls = new Map<string, number>();
+  for (const entry of opened.get(parentId)?.replica.ordered() ?? []) {
+    if (entry.kind !== 'pi.assistant') continue;
+    const message = (entry.model as any[])[0];
+    for (const part of message?.content ?? []) {
+      const { action, name } = part.arguments ?? {};
+      if (part.type !== 'toolCall' || part.name !== 'subagent' || !name) continue;
+      if (!action || action === 'spawn' || action === 'send') calls.set(String(name), message.timestamp);
+    }
+  }
+  return [...dialogs.dialogs.values()]
+    .filter((dialog) => dialog.conversation.owner?.conversationId === parentId)
+    .sort((a, b) => a.conversation.id - b.conversation.id)
+    .map((dialog) => {
+      const [name, ...task] = (dialog.title ?? '').split(': ');
+      const since = calls.get(name);
+      const end = dialog.last?.timestamp;
+      return {
+        conversationId: dialog.conversation.id,
+        name: name || STRINGS.Subagent,
+        task: task.join(': '),
+        isBusy: dialog.busy,
+        since,
+        workedMs: !dialog.busy && since !== undefined && end !== undefined && end > since ? end - since : undefined,
+      };
+    });
+}
+
+/**
+ * Opens a conversation the chat list does not list, a subagent's, as Web A opens a chat it has: the chat is sent to
+ * Web A first, not listed, and its title, read state and work follow it as a listed chat's do
+ */
+export function openConversation(conversationId: number) {
+  const dialog = dialogs.dialogs.get(conversationId);
+  if (!dialog) return;
+  const chatId = buildChatId(conversationId);
+  if (!isListed(dialog)) sendUnlisted(dialog);
+  window.setTimeout(() => getActions().openChat({ id: chatId }));
+}
+
+function sendUnlisted(dialog: Dialog) {
+  const chatId = buildChatId(dialog.conversation.id);
+  send({ '@type': 'updateUser', id: chatId, user: buildUser(dialog) });
+  send({ '@type': 'updateThreadInfo', threadInfo: buildThreadInfo(dialog) });
+  send({
+    '@type': 'updateChat', id: chatId, chat: { ...buildChat(dialog), isListed: false }, readState: readStateOf(dialog),
+  });
+  send({
+    '@type': 'updateThreadReadState', chatId, threadId: MAIN_THREAD_ID, readState: readStateOf(dialog),
+  });
 }
 
 /** What a chat's agent does, as iOS's title says it: working; reader working; 2 subagents working */
