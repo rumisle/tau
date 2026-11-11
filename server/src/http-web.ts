@@ -1,0 +1,83 @@
+// The web app, served on the server's port (docs/web.md "Serving and connecting"): the built files of web/ as they
+// are, without a token (the app holds no data; it asks for the token itself), `index.html` for any other path the app
+// routes itself. Hashed assets are cached for good, the rest revalidated.
+import { createReadStream, existsSync, statSync } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { extname, join, normalize, resolve, sep } from "node:path";
+
+const TYPES: Record<string, string> = {
+	".html": "text/html; charset=utf-8",
+	".js": "text/javascript; charset=utf-8",
+	".mjs": "text/javascript; charset=utf-8",
+	".css": "text/css; charset=utf-8",
+	".json": "application/json",
+	".webmanifest": "application/manifest+json",
+	".svg": "image/svg+xml",
+	".png": "image/png",
+	".jpg": "image/jpeg",
+	".webp": "image/webp",
+	".ico": "image/x-icon",
+	".woff": "font/woff",
+	".woff2": "font/woff2",
+	".wasm": "application/wasm",
+	".mp3": "audio/mpeg",
+	".mp4": "video/mp4",
+	".tgs": "application/x-tgsticker",
+	".txt": "text/plain; charset=utf-8",
+	".xml": "application/xml",
+};
+
+// Vite names built assets by their content: `index-B4x9Qf2a.js`
+const HASHED = /-[\w-]{8}\.\w+$/;
+
+export class WebApp {
+	readonly dir: string;
+
+	constructor(dir: string) {
+		this.dir = resolve(dir);
+	}
+
+	/** A built app is in `dir`. */
+	static at(dir: string): WebApp | undefined {
+		return existsSync(join(dir, "index.html")) ? new WebApp(dir) : undefined;
+	}
+
+	/** Serves a GET or HEAD for the app; false for anything else, which the server handles. */
+	handle(request: IncomingMessage, response: ServerResponse): boolean {
+		if (request.method !== "GET" && request.method !== "HEAD") return false;
+		const path = decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname);
+		let file = normalize(join(this.dir, path));
+		if (file !== this.dir && !file.startsWith(this.dir + sep)) return false;
+		if (!isFile(file)) {
+			// A path the app routes (or a file it does not have, which then says so itself)
+			if (extname(path) !== "") return notFound(response);
+			file = join(this.dir, "index.html");
+		}
+		const size = statSync(file).size;
+		response.writeHead(200, {
+			"Content-Type": TYPES[extname(file)] ?? "application/octet-stream",
+			"Content-Length": size,
+			"Cache-Control": HASHED.test(file) ? "public, max-age=31536000, immutable" : "no-cache",
+			"X-Content-Type-Options": "nosniff",
+			"Referrer-Policy": "no-referrer",
+			// Web A's index.html has its Content-Security-Policy (web/vite.config.ts buildCsp)
+		});
+		if (request.method === "HEAD") response.end();
+		else createReadStream(file).pipe(response);
+		return true;
+	}
+}
+
+function isFile(path: string): boolean {
+	try {
+		return statSync(path).isFile();
+	} catch {
+		return false;
+	}
+}
+
+function notFound(response: ServerResponse): true {
+	response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+	response.end("Not found");
+	return true;
+}

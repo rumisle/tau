@@ -7,6 +7,7 @@ import { WebSocketServer } from "ws";
 import { Connection } from "./connection.ts";
 import { Dialogs } from "./dialogs.ts";
 import { handleFiles } from "./http-files.ts";
+import type { WebApp } from "./http-web.ts";
 import type { Host } from "./host.ts";
 import { Notifier, type PushSender } from "./notifier.ts";
 import { Search } from "./search/service.ts";
@@ -15,8 +16,13 @@ import { Titler } from "./titles.ts";
 export type ServerOptions = {
 	host?: string;
 	port?: number;
-	/** Required as `Authorization: Bearer <token>` or `?token=<token>` when set. */
+	/**
+	 * Required when set: as `Authorization: Bearer <token>`, `?token=<token>`, or on a WebSocket from a browser, which
+	 * cannot set headers, as the subprotocol `tau.token.<token in base64url>` beside `tau.v1` (docs/web.md).
+	 */
 	token?: string;
+	/** The built web app to serve (src/http-web.ts); none when undefined. */
+	web?: WebApp;
 	/** Apple's push service, with the account's key (src/apns.ts); without it, no pushes. */
 	apns?: PushSender;
 	/** For tests: how long an activity whose chats are all done stays (half an hour). */
@@ -53,12 +59,21 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 	host.files.referenced = (id) => search.referencesFile(id);
 	void host.files.sweep().catch(() => {});
 	const connections = new Set<Connection>();
-	// HTTP for files (src/http-files.ts), behind the same token; the WebSocket upgrades on the same port.
+	// HTTP for files (src/http-files.ts) behind the same token, `/auth` to ask whether a token is taken (204 or 401),
+	// and the web app (src/http-web.ts) without one; the WebSocket upgrades on the same port.
 	const http = createServer((request, response) => {
+		const path = new URL(request.url ?? "/", "http://localhost").pathname;
+		const isApi = path === "/auth" || path === "/files" || path.startsWith("/files/");
+		if (!isApi && options.web?.handle(request, response)) return;
 		if (!authorized(request, options.token)) {
-			response.writeHead(401, { "Content-Type": "application/json" });
+			response.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
 			response.end(JSON.stringify({ error: { code: "unauthorized", message: "A token is needed" } }));
 			request.resume();
+			return;
+		}
+		if (path === "/auth") {
+			response.writeHead(204, { "Cache-Control": "no-store" });
+			response.end();
 			return;
 		}
 		void handleFiles(host.files, request, response);
@@ -75,6 +90,8 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 		// of closing the socket, which the client would take for a network failure and retry forever.
 		maxPayload: 96 * 1024 * 1024,
 		verifyClient: ({ req }: { req: IncomingMessage }) => authorized(req, options.token),
+		// A browser's socket offers `tau.v1` beside its token, and must be answered with one it offered.
+		handleProtocols: (protocols) => (protocols.has(PROTOCOL) ? PROTOCOL : false),
 	});
 	wss.on("connection", (socket, request) => {
 		const connection = new Connection(host, dialogs, socket, notifier, search);
@@ -124,11 +141,20 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 	};
 }
 
+const PROTOCOL = "tau.v1";
+const TOKEN_PROTOCOL = "tau.token.";
+
 function authorized(request: IncomingMessage, token: string | undefined): boolean {
 	if (token === undefined) return true;
 	const header = request.headers.authorization;
 	const url = new URL(request.url ?? "/", "http://localhost");
-	const given = header?.startsWith("Bearer ") ? header.slice(7) : url.searchParams.get("token");
+	const offered = (request.headers["sec-websocket-protocol"] ?? "").split(",").map((each) => each.trim());
+	const inProtocol = offered.find((each) => each.startsWith(TOKEN_PROTOCOL));
+	const given = header?.startsWith("Bearer ")
+		? header.slice(7)
+		: inProtocol !== undefined
+			? Buffer.from(inProtocol.slice(TOKEN_PROTOCOL.length), "base64url").toString()
+			: url.searchParams.get("token");
 	if (given === null || given === undefined) return false;
 	const a = Buffer.from(given);
 	const b = Buffer.from(token);
