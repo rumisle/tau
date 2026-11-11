@@ -60,6 +60,14 @@ its own summary, and the waiting one settles stale at the next boundary. The wai
 boundary, which durable has after tool results, at the final answer and when a run fails, not before a retry: a run
 that retries until it fails places it only then.
 
+**Open: a ready summary waits for a boundary.** Durable places a waiting write only at its boundaries (after tool
+results, at the answer, when idle). A provider retry is not one, nor is a failed run: during a 429 the full request is
+resent for up to half an hour while a summary a tenth its size waits, and after the run fails the summary stays until
+the next input. Options, for pi upstream rather than tau: place waiting writes (not resets, steers or follow-ups)
+before a retry's prepare; place them when a run fails. Stopgaps not taken: rewriting the retry's request in
+`beforeRequest` (it would copy durable's placement rules and send what the transcript does not hold), or ending the
+run to reach a boundary.
+
 **Usage.** The follow-up's usage goes into the conversation's `pi.usage`, as durable records its summaries, and into
 the Usage ledger as the model `tau/compaction` (`server/src/search/usage.ts`).
 
