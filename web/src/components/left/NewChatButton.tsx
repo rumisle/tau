@@ -4,6 +4,8 @@ import {
 import { getActions } from '../../global';
 
 import buildClassName from '../../util/buildClassName';
+import { openNewChat } from '../../tau/api/session'; // tau: New Chat is a draft at once
+import { IS_TAU } from '../../tau/config'; // tau: New Chat is a draft at once
 
 import useLang from '../../hooks/useLang';
 
@@ -49,6 +51,10 @@ const NewChatButton = ({
   );
 
   const toggleIsMenuOpen = useCallback(() => {
+    if (IS_TAU) { // tau: New Chat is a draft at once, no menu
+      openNewChat();
+      return;
+    }
     if (isAccountFrozen) {
       openFrozenAccountModal();
       return;

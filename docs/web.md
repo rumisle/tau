@@ -123,7 +123,9 @@ web/src/tau/
   bubble is a local message (a fraction above the chat's last ID) with Telegram's clock, one check once queued, the red
   badge when refused, and `updateMessageSendSucceeded` when its entry comes, matched by text before the record if need
   be. The outbox lasts in IndexedDB, one per tab (`db/outbox.ts`): each tab holds a Web Lock, and a tab that opens
-  adopts the outboxes of tabs gone, so a reload or a crash sends what was left.
+  adopts the outboxes of tabs gone, so a reload or a crash sends what was left. New Chat (Web A's New Message button,
+  without its menu) is a draft chat with an ID of its own, not listed, whose messages wait in the outbox for the
+  conversation's create; once created, the conversation opens in its place.
 - **Stop is Web A's Stop for a bot's streamed answer.** The chat's typing status carries `tauRun` while its own run
   works; the composer shows Stop for it unless the field has text (Send steers then); Stop withdraws the queued
   messages back to the field and aborts the run.

@@ -2,23 +2,26 @@
 // replica per opened chat (tau-client), turned into `apiUpdate`s as GramJS's update handler sends them.
 import { TauClient } from 'tau-client/connection';
 import { DialogList } from 'tau-client/dialogs';
-import type { OutgoingMessage } from 'tau-client/outbox';
+import type { OutgoingMessage, PendingCreate } from 'tau-client/outbox';
 import { Outbox } from 'tau-client/outbox';
 import type { Dialog, Entry, JsonObject } from 'tau-client/protocol';
 import { ConversationReplica } from 'tau-client/replica';
+import { getActions, getGlobal } from '../../global';
 
 import type { ApiMessage, ApiUpdate } from '../../api/types';
 import type { MessageContext } from './builders';
 import { MAIN_THREAD_ID } from '../../api/types';
 
+import { selectCurrentMessageList } from '../../global/selectors';
 import {
   probe, readToken, saveToken, serverOrigin, socketProtocols, socketUrl,
 } from '../auth';
 import { whenLinkTokenStored } from '../boot';
 import { openOutboxState } from '../db/outbox';
 import {
-  buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildMe, buildMessage, buildReadState,
-  buildSummaryMessage, buildThreadInfo, buildUser, userText,
+  buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildDraftChat, buildDraftUser, buildMe,
+  buildMessage, buildReadState, buildSummaryMessage, buildThreadInfo, buildUser, DRAFT_CHAT_ID,
+  userText,
 } from './builders';
 import { buildOutgoingMessage } from './outgoing';
 
@@ -64,6 +67,8 @@ const subagentCalls = new Map<number, { parentId: number; callId: string }>();
 // Messages on their way as Web A has them: their local message and the state it shows, by request ID
 const shown = new Map<string, { chatId: string; localId: number; state: string }>();
 let outbox: Outbox | undefined;
+// New Chat's create, until it is sent
+let draftRequestId: string | undefined;
 
 dialogs.onChange((changed) => {
   for (const dialog of changed) applyDialog(dialog);
@@ -80,7 +85,9 @@ export async function start(callback: (update: ApiUpdate) => void) {
     events: {
       changed: (conversationId) => {
         if (conversationId !== undefined) refreshOutgoing(conversationId);
+        else refreshDraft();
       },
+      created: onCreated,
       placed: onPlaced,
       restored: restoreToField,
     },
@@ -482,7 +489,12 @@ function hasBusySubagent(conversationId: number, depth = 0): boolean {
 // MARK: Sending
 
 /** The composer's Send: a message to the conversation, steering a run that works (docs/sending.md) */
-export function sendText(conversationId: number, text: string) {
+export function sendText(chatId: string, text: string) {
+  if (isDraftChat(chatId)) {
+    sendToDraft(text);
+    return;
+  }
+  const conversationId = Number(chatId);
   outbox!.enqueue({
     text, conversationId, mode: 'steer', showsInQueue: Boolean(dialogs.dialogs.get(conversationId)?.busy),
   });
@@ -497,8 +509,11 @@ export function stop(conversationId: number) {
 
 /** Bubbles for the messages of a conversation on their way, oldest first, numbered after its entries */
 function outgoingOf(conversationId: number) {
-  const chatId = buildChatId(conversationId);
-  return outbox!.itemsOf(conversationId)
+  return bubblesOf(buildChatId(conversationId), outbox!.itemsOf(conversationId));
+}
+
+function bubblesOf(chatId: string, items: OutgoingMessage[]) {
+  return items
     .filter((item) => item.state.type !== 'placed' && item.state.type !== 'withdrawing')
     .map((item) => {
       const local = shown.get(item.requestId) ?? showAs(item, chatId);
@@ -522,10 +537,12 @@ function stateOf(item: OutgoingMessage) {
 
 /** What Web A shows of a conversation's messages on their way follows the outbox: new ones, states, the withdrawn */
 function refreshOutgoing(conversationId: number) {
-  const each = opened.get(conversationId);
-  if (!each?.isLoaded) return;
-  const chatId = buildChatId(conversationId);
-  const items = new Map(outbox!.itemsOf(conversationId).map((item) => [item.requestId, item]));
+  if (!opened.get(conversationId)?.isLoaded) return;
+  refreshBubbles(buildChatId(conversationId), outbox!.itemsOf(conversationId));
+}
+
+function refreshBubbles(chatId: string, list: OutgoingMessage[]) {
+  const items = new Map(list.map((item) => [item.requestId, item]));
   const gone: number[] = [];
   for (const [requestId, local] of shown) {
     if (local.chatId !== chatId) continue;
@@ -561,6 +578,56 @@ function refreshOutgoing(conversationId: number) {
       });
     }
   }
+}
+
+// MARK: New Chat
+
+/**
+ * New Chat is a draft until its first message (docs/sending.md "Edits and drafts"): a chat of its own, not listed,
+ * whose messages wait in the outbox for the conversation's create. One at a time, as iOS keeps one: what a reload left
+ * unsent is still in it.
+ */
+export function openNewChat() {
+  draftRequestId ??= outbox!.state.creates.find((create) => create.forkOf === undefined)?.requestId
+    ?? crypto.randomUUID();
+  send({ '@type': 'updateUser', id: DRAFT_CHAT_ID, user: buildDraftUser() });
+  send({ '@type': 'updateChat', id: DRAFT_CHAT_ID, chat: buildDraftChat() });
+  getActions().openChat({ id: DRAFT_CHAT_ID });
+}
+
+export function isDraftChat(chatId: string) {
+  return chatId === DRAFT_CHAT_ID;
+}
+
+/** The draft's messages, newest first, as a history page */
+export function draftHistory() {
+  if (!draftRequestId) return [];
+  return bubblesOf(DRAFT_CHAT_ID, outbox!.itemsOfCreate(draftRequestId)).reverse();
+}
+
+function sendToDraft(text: string) {
+  draftRequestId ??= crypto.randomUUID();
+  // Named after its first answer; the server's default model, as iOS's New Chat without a pick
+  outbox!.enqueueCreate({ requestId: draftRequestId, autoTitle: true });
+  outbox!.enqueue({ text, createRequestId: draftRequestId, mode: 'steer' });
+}
+
+function refreshDraft() {
+  if (draftRequestId) refreshBubbles(DRAFT_CHAT_ID, outbox!.itemsOfCreate(draftRequestId));
+}
+
+/** The draft is a conversation now: its messages show there, and the chat opens in the draft's place */
+function onCreated(create: PendingCreate, conversationId: number) {
+  if (create.requestId !== draftRequestId) return;
+  draftRequestId = undefined;
+  const wasOpen = Object.values(getGlobal().byTabId)
+    .some(({ id: tabId }) => selectCurrentMessageList(getGlobal(), tabId)?.chatId === DRAFT_CHAT_ID);
+  const gone = [...shown].filter(([, local]) => local.chatId === DRAFT_CHAT_ID);
+  for (const [requestId] of gone) shown.delete(requestId);
+  if (gone.length > 0) {
+    send({ '@type': 'deleteMessages', ids: gone.map(([, local]) => local.localId), chatId: DRAFT_CHAT_ID });
+  }
+  if (wasOpen) getActions().openChat({ id: buildChatId(conversationId) });
 }
 
 /** A message reached the model; when its entry already shows on its own, the bubble that stood for it goes */

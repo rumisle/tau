@@ -10,10 +10,13 @@ import type { ApiTauPart } from './types';
 import { MAIN_THREAD_ID } from '../../api/types';
 
 import { ARCHIVED_FOLDER_ID } from '../../config';
+import { STRINGS } from '../strings';
 import { buildMarkdownBlocks, buildParagraph } from './markdown';
 
 // The user's own account. Conversation IDs are entry IDs, far below it.
 export const ME_ID = '9000000000';
+// New Chat's draft, a chat until its conversation exists (session.ts)
+export const DRAFT_CHAT_ID = '8999999999';
 const MAX_TOOL_OUTPUT = 2000;
 
 export function buildChatId(conversationId: number) {
@@ -43,6 +46,25 @@ export function buildMe(): ApiUser {
     type: 'userTypeRegular',
     firstName: 'You',
     phoneNumber: '',
+  };
+}
+
+export function buildDraftUser(): ApiUser {
+  return {
+    id: DRAFT_CHAT_ID,
+    isMin: false,
+    type: 'userTypeRegular',
+    firstName: STRINGS.NewChat,
+    phoneNumber: '',
+    noStatus: true,
+  };
+}
+
+export function buildDraftChat(): ApiChat {
+  return {
+    id: DRAFT_CHAT_ID,
+    type: 'chatTypePrivate',
+    title: STRINGS.NewChat,
   };
 }
 

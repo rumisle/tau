@@ -8,7 +8,8 @@ import {
 } from './builders';
 import { toMarkdown } from './outgoing';
 import {
-  chatListMessage, dialogs, fetchHistory, isListed, requestDialog, sendChatListMessages, sendText, stop,
+  chatListMessage, dialogs, draftHistory, fetchHistory, isDraftChat, isListed, requestDialog, sendChatListMessages,
+  sendText, stop,
 } from './session';
 
 // Telegram's seven peer colors, which its server sends with `help.getPeerColors`; without them avatars are black
@@ -47,6 +48,12 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
   async fetchMessages({
     chat, offsetId, addOffset, limit,
   }: { chat: ApiChat; offsetId?: number; addOffset?: number; limit: number }) {
+    if (isDraftChat(chat.id)) {
+      const messages = offsetId ? [] : draftHistory();
+      return {
+        messages, users: [], chats: [], count: messages.length, topics: [],
+      };
+    }
     const { messages, count } = await fetchHistory(Number(chat.id), offsetId, addOffset ?? 0, limit);
     return {
       messages, users: [], chats: [], count, topics: [],
@@ -55,7 +62,7 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
 
   sendMessage({ chat, text, entities }: { chat?: ApiChat; text?: string; entities?: ApiMessageEntity[] }) {
     if (!chat || !text) return;
-    sendText(Number(chat.id), toMarkdown(text, entities));
+    sendText(chat.id, toMarkdown(text, entities));
   },
 
   sendMessageAction({ peer, action }: { peer: ApiPeer; action: { type: string } }) {

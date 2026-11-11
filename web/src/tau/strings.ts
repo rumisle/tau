@@ -8,4 +8,5 @@ export const STRINGS = {
   ConnectWrongToken: 'The server did not take this token.',
   ConnectUnreachable: 'The server does not answer. It may be restarting.',
   ConnectConnecting: 'Connecting…',
+  NewChat: 'New Chat',
 } as const;
