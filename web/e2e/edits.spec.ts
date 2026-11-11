@@ -82,10 +82,17 @@ test('offline, the fork\'s draft shows the original up to the edit and the new m
   await expect(own(app, 'alpha')).toBeVisible();
   await expect(app.locator(answers).filter({ hasText: 'You said: alpha' })).toBeVisible();
   await expect(own(app, /^beta$/)).toHaveCount(0);
+  // In the list, at the top with its clock, as the chat open
+  const draftRow = listItems(app, 'Edit away').filter({ hasText: 'beta, edited' });
+  await expect(draftRow).toHaveClass(/selected/);
+  await expect(draftRow.locator('.icon-message-pending')).toBeVisible();
 
   isAway = false;
   await expect(app.locator(answers).filter({ hasText: 'You said: beta, edited' })).toBeVisible({ timeout: 15_000 });
   await expect(own(app, 'beta, edited')).toHaveCount(1);
+  // The draft's row gave way to the fork's: the original and the fork
+  await expect(listItems(app, 'Edit away')).toHaveCount(2);
+  await expect(listItems(app, 'Edit away').filter({ hasText: 'You said: beta, edited' })).toHaveClass(/selected/);
 });
 
 test('editing the first message starts a new chat with the chat\'s model', async ({ app, api }) => {

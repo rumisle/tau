@@ -163,7 +163,9 @@ web/src/tau/
   (`session.editMessage`): a create in the outbox with the agent the chat shows and the new text, carrying the
   original's kept files, as its first message. Until the fork exists its draft chat (an ID of its own, below New Chat's)
   shows the original up to the fork, read, and the new message with the clock, in the chat's place; then the fork opens
-  in the draft's. Editing the first message is a New Chat with the chat's agent.
+  in the draft's. Editing the first message is a New Chat with the chat's agent. A draft chat with messages waiting (New
+  Chat's too) is in the chat list at the top, with its newest message and the clock, so the chat open is highlighted
+  there; it leaves the list as its conversation comes.
 - **Drafts are Web A's, kept here** (`db/drafts.ts`): Web A saves a chat's draft through `saveDraft`, which Telegram's
   server would keep; tau keeps it in localStorage per server, and gives it back with the chat list (`draftsById`), so
   the list shows Telegram's red "Draft:" and the field has it after a reload. Web A saves when the chat changes, a

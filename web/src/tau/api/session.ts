@@ -938,6 +938,7 @@ export function draftHistory(chatId: string, offsetId: number | undefined, addOf
       .map((message) => ({ ...message, chatId }));
     messages.push(...inherited.reverse());
   }
+  listDraft(draft);
   // As fetchHistory pages
   let first = offsetId ? messages.findIndex((message) => message.id < offsetId) : 0;
   if (first < 0) first = messages.length;
@@ -1000,6 +1001,29 @@ function refreshDraft() {
     if (draft.requestId && (draft.isLoaded || draft.forkOf === undefined)) {
       refreshBubbles(draft.chatId, outbox!.itemsOfCreate(draft.requestId));
     }
+    listDraft(draft);
+  }
+}
+
+/**
+ * A draft with messages waiting for its create is in the chat list, at the top with its newest message and the clock,
+ * so the chat open is the one highlighted there, as any; it leaves the list when it becomes its conversation, or when
+ * nothing waits in it any more
+ */
+function listDraft(draft: DraftChat) {
+  const { chatId } = draft;
+  const [requestId, local] = [...shown.entries()].filter(([, each]) => each.chatId === chatId).at(-1) ?? [];
+  const item = requestId ? outbox!.item(requestId) : undefined;
+  const isWaiting = Boolean(item && local && draft.requestId);
+  if (isWaiting && !isInWebAList(chatId)) {
+    send({ '@type': 'updateChat', id: chatId, chat: { ...buildDraftChat(chatId, draft.title), isListed: true } });
+    send({ '@type': 'updateChatListType', id: chatId, folderId: ALL_FOLDER_ID });
+  }
+  if (isWaiting) {
+    const lastMessage = buildOutgoingRows(item!, chatId, local!.localIds, blobUrls).at(-1)!;
+    send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage });
+  } else if (isInWebAList(chatId)) {
+    send({ '@type': 'updateChatLeave', id: chatId });
   }
 }
 
@@ -1014,6 +1038,7 @@ function onCreated(create: PendingCreate, conversationId: number) {
     draftChats.delete(draft.chatId);
   }
   const { chatId } = draft;
+  if (isInWebAList(chatId)) send({ '@type': 'updateChatLeave', id: chatId });
   const wasOpen = Object.values(getGlobal().byTabId)
     .some(({ id: tabId }) => selectCurrentMessageList(getGlobal(), tabId)?.chatId === chatId);
   const gone = [...shown].filter(([, local]) => local.chatId === chatId);

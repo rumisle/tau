@@ -83,6 +83,8 @@ export function buildDraftChat(id = DRAFT_CHAT_ID, title: string = STRINGS.NewCh
     id,
     type: 'chatTypePrivate',
     title,
+    // Joined again after it left the list as its conversation (Web A takes leaving a list as leaving the chat)
+    isNotJoined: false,
   };
 }
 
