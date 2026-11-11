@@ -15,7 +15,7 @@ const data = mkdtempSync(join(tmpdir(), "tau-release-check-"));
 const failures: string[] = [];
 let log = "";
 
-async function start(): Promise<{ server: ChildProcess; client: TauClient }> {
+async function start(): Promise<{ server: ChildProcess; client: TauClient; url: string }> {
 	const server = spawn(process.execPath, ["--no-warnings", join(dir, "tau-server.js"), "--data", data, "--port", "0", "--model", "dev/echo"], {
 		cwd: tmpdir(),
 		stdio: ["ignore", "pipe", "pipe"],
@@ -38,7 +38,7 @@ async function start(): Promise<{ server: ChildProcess; client: TauClient }> {
 	});
 	const client = await TauClient.connect(url);
 	await client.request("hello", { protocol: 1 });
-	return { server, client };
+	return { server, client, url };
 }
 
 async function stop({ server, client }: { server: ChildProcess; client: TauClient }): Promise<void> {
@@ -63,6 +63,12 @@ try {
 	const { client } = running;
 	const hello = (await client.request("hello", { protocol: 1 })) as { piRevision?: string };
 	if (!hello.piRevision) failures.push("hello has no piRevision");
+	// The web app it carries, served on its port: the page, and a script the page names (docs/web.md)
+	const origin = running.url.replace("ws://", "http://");
+	const page = await (await fetch(`${origin}/`)).text();
+	const script = /<script[^>]+src="\.?\/?(assets\/[^"]+\.js)"/.exec(page)?.[1];
+	if (!page.includes('id="root"') || script === undefined) failures.push("web: / is not the app's index.html");
+	else if ((await fetch(`${origin}/${script}`)).status !== 200) failures.push(`web: /${script} is not served`);
 	const { dialog } = (await client.request("conversation.create", { title: "release check" })) as { dialog: { conversation: { id: number } } };
 	const replica = new ConversationReplica(dialog.conversation.id);
 	await replica.sync(client);
@@ -98,4 +104,4 @@ if (failures.length > 0) {
 	console.error(`release check failed:\n- ${failures.join("\n- ")}`);
 	process.exit(1);
 }
-console.log("release check: a command, code mode, the search index built again");
+console.log("release check: the web app, a command, code mode, the search index built again");

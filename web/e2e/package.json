@@ -1,0 +1,12 @@
+{
+	"name": "tau-web-e2e",
+	"private": true,
+	"type": "module",
+	"description": "The web app's end-to-end tests (docs/web.md \"Tests, fast\"): the built app, served by dev tau servers with the dev model, in headless Chromium.",
+	"scripts": {
+		"test": "playwright test"
+	},
+	"devDependencies": {
+		"@playwright/test": "1.63.0"
+	}
+}

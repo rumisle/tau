@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds the server as a release (docs/deploy.md): one bundle with pi in it, the image worker beside it, and the two
-# WebAssembly packages the bundle resolves at run time, so a machine needs only Node, not vendor/pi.
+# Builds the server as a release (docs/deploy.md): one bundle with pi in it, the image worker beside it, the two
+# WebAssembly packages the bundle resolves at run time, so a machine needs only Node, not vendor/pi, and the web app it
+# serves (docs/web.md).
 # Usage: scripts/build-release.sh [version]   -> dist/tau-server-<version>.tar.gz
 # The version is by default the commit's date and short hash (2026.10.27-9830ece).
 set -euo pipefail
@@ -32,6 +33,9 @@ for package in quickjs-wasi @silvia-odwyer/photon; do
 	cp -R "$pi/node_modules/$package/." "$out/node_modules/$package/"
 done
 rm -rf "$out/node_modules/quickjs-wasi/dist" "$out/node_modules/quickjs-wasi/src"
+
+# The web app the server serves on its port (docs/web.md): web/ beside the bundle.
+scripts/web/build.sh "$out/web" > /dev/null
 
 mkdir -p "$out/bin"
 cp scripts/tau "$out/bin/tau"

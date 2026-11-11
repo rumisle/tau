@@ -499,6 +499,12 @@ UNIT
 	say "In the app: Settings > Servers > Add, with"
 	say "  address  ${name:-$(hostname)}:${port:-7878}"
 	say "  token    $(cat "$config/token")"
+	# The web app (docs/web.md): a secure context only, so HTTPS from Tailscale away from this machine. The link's
+	# fragment carries the token, which never reaches a server's log.
+	say "In a browser, on this machine: http://localhost:${port:-7878}/#token=$(cat "$config/token")"
+	if [ -n "$name" ]; then
+		say "From elsewhere, once \`tailscale serve --bg ${port:-7878}\` gives it HTTPS: https://$name/#token=$(cat "$config/token")"
+	fi
 	say "Model logins: the pi CLI's (~/.pi/agent/auth.json) or the providers' API keys in your shell's environment."
 }
 
