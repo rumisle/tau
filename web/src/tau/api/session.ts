@@ -35,6 +35,7 @@ import {
   entryIdOf,
   lastRowIdOf, messageIdOf,
 } from './builders';
+import { buildParagraph } from './markdown';
 import { buildOutgoingRows, outgoingRowCount, prepareUploads } from './outgoing';
 import { buildQueue, isInQueue } from './queue';
 import { mappedSocket, readServers, slotOf, writeServers } from './servers';
@@ -51,6 +52,7 @@ const LOCAL_ID_STEP = 1e-6;
 const REFRESHED_ON_OPEN = 50;
 // When drafts an answer replaced are looked for again in Web A's state
 const DRAFT_SWEEP_MS = 300;
+const WAIT_REFRESH_MS = 5000;
 // A chat on screen tells the server what was read at most this often (docs/protocol.md conversation.read)
 const READ_INTERVAL_MS = 2000;
 
@@ -68,6 +70,11 @@ type Opened = {
   results: Map<string, any>;
   callEntries: Map<string, number>;
   draftId?: string;
+  // While the τ waits: its draft, and the timer that sends it again before Web A's draft expiry. The answer then
+  // streams in the same draft: `streamsIn` maps its generation's draft ID to the τ's
+  waitingDraftId?: string;
+  streamsIn?: { id: string; draftId: string };
+  waitTimer?: number;
   // Generations answered so far, in the draft's ID: the next generation of a run streams as a draft of its own
   answered: number;
 };
@@ -581,6 +588,8 @@ function emitEntry(each: Opened, entry: Entry) {
  */
 function endDraft(each: Opened) {
   each.answered += 1;
+  each.waitingDraftId = undefined;
+  each.streamsIn = undefined;
   if (!each.draftId) return;
   const chatId = buildChatId(each.replica.id);
   if (!each.isLoaded) send({ '@type': 'updateChatTypingDraftStopped', chatId, id: each.draftId });
@@ -606,14 +615,35 @@ function updateDraft(each: Opened) {
   const message = generation?.message;
   const hasContent = message?.content?.some((part: any) => (part.type === 'text' && part.text)
     || (part.type === 'thinking' && part.thinking));
+  if (!hasContent && isAgentWaiting(live)) {
+    // The τ where the answer will be, in the draft the answer then streams in (iOS's ChatWaitingNode)
+    each.waitingDraftId ??= `${live?.run?.taskId ?? 0}-waiting-${each.answered}`;
+    each.draftId = each.waitingDraftId;
+    send({
+      '@type': 'updateChatTypingDraft',
+      chatId,
+      id: each.draftId,
+      threadId: MAIN_THREAD_ID,
+      richMessage: { blocks: [buildParagraph('…')] },
+      tau: { role: 'assistant', parts: [{ type: 'waiting' }] },
+    });
+    keepWaiting(each);
+    return;
+  }
   if (!hasContent) {
     if (each.draftId && !generation) {
       send({ '@type': 'updateChatTypingDraftStopped', chatId, id: each.draftId });
       each.draftId = undefined;
+      each.waitingDraftId = undefined;
     }
     return;
   }
-  each.draftId = `${live?.run?.taskId ?? 0}-${generation.attempt ?? 0}-${each.answered}`;
+  const id = `${live?.run?.taskId ?? 0}-${generation.attempt ?? 0}-${each.answered}`;
+  if (each.waitingDraftId) {
+    each.streamsIn = { id, draftId: each.waitingDraftId };
+    each.waitingDraftId = undefined;
+  }
+  each.draftId = each.streamsIn?.id === id ? each.streamsIn.draftId : id;
   send({
     '@type': 'updateChatTypingDraft',
     chatId,
@@ -622,6 +652,26 @@ function updateDraft(each: Opened) {
     richMessage: buildAssistantRichMessage(message),
     tau: { role: 'assistant', parts: buildAssistantParts(message, contextOf(each)) },
   });
+}
+
+/**
+ * The agent works and nothing shows it: no answer streams and no call runs (its card has a spinner). The run is the
+ * server's, so the τ shows only once the server has the message.
+ */
+function isAgentWaiting(live: Record<string, any> | undefined) {
+  // A compaction says it works itself
+  if (!live?.run || live.compactions?.length) return false;
+  const tools: { status?: string }[] = live.tools ?? [];
+  return !tools.some((tool) => tool.status !== 'done');
+}
+
+/** Web A drops a typing draft nothing updated for ten seconds: a long wait sends the τ again */
+function keepWaiting(each: Opened) {
+  window.clearTimeout(each.waitTimer);
+  each.waitTimer = window.setTimeout(() => {
+    each.waitTimer = undefined;
+    if (each.draftId && opened.get(each.replica.id) === each) updateDraft(each);
+  }, WAIT_REFRESH_MS);
 }
 
 function contextOf(each: Opened): MessageContext {

@@ -344,6 +344,7 @@ function buildToolPart(call: any, startedAt: number, result: any, context?: Mess
         isWorking,
         isFailed: result?.isError,
         task: String(args.message ?? args.task ?? ''),
+        meta: subagentMeta({ ...args, ...result?.details }),
       };
     }
     default: {
@@ -353,6 +354,16 @@ function buildToolPart(call: any, startedAt: number, result: any, context?: Mess
       };
     }
   }
+}
+
+/** What a spawn runs on (docs/protocol.md: `model`, `thinking`, `fork`), as iOS's card says it under the task */
+function subagentMeta({ model, thinking, fork }: { model?: unknown; thinking?: unknown; fork?: unknown }) {
+  const parts = [
+    typeof model === 'string' ? model.split('/').pop() : undefined,
+    typeof thinking === 'string' ? `${STRINGS.Thinking} ${thinking}` : undefined,
+    fork === true ? STRINGS.ForkedFromChat : undefined,
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : undefined;
 }
 
 // File names to the languages Web A colors (ios/Tau/Chat/MarkdownText.swift `language(forPath:)`)

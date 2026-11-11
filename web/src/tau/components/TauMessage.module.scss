@@ -247,6 +247,18 @@
   color: var(--tau-card-title);
 }
 
+// What a spawn runs on, one line under the quote (iOS: 13 pt, 5 pt below it)
+.subagentMeta {
+  overflow: hidden;
+
+  padding: 0.3125rem 0.375rem 0.25rem;
+
+  font-size: 0.8125rem;
+  color: var(--tau-card-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .answer {
   --color-text: var(--tau-card-title);
 
@@ -257,4 +269,53 @@
 
 .failed {
   color: var(--color-error);
+}
+
+// The waiting τ (components/WaitingTau.tsx), where the answer's first letter will be. Its 1.9 s cycle, as iOS's: drawn
+// in 0.8 s, held, lifted off from its start in 0.7 s; the bar is a little over half the length, the stem the rest.
+.waiting {
+  width: 1.5rem;
+  height: 1.75rem;
+  margin-left: -0.1875rem;
+  padding-top: 0.125rem;
+
+  color: var(--tau-accent);
+
+  animation: tau-waiting-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.waitingTrack {
+  opacity: 0.18;
+}
+
+.waitingBar {
+  stroke-dasharray: 0 2;
+  animation: tau-waiting-bar 1.9s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+
+.waitingStem {
+  stroke-dasharray: 0 2;
+  animation: tau-waiting-stem 1.9s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+
+@keyframes tau-waiting-in {
+  from {
+    transform: scale(0.6);
+  }
+}
+
+@keyframes tau-waiting-bar {
+  0% { opacity: 0; stroke-dasharray: 0 2; stroke-dashoffset: 0; }
+  0.5% { opacity: 1; }
+  22.7%, 55.3% { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+  75.2% { opacity: 1; stroke-dasharray: 0 2; stroke-dashoffset: -1; }
+  75.7%, 100% { opacity: 0; stroke-dasharray: 0 2; stroke-dashoffset: -1; }
+}
+
+@keyframes tau-waiting-stem {
+  0%, 22.7% { opacity: 0; stroke-dasharray: 0 2; stroke-dashoffset: 0; }
+  23.2% { opacity: 1; }
+  42.1%, 75.2% { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+  92.1% { opacity: 1; stroke-dasharray: 0 2; stroke-dashoffset: -1; }
+  92.6%, 100% { opacity: 0; stroke-dasharray: 0 2; stroke-dashoffset: -1; }
 }

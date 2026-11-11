@@ -62,6 +62,23 @@ describe('buildMessage', () => {
     });
   });
 
+  it('says what a spawned subagent runs on when not as its parent: the model, the effort, a fork', () => {
+    const spawn = (args: object) => buildMessage(entry(4, 'pi.assistant', {
+      role: 'assistant',
+      stopReason: 'toolUse',
+      content: [{
+        type: 'toolCall',
+        id: 's1',
+        name: 'subagent',
+        arguments: { action: 'spawn', name: 'scout', message: 'look', ...args },
+      }],
+    }), context())!.tau!.parts[0];
+    expect(spawn({ model: 'anthropic/claude-haiku-4-5', thinking: 'low', fork: true })).toMatchObject({
+      type: 'subagent', name: 'scout', state: 'working', meta: 'claude-haiku-4-5, thinking low, forked from this chat',
+    });
+    expect(spawn({})).toMatchObject({ meta: undefined });
+  });
+
   it('shows a subagent\'s report as its card, and leaves tool results and system entries out', () => {
     const report = buildMessage(entry(4, 'pi.user', {
       role: 'user', content: '<subagent name="helper" conversation="9" status="answered">Three.</subagent>',

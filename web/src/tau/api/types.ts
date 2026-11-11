@@ -38,8 +38,12 @@ export type ApiTauPart =
     isFailed?: boolean;
     isWorking?: boolean;
     task: string;
+    // What a spawn runs on, when not as its parent: "haiku-4-5, thinking low, forked from this chat"
+    meta?: string;
     answer?: ApiPageBlock[];
-  };
+  }
+  // Where the answer will be, while the agent works and has written nothing yet
+  | { type: 'waiting' };
 
 export interface ApiTauContent {
   role: 'assistant' | 'notice';

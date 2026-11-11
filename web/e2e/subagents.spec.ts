@@ -40,3 +40,16 @@ test('the chat\'s own run says working', async ({ app, api }) => {
   await expect(app.locator('.MiddleHeader')).not.toContainText('typing');
   gate.open();
 });
+
+test('a spawn on another model, effort or a fork says so under its task while it works', async ({ app, api }) => {
+  await api.chat('Spawn options', ['hello']);
+  await listItem(app, 'Spawn options').click();
+  await app.locator(field).click();
+  const gate = api.gate();
+  await app.keyboard.type(`& scout fork model=dev/echo thinking=high: ${gate.command}`);
+  await app.keyboard.press('Enter');
+  const card = app.locator('[data-tau-part="subagent"]').filter({ hasText: 'scout' }).first();
+  await expect(card).toContainText('working');
+  await expect(card).toContainText('echo, thinking high, forked from this chat');
+  gate.open();
+});

@@ -28,6 +28,8 @@ export const STRINGS = {
   Subagent: 'subagent',
   SubagentsWorking: 'subagents working',
   NotificationsAnswers: 'Answers',
+  Thinking: 'thinking',
+  ForkedFromChat: 'forked from this chat',
   StorageUsage: 'Storage Usage',
   UnsentMessages: 'Unsent Messages',
   Drafts: 'Drafts',

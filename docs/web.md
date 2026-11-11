@@ -137,6 +137,10 @@ web/src/tau/
   and other devices' (`pi.inbox`). × withdraws one; a click or a right-click opens Edit, Send as Follow-up or Steer,
   Send Now, Delete (a submenu each when several). Send's menu is a right-click on Send while the agent works (iOS: a
   long press): Send as Follow-up, Stop and Send; Web A's Send Without Sound and Schedule are left out.
+- **The τ while the agent works and has written nothing** (`components/WaitingTau.tsx`, iOS's ChatWaitingNode): a
+  typing draft whose only part is `waiting`, sent while the run is on and no call runs; the answer then streams in the
+  same draft (`streamsIn` maps its generation's draft ID to the τ's), and it is sent again every 5 s against Web A's
+  draft expiry. The run is the server's, so the τ shows only once the server has the message.
 - **An answer is a system notification** (docs/notifications.md "On the web"): tau's, decided on the chat list when a
   run ends, in place of Web A's per message; Settings > Notifications is tau's (`components/NotificationSettings.tsx`).
 - **Data and Storage is tau's** (`components/DataSettings.tsx`, in place of Web A's auto-download settings): the bytes

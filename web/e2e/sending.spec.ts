@@ -2,6 +2,7 @@
 // it and its checks once it is in the transcript; while the agent works, Send steers and Stop ends the run.
 import type { Page } from '@playwright/test';
 
+import { ConversationReplica } from '../../client/src/replica.ts';
 import { expect, SMOKE, test } from './fixtures.ts';
 
 // Answers, without the typing draft that streamed them
@@ -103,4 +104,31 @@ test('what is typed is sent as typed: no dash for `--`, no guillemets for `<<`',
   await expect(own(app, 'also check the `--fast` flag: git log --oneline << EOF')).toBeVisible();
   await expect(app.locator('[data-tau-part="thinking"]')
     .filter({ hasText: 'The user said "also check the `--fast` flag: git log --oneline << EOF"' }).last()).toBeVisible();
+});
+
+test('while the agent works and has written nothing, the τ is where its answer will be; the answer takes its place', async ({ app, api }) => {
+  const id = await api.chat('Waiting', ['hello']);
+  const replica = new ConversationReplica(id);
+  await replica.sync(api.client);
+  await openChat(app, 'Waiting');
+  const waiting = app.locator('[data-tau-part="waiting"]');
+  // The dev model waits two seconds before it answers
+  await type(app, '~2 after a pause');
+  await expect(waiting).toHaveCount(1);
+  // Still one once the model's generation started, before it wrote anything
+  await expect.poll(() => (replica.docs['pi.live'] as { generation?: unknown } | undefined)?.generation).toBeTruthy();
+  await expect(app.locator('[data-tau-draft]')).toHaveCount(1);
+  await expect(waiting).toHaveCount(1);
+  // In the draft the answer then streams in, and gone with it
+  await expect(app.locator(row).filter({ hasText: 'after a pause' })).toBeVisible();
+  await expect(waiting).toHaveCount(0);
+  // A call that runs has its own spinner: no τ beside it
+  const gate = api.gate();
+  await type(app, gate.command);
+  await expect(app.locator('[data-tau-part="tool"]').last()).toContainText('until');
+  await expect(waiting).toHaveCount(0);
+  gate.open();
+  await expect(app.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+  await expect(waiting).toHaveCount(0);
+  replica.detach();
 });

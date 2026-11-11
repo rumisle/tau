@@ -26,6 +26,7 @@ import RichContent from '../../components/iv/RichContent';
 import MessageMenu from './MessageMenu';
 import SubagentCard from './SubagentCard';
 import ToolCard from './ToolCard';
+import WaitingTau from './WaitingTau';
 
 import styles from './TauMessage.module.scss';
 
@@ -90,6 +91,8 @@ const TauMessage = ({
         return <ToolCard key={part.id} part={part} />;
       case 'subagent':
         return <SubagentCard key={index} part={part} theme={theme} message={message} />;
+      case 'waiting':
+        return <WaitingTau key="waiting" />;
     }
   }
 

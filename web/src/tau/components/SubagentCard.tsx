@@ -34,6 +34,7 @@ const SubagentCard = ({ part, theme, message }: OwnProps) => {
         </div>
         <div className={styles.task}>{part.task}</div>
       </div>
+      {part.meta && !part.answer && <div className={styles.subagentMeta}>{part.meta}</div>}
       {part.answer && (
         <div className={styles.answer}>
           <RichContent
