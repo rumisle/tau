@@ -162,6 +162,11 @@ web/src/tau/
 - **The page is tau's**: the title "tau" (Web A's `APP_TITLE` default), the iOS icon's τ on pink as favicons, Apple's
   touch icon and the manifest's (`public/tau`, made by `scripts/web/icons.mjs`; `tau.webmanifest`), with Web A's
   unread swap (`favicon` to `favicon-unread`) kept.
+- **Model errors as pi has them** (iOS's ModelErrorText; `api/modelErrors.ts`): a failed attempt the server asks past
+  does not show (`errorState`: retried, pending while the run goes on, or the run's end, shown then by `flushErrors`);
+  meanwhile the τ says "retrying in 5s (attempt 3): overloaded" from `pi.live.generation`; the answer's footer says
+  "retried 2 times"; an error the run ends on is a card, "The model failed" and the provider's message, with Retry
+  (also in its right-click menu), which sends the message before it again.
 - **An answer is a system notification** (docs/notifications.md "On the web"): tau's, decided on the chat list when a
   run ends, in place of Web A's per message; Settings > Notifications is tau's (`components/NotificationSettings.tsx`).
 - **Data and Storage is tau's** (`components/DataSettings.tsx`, in place of Web A's auto-download settings): the bytes

@@ -36,6 +36,7 @@ import {
   lastRowIdOf, messageIdOf,
 } from './builders';
 import { buildParagraph } from './markdown';
+import { modelErrorReason } from './modelErrors';
 import { buildOutgoingRows, outgoingRowCount, prepareUploads } from './outgoing';
 import { buildQueue, isInQueue } from './queue';
 import { mappedSocket, readServers, slotOf, writeServers } from './servers';
@@ -81,6 +82,8 @@ type Opened = {
   // The compaction failure last seen (`pi.live.compactionFailure`): a new one says so once, as a toast
   seenFailure?: number;
   hasSeenFailures?: boolean;
+  // Model errors the server may still ask past: not shown until the run ends on one
+  pendingErrors?: Set<number>;
   // Generations answered so far, in the draft's ID: the next generation of a run streams as a draft of its own
   answered: number;
 };
@@ -523,6 +526,12 @@ function applyReplica(each: Opened) {
     for (const entry of fresh) emitEntry(each, entry);
   }
   if (fresh.some((entry) => entry.kind === 'pi.assistant')) endDraft(each);
+  for (const entry of fresh) {
+    if (entry.kind === 'pi.assistant' && (entry.model as any[])?.[0]?.stopReason === 'error') {
+      (each.pendingErrors ??= new Set()).add(entry.id);
+    }
+  }
+  flushErrors(each);
   if (fresh.length && each.isLoaded) readOnScreen(each.replica.id, each.replica.maxId);
   updateDraft(each);
   updateTimes(each);
@@ -679,7 +688,7 @@ function updateDraft(each: Opened) {
       id: each.draftId,
       threadId: MAIN_THREAD_ID,
       richMessage: { blocks: [buildParagraph('…')] },
-      tau: { role: 'assistant', parts: [{ type: 'waiting' }] },
+      tau: { role: 'assistant', parts: [{ type: 'waiting', retry: retryOf(each, live) }] },
     });
     keepWaiting(each);
     return;
@@ -715,11 +724,32 @@ function updateDraft(each: Opened) {
 function isAgentWaiting(live: Record<string, any> | undefined, replica: ConversationReplica) {
   // A compaction says it works itself
   if (!live?.run || live.compactions?.length) return false;
-  // The answer is in: what the run still does after it (a title, a report) is not an answer to wait for
+  // The answer is in: what the run still does after it (a title, a report) is not an answer to wait for; a model
+  // error is not one, the server asking again
   const last = replica.entries.get(replica.maxId);
-  if (last?.kind === 'pi.assistant' && (last.model as any[])?.[0]?.stopReason !== 'toolUse') return false;
+  const stopReason = last?.kind === 'pi.assistant' ? (last.model as any[])?.[0]?.stopReason : undefined;
+  if (stopReason && stopReason !== 'toolUse' && stopReason !== 'error') return false;
   const tools: { status?: string }[] = live.tools ?? [];
   return !tools.some((tool) => tool.status !== 'done');
+}
+
+/**
+ * The server waiting to ask the model again after an error (durable's backoff, `pi.live.generation.retry`), or asking:
+ * the attempt that comes, when, and why (iOS's RetryState)
+ */
+function retryOf(each: Opened, live: Record<string, any> | undefined) {
+  const generation = live?.generation;
+  if (!generation) return undefined;
+  const attempt: number = generation.attempt ?? 1;
+  const { retry } = generation;
+  if (!retry && attempt <= 1) return undefined;
+  const last = each.replica.entries.get(each.replica.maxId);
+  const error: string | undefined = retry?.error ?? (last?.model as any[] | undefined)?.[0]?.errorMessage;
+  return {
+    attempt: retry ? attempt + 1 : attempt,
+    at: retry?.at,
+    reason: error ? modelErrorReason(error) : 'error',
+  };
 }
 
 /** Web A drops a typing draft nothing updated for ten seconds: a long wait sends the τ again */
@@ -750,7 +780,47 @@ function contextOf(each: Opened): MessageContext {
       return toolCall?.arguments?.message ?? toolCall?.arguments?.task ?? dialogs.dialogs.get(conversationId)?.title;
     },
     isBusy: (conversationId) => Boolean(dialogs.dialogs.get(conversationId)?.busy),
+    errorState: (entryId) => errorStateOf(each, entryId),
+    retriesBefore: (entryId) => {
+      let retries = 0;
+      for (const entry of each.replica.ordered().reverse()) {
+        if (entry.id >= entryId) continue;
+        if (entry.kind === 'pi.user') break;
+        if (entry.kind === 'pi.assistant' && (entry.model as any[])?.[0]?.stopReason === 'error') retries++;
+      }
+      return retries;
+    },
   };
+}
+
+/**
+ * A model error's fate (iOS's ConversationReplica `pendingError`): asked past when an answer came after it in its run;
+ * the run's end when a message of the user's came after it, or the run is over; else pending, the server asking again
+ */
+function errorStateOf(each: Opened, entryId: number): 'retried' | 'pending' | 'stands' {
+  for (const entry of each.replica.ordered()) {
+    if (entry.id <= entryId) continue;
+    if (entry.kind === 'pi.assistant') return 'retried';
+    if (entry.kind === 'pi.user') return 'stands';
+  }
+  const live = each.replica.docs['pi.live'] as Record<string, any> | undefined;
+  return live?.run ? 'pending' : 'stands';
+}
+
+/** Model errors not shown while the server may ask again: shown once the run ends on one (`errorStateOf`) */
+function flushErrors(each: Opened) {
+  for (const entryId of each.pendingErrors ?? []) {
+    const state = errorStateOf(each, entryId);
+    if (state === 'pending') continue;
+    each.pendingErrors!.delete(entryId);
+    const entry = each.replica.entries.get(entryId);
+    if (state !== 'stands' || !entry || !each.isLoaded) continue;
+    for (const message of buildRows(entry, contextOf(each))) {
+      send({
+        '@type': 'newMessage', chatId: message.chatId, id: message.id, message,
+      });
+    }
+  }
 }
 
 /** A subagent started or stopped working: the card of the call that started it says so */
@@ -924,6 +994,27 @@ export async function sendText(chatId: string, text: string, attachments: ApiAtt
     mode: how ?? 'steer',
     showsInQueue: Boolean(dialogs.dialogs.get(conversationId)?.busy),
     uploads,
+  });
+}
+
+/**
+ * Retry on an error the run ended on (iOS's `retryAfterError`): the user's message before it, sent again with its
+ * files. It is what happens anyway: the server's own retries are over, and the model never read the failed answer.
+ */
+export function retryAfterError(chatId: string, messageId: number) {
+  const conversationId = Number(chatId);
+  const each = opened.get(conversationId);
+  const errorId = entryIdOf(messageId);
+  const user = each?.replica.ordered().filter((entry) => entry.id < errorId && entry.kind === 'pi.user').at(-1);
+  if (!user) return;
+  const content = (user.model as any[] | undefined)?.[0]?.content;
+  const { text } = readUserContent(content, conversationId, user.id, 0);
+  outboxOf(conversationId).enqueue({
+    text,
+    conversationId,
+    mode: 'steer',
+    showsInQueue: Boolean(dialogs.dialogs.get(conversationId)?.busy),
+    uploads: keptUploadsOf(content),
   });
 }
 

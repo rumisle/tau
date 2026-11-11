@@ -386,3 +386,51 @@
   font-size: 1.125rem;
   opacity: 0.7;
 }
+
+// The τ's row, with what the server does about a model error beside it (14 pt, secondary)
+.waitingRow {
+  display: flex;
+  gap: 0.375rem;
+  align-items: center;
+}
+
+.retry {
+  font-size: 0.875rem;
+  color: var(--tau-text-secondary);
+}
+
+// An error the run ended on (components/ErrorCard.tsx): a card where the answer would be, Retry in the accent
+.errorCard {
+  margin-top: 0.25rem;
+  padding: 0.625rem 0.75rem 0.5rem;
+  border-radius: 0.875rem;
+  background: var(--tau-card-bg);
+}
+
+.errorTitle {
+  font-size: 0.9375rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-error);
+}
+
+.errorText {
+  margin-top: 0.125rem;
+  font-size: 0.9375rem;
+  color: var(--tau-card-title);
+  overflow-wrap: anywhere;
+}
+
+.errorRetry {
+  cursor: pointer;
+
+  margin-top: 0.375rem;
+  padding: 0.25rem 0;
+  border: none;
+
+  font: inherit;
+  font-size: 1rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--tau-accent);
+
+  background: none;
+}

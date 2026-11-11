@@ -7,11 +7,16 @@ import type { MessageContext } from './builders';
 import { buildMessage, ME_ID } from './builders';
 
 const at = 1_700_000_000_000;
-const context = (results = new Map<string, any>(), busy = false): MessageContext => ({
+const context = (
+  results = new Map<string, any>(), busy = false, errorState: ReturnType<MessageContext['errorState']> = 'stands',
+  retries = 0,
+): MessageContext => ({
   results,
   runStartAt: () => at,
   subagentTask: () => 'count to three',
   isBusy: () => busy,
+  errorState: () => errorState,
+  retriesBefore: () => retries,
 });
 const entry = (id: number, kind: string, message: object): Entry => ({
   id, kind, conversationId: 7, model: [{ timestamp: at + 2500, ...message }],
@@ -60,6 +65,24 @@ describe('buildMessage', () => {
     expect(buildMessage(call, context(results))!.tau!.parts[0]).toMatchObject({
       status: 'done', output: 'hi', durationMs: 1200,
     });
+  });
+
+  it('shows a model error only once the run ends on it, as a card; an answer after errors says it was retried', () => {
+    const failed = entry(5, 'pi.assistant', {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+      content: [{ type: 'text', text: 'Let me look' }],
+    });
+    expect(buildMessage(failed, context(undefined, false, 'retried'))).toBeUndefined();
+    expect(buildMessage(failed, context(undefined, false, 'pending'))).toBeUndefined();
+    const parts = buildMessage(failed, context())!.tau!.parts;
+    expect(parts.map((part) => part.type)).toEqual(['text', 'error']);
+    expect(parts[1]).toEqual({ type: 'error', text: '529: Overloaded' });
+    const answer = buildMessage(entry(6, 'pi.assistant', {
+      role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Done.' }],
+    }), context(undefined, false, 'stands', 2))!;
+    expect(answer.tau!.runEnd).toEqual({ workedForMs: 2500, retries: 2 });
   });
 
   it('says what a spawned subagent runs on when not as its parent: the model, the effort, a fork', () => {

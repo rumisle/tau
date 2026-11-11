@@ -13,6 +13,7 @@ import { ARCHIVED_FOLDER_ID } from '../../config';
 import { STRINGS } from '../strings';
 import { buildMediaRows, readUserContent } from './attachments';
 import { buildMarkdownBlocks, buildParagraph } from './markdown';
+import { cleanModelError } from './modelErrors';
 
 // The user's own account. Conversation IDs are entry IDs, far below it.
 export const ME_ID = '9000000000';
@@ -142,6 +143,10 @@ export type MessageContext = {
   // A subagent's task, by its conversation, from the call that started it
   subagentTask: (conversationId: number) => string | undefined;
   isBusy: (conversationId: number) => boolean;
+  // A model error's fate: asked past (another attempt came), pending (the server may ask again), or the run's end
+  errorState: (entryId: number) => 'retried' | 'pending' | 'stands';
+  // Model errors the server asked past in the run an entry ends
+  retriesBefore: (entryId: number) => number;
 };
 
 const SUBAGENT_REPORT = /^<subagent name="([^"]*)" conversation="(\d+)" status="(\w+)">([\s\S]*)<\/subagent>$/;
@@ -224,8 +229,29 @@ export function buildMessage(entry: Entry, context: MessageContext): ApiMessage 
       };
     }
     case 'pi.assistant': {
+      if (message.stopReason === 'error') {
+        // Shown only if the run ends on it, as iOS: the model never reads a failed answer, and another attempt
+        // replaces it; meanwhile the τ says the server is asking again
+        if (context.errorState(entry.id) !== 'stands') return undefined;
+        const content = { ...message, errorMessage: undefined };
+        return {
+          ...base,
+          isOutgoing: false,
+          senderId: chatId,
+          content: { richMessage: buildAssistantRichMessage(message, context.results) },
+          tau: {
+            role: 'assistant',
+            parts: [
+              ...buildAssistantParts(content, context),
+              { type: 'error', text: cleanModelError(message.errorMessage ?? STRINGS.ModelErrorUnknown) },
+            ],
+            copyText: assistantText(message),
+          },
+        };
+      }
       const isRunEnd = message.stopReason !== 'toolUse';
       const startAt = isRunEnd ? context.runStartAt(entry.id) : undefined;
+      const retries = isRunEnd ? context.retriesBefore(entry.id) : 0;
       return {
         ...base,
         isOutgoing: false,
@@ -236,7 +262,10 @@ export function buildMessage(entry: Entry, context: MessageContext): ApiMessage 
           parts: buildAssistantParts(message, context),
           copyText: assistantText(message),
           runEnd: isRunEnd
-            ? { workedForMs: startAt !== undefined ? message.timestamp - startAt : undefined }
+            ? {
+              workedForMs: startAt !== undefined ? message.timestamp - startAt : undefined,
+              retries: retries || undefined,
+            }
             : undefined,
         },
       };
@@ -459,7 +488,7 @@ export function buildAssistantRichMessage(message: any, results?: Map<string, an
       blocks.push(buildToolBlock(part, results?.get(part.id)));
     }
   }
-  if (message.errorMessage) blocks.push(buildParagraph(`⚠ ${message.errorMessage}`));
+  if (message.errorMessage) blocks.push(buildParagraph(`⚠ ${cleanModelError(message.errorMessage)}`));
   if (!blocks.length) blocks.push(buildParagraph('…'));
   return { blocks };
 }

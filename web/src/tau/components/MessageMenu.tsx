@@ -11,7 +11,7 @@ import { getMessageHtmlId } from '../../global/helpers';
 import { copyTextToClipboard } from '../../util/clipboard';
 import { isLocalMessageId } from '../../util/keys/messageKey';
 import {
-  deleteOutgoing, isDraftChat, outgoingForMessage, resendOutgoing, restoreFullContext,
+  deleteOutgoing, isDraftChat, outgoingForMessage, resendOutgoing, restoreFullContext, retryAfterError,
 } from '../api/session';
 import { STRINGS } from '../strings';
 
@@ -105,6 +105,17 @@ const MessageMenu = ({
         <MenuItem icon="copy" onClick={() => copy(selected)}>{lang('ContextCopySelected')}</MenuItem>
       ) : text && (
         <MenuItem icon="copy" onClick={() => copy(text)}>{lang('Copy')}</MenuItem>
+      )}
+      {message.tau?.parts.some((part) => part.type === 'error') && (
+        <MenuItem
+          icon="reload"
+          onClick={() => {
+            retryAfterError(message.chatId, message.id);
+            onClose();
+          }}
+        >
+          {STRINGS.Retry}
+        </MenuItem>
       )}
       {message.tau?.parts.some((part) => part.type === 'compaction') && !isDraftChat(message.chatId) && (
         // As an edit of an earlier message: the chat goes on in a copy from before the summary, with all the model saw

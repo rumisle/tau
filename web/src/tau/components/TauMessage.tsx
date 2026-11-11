@@ -14,6 +14,7 @@ import { getMessageHtmlId } from '../../global/helpers';
 import { selectTheme } from '../../global/selectors';
 import buildClassName from '../../util/buildClassName';
 import { formatDateTime, secondsToDate } from '../../util/localization/dateFormat';
+import { STRINGS } from '../strings';
 import { formatDuration } from './format';
 
 import useSelector from '../../hooks/data/useSelector';
@@ -24,6 +25,7 @@ import useShowTransition from '../../hooks/useShowTransition';
 
 import RichContent from '../../components/iv/RichContent';
 import CompactionCard from './CompactionCard';
+import ErrorCard from './ErrorCard';
 import MessageMenu from './MessageMenu';
 import SubagentCard from './SubagentCard';
 import ToolCard from './ToolCard';
@@ -93,15 +95,22 @@ const TauMessage = ({
       case 'subagent':
         return <SubagentCard key={index} part={part} theme={theme} message={message} />;
       case 'waiting':
-        return <WaitingTau key="waiting" />;
+        return <WaitingTau key="waiting" retry={part.retry} />;
+      case 'error':
+        return <ErrorCard key="error" text={part.text} message={message} />;
       case 'compaction':
         return <CompactionCard key="compaction" part={part} message={message} theme={theme} />;
     }
   }
 
   const { runEnd } = tau;
-  const workedFor = runEnd?.workedForMs !== undefined && runEnd.workedForMs >= 1000
-    ? `worked for ${formatDuration(runEnd.workedForMs)}` : undefined;
+  // How long the run took, and the model errors the server asked past, as iOS's footer
+  const workedFor = [
+    runEnd?.workedForMs !== undefined && runEnd.workedForMs >= 1000
+      ? `worked for ${formatDuration(runEnd.workedForMs)}` : undefined,
+    runEnd?.retries ? (runEnd.retries === 1 ? STRINGS.RetriedOnce
+      : STRINGS.RetriedTimes.replace('{n}', String(runEnd.retries))) : undefined,
+  ].filter(Boolean).join(', ') || undefined;
 
   return (
     <div

@@ -45,7 +45,13 @@ export type ApiTauPart =
     answer?: ApiPageBlock[];
   }
   // Where the answer will be, while the agent works and has written nothing yet
-  | { type: 'waiting' }
+  | {
+    type: 'waiting';
+    // The server asking the model again after an error: the attempt that comes, when, and why in a few words
+    retry?: { attempt: number; at?: number; reason: string };
+  }
+  // An error the run ended on, after the server's retries: why, and Retry
+  | { type: 'error'; text: string }
   // A compaction's summary, which the model reads instead of what came before: why and when, then the summary
   | { type: 'compaction'; reason: string; summary: ApiPageBlock[] };
 
@@ -53,7 +59,7 @@ export interface ApiTauContent {
   role: 'assistant' | 'notice';
   parts: ApiTauPart[];
   // The last message of a run: its footer, how long the run took
-  runEnd?: { workedForMs?: number };
+  runEnd?: { workedForMs?: number; retries?: number };
   // What Copy copies: the answer's Markdown
   copyText?: string;
 }
