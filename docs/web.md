@@ -391,7 +391,7 @@ Timings on the development machine (warm caches; a cold `npm ci` of `web/` downl
 | Workflow | Time |
 |---|---|
 | `scripts/web/dev.sh`: both servers up | 1 s (Vite's first page load compiles Web A's modules on demand: about 10 s once) |
-| `scripts/web/test.sh` | 28 s: static 5 s (with TypeScript's incremental cache), unit 2 s, e2e 21 s for 51 tests on 12 workers (47 s on 4); plus the build's 13 s when the sources changed |
+| `scripts/web/test.sh` | 27 s: static 2 to 5 s (with TypeScript's incremental cache), unit 2 s, e2e 22 s for 59 tests on 12 workers (47 s for 51 on 4); plus the build's 13 s when the sources changed |
 | `scripts/web/test.sh e2e --dev -- <spec>` | 9 s for a spec of 5 tests; Vite starts in 1 s when it is not running |
 | `scripts/web/build.sh` | 13 s; 15 MB unpacked |
 | `scripts/build-release.sh` (server bundle, app, release check) | 6 s; 8.3 MB packed, 2.3 MB before |
