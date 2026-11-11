@@ -11,8 +11,8 @@ if [ ! -f "$list" ]; then
 # Parity with tau's history
 
 The web client catches up with tau by its commits, oldest first (docs/web.md "Scope"). A line per commit: its hash, its
-state, its subject. States: `todo`; `done <web commit>`; `skip: <why>` (relevant, not done now); `n/a: <why>` (nothing
-for the web to do). `scripts/web/parity.sh` appends new commits as `todo`.
+state, its subject. States: `todo`; `done <web commit>`; `skip: <why>` (relevant, not done now); `deferred: <why>`
+(put off by the user); `n/a: <why>` (nothing for the web to do). `scripts/web/parity.sh` appends new commits as `todo`.
 
 HEAD
 fi
@@ -25,4 +25,4 @@ while IFS=$'\t' read -r hash subject; do
 	printf -- '- `%s` todo — %s\n' "$hash" "$subject" >> "$list"
 	added=$((added + 1))
 done < <(git -C "$root" log --reverse --no-merges --format='%h%x09%s' -- ios/Tau server/src client docs)
-echo "web/PARITY.md: $added added; $(grep -c '` todo' "$list" || true) todo, $(grep -c '` done' "$list" || true) done, $(grep -c '` skip' "$list" || true) skipped, $(grep -c '` n/a' "$list" || true) n/a"
+echo "web/PARITY.md: $added added; $(grep -c '` todo' "$list" || true) todo, $(grep -c '` done' "$list" || true) done, $(grep -c '` skip' "$list" || true) skipped, $(grep -c '` deferred' "$list" || true) deferred, $(grep -c '` n/a' "$list" || true) n/a"

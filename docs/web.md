@@ -444,6 +444,7 @@ web client is in the same repository, so a commit after the walk catches up does
   - `todo` (the default);
   - `done <commit>`: the web commit that brought it;
   - `skip: <reason>`: relevant, but deliberately not done now;
+  - `deferred: <reason>`: put off by the user, to come back to;
   - `n/a: <reason>`: nothing for the web to do, e.g. an iOS layout fix to Telegram's ListView, a server-only change,
     or a docs fix.
 - **`scripts/web/parity.sh`** appends the commits not yet listed, as `todo`, and prints the count per state. A run
