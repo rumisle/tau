@@ -139,6 +139,10 @@ web/src/tau/
   long press): Send as Follow-up, Stop and Send; Web A's Send Without Sound and Schedule are left out.
 - **An answer is a system notification** (docs/notifications.md "On the web"): tau's, decided on the chat list when a
   run ends, in place of Web A's per message; Settings > Notifications is tau's (`components/NotificationSettings.tsx`).
+- **Data and Storage is tau's** (`components/DataSettings.tsx`, in place of Web A's auto-download settings): the bytes
+  of unsent messages (the outboxes and their files in IndexedDB) and drafts (localStorage), and Network Usage, the
+  socket's frames per server since Reset Statistics (`api/usage.ts`, one count: a browser does not say whether it is on
+  Wi-Fi). Chat history has no copy in the browser yet, so no per-chat sizes or Clear Cache.
 - **The chat's ⋯ menu is tau's** (`components/ChatMenu.tsx`, in Web A's header menu, with its nested submenus): the
   model, in a picker (`components/ModelPicker.tsx`: Web A's searchable picker in a modal of its own root, recent models
   first, Enter takes the first match), the thinking level (`api/agent.ts`: shown at once, sent in order with the chat's

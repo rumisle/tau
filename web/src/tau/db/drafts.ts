@@ -30,3 +30,13 @@ export function draftsOf(chatIds: string[]): Record<string, ApiDraft> {
   const drafts = readDrafts();
   return Object.fromEntries(chatIds.filter((id) => drafts[id]).map((id) => [id, drafts[id]]));
 }
+
+/** What the drafts of every server take in localStorage */
+export function draftBytes() {
+  let bytes = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith('tau-drafts:')) bytes += new TextEncoder().encode(localStorage.getItem(key) ?? '').length;
+  }
+  return bytes;
+}

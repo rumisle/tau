@@ -38,6 +38,7 @@ import {
 import { buildOutgoingRows, outgoingRowCount, prepareUploads } from './outgoing';
 import { buildQueue, isInQueue } from './queue';
 import { mappedSocket, readServers, slotOf, writeServers } from './servers';
+import { countSocket } from './usage';
 
 // The PoC reads a transcript whole, in pages of the server's largest
 const PAGE = 500;
@@ -240,6 +241,7 @@ async function connect(link: ServerLink) {
   let client: TauClient;
   try {
     const socket = new WebSocket(socketUrlOf(link.origin), socketProtocols(link.token));
+    countSocket(socket, link.origin);
     client = await TauClient.open(mappedSocket(socket, link.slot));
   } catch {
     scheduleReconnect(link, 'unreachable');

@@ -18,6 +18,7 @@ import useScrollNotch from '../../../hooks/useScrollNotch';
 import useSyncEffect from '../../../hooks/useSyncEffect';
 import useSettingsHighlight from './hooks/useSettingsHighlight';
 
+import DataSettings from '../../../tau/components/DataSettings'; // tau: its own
 import NotificationSettings from '../../../tau/components/NotificationSettings'; // tau: its own
 import Transition from '../../ui/Transition';
 import SettingsFolders from './folders/SettingsFolders';
@@ -338,6 +339,7 @@ const Settings = ({
           <SettingsNotifications isActive={isScreenActive} onReset={handleReset} />
         );
       case SettingsScreens.DataStorage:
+        if (IS_TAU) return <DataSettings isActive={isScreenActive} onReset={handleReset} />; // tau: its own
         return (
           <SettingsDataStorage isActive={isScreenActive} onReset={handleReset} />
         );

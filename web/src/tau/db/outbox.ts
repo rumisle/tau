@@ -44,3 +44,10 @@ function merge(state: OutboxState, other: OutboxState) {
   Object.assign(state.created, other.created);
   state.serverId ??= other.serverId;
 }
+
+/** What the messages in the outboxes of every tab and server take on disk, as JSON (an empty outbox: none) */
+export async function outboxBytes() {
+  const all = await entries<string, OutboxState>(STORE);
+  return all.reduce((sum, [, value]) => sum
+    + (value.items.length ? new TextEncoder().encode(JSON.stringify(value)).length : 0), 0);
+}
