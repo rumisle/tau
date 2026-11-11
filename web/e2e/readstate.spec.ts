@@ -16,19 +16,28 @@ async function dialogOf(api: { client: TauClient }, id: number) {
   return (dialogs as Dialog[]).find((dialog) => dialog.conversation.id === id)!;
 }
 
+// The menu's item, then its closing waited for: a menu opened while the last one closes can be the closing one
 async function menu(app: Page, title: string, item: string) {
+  const items = app.locator('.ContextMenuContainer .MenuItem:visible, .menu-container .MenuItem:visible');
   await listItem(app, title).click({ button: 'right' });
-  await app.locator('.ContextMenuContainer .MenuItem, .menu-container .MenuItem').filter({ hasText: item }).first().click();
+  await items.filter({ hasText: item }).first().click();
+  await expect(items).toHaveCount(0);
 }
 
-test('an answer is unread until the chat is open; then the server has it read', async ({ app, api }) => {
+test('an answer is unread until the chat is open; then the server has it read, with no unread divider', async ({ app, api }) => {
   const id = await api.chat('Read me', ['hello']);
   // Telegram's unread badge, the count alone
   const badge = listItem(app, 'Read me').getByText('1', { exact: true });
   await expect(badge).toHaveText('1');
+  // Web A places its divider when a chat opens with its messages loaded, after a reload
+  await app.reload();
+  await expect(badge).toHaveText('1');
   await listItem(app, 'Read me').click();
   await expect(badge).toHaveCount(0);
   await expect.poll(async () => (await dialogOf(api, id)).unreadCount).toBe(0);
+  // tau has no unread divider (docs/reading-position.md)
+  await expect(app.locator('.MessageList').getByText('You said: hello')).toBeVisible();
+  await expect(app.locator('.unread-divider')).toHaveCount(0);
 });
 
 test('Mark as Unread and Archive reach the server; Unarchive brings the chat back', async ({ app, api }) => {

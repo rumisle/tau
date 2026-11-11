@@ -73,6 +73,7 @@ import resetScroll from '../../util/resetScroll';
 import { debounce, onTickEnd } from '../../util/schedulers';
 import { getServerTime } from '../../util/serverTime';
 import getOffsetToContainer from '../../util/visibility/getOffsetToContainer';
+import { IS_TAU } from '../../tau/config'; // tau: no unread divider (docs/reading-position.md)
 import { REM } from '../common/helpers/mediaDimensions';
 import { groupMessages } from './helpers/groupMessages';
 import { requestMessageListReflow } from './helpers/messageListReflow';
@@ -487,7 +488,7 @@ const MessageList = ({
   // Updated only once when messages are loaded (as we want the unread divider to keep its position)
   useSyncEffect(() => {
     if (areMessagesLoaded) {
-      memoUnreadDividerBeforeIdRef.current = memoFirstUnreadIdRef.current;
+      memoUnreadDividerBeforeIdRef.current = IS_TAU ? undefined : memoFirstUnreadIdRef.current; // tau: no divider
     }
   }, [areMessagesLoaded]);
 
