@@ -193,3 +193,29 @@
   flex-shrink: 0;
   margin-inline-end: 1rem;
 }
+
+// The chat list's search (docs/search.md "In the app"): chats, then messages, without Telegram's tabs (channels, apps,
+// posts, media), its strip of chats over the list, or its "All chats" filter of messages
+.LeftSearch {
+  .left-search-tab-list,
+  .search-island:has(.chat-selection),
+  .section-heading .dropDownLink {
+    display: none !important;
+  }
+}
+
+// Found words: in tau's rows (components/searchHighlight.ts), and in Web A's results and bubbles, whose blue is
+// Telegram's, in tau's pink
+::highlight(tau-search) {
+  color: inherit;
+  background-color: var(--color-primary-opacity-hover);
+}
+
+.matching-text-highlight:not(.is-quote) {
+  background: var(--color-primary-opacity-hover) !important;
+}
+
+// A chat's search: no jump to a date, which tau's history cannot do
+#MiddleColumn button[aria-label="Jump to Date"] {
+  display: none !important;
+}

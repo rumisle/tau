@@ -14,13 +14,62 @@ import { downloadMedia } from './media';
 import { toMarkdown } from './outgoing';
 import {
   chatListMessage, dialogs, draftHistory, editMessage, fetchHistory, isDraftChat, isListed, mark, markRead,
-  pin, rename, requestDialog, sendChatListMessages, sendText, stop,
+  pin, rename, requestDialog, searchConversation, searchConversations, searchMessage, sendChatListMessages, sendText,
+  stop,
 } from './session';
 
 // Telegram's seven peer colors, which its server sends with `help.getPeerColors`; without them avatars are black
 const PEER_COLORS = ['#CC5049', '#D67722', '#955CDB', '#40A920', '#309EBA', '#368AD1', '#C7508B'];
 
+// A page of the chat list's message search, as Telegram's (docs/search.md "In the app")
+const SEARCH_PAGE = 20;
+
 export const methods: Record<string, (...args: any[]) => unknown> = {
+  /** No contacts: an empty list, which Web A's search results wait for */
+  fetchContactList() {
+    return { users: [], userStatusesById: {} };
+  },
+
+  /** The chat list's search, its chats: those whose title has the query, at once, before the servers' messages */
+  searchChats({ query }: { query: string }) {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const found = dialogs.ordered().filter((dialog) => {
+      const title = (dialog.title ?? '').toLowerCase();
+      return isListed(dialog) && words.every((word) => title.includes(word));
+    });
+    return { accountResultIds: found.map((dialog) => buildChatId(dialog.conversation.id)), globalResultIds: [] };
+  },
+
+  /**
+   * The chat list's search, its messages: the servers' conversations best first, each by its best part, a page at a
+   * time (the page's offset in `offsetRate`, as Telegram's pages by rate)
+   */
+  async searchMessagesGlobal({ query, offsetRate = 0, type }: { query: string; offsetRate?: number; type?: string }) {
+    if (!query.trim() || (type && type !== 'text')) return { messages: [], topics: [], totalCount: 0 };
+    const { results, total, hasMore } = await searchConversations(query, offsetRate, SEARCH_PAGE);
+    const messages = results.flatMap(({ conversationId, hits }) => {
+      const hit = hits.find((each) => each.entryId !== undefined);
+      return hit ? [searchMessage(conversationId, hit)] : [];
+    });
+    return {
+      messages,
+      topics: [],
+      totalCount: total,
+      nextOffsetRate: hasMore ? offsetRate + SEARCH_PAGE : undefined,
+    };
+  },
+
+  /** A chat's own search: its matching messages, newest first, which Up and Down step through */
+  async searchMessagesInChat({ peer, query }: { peer: ApiPeer; query?: string }) {
+    if (!query?.trim() || isDraftChat(peer.id)) return { messages: [], topics: [], totalCount: 0 };
+    const conversationId = Number(peer.id);
+    // One per entry: an answer's text and its reasoning are parts of one message
+    const hits = (await searchConversation(conversationId, query))
+      .filter((hit, index, all) => all.findIndex((each) => each.entryId === hit.entryId) === index);
+    const messages = hits.map((hit) => searchMessage(conversationId, hit));
+    return { messages, topics: [], totalCount: messages.length };
+  },
+
   fetchChats({ archived }: { archived?: boolean }) {
     const listed = dialogs.ordered()
       .filter((dialog) => isListed(dialog) && Boolean(dialog.archived) === Boolean(archived));

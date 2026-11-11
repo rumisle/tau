@@ -30,6 +30,7 @@ export const STRINGS = {
   Subagents: 'subagents',
   MenuSubagents: 'Subagents',
   AllModels: 'All Models…',
+  SearchChats: 'Chats',
   ContextCompacted: 'Context compacted',
   ModelFailed: 'The model failed',
   ModelErrorUnknown: 'The model returned an error.',

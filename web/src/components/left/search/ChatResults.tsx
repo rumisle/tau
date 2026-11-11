@@ -20,6 +20,8 @@ import { unique } from '../../../util/iteratees';
 import { parseSearchResultKey, type SearchResultKey } from '../../../util/keys/searchResultKey';
 import { MEMO_EMPTY_ARRAY } from '../../../util/memo';
 import { throttle } from '../../../util/schedulers';
+import { IS_TAU } from '../../../tau/config'; // tau: chats, no contacts
+import { STRINGS } from '../../../tau/strings'; // tau: see above
 import { renderMessageSummary } from '../../common/helpers/renderMessageText';
 import sortChatIds from '../../common/helpers/sortChatIds';
 
@@ -404,7 +406,8 @@ const ChatResults: FC<OwnProps & StateProps> = ({
                 {lang(shouldShowMoreLocal ? 'ChatListSearchShowLess' : 'ChatListSearchShowMore')}
               </Link>
             )}
-            {lang(isChannelList ? 'SearchResultMyChannels' : 'DialogListSearchSectionDialogs')}
+            {IS_TAU ? STRINGS.SearchChats /* tau: chats, no contacts */
+              : lang(isChannelList ? 'SearchResultMyChannels' : 'DialogListSearchSectionDialogs')}
           </h3>
           {localResults.map((id, index) => {
             if (!shouldShowMoreLocal && index >= LESS_LIST_ITEMS_AMOUNT) {

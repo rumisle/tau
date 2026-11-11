@@ -14,8 +14,10 @@ import { getMessageHtmlId } from '../../global/helpers';
 import { selectTheme } from '../../global/selectors';
 import buildClassName from '../../util/buildClassName';
 import { formatDateTime, secondsToDate } from '../../util/localization/dateFormat';
+import { selectTauSearchHighlight } from '../selectors';
 import { STRINGS } from '../strings';
 import { formatDuration } from './format';
+import { useSearchHighlight } from './searchHighlight';
 
 import useSelector from '../../hooks/data/useSelector';
 import useContextMenuHandlers from '../../hooks/useContextMenuHandlers';
@@ -54,10 +56,12 @@ const TauMessage = ({
 }: OwnProps) => {
   const lang = useLang();
   const theme = useSelector(selectTheme);
+  const searchHighlight = useSelector(selectTauSearchHighlight);
   const ref = useRef<HTMLDivElement>();
   const bottomMarkerRef = useRef<HTMLDivElement>();
   const tau = message.tau!;
 
+  useSearchHighlight(ref, searchHighlight, message.tau);
   useOnIntersect(bottomMarkerRef, message.isTypingDraft ? undefined : observeIntersectionForBottom);
   useShowTransition({
     ref,

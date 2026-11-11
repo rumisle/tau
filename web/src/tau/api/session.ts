@@ -33,7 +33,7 @@ import {
   buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildDraftChat, buildDraftUser, buildMe,
   buildMessage, buildReadState, buildRows, buildSummaryMessage, buildThreadInfo, buildTitle, buildUser, DRAFT_CHAT_ID,
   entryIdOf,
-  lastRowIdOf, messageIdOf,
+  lastRowIdOf, ME_ID, messageIdOf,
 } from './builders';
 import { buildParagraph } from './markdown';
 import { modelErrorReason } from './modelErrors';
@@ -1766,6 +1766,63 @@ export function slotOfChat(chatId: string) {
 // MARK: Servers (src/tau/components/ServersModal.tsx)
 
 export type ServerInfo = { slot: number; origin: string; status: ServerStatus };
+
+// MARK: Search
+
+export type SearchHit = { kind: string; entryId?: number; time: number; text: string; ranges: [number, number][] };
+export type SearchResult = { conversationId: number; score: number; hits: SearchHit[] };
+
+/**
+ * The servers' full-text search (docs/search.md, docs/protocol.md `search`): every server asked, their pages merged by
+ * score, best first; what the user and the model said and its reasoning, not tool output
+ */
+export async function searchConversations(query: string, offset: number, limit: number) {
+  const pages = await Promise.all([...links.values()].filter((link) => link.client && !link.isRemoved)
+    .map((link) => link.client!.request<{ results: SearchResult[]; total: number }>('search', {
+      // Messages only: chats by their titles are found in the list itself (`searchChats`)
+      // `typing`: the last word a prefix from its second letter, as the field is typed in
+      query, offset, limit, typing: true, kinds: ['user', 'assistant', 'reasoning'],
+    }).catch(() => undefined)));
+  const results = pages.flatMap((page) => page?.results ?? [])
+    .filter((result) => {
+      const dialog = dialogs.dialogs.get(result.conversationId);
+      return dialog && isListed(dialog);
+    })
+    .sort((a, b) => b.score - a.score);
+  const total = pages.reduce((sum, page) => sum + (page?.total ?? 0), 0);
+  return { results, total, hasMore: pages.some((page) => (page?.results.length ?? 0) >= limit) };
+}
+
+/** One conversation's matching entries, newest first, its origins' up to its fork included */
+export async function searchConversation(conversationId: number, query: string) {
+  const client = linkOf(conversationId)?.client;
+  if (!client) return [];
+  const { hits } = await client.request<{ hits: { entryId: number; kind: string; time: number }[] }>('search', {
+    query, conversationId, typing: true, kinds: ['user', 'assistant', 'reasoning'],
+  }).catch(() => ({ hits: [] }));
+  return hits;
+}
+
+/** A found entry as a message: the one the chat shows when its replica has it, else its excerpt */
+export function searchMessage(
+  conversationId: number, hit: Pick<SearchHit, 'entryId' | 'time' | 'kind'> & { text?: string },
+) {
+  const each = opened.get(conversationId);
+  const entry = hit.entryId !== undefined ? each?.replica.entries.get(hit.entryId) : undefined;
+  const built = entry && each ? buildRows(entry, contextOf(each))[0] : undefined;
+  // The result list shows its text, the excerpt of what matched; the chat shows its row as ever
+  if (built) return hit.text ? { ...built, content: { ...built.content, text: { text: hit.text } } } : built;
+  const chatId = buildChatId(conversationId);
+  // Its excerpt, which the chat's own row replaces once it loads
+  return {
+    id: messageIdOf(hit.entryId ?? 0),
+    chatId,
+    date: Math.floor(hit.time / 1000),
+    isOutgoing: hit.kind === 'user',
+    senderId: hit.kind === 'user' ? ME_ID : chatId,
+    content: { text: { text: hit.text ?? '' } },
+  } as ApiMessage;
+}
 
 export function servers(): ServerInfo[] {
   return [...links.values()].filter((link) => !link.isRemoved).map((link) => ({
