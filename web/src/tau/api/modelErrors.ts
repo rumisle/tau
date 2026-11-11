@@ -45,3 +45,8 @@ export function modelErrorReason(raw: string) {
   const cleaned = cleanModelError(raw);
   return cleaned.length > 40 ? `${cleaned.slice(0, 39)}…` : cleaned;
 }
+
+/** A compaction's error in words: the provider's, without durable's "Summarization failed:" before it */
+export function compactionError(raw: string) {
+  return cleanModelError(raw).replace(/^summarization failed:\s*/i, '');
+}

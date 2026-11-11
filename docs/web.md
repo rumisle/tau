@@ -158,7 +158,11 @@ web/src/tau/
   Its time is the server's record's start (`tau.compactions`), else when this page first saw it. Then the summary as a
   card on Telegram's service fill (`components/CompactionCard.tsx`), folded with a fade until clicked; its right-click
   menu's Restore Full Context opens a fork draft from before it (`restoreFullContext`), created by its first message.
-  A failure says so once, as a toast.
+  One that ended unused stays as a small note on the service fill after the entry where the chat was then (a row of
+  that entry's, never the chat's last message nor unread): "Compaction not used: the chat moved on", "Compaction
+  failed: 400: prompt is too long", "Nothing to compact". A failure that comes in a live commit while the chat is open
+  says so once, as a toast in words (`compactionError`); one a subscribe's snapshot brings (an open, a reconnect, a
+  reload) stays quiet.
 - **Subagents** are listed in the ⋯ menu (avatar, working for or worked how long, the task); a row, or a subagent's
   card, opens its conversation: sent to Web A unlisted (`openConversation`), its title and work kept up to date.
 - **The page is tau's**: the title "tau" (Web A's `APP_TITLE` default), the iOS icon's τ on pink as favicons, Apple's

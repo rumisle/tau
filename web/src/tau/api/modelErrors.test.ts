@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cleanModelError, modelErrorReason } from './modelErrors';
+import { cleanModelError, compactionError, modelErrorReason } from './modelErrors';
 
 describe('model errors', () => {
   it('reads a provider\'s JSON body as its message, with its status', () => {
@@ -19,5 +19,12 @@ describe('model errors', () => {
     expect(modelErrorReason('fetch failed')).toBe('connection lost');
     expect(modelErrorReason('401 {"error":{"message":"invalid x-api-key"}}')).toBe('401: invalid x-api-key');
     expect(modelErrorReason('x'.repeat(50))).toBe(`${'x'.repeat(39)}…`);
+  });
+});
+
+describe('compactionError', () => {
+  it('reads a failed summary as the provider\'s words, without durable\'s prefix', () => {
+    expect(compactionError('Summarization failed: 400 {"type":"error","error":{"type":"invalid_request_error",'
+      + '"message":"prompt is too long"}}')).toBe('400: prompt is too long');
   });
 });

@@ -1572,6 +1572,7 @@ function updateChatLastMessage<T extends GlobalState>(
   message: ApiMessage,
   force = false,
 ) {
+  if (message.tau?.parts[0]?.type === 'note') return global; // tau: a compaction's note is never the chat's last
   const currentLastMessageId = selectChatLastMessageId(global, chatId);
 
   const threadId = selectThreadIdFromMessage(global, message);

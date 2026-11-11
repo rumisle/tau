@@ -53,7 +53,9 @@ export type ApiTauPart =
   // An error the run ended on, after the server's retries: why, and Retry
   | { type: 'error'; text: string }
   // A compaction's summary, which the model reads instead of what came before: why and when, then the summary
-  | { type: 'compaction'; reason: string; summary: ApiPageBlock[] };
+  | { type: 'compaction'; reason: string; summary: ApiPageBlock[] }
+  // A compaction that ended unused, a small note where the chat was then: moved on, failed, nothing to compact
+  | { type: 'note'; text: string };
 
 export interface ApiTauContent {
   role: 'assistant' | 'notice';

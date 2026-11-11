@@ -104,6 +104,8 @@ const TauMessage = ({
         return <ErrorCard key="error" text={part.text} message={message} />;
       case 'compaction':
         return <CompactionCard key="compaction" part={part} message={message} theme={theme} />;
+      case 'note':
+        return <div key="note" className={styles.note} data-tau-part="note" dir="auto">{part.text}</div>;
     }
   }
 

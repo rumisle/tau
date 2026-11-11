@@ -13,7 +13,7 @@ import { ARCHIVED_FOLDER_ID } from '../../config';
 import { STRINGS } from '../strings';
 import { buildMediaRows, readUserContent } from './attachments';
 import { buildMarkdownBlocks, buildParagraph } from './markdown';
-import { cleanModelError } from './modelErrors';
+import { cleanModelError, compactionError } from './modelErrors';
 
 // The user's own account. Conversation IDs are entry IDs, far below it.
 export const ME_ID = '9000000000';
@@ -147,16 +147,52 @@ export type MessageContext = {
   errorState: (entryId: number) => 'retried' | 'pending' | 'stands';
   // Model errors the server asked past in the run an entry ends
   retriesBefore: (entryId: number) => number;
+  // The note of a compaction that ended unused after this entry, if any
+  compactionNote: (entryId: number) => string | undefined;
 };
+
+// The row of an entry a compaction note takes, after the entry's own
+const NOTE_ROW = ROWS - 2;
+
+/**
+ * What a compaction that ended unused says where the chat was then (docs/compaction.md, iOS's ConversationReplica
+ * notes): by `tau.compactions`' records, the newest per entry
+ */
+export function compactionNotes(records: any[] | undefined) {
+  const notes = new Map<number, string>();
+  for (const record of records ?? []) {
+    if (record.after === undefined) continue;
+    const text = record.state === 'stale' ? STRINGS.CompactionStale
+      : record.state === 'failed' ? `${STRINGS.CompactionFailedNote}: ${compactionError(String(record.error ?? ''))}`
+        .replace(/: $/, '')
+        : record.state === 'empty' ? STRINGS.CompactionEmpty : undefined;
+    if (text) notes.set(record.after, text);
+  }
+  return notes;
+}
+
+/** A compaction's note after an entry, as a row of the entry's */
+export function buildCompactionNote(entry: Entry, text: string): ApiMessage {
+  const chatId = buildChatId(entry.conversationId);
+  const timestamp = (entry.model as any[] | undefined)?.[0]?.timestamp ?? Date.now();
+  return {
+    id: messageIdOf(entry.id, NOTE_ROW),
+    chatId,
+    date: Math.floor(timestamp / 1000),
+    isOutgoing: false,
+    senderId: chatId,
+    content: { text: { text } },
+    tau: { role: 'notice', parts: [{ type: 'note', text }] },
+  };
+}
 
 const SUBAGENT_REPORT = /^<subagent name="([^"]*)" conversation="(\d+)" status="(\w+)">([\s\S]*)<\/subagent>$/;
 
 /** An entry's messages, in order: none for those the chat does not show, several for an album */
 export function buildRows(entry: Entry, context: MessageContext): ApiMessage[] {
-  const media = userMediaRows(entry);
-  if (media) return media;
-  const message = buildMessage(entry, context);
-  return message ? [message] : [];
+  const rows = userMediaRows(entry) ?? [buildMessage(entry, context)].filter((row) => row !== undefined);
+  const note = context.compactionNote(entry.id);
+  return note ? [...rows, buildCompactionNote(entry, note)] : rows;
 }
 
 /** A user message's rows when it has photos or files: the media, the caption with them */

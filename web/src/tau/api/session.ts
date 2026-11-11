@@ -30,13 +30,12 @@ import { STRINGS } from '../strings';
 import { AnswerWatch } from './answers';
 import { keptUploadsOf, readUserContent } from './attachments';
 import {
-  buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildDraftChat, buildDraftUser, buildMe,
-  buildMessage, buildReadState, buildRows, buildSummaryMessage, buildThreadInfo, buildTitle, buildUser, DRAFT_CHAT_ID,
-  entryIdOf,
-  lastRowIdOf, ME_ID, messageIdOf,
+  buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildCompactionNote, buildDraftChat,
+  buildDraftUser, buildMe, buildMessage, buildReadState, buildRows, buildSummaryMessage, buildThreadInfo, buildTitle,
+  buildUser, compactionNotes, DRAFT_CHAT_ID, entryIdOf, lastRowIdOf, ME_ID, messageIdOf,
 } from './builders';
 import { buildParagraph } from './markdown';
-import { modelErrorReason } from './modelErrors';
+import { compactionError, modelErrorReason } from './modelErrors';
 import { buildOutgoingRows, outgoingRowCount, prepareUploads } from './outgoing';
 import { buildQueue, isInQueue } from './queue';
 import { mappedSocket, readServers, slotOf, writeServers } from './servers';
@@ -79,9 +78,12 @@ type Opened = {
   // When its run began (its first input's time) and the compaction now running, for the title's time
   runSince?: number;
   compactingSince?: number;
-  // The compaction failure last seen (`pi.live.compactionFailure`): a new one says so once, as a toast
+  // The compaction failure last seen (`pi.live.compactionFailure`): one that comes in a live commit says so once, as a
+  // toast; one a subscribe's snapshot brings (an open, a reconnect, a reload) stays quiet
   seenFailure?: number;
-  hasSeenFailures?: boolean;
+  isSubscribing?: boolean;
+  // The notes of compactions that ended unused, by the entry they follow, as last shown
+  notes: Map<number, string>;
   // Model errors the server may still ask past: not shown until the run ends on one
   pendingErrors?: Set<number>;
   // Generations answered so far, in the draft's ID: the next generation of a run streams as a draft of its own
@@ -451,6 +453,7 @@ function open(conversationId: number) {
     seen: new Set(),
     results: new Map(),
     callEntries: new Map(),
+    notes: new Map(),
     answered: 0,
   };
   const current = each;
@@ -466,7 +469,12 @@ async function syncReplica(each: Opened) {
   const link = linkOf(replica.id)!;
   const { client, outbox } = link;
   if (!client) return;
-  await replica.sync(client, { limit: PAGE });
+  each.isSubscribing = true;
+  try {
+    await replica.sync(client, { limit: PAGE });
+  } finally {
+    each.isSubscribing = false;
+  }
   each.isSynced = true;
   const unsettled = new Set<number>();
   for (const record of replica.submissions.values()) {
@@ -501,7 +509,7 @@ async function load(each: Opened) {
     const entry = replica.entries.get(id);
     const rows = entry ? buildRows(entry, contextOf(each)) : [];
     for (const message of rows) {
-      last = message;
+      if (message.tau?.parts[0]?.type !== 'note') last = message;
       send({
         '@type': 'updateMessage', chatId, id: message.id, message, isFull: true,
       });
@@ -525,6 +533,7 @@ function applyReplica(each: Opened) {
   if (each.isLoaded) {
     for (const entry of fresh) emitEntry(each, entry);
   }
+  updateNotes(each, fresh);
   if (fresh.some((entry) => entry.kind === 'pi.assistant')) endDraft(each);
   for (const entry of fresh) {
     if (entry.kind === 'pi.assistant' && (entry.model as any[])?.[0]?.stopReason === 'error') {
@@ -538,6 +547,31 @@ function applyReplica(each: Opened) {
   emitChange(each.replica.id);
 }
 
+/** Compaction notes that came or changed, on entries already shown (a fresh entry brings its own) */
+function updateNotes(each: Opened, fresh: Entry[]) {
+  const notes = compactionNotes((each.replica.docs['tau.compactions'] as { items?: any[] } | undefined)?.items);
+  const freshIds = new Set(fresh.map((entry) => entry.id));
+  const chatId = buildChatId(each.replica.id);
+  for (const [entryId, text] of notes) {
+    const was = each.notes.get(entryId);
+    if (was === text) continue;
+    const entry = each.replica.entries.get(entryId);
+    if (!each.isLoaded || !entry || freshIds.has(entryId)) continue;
+    const message = buildCompactionNote(entry, text);
+    send(was === undefined
+      ? { '@type': 'newMessage', chatId, id: message.id, message }
+      : { '@type': 'updateMessage', chatId, id: message.id, message, isFull: true });
+    // Web A counts a new message unread; a note is not one, so the chat's read state goes again
+    const dialog = dialogs.dialogs.get(each.replica.id);
+    if (dialog) {
+      send({
+        '@type': 'updateThreadReadState', chatId, threadId: MAIN_THREAD_ID, readState: readStateOf(dialog),
+      });
+    }
+  }
+  each.notes = notes;
+}
+
 /** When its run and its compaction began, as the title counts them: told to the title when either changes */
 function updateTimes(each: Opened) {
   const live = each.replica.docs['pi.live'] as Record<string, any> | undefined;
@@ -546,13 +580,12 @@ function updateTimes(each: Opened) {
     ? (first?.model as any[] | undefined)?.[0]?.timestamp ?? each.runSince ?? Date.now() : undefined;
   const compactingSince = compactionOf(each)?.since;
   const failure = live?.compactionFailure as { taskId: number; error?: string } | undefined;
-  // One from before the chat opened stays quiet
-  if (!each.hasSeenFailures) {
-    each.hasSeenFailures = true;
+  if (each.isSubscribing) {
     each.seenFailure = failure?.taskId;
   } else if (failure && failure.taskId !== each.seenFailure) {
     each.seenFailure = failure.taskId;
-    getActions().showNotification({ message: `${STRINGS.CompactionFailed} ${failure.error ?? ''}`.trim() });
+    const error = compactionError(failure.error ?? '');
+    getActions().showNotification({ message: `${STRINGS.CompactionFailed} ${error}`.trim() });
   }
   if (runSince === each.runSince && compactingSince === each.compactingSince) return;
   each.runSince = runSince;
@@ -638,7 +671,8 @@ function emitEntry(each: Opened, entry: Entry) {
     }
   });
   if (localIds.length > rows.length) send({ '@type': 'deleteMessages', ids: localIds.slice(rows.length), chatId });
-  const lastRow = rows.at(-1)!;
+  // The entry's own message, not a compaction's note after it
+  const lastRow = rows.findLast((row) => row.tau?.parts[0]?.type !== 'note') ?? rows.at(-1)!;
   // At once, not after Web A's 350 ms for an open chat: a typing draft is numbered after the chat's last message
   send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage: lastRow });
 }
@@ -781,6 +815,9 @@ function contextOf(each: Opened): MessageContext {
     },
     isBusy: (conversationId) => Boolean(dialogs.dialogs.get(conversationId)?.busy),
     errorState: (entryId) => errorStateOf(each, entryId),
+    compactionNote: (entryId) => compactionNotes(
+      (each.replica.docs['tau.compactions'] as { items?: any[] } | undefined)?.items,
+    ).get(entryId),
     retriesBefore: (entryId) => {
       let retries = 0;
       for (const entry of each.replica.ordered().reverse()) {

@@ -2,7 +2,8 @@
 // naming the model and thinking level that answered, runs `$ <command>` through bash, and starts
 // a background subagent for `& <name> [fork] [model=…] [thinking=…]: <task>`, waits before answering `~<seconds> <text>`,
 // fails as an overloaded provider would `!overloaded <times> <text>` before answering, fails for good `!fatal <text>`,
-// and fails for good once `!flaky <text>` (then answers, as a continue after it finds).
+// and fails for good once `!flaky <text>` (then answers, as a continue after it finds); `!compact-fail` anywhere in a chat
+// fails its compactions' summaries.
 // `!read <path>` reads a file with the read tool (an image comes back as one); `!send <path> [<path>…]` sends files to
 // the user (src/send-file.ts). `!code <script>` runs a code mode script (docs/codemode.md), `!code @<path>` the one in a file. `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
 // streams. `!burst <text>` answers as the echo does but all at once, its thinking and text in one go, as a provider that
@@ -62,7 +63,12 @@ export function devProvider(options: { tokensPerSecond?: number; cacheTtl?: numb
 		if (followUp && context.messages.some((message) => message.role === "user" && userText(message.content).includes("!no-follow-up"))) {
 			return fauxAssistantMessage([fauxToolCall("read", { path: "README.md" })], { stopReason: "toolUse" });
 		}
-		if (followUp || context.messages.some((message) => (message.role as string) === "system" && JSON.stringify(message).includes("summarization assistant"))) {
+		const summarizing = followUp || context.messages.some((message) => (message.role as string) === "system" && JSON.stringify(message).includes("summarization assistant"));
+		// `!compact-fail` anywhere in the chat: its summary fails as a provider's error would, for a compaction failure.
+		if (summarizing && context.messages.some((message) => message.role === "user" && userText(message.content).includes("!compact-fail"))) {
+			return fauxAssistantMessage([], { stopReason: "error", errorMessage: '400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}' });
+		}
+		if (summarizing) {
 			await new Promise((resolve) => setTimeout(resolve, 3000));
 			const turns = context.messages.filter((message) => message.role === "user").length;
 			return fauxAssistantMessage([fauxText(`## Goal\nTry tau's compaction with the dev model.\n\n## Progress\n- ${turns} messages summarized\n- The echo model answered each one\n\n## Next Steps\n1. Keep chatting after the summary`)]);

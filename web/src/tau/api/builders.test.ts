@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { MessageContext } from './builders';
 
-import { buildMessage, ME_ID } from './builders';
+import { buildMessage, compactionNotes, ME_ID } from './builders';
 
 const at = 1_700_000_000_000;
 const context = (
@@ -17,6 +17,7 @@ const context = (
   isBusy: () => busy,
   errorState: () => errorState,
   retriesBefore: () => retries,
+  compactionNote: () => undefined,
 });
 const entry = (id: number, kind: string, message: object): Entry => ({
   id, kind, conversationId: 7, model: [{ timestamp: at + 2500, ...message }],
@@ -137,5 +138,22 @@ describe('buildMessage', () => {
     });
     expect(buildMessage(call('edit', edits), context(result('done', { diff: ' 1 x\n-2 a = 1\n+2 a = 2' })))!
       .tau!.parts[0]).toMatchObject({ summary: '/w/x.ts  +1 −1', diff: ' 1 x\n-2 a = 1\n+2 a = 2' });
+  });
+});
+
+describe('compactionNotes', () => {
+  it('says what became of the compactions not used, after the entry where the chat was then', () => {
+    const notes = compactionNotes([
+      { taskId: 1, state: 'placed', entryId: 9 },
+      { taskId: 2, state: 'stale', after: 12 },
+      { taskId: 3, state: 'failed', after: 15, error: 'Summarization failed: 529 {"error":{"message":"Overloaded"}}' },
+      { taskId: 4, state: 'empty', after: 20 },
+      { taskId: 5, state: 'running' },
+    ]);
+    expect([...notes]).toEqual([
+      [12, 'Compaction not used: the chat moved on'],
+      [15, 'Compaction failed: 529: Overloaded'],
+      [20, 'Nothing to compact'],
+    ]);
   });
 });
