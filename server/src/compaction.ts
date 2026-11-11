@@ -10,6 +10,12 @@
 // kept, places the summary entry, and owns the task. Anything that does not give a summary (no cached context to
 // follow, a reply with a tool call or no text, an error that persists) declines to decide, and durable's own
 // summarization runs: the fallback is the default.
+//
+// One thing tau declines outright: a background threshold compaction while another compaction's summary waits in
+// `pi.inbox` for the run's next boundary. Durable starts a background one whenever a request is prepared over the
+// threshold and no compaction task is listed in `pi.live.compactions`; a summary that is done but not yet placed is no
+// longer listed there, so each retry of a request (which prepares it again) would start another summary of the same
+// context, as conversation 89824 did during a 429.
 import type { Context } from "@earendil-works/chord/context";
 import type { AssistantMessage, Message, Models, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
 import { isRetryableAssistantError, retryDelayMs } from "@earendil-works/pi-ai/utils/retry";
@@ -22,6 +28,8 @@ import {
 	type Harness,
 	type HookRegistration,
 	hook,
+	InboxDoc,
+	LiveDoc,
 	ProviderDoc,
 	UsageDoc,
 } from "@earendil-works/pi-durable";
@@ -123,6 +131,7 @@ export type CompactionUsage = { conversationId: ConversationId; time: number; mo
 export class FollowUpCompaction {
 	#harness?: Harness;
 	readonly #listeners = new Set<(record: CompactionUsage) => void>();
+	readonly #declined = new Set<(conversationId: ConversationId, taskId: number) => void>();
 	readonly #retry: () => { baseDelayMs: number; maxAgentDelayMs?: number };
 	readonly #stream: () => SimpleStreamOptions;
 	readonly #now: () => number;
@@ -143,14 +152,39 @@ export class FollowUpCompaction {
 		return () => this.#listeners.delete(listener);
 	}
 
+	/** A compaction declined because another's summary waits to be placed: it did nothing (src/compactions.ts drops it). */
+	onDeclined(listener: (conversationId: ConversationId, taskId: number) => void): () => void {
+		this.#declined.add(listener);
+		return () => this.#declined.delete(listener);
+	}
+
 	readonly hook: HookRegistration = hook(CompactionTask, {
 		beforeCompact: async (compaction, api, context) => {
 			// The compaction task asking: what its summary costs is its own (src/compactions.ts).
 			const taskId = (api as { taskId?: number }).taskId;
+			if (compaction.reason === "threshold" && (await this.#summaryWaiting(api.conversationId, taskId, context))) {
+				if (taskId !== undefined) for (const listener of this.#declined) listener(api.conversationId, taskId);
+				return { decline: true };
+			}
 			const summary = await this.#summarize(api.conversationId, api.models, compaction.firstKept, compaction.instructions, context, taskId);
 			return summary === undefined ? undefined : { summary };
 		},
 	});
+
+	/**
+	 * Whether another compaction's summary waits in the conversation's inbox, while `taskId` is a background compaction.
+	 * A blocking one is not declined: its run waits for it, and it places its summary itself, ahead of the waiting one
+	 * (which the next boundary then settles stale).
+	 */
+	async #summaryWaiting(id: ConversationId, taskId: number | undefined, context: Context): Promise<boolean> {
+		const harness = this.#harness;
+		if (harness === undefined) return false;
+		const live = await harness.snapshot(LiveDoc, id, context);
+		const status = live?.compactions?.find((each) => each.taskId === taskId);
+		if (status === undefined || status.blocking) return false;
+		const inbox = await harness.snapshot(InboxDoc, id, context);
+		return (inbox?.items ?? []).some((item) => item.mode === "write" && item.entry.kind === "pi.compaction");
+	}
 
 	async #summarize(id: ConversationId, models: Models, firstKept: EntryId, instructions: string | undefined, context: Context, taskId?: number): Promise<string | undefined> {
 		const harness = this.#harness;

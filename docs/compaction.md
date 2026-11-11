@@ -49,6 +49,17 @@ message cannot follow unanswered tool calls, and what comes before is still the 
 no provider session yet (nothing is cached), a reply that calls a tool, stops for length or has no text, an error
 after two retries of those that may pass, or a request that throws. The default is the fallback.
 
+**One summary at a time.** Durable starts a background compaction whenever it prepares a request over the threshold
+and lists no compaction task in `pi.live.compactions`. A summary that is done but waits in `pi.inbox` for the run's
+next boundary is no longer listed, and a provider retry prepares the request again (a 429 or 529 backoff), so each
+retry would start another summary of the same context (conversation 89824: a second one started 54 s after the first
+and failed on the same 429; on the dev model both were placed). tau's `beforeCompact` declines a background threshold
+compaction while another compaction's summary waits in the inbox; it did nothing, so its record is dropped from
+`tau.compactions` rather than shown as "Nothing to compact". A blocking one (its run waits) is not declined: it places
+its own summary, and the waiting one settles stale at the next boundary. The waiting summary still goes in only at a
+boundary, which durable has after tool results, at the final answer and when a run fails, not before a retry: a run
+that retries until it fails places it only then.
+
 **Usage.** The follow-up's usage goes into the conversation's `pi.usage`, as durable records its summaries, and into
 the Usage ledger as the model `tau/compaction` (`server/src/search/usage.ts`).
 

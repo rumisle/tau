@@ -287,6 +287,30 @@ describe("follow-up compaction", () => {
 		await client.close();
 	});
 
+	test("does not start at the threshold again while a summary waits for the run's next boundary", async () => {
+		const client = await TauClient.connect(server.url);
+		await client.request("hello", { protocol: 1 });
+		await client.request("settings.configure", { compaction: { ratio: 0.3 } });
+		try {
+			const replica = await conversation(client);
+			// Just under the threshold (60k tokens of the dev model's 200k)...
+			await chat(client, replica, `!quiet big ${"lorem ipsum dolor sit amet ".repeat(8_000)}`, "w-big", 60_000);
+			assert.equal(records(replica).length, 0);
+			const before = usages.length;
+			// ...and over it with the next message, which a provider fails twice (retried after 2 s, then 4 s): the summary
+			// (3 s) is ready during the backoff, and the second retry prepares the request again while it waits in pi.inbox.
+			await chat(client, replica, `!overloaded 2 more ${"lorem ipsum dolor sit amet ".repeat(400)}`, "w-retried", 60_000);
+			await until(replica, () => settled(replica) && records(replica).every((record) => !["running", "waiting"].includes(record.state)), 30_000);
+			assert.deepEqual(records(replica).map((record) => [record.reason, record.state]), [["threshold", "placed"]]);
+			assert.equal(usages.length - before, 1, "one summary asked for");
+			assert.equal(ofKind(replica, "pi.compaction").length, 1);
+			await chat(client, replica, "next", "w-next");
+		} finally {
+			await client.request("settings.configure", { compaction: { ratio: 0.9 } });
+			await client.close();
+		}
+	});
+
 	test("starts on its own at the threshold set, and the conversation goes on", async () => {
 		const client = await TauClient.connect(server.url);
 		await client.request("hello", { protocol: 1 });

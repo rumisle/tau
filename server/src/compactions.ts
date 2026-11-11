@@ -75,6 +75,9 @@ export class CompactionLog {
 	readonly #unsubscribe: () => void;
 	readonly #unsubscribeUsage: () => void;
 	readonly #listeners = new Set<(id: ConversationId, items: CompactionRecord[]) => void>();
+	/** Tasks declined because another's summary waited (src/compaction.ts): not shown, as they did nothing. */
+	readonly #declined = new Set<number>();
+	readonly #unsubscribeDeclined: () => void;
 	#closed = false;
 
 	constructor(harness: Harness, storage: Storage, followUp: FollowUpCompaction) {
@@ -120,6 +123,10 @@ export class CompactionLog {
 				const item = record.taskId === undefined ? items.findLast((each) => each.state === "running") : items.find((each) => each.taskId === record.taskId);
 				if (item !== undefined) item.cost = (item.cost ?? 0) + record.usage.cost.total;
 			});
+		});
+		this.#unsubscribeDeclined = followUp.onDeclined((id, taskId) => {
+			this.#declined.add(taskId);
+			this.#write(id, (items) => this.#forget(items));
 		});
 		// A record is written after the commit that changed what it says: a crash between the two left it running.
 		void this.#reconcileOpen();
@@ -199,6 +206,14 @@ export class CompactionLog {
 		this.#closed = true;
 		this.#unsubscribe();
 		this.#unsubscribeUsage();
+		this.#unsubscribeDeclined();
+	}
+
+	/** Takes out the records of declined tasks. */
+	#forget(items: CompactionRecord[]): void {
+		for (let index = items.length - 1; index >= 0; index--) {
+			if (this.#declined.has(items[index]!.taskId)) items.splice(index, 1);
+		}
 	}
 
 	/** Conversations with a placed summary still to measure the next answer's context for. */
@@ -255,6 +270,7 @@ export class CompactionLog {
 		}
 		if (items.some((item) => item.state === "placed" && item.tokensAfter === undefined)) this.#measuring.add(id);
 		else this.#measuring.delete(id);
+		this.#forget(items);
 		if (items.length > KEPT) items.splice(0, items.length - KEPT);
 	}
 
