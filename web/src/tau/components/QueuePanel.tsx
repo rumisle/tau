@@ -26,6 +26,7 @@ import Menu from '../../components/ui/Menu';
 import MenuItem, { MenuItemSubtitle, MenuItemTitle } from '../../components/ui/MenuItem';
 import MenuSeparator from '../../components/ui/MenuSeparator';
 import NestedMenuItem from '../../components/ui/NestedMenuItem';
+import CompactionPill from './CompactionPill';
 
 type OwnProps = {
   chatId: string;
@@ -33,7 +34,17 @@ type OwnProps = {
 
 const titleOf = (queued: QueuedMessage) => (queued.mode === 'followUp' ? STRINGS.QueueFollowUp : STRINGS.QueueSteer);
 
+/** Above the field: the compaction running, as a pill, and the queue */
 const QueuePanel = ({ chatId }: OwnProps) => {
+  return (
+    <>
+      <CompactionPill chatId={chatId} />
+      <QueueBar chatId={chatId} />
+    </>
+  );
+};
+
+const QueueBar = ({ chatId }: OwnProps) => {
   const conversationId = Number(chatId);
   const [queue, setQueue] = useState<QueuedMessage[]>(() => queueOf(conversationId));
   const ref = useRef<HTMLDivElement>();

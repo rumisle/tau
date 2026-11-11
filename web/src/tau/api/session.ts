@@ -78,6 +78,9 @@ type Opened = {
   // When its run began (its first input's time) and the compaction now running, for the title's time
   runSince?: number;
   compactingSince?: number;
+  // The compaction failure last seen (`pi.live.compactionFailure`): a new one says so once, as a toast
+  seenFailure?: number;
+  hasSeenFailures?: boolean;
   // Generations answered so far, in the draft's ID: the next generation of a run streams as a draft of its own
   answered: number;
 };
@@ -533,6 +536,15 @@ function updateTimes(each: Opened) {
   const runSince = live?.run
     ? (first?.model as any[] | undefined)?.[0]?.timestamp ?? each.runSince ?? Date.now() : undefined;
   const compactingSince = compactionOf(each)?.since;
+  const failure = live?.compactionFailure as { taskId: number; error?: string } | undefined;
+  // One from before the chat opened stays quiet
+  if (!each.hasSeenFailures) {
+    each.hasSeenFailures = true;
+    each.seenFailure = failure?.taskId;
+  } else if (failure && failure.taskId !== each.seenFailure) {
+    each.seenFailure = failure.taskId;
+    getActions().showNotification({ message: `${STRINGS.CompactionFailed} ${failure.error ?? ''}`.trim() });
+  }
   if (runSince === each.runSince && compactingSince === each.compactingSince) return;
   each.runSince = runSince;
   each.compactingSince = compactingSince;
@@ -541,11 +553,17 @@ function updateTimes(each: Opened) {
 
 const firstSeen = new Map<number, number>();
 
+/** When the compaction running in a chat began, if one runs */
+export function compactionSince(chatId: string) {
+  const each = opened.get(Number(chatId));
+  return each && compactionOf(each)?.since;
+}
+
 /**
  * The compaction running in a chat, from the server's records (`tau.compactions`, docs/compaction.md) or, without
  * them, from durable's live status, timed from when this page first saw it
  */
-export function compactionOf(each: Opened): { taskId: number; since: number } | undefined {
+function compactionOf(each: Opened): { taskId: number; since: number } | undefined {
   const records = (each.replica.docs['tau.compactions'] as { items?: any[] } | undefined)?.items;
   const running = records?.find((record) => record.state === 'running');
   if (running) return { taskId: running.taskId, since: running.startedAt };
@@ -1270,9 +1288,11 @@ export function isDraftChat(chatId: string) {
 /** A draft's messages, newest first, as a history page: a fork's start with the original's rows up to the fork */
 export function draftHistory(chatId: string, offsetId: number | undefined, addOffset: number, limit: number) {
   const draft = chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId);
-  if (!draft?.requestId) return { messages: [], count: 0 };
+  if (!draft || (!draft.requestId && draft.forkOf === undefined)) return { messages: [], count: 0 };
   draft.isLoaded = true;
-  const messages = bubblesOf(chatId, outboxOfDraft(draft).itemsOfCreate(draft.requestId)).reverse();
+  // A fork with nothing sent yet (Restore Full Context's copy) shows the original's rows alone
+  const messages = draft.requestId
+    ? bubblesOf(chatId, outboxOfDraft(draft).itemsOfCreate(draft.requestId)).reverse() : [];
   const parent = draft.forkOf === undefined ? undefined : opened.get(draft.forkOf);
   if (parent && draft.forkAt !== undefined) {
     const inherited = parent.replica.ordered().filter((entry) => entry.id <= draft.forkAt!)
@@ -1296,12 +1316,38 @@ function sendToDraft(chatId: string, text: string, uploads?: Upload[]) {
   // New Chat: named after its first answer unless renamed; the server's default model, as iOS's New Chat without a pick
   outbox.enqueueCreate({
     requestId: draft.requestId,
-    ...(draft.isTitleManual ? { title: draft.title, autoTitle: false } : { autoTitle: true }),
+    // A fork (Restore Full Context's copy) keeps the chat's title; New Chat is named after its first answer
+    ...(draft.forkOf !== undefined ? { title: draft.title, forkOf: draft.forkOf, forkAt: draft.forkAt }
+      : draft.isTitleManual ? { title: draft.title, autoTitle: false } : { autoTitle: true }),
     agent: draft.agent,
   });
   outbox.enqueue({
     text, createRequestId: draft.requestId, mode: 'steer', uploads,
   });
+}
+
+/**
+ * Restore Full Context on a compaction's summary (iOS's `restoreFullContext`): a copy of the chat from before the
+ * summary, opened over it, with all the model read then; created by its first message, as any draft, so leaving it
+ * unsent leaves nothing behind
+ */
+export function restoreFullContext(chatId: string, messageId: number) {
+  const conversationId = Number(chatId);
+  const parent = opened.get(conversationId);
+  const entryId = entryIdOf(messageId);
+  const at = Math.max(...[...parent?.replica.entries.keys() ?? []].filter((id) => id < entryId));
+  if (!parent || !Number.isFinite(at)) return;
+  const dialog = dialogs.dialogs.get(conversationId);
+  const draft: DraftChat = {
+    chatId: String(Number(DRAFT_CHAT_ID) - ++lastForkChat),
+    title: dialog ? buildTitle(dialog) : STRINGS.NewChat,
+    slot: slotOf(conversationId),
+    forkOf: conversationId,
+    forkAt: at,
+  };
+  draftChats.set(draft.chatId, draft);
+  showDraftChat(draft);
+  window.setTimeout(() => getActions().showNotification({ message: STRINGS.RestoredFullContext }), 500);
 }
 
 /**

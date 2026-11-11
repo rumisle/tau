@@ -11,7 +11,7 @@ import { getMessageHtmlId } from '../../global/helpers';
 import { copyTextToClipboard } from '../../util/clipboard';
 import { isLocalMessageId } from '../../util/keys/messageKey';
 import {
-  deleteOutgoing, isDraftChat, outgoingForMessage, resendOutgoing,
+  deleteOutgoing, isDraftChat, outgoingForMessage, resendOutgoing, restoreFullContext,
 } from '../api/session';
 import { STRINGS } from '../strings';
 
@@ -19,7 +19,7 @@ import useLang from '../../hooks/useLang';
 import useLastCallback from '../../hooks/useLastCallback';
 
 import Menu from '../../components/ui/Menu';
-import MenuItem from '../../components/ui/MenuItem';
+import MenuItem, { MenuItemSubtitle, MenuItemTitle } from '../../components/ui/MenuItem';
 import MenuSeparator from '../../components/ui/MenuSeparator';
 
 type OwnProps = {
@@ -105,6 +105,19 @@ const MessageMenu = ({
         <MenuItem icon="copy" onClick={() => copy(selected)}>{lang('ContextCopySelected')}</MenuItem>
       ) : text && (
         <MenuItem icon="copy" onClick={() => copy(text)}>{lang('Copy')}</MenuItem>
+      )}
+      {message.tau?.parts.some((part) => part.type === 'compaction') && !isDraftChat(message.chatId) && (
+        // As an edit of an earlier message: the chat goes on in a copy from before the summary, with all the model saw
+        <MenuItem
+          icon="reload"
+          onClick={() => {
+            restoreFullContext(message.chatId, message.id);
+            onClose();
+          }}
+        >
+          <MenuItemTitle>{STRINGS.RestoreFullContext}</MenuItemTitle>
+          <MenuItemSubtitle>{STRINGS.ContinuesInACopy}</MenuItemSubtitle>
+        </MenuItem>
       )}
       {canEdit && (
         <MenuItem

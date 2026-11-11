@@ -1,5 +1,5 @@
 // The chat's ⋯ menu (ios/Tau/Chat/ChatController.swift openChatMenu): the model (its picker, searchable) and thinking
-// level, shown at once and answering the next message, and Compact Context.
+// level, shown at once and answering the next message (Compact Context: compaction.spec.ts).
 import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures.ts';
@@ -58,18 +58,6 @@ test('the menu picks the thinking level and the model; the next answer comes fro
   await app.getByRole('button', { name: 'More options' }).click();
   await expect(menu.locator('.MenuItem').filter({ hasText: 'Model' })).toContainText('Dev parrot');
   await expect(menu.locator('.MenuItem').filter({ hasText: 'Thinking' })).toContainText('High');
-});
-
-test('Compact Context compacts the conversation', async ({ app, api }) => {
-  const id = await api.chat('Menu compact', ['one', 'two']);
-  await openChat(app, 'Menu compact');
-  await app.getByRole('button', { name: 'More options' }).click();
-  await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Compact Context' }).click();
-  await expect(app.locator('.Notification').filter({ hasText: 'Compacting the context' })).toBeVisible();
-  await expect.poll(async () => {
-    const { entries } = await api.client.request('conversation.history', { conversationId: id, limit: 50 });
-    return entries.some((entry: { kind: string }) => entry.kind === 'pi.compaction');
-  }).toBe(true);
 });
 
 test('the model picker lists the recent models first', async ({ app, api }) => {

@@ -10,7 +10,9 @@ import {
   summarizeUsage, thinkingLevels, thinkingTitle,
   usageOf,
 } from '../api/agent';
-import { openConversation, slotOfChat, subagentsOf } from '../api/session';
+import {
+  compactionSince, openConversation, slotOfChat, subagentsOf,
+} from '../api/session';
 import { STRINGS } from '../strings';
 import { formatDuration, formatElapsed } from './format';
 
@@ -150,7 +152,7 @@ const ChatMenu = ({
               className="tau-subagent-row"
               customIcon={(
                 <Avatar
-                  className="icon"
+                  className="tau-subagent-avatar"
                   size="tiny"
                   peer={{ isCustomPeer: true, title: each.name, peerColorId: (index + 2) % 7 }}
                 />
@@ -178,16 +180,20 @@ const ChatMenu = ({
       >
         {STRINGS.MenuRename}
       </MenuItem>
-      <MenuItem
-        icon="replace"
-        onClick={() => {
-          void compact(chatId).catch(() => undefined);
-          getActions().showNotification({ message: STRINGS.Compacting });
-          onClose();
-        }}
-      >
-        {STRINGS.MenuCompact}
-      </MenuItem>
+      {compactionSince(chatId) !== undefined ? (
+        // Its pill over the chat shows it working; the chat goes on meanwhile
+        <MenuItem icon="replace" disabled>{STRINGS.MenuCompactingContext}</MenuItem>
+      ) : (
+        <MenuItem
+          icon="replace"
+          onClick={() => {
+            void compact(chatId).catch(() => undefined);
+            onClose();
+          }}
+        >
+          {STRINGS.MenuCompact}
+        </MenuItem>
+      )}
     </Menu>
   );
 };

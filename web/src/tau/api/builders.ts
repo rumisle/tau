@@ -244,6 +244,21 @@ export function buildMessage(entry: Entry, context: MessageContext): ApiMessage 
     case 'pi.tool-result':
     case 'pi.system':
       return undefined;
+    case 'pi.compaction': {
+      const summary = compactionSummary(userText((entry.model as any[] | undefined)?.[0]?.content ?? ''));
+      const blocks = summary ? buildMarkdownBlocks(summary) : [buildParagraph(STRINGS.NoSummary)];
+      return {
+        ...base,
+        isOutgoing: false,
+        senderId: chatId,
+        content: { richMessage: { blocks } },
+        tau: {
+          role: 'notice',
+          parts: [{ type: 'compaction', reason: String((entry.data as any)?.reason ?? 'manual'), summary: blocks }],
+          copyText: summary,
+        },
+      };
+    }
     default:
       // Compactions, resets, files and subagents a script started: a placeholder per kind
       return {
@@ -254,6 +269,13 @@ export function buildMessage(entry: Entry, context: MessageContext): ApiMessage 
         tau: { role: 'notice', parts: [{ type: 'text', blocks: [buildParagraph(`[${entry.kind}]`)] }] },
       };
   }
+}
+
+/** The summary the model reads, without durable's wrapper (its SUMMARY_PREFIX and the <summary> tags) */
+export function compactionSummary(text: string) {
+  const start = text.indexOf('<summary>\n');
+  const body = start >= 0 ? text.slice(start + '<summary>\n'.length) : text;
+  return body.replace(/\n?<\/summary>\s*$/, '').trim();
 }
 
 /** An answer's text as the model wrote it, Markdown and all: what Copy copies */

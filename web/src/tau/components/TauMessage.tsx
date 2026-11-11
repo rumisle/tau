@@ -23,6 +23,7 @@ import useLang from '../../hooks/useLang';
 import useShowTransition from '../../hooks/useShowTransition';
 
 import RichContent from '../../components/iv/RichContent';
+import CompactionCard from './CompactionCard';
 import MessageMenu from './MessageMenu';
 import SubagentCard from './SubagentCard';
 import ToolCard from './ToolCard';
@@ -93,6 +94,8 @@ const TauMessage = ({
         return <SubagentCard key={index} part={part} theme={theme} message={message} />;
       case 'waiting':
         return <WaitingTau key="waiting" />;
+      case 'compaction':
+        return <CompactionCard key="compaction" part={part} message={message} theme={theme} />;
     }
   }
 

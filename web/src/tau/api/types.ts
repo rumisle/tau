@@ -45,7 +45,9 @@ export type ApiTauPart =
     answer?: ApiPageBlock[];
   }
   // Where the answer will be, while the agent works and has written nothing yet
-  | { type: 'waiting' };
+  | { type: 'waiting' }
+  // A compaction's summary, which the model reads instead of what came before: why and when, then the summary
+  | { type: 'compaction'; reason: string; summary: ApiPageBlock[] };
 
 export interface ApiTauContent {
   role: 'assistant' | 'notice';

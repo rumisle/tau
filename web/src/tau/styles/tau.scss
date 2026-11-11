@@ -142,3 +142,54 @@
 .Modal.tau-servers .modal-content {
   max-height: calc(100vh - 9rem);
 }
+
+// A compaction at work (components/CompactionPill.tsx): Telegram's service pill over the end of the chat, above the
+// field, the τ in it at 18 px
+.tau-compaction-pill {
+  pointer-events: none;
+
+  position: absolute;
+  z-index: 1;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+
+  display: flex;
+  gap: 0.3125rem;
+  align-items: center;
+
+  height: 1.75rem;
+  padding: 0 0.75rem 0 0.5rem;
+  border-radius: 0.875rem;
+
+  font-size: 0.8125rem;
+  font-weight: var(--font-weight-medium);
+  color: #fff;
+  white-space: nowrap;
+
+  background-color: var(--action-message-bg);
+
+  [data-tau-part="waiting"] {
+    --tau-accent: #fff;
+
+    transform: scale(0.75);
+
+    width: 1.5rem;
+    height: 1.5rem;
+    margin: 0 -0.1875rem;
+    padding: 0;
+
+    animation: none;
+  }
+
+  .tau-compaction-time {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+  }
+}
+
+// A subagent's avatar in the ⋯ menu's Subagents list, where a menu item's icon is
+.tau-subagent-avatar {
+  flex-shrink: 0;
+  margin-inline-end: 1rem;
+}

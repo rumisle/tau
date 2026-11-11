@@ -150,6 +150,15 @@ web/src/tau/
   the τ, streaming, calls and reconnects until a newer message is sent. A draft's first frame does not scroll to its
   end, and an answer that outgrew the view leaves it where it is. A chat opened mid-run opens at its end. The reading
   position's other parts (where a chat opens, turns, the return stack) apply in their desktop form.
+- **Compaction shows as it goes** (iOS's service rows): while one runs, a pill over the end of the chat above the
+  field (`components/CompactionPill.tsx`, in the queue's place, so Web A's composer has no other hook) with the τ and
+  its time, the title "compacting for 12s" and the ⋯ menu's Compacting Context… disabled; the chat goes on meanwhile.
+  Its time is the server's record's start (`tau.compactions`), else when this page first saw it. Then the summary as a
+  card on Telegram's service fill (`components/CompactionCard.tsx`), folded with a fade until clicked; its right-click
+  menu's Restore Full Context opens a fork draft from before it (`restoreFullContext`), created by its first message.
+  A failure says so once, as a toast.
+- **Subagents** are listed in the ⋯ menu (avatar, working for or worked how long, the task); a row, or a subagent's
+  card, opens its conversation: sent to Web A unlisted (`openConversation`), its title and work kept up to date.
 - **An answer is a system notification** (docs/notifications.md "On the web"): tau's, decided on the chat list when a
   run ends, in place of Web A's per message; Settings > Notifications is tau's (`components/NotificationSettings.tsx`).
 - **Data and Storage is tau's** (`components/DataSettings.tsx`, in place of Web A's auto-download settings): the bytes
