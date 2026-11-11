@@ -179,8 +179,10 @@ web/src/tau/
   failed: 400: prompt is too long", "Nothing to compact". A failure that comes in a live commit while the chat is open
   says so once, as a toast in words (`compactionError`); one a subscribe's snapshot brings (an open, a reconnect, a
   reload) stays quiet.
-- **Subagents** are listed in the ⋯ menu (avatar, working for or worked how long, the task); a row, or a subagent's
-  card, opens its conversation: sent to Web A unlisted (`openConversation`), its title and work kept up to date.
+- **Subagents** are listed in the ⋯ menu, the working ones first, then the most recently active (avatar, working for
+  or worked how long, working in tau's accent as Telegram's typing; the task is in the conversation's title); a row,
+  or a subagent's card, opens its conversation: sent to Web A unlisted (`openConversation`), its title and work kept
+  up to date.
 - **The page is tau's**: the title "tau" (Web A's `APP_TITLE` default), the iOS icon's τ on pink as favicons, Apple's
   touch icon and the manifest's (`public/tau`, made by `scripts/web/icons.mjs`; `tau.webmanifest`), with Web A's
   unread swap (`favicon` to `favicon-unread`) kept.

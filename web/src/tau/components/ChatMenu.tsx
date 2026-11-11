@@ -36,23 +36,35 @@ type OwnProps = {
   onClose: () => void;
 };
 
-/** A subagent's row: what it does and for how long, then its task (iOS joins them with middle dots) */
-function subagentStatus({
-  isBusy, since, workedMs, task,
-}: ReturnType<typeof subagentsOf>[number]) {
-  const status = isBusy
-    ? (since !== undefined ? `${STRINGS.Working} ${STRINGS.ElapsedFor} ${formatElapsed(Date.now() - since)}`
-      : STRINGS.Working)
-    // A run shorter than a tenth of a second (an answer without tools) says so, not 0.0s
-    : workedMs !== undefined ? `${STRINGS.Worked} ${workedMs < 100 ? STRINGS.UnderATenth : formatDuration(workedMs)}`
-      : STRINGS.Idle;
-  return task ? `${status}, ${task}` : status;
+/**
+ * A subagent's row: what it does and for how long, in the accent color while it works as Telegram's typing; not its
+ * task, which its conversation's title has (a menu row would cut it to a few words)
+ */
+function subagentStatus({ isBusy, since, workedMs }: ReturnType<typeof subagentsOf>[number]) {
+  if (isBusy) {
+    return (
+      <span className="tau-accent">
+        {since !== undefined ? `${STRINGS.Working} ${STRINGS.ElapsedFor} ${formatElapsed(Date.now() - since)}`
+          : STRINGS.Working}
+      </span>
+    );
+  }
+  // A run shorter than a tenth of a second (an answer without tools) says so, not 0.0s
+  return workedMs !== undefined ? `${STRINGS.Worked} ${workedMs < 100 ? STRINGS.UnderATenth : formatDuration(workedMs)}`
+    : STRINGS.Idle;
 }
 
+/** "2 working, 3 subagents", the working ones in the accent color */
 function subagentsSummary(subagents: ReturnType<typeof subagentsOf>) {
   const working = subagents.filter((each) => each.isBusy).length;
-  if (working) return `${working} ${STRINGS.Working}, ${subagents.length} ${STRINGS.InAll}`;
-  return subagents.length === 1 ? `1 ${STRINGS.Subagent}` : `${subagents.length} ${STRINGS.Subagents}`;
+  const count = subagents.length === 1 ? `1 ${STRINGS.Subagent}` : `${subagents.length} ${STRINGS.Subagents}`;
+  if (!working) return count;
+  return (
+    <>
+      <span className="tau-accent">{`${working} ${STRINGS.Working}`}</span>
+      {`, ${count}`}
+    </>
+  );
 }
 
 const TICK_MS = 1000;
@@ -187,7 +199,7 @@ const ChatMenu = ({
       {subagents.length > 0 && (
         <NestedMenuItem
           icon="bots"
-          submenu={subagents.map((each, index) => (
+          submenu={subagents.map((each) => (
             <MenuItem
               key={each.conversationId}
               className="tau-subagent-row"
@@ -195,7 +207,7 @@ const ChatMenu = ({
                 <Avatar
                   className="tau-subagent-avatar"
                   size="tiny"
-                  peer={{ isCustomPeer: true, title: each.name, peerColorId: (index + 2) % 7 }}
+                  peer={{ isCustomPeer: true, title: each.name, peerColorId: each.conversationId % 7 }}
                 />
               )}
               onClick={() => {

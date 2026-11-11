@@ -219,3 +219,8 @@
 #MiddleColumn button[aria-label="Jump to Date"] {
   display: none !important;
 }
+
+// Text in tau's accent within Web A's quiet text: a subagent at work in the ⋯ menu, as Telegram's typing
+.tau-accent {
+  color: var(--tau-accent);
+}

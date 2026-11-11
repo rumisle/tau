@@ -1283,7 +1283,8 @@ export function subagentsOf(chatId: string): SubagentRow[] {
   }
   return [...dialogs.dialogs.values()]
     .filter((dialog) => dialog.conversation.owner?.conversationId === parentId)
-    .sort((a, b) => a.conversation.id - b.conversation.id)
+    // The working ones first, then the most recently active
+    .sort((a, b) => Number(b.busy) - Number(a.busy) || (b.last?.timestamp ?? 0) - (a.last?.timestamp ?? 0))
     .map((dialog) => {
       const [name, ...task] = (dialog.title ?? '').split(': ');
       const since = calls.get(name);

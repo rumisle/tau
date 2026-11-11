@@ -56,7 +56,6 @@ export const STRINGS = {
   Worked: 'worked',
   UnderATenth: 'under 0.1s',
   Idle: 'idle',
-  InAll: 'in all',
   SubagentsWorking: 'subagents working',
   NotificationsAnswers: 'Answers',
   Thinking: 'thinking',

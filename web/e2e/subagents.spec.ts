@@ -71,18 +71,23 @@ test('the ⋯ menu lists the chat\'s subagents, what each does and for how long;
 
   await app.getByRole('button', { name: 'More options' }).click();
   const item = app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Subagents' });
-  await expect(item).toContainText('1 working, 2 in all');
+  await expect(item).toContainText('1 working, 2 subagents');
+  // The working count in the accent color, as Telegram's typing
+  await expect(item.locator('.tau-accent')).toHaveText('1 working');
+  await expect(item.locator('.tau-accent')).toHaveCSS('color', 'rgb(235, 108, 164)');
   await item.hover();
   const rows = app.locator('.tau-subagent-row');
   await expect(rows).toHaveCount(2);
-  await expect(rows.nth(0)).toContainText('done-one');
+  // The working one first, then the most recently active; no task (its title has it)
+  await expect(rows.nth(0)).toContainText(/busy-one.*working( for \d+s)?$/);
+  await expect(rows.nth(0)).not.toContainText('until');
+  await expect(rows.nth(1)).toContainText('done-one');
   // Its run took milliseconds (the dev model answers at once): not 0.0s
-  await expect(rows.nth(0)).toContainText(/worked (under 0.1s|[\d.]+s), echo finished/);
-  await expect(rows.nth(0)).not.toContainText('0.0s');
-  await expect(rows.nth(1)).toContainText(/busy-one.*working( for \d+s)?, \$ until/);
+  await expect(rows.nth(1)).toContainText(/worked (under 0.1s|[\d.]+s)$/);
+  await expect(rows.nth(1)).not.toContainText('0.0s');
   // Its time keeps going while the list is open
-  await expect(rows.nth(1)).toContainText(/working for [2-9]s/);
-  await rows.nth(1).click();
+  await expect(rows.nth(0)).toContainText(/working for [2-9]s/);
+  await rows.nth(0).click();
   // Its own conversation, working, not in the chat list
   await expect(app.locator('.MiddleHeader')).toContainText('busy-one');
   await expect(app.locator('.MiddleHeader')).toContainText('working');
