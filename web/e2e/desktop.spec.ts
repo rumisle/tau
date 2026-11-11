@@ -14,6 +14,8 @@ async function openChat(app: Page, title: string) {
 test('a double-click on a bubble selects a word, with no reply', async ({ app, api }) => {
   await api.chat('Desktop keys', ['first message']);
   await openChat(app, 'Desktop keys');
+  // Web A focuses the field as a chat opens, which would take the selection if it came after the double-click
+  await expect(app.locator(field)).toBeFocused();
   await app.locator('.Message.own').filter({ hasText: 'first message' }).locator('.text-content').dblclick();
   expect((await app.evaluate(() => window.getSelection()?.toString()))?.trim()).toMatch(/^(first|message)$/);
   await expect(app.locator('.ComposerEmbeddedMessage')).toHaveCount(0);

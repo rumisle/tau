@@ -19,8 +19,8 @@ test('Data and Storage: drafts and unsent messages here, the bytes of each serve
   await app.locator('#editable-message-text').click();
   await app.keyboard.type('a draft kept here');
   // Another chat: Web A saves the draft as the chat changes
-  await api.chat('Other', ['hello']);
-  await listItem(app, 'Other').click();
+  await api.chat('Other for storage', ['hello']);
+  await listItem(app, 'Other for storage').click();
   await expect(listItem(app, 'Storage')).toContainText('Draft:');
 
   await openDataAndStorage(app);

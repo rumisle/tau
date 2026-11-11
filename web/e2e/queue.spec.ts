@@ -77,7 +77,11 @@ test('Edit brings a queued message back to the field; Send Now stops the agent a
   await queueAction(app, 'Edit');
   await expect(app.locator(field)).toHaveText('to change');
   await expect(panel(app)).toHaveCount(0);
-  await app.locator(field).fill('');
+  // Cleared as a hand does, through the editor: fill() set the field's DOM under it, which the editor, still putting
+  // the restored text in under a load, could write over ("to changeright now" was sent)
+  await app.locator(field).press('ControlOrMeta+a');
+  await app.locator(field).press('Backspace');
+  await expect(app.locator(field)).toHaveText('');
 
   await type(app, 'right now');
   await expect(panel(app)).toContainText('right now');

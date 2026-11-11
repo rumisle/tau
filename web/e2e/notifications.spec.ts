@@ -76,9 +76,9 @@ test('the open chat notifies only while the window is in the background', async 
 });
 
 test('what came before the page loaded does not notify', async ({ app, api }) => {
-  await api.chat('Before', ['hello']);
+  await api.chat('Before notifying', ['hello']);
   await spyNotifications(app);
-  await expect(listItem(app, 'Before')).toBeVisible();
+  await expect(listItem(app, 'Before notifying')).toBeVisible();
   const later = await api.chat('After', ['hello']);
   // A chat new since the page loaded tells of its answer; the one before stays quiet
   await expect.poll(() => shown(app)).toEqual([expect.objectContaining({ title: 'After' })]);

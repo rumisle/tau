@@ -61,7 +61,7 @@ test('Compact Context: the pill while it runs, then the summary\'s card; Restore
 
 test('a compaction that fails while the chat is open says so once, as a toast in words; its note stays, quiet on reopen and reload', async ({ app, api }) => {
   await api.chat('Compact fail', ['!compact-fail one two', 'three four']);
-  await api.chat('Other', ['hello']);
+  await api.chat('Away from compacting', ['hello']);
   await openChat(app, 'Compact fail');
   await app.getByRole('button', { name: 'More options' }).click();
   await menuItem(app, 'Compact Context').click();
@@ -76,7 +76,7 @@ test('a compaction that fails while the chat is open says so once, as a toast in
   await expect(row.getByText('1', { exact: true })).toHaveCount(0);
   await expect(toast).toHaveCount(0, { timeout: 10_000 });
   // Away and back: the snapshot has the failure, and the chat stays quiet
-  await openChat(app, 'Other');
+  await openChat(app, 'Away from compacting');
   await openChat(app, 'Compact fail');
   await expect(note).toBeVisible();
   await app.reload();

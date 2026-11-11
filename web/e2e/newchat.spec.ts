@@ -3,8 +3,8 @@
 import { expect, SMOKE, test } from './fixtures.ts';
 
 test('New Chat is a draft; its first message makes the chat, opened with the answer', SMOKE, async ({ app, api }) => {
-  await api.chat('Before', ['hello']);
-  await expect(app.locator('.chat-list').getByText('Before', { exact: true })).toBeVisible();
+  await api.chat('Before the draft', ['hello']);
+  await expect(app.locator('.chat-list').getByText('Before the draft', { exact: true })).toBeVisible();
   await app.locator('.chat-list').hover();
   await app.getByRole('button', { name: 'New Message' }).click();
   await expect(app.locator('.MiddleHeader').getByText('New Chat')).toBeVisible();

@@ -52,7 +52,7 @@ async function settled(app: Page) {
 
 test('left right after sending, reopened after a long answer: the user\'s message at the top, the answer below', async ({ app, api }) => {
   const id = await api.chat('Sent and left', ['hello']);
-  await api.chat('Elsewhere', ['hello']);
+  await api.chat('Elsewhere 1', ['hello']);
   await openChat(app, 'Sent and left');
   const gate = api.gate();
   await app.locator(field).click();
@@ -60,7 +60,7 @@ test('left right after sending, reopened after a long answer: the user\'s messag
   await app.keyboard.press('Enter');
   await expect(app.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   await expect.poll(() => topOf(app, gate.command)).toBeLessThan(60);
-  await openChat(app, 'Elsewhere');
+  await openChat(app, 'Elsewhere 1');
   gate.open();
   await api.send(id, '!doc 6');
   await openChat(app, 'Sent and left');
@@ -74,7 +74,7 @@ test('left right after sending, reopened after a long answer: the user\'s messag
 
 test('left half way down an answer, reopened after more came: the last lines seen near the top', async ({ app, api }) => {
   const id = await api.chat('Half read', ['hello']);
-  await api.chat('Elsewhere', ['hello']);
+  await api.chat('Elsewhere 2', ['hello']);
   await openChat(app, 'Half read');
   // Sent here: at the top, the long answer grows below the view, unseen but for its start
   await app.locator(field).click();
@@ -87,7 +87,7 @@ test('left half way down an answer, reopened after more came: the last lines see
   await settled(app);
   const left = await list(app).evaluate((element) => element.scrollTop);
   const height = await list(app).evaluate((element) => element.clientHeight);
-  await openChat(app, 'Elsewhere');
+  await openChat(app, 'Elsewhere 2');
   await api.send(id, 'more after that');
   await openChat(app, 'Half read');
   await settled(app);
@@ -99,7 +99,7 @@ test('left half way down an answer, reopened after more came: the last lines see
 
 test('scrolled back and left, reopened after more came: exactly where it was, with the down button', async ({ app, api }) => {
   const id = await api.chat('Scrolled back', ['one', 'two', '!doc 4', 'three']);
-  await api.chat('Elsewhere', ['hello']);
+  await api.chat('Elsewhere 3', ['hello']);
   await openChat(app, 'Scrolled back');
   await settled(app);
   await list(app).evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
@@ -107,7 +107,7 @@ test('scrolled back and left, reopened after more came: exactly where it was, wi
   await scrollBy(app, -900);
   await settled(app);
   const before = await topOf(app, 'You said: two', '[data-tau-row="assistant"]');
-  await openChat(app, 'Elsewhere');
+  await openChat(app, 'Elsewhere 3');
   await api.send(id, 'four');
   await openChat(app, 'Scrolled back');
   await settled(app);
