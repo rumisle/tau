@@ -142,3 +142,14 @@ test('desktop copying: a code block\'s copy button on hover; selection across an
   await card.locator('pre').click();
   await expect(card).toHaveAttribute('data-tau-expanded');
 });
+
+test('a chat that comes while the app syncs leaves no syncing spinner, and avatars have their colors', async ({ app, api }) => {
+  // At once, as the page loads: Web A's sync had nothing left to load and waited 30 s for itself
+  await api.chat('While syncing', ['hello']);
+  const row = app.locator('.chat-list .ListItem').filter({ hasText: 'While syncing' });
+  await expect(row).toBeVisible();
+  await expect(app.locator('#LeftMainHeader .SearchInput .Loading')).toHaveCount(0);
+  // Telegram's peer colors, which the sync loads: not the black of none
+  await expect(row.locator('.Avatar .inner')).toHaveCSS('background-image', /linear-gradient/);
+  await expect(row.locator('.Avatar .inner')).not.toHaveCSS('background-image', /rgb\(0, 0, 0\)\)$/);
+});

@@ -47,6 +47,7 @@ import { isLocalMessageId } from '../../../util/keys/messageKey';
 import { debounce, pause, throttle } from '../../../util/schedulers';
 import { extractCurrentThemeParams } from '../../../util/themeStyle';
 import { callApi } from '../../../api/gramjs';
+import { IS_TAU } from '../../../tau/config'; // tau: the chat list in one batch
 import {
   getIsSavedDialog,
   isChatArchived,
@@ -604,6 +605,10 @@ addActionHandler('loadAllChats', async (global, actions, payload): Promise<void>
     setGlobal(global);
     global = getGlobal();
   }
+
+  // tau: the list was whole already (tau's comes in one batch, which Main may have asked for first): `sync` waits for
+  // this to say it is done, and showed Web A's syncing spinner, without peer colors, until its 30-second recovery
+  if (IS_TAU && !isCallbackFired) await whenFirstBatchDone?.(); // tau: see above
 });
 
 addActionHandler('loadPinnedDialogs', async (global, actions, payload): Promise<void> => {
