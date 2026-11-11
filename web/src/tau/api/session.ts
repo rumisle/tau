@@ -23,6 +23,9 @@ import {
 } from '../auth';
 import { whenLinkTokenStored } from '../boot';
 import { draftsOf } from '../db/drafts';
+import {
+  readConversation, readDialogs, readServerId, resetCache, saveConversation, saveDialogs,
+} from '../db/entries';
 import { openOutboxState } from '../db/outbox';
 import { deleteOutboxFile, readOutboxFile, saveOutboxFile } from '../db/outboxFiles';
 import { isLooking, notifyAnswer } from '../notifications';
@@ -41,8 +44,11 @@ import { buildQueue, isInQueue } from './queue';
 import { mappedSocket, readServers, slotOf, writeServers } from './servers';
 import { countSocket } from './usage';
 
-// The PoC reads a transcript whole, in pages of the server's largest
-const PAGE = 500;
+// An opened chat's newest entries, and each older page as the chat scrolls up to it (docs/chat-open.md)
+const PAGE = 100;
+const OLDER_PAGE = 200;
+// What is kept on disk is written this long after it last changed
+const SAVE_DELAY_MS = 1000;
 // Web A drops a typing status a few seconds after it came, as Telegram's clients send theirs again every few seconds
 const TYPING_REFRESH_MS = 4000;
 const RECONNECT_MS = [500, 1000, 2000, 5000];
@@ -62,6 +68,11 @@ type Opened = {
   replica: ConversationReplica;
   ready: Promise<void>;
   isLoaded: boolean;
+  // The newest entry Web A has as a message: one after it is new, one before it an older page's
+  shownThrough: number;
+  // An older page on its way
+  loadingOlder?: Promise<void>;
+  saveTimer?: number;
   // Its docs are current: subscribed on this connection
   isSynced: boolean;
   // Entries already turned into messages or folded into one (a tool result into its call)
@@ -99,6 +110,9 @@ type ServerLink = {
   token?: string;
   client?: TauClient;
   dialogs: DialogList;
+  // The database this browser's cache of the server is for (db/entries.ts)
+  serverId?: string;
+  saveDialogsTimer?: number;
   outbox: Outbox;
   status: ServerStatus;
   attempt: number;
@@ -146,8 +160,32 @@ export async function start(callback: (update: ApiUpdate) => void) {
   const others = await readServers();
   await addLink({ slot: 0, origin: serverOrigin() });
   for (const config of others) await addLink(config);
+  startFromCache();
   for (const config of others) void connect(links.get(config.slot)!);
   await connect(links.get(0)!);
+}
+
+/**
+ * The chat list this browser kept of this origin's server: Web A starts with it at once, connecting meanwhile, as
+ * Telegram starts with what it has (docs/chat-open.md). A refused token still brings the connect screen.
+ */
+function startFromCache() {
+  const first = links.get(0)!;
+  if (!first.serverId || first.dialogs.dialogs.size === 0) return;
+  wasConnected = true;
+  send({ '@type': 'updateApiReady' });
+  authorize();
+  send({ '@type': 'updateCurrentUser', currentUser: buildMe(), currentUserFullInfo: {} });
+  send({ '@type': 'updateConnectionState', connectionState: 'connectionStateConnecting' });
+}
+
+// Web A's auth state is ready: its main screen shows
+let isAuthorized = false;
+
+function authorize() {
+  if (isAuthorized) return;
+  isAuthorized = true;
+  send({ '@type': 'updateAuthorizationState', authorizationState: 'authorizationStateReady' });
 }
 
 /** A server's link: its token, its outbox as the last page left it, its chat list */
@@ -158,11 +196,14 @@ async function addLink(config: ServerConfig) {
     const blob = await readOutboxFile(upload.key);
     if (blob) blobUrls.set(upload.key, URL.createObjectURL(blob));
   }
+  const serverId = await readServerId(config.origin);
+  const cached = serverId ? await readDialogs(config.origin, config.slot) : undefined;
   const link: ServerLink = {
     slot: config.slot,
     origin: config.origin,
     token: await readToken(config.origin),
-    dialogs: new DialogList(),
+    dialogs: cached ? DialogList.restore(cached.dialogs, cached.version) : new DialogList(),
+    serverId,
     status: 'connecting',
     attempt: 0,
     outbox: undefined as unknown as Outbox,
@@ -184,6 +225,7 @@ async function addLink(config: ServerConfig) {
     },
   });
   link.dialogs.onChange((changed) => {
+    scheduleDialogsSave(link);
     for (const dialog of changed) applyDialog(dialog);
     for (const answer of answers.changed(changed, Boolean(link.isSyncing))) {
       notifyAnswer(answer, buildChatId(answer.conversationId));
@@ -191,6 +233,15 @@ async function addLink(config: ServerConfig) {
   });
   links.set(config.slot, link);
   return link;
+}
+
+/** A server's chat list on disk, with its version, a moment after it last changed */
+function scheduleDialogsSave(link: ServerLink) {
+  window.clearTimeout(link.saveDialogsTimer);
+  link.saveDialogsTimer = window.setTimeout(() => {
+    if (!link.serverId || link.isRemoved) return;
+    void saveDialogs(link.origin, [...link.dialogs.dialogs.values()], link.dialogs.version);
+  }, SAVE_DELAY_MS);
 }
 
 function linkOf(conversationId: number) {
@@ -239,6 +290,7 @@ function setAuthStatus(status: AuthStatus) {
   for (const listener of authListeners) listener(status);
   if (status === 'needsToken' || status === 'wrongToken') {
     // Web A's auth screen, where tau's connect screen is (src/tau/components/Connect.tsx)
+    isAuthorized = false;
     send({ '@type': 'updateAuthorizationState', authorizationState: 'authorizationStateWaitPhoneNumber' });
   }
 }
@@ -268,6 +320,19 @@ async function connect(link: ServerLink) {
   if (link.isRemoved) {
     void client.close();
     return;
+  }
+  const serverId = String(client.hello?.serverId);
+  if (link.serverId !== serverId) {
+    // Another database: what was kept is of other conversations, by the same IDs. Kept for the new one from now on;
+    // a page that showed the old one starts again.
+    await resetCache(link.origin, serverId);
+    if (link.serverId !== undefined && wasConnected) {
+      window.location.reload();
+      return;
+    }
+    link.serverId = serverId;
+    link.dialogs.dialogs.clear();
+    link.dialogs.version = undefined;
   }
   link.client = client;
   link.attempt = 0;
@@ -302,9 +367,10 @@ async function connect(link: ServerLink) {
     if (!wasConnected) {
       wasConnected = true;
       send({ '@type': 'updateApiReady' });
-      send({ '@type': 'updateAuthorizationState', authorizationState: 'authorizationStateReady' });
+      authorize();
       send({ '@type': 'updateCurrentUser', currentUser: buildMe(), currentUserFullInfo: {} });
     }
+    authorize();
     setAuthStatus('ready');
     // Web A syncs (`loadAllChats`, then `fetchChats`) once connected and authorized
     send({ '@type': 'updateConnectionState', connectionState: 'connectionStateReady' });
@@ -449,6 +515,7 @@ function open(conversationId: number) {
     replica,
     ready: Promise.resolve(),
     isLoaded: false,
+    shownThrough: 0,
     isSynced: false,
     seen: new Set(),
     results: new Map(),
@@ -476,6 +543,7 @@ async function syncReplica(each: Opened) {
     each.isSubscribing = false;
   }
   each.isSynced = true;
+  dropBeforeGap(each);
   const unsettled = new Set<number>();
   for (const record of replica.submissions.values()) {
     if (record.status === 'queued' || record.status === 'placed') unsettled.add(record.id as number);
@@ -484,15 +552,80 @@ async function syncReplica(each: Opened) {
   outbox.refreshSettled(replica.id, unsettled);
 }
 
+/**
+ * Opens a chat with what this browser has of it, without the network (docs/chat-open.md): its cached entries are its
+ * messages at once, and the subscribe brings what came after them. With nothing cached, the subscribe's newest page.
+ */
 async function load(each: Opened) {
   const { replica } = each;
   const link = linkOf(replica.id)!;
+  const cached = await readConversation(link.origin, replica.id);
+  if (cached?.entries.length && replica.entries.size === 0) {
+    for (const entry of cached.entries) replica.entries.set(entry.id, entry);
+    replica.hasOlder = cached.hasOlder;
+    applyReplica(each);
+  }
+  if (replica.entries.size > 0) {
+    show(each);
+    // Now if connected; else once it is, as every opened chat
+    if (link.client) void syncReplica(each);
+    return;
+  }
   // A server not connected yet: its chats load once it is
   while (!link.client) await new Promise((resolve) => window.setTimeout(resolve, RECONNECT_MS[0]));
   await syncReplica(each);
-  while (replica.hasOlder) await replica.loadOlder(link.client, PAGE);
-  while (replica.holes.length > 0) await replica.fillHole(link.client, PAGE);
+  show(each);
+}
+
+/**
+ * More missing than a subscribe brings (its `gap`): what was kept from before goes, here and in Web A, rather than show
+ * a transcript with a hole in it; older pages come as the chat scrolls up to them (iOS's subscribe does the same)
+ */
+function dropBeforeGap(each: Opened) {
+  const { replica } = each;
+  const gap = replica.holes.at(-1);
+  replica.holes.length = 0;
+  if (!gap) return;
+  const chatId = buildChatId(replica.id);
+  const removed: number[] = [];
+  for (const entry of replica.ordered()) {
+    if (entry.id > gap.after) break;
+    if (each.isLoaded) removed.push(...buildRows(entry, contextOf(each)).map((message) => message.id));
+    replica.entries.delete(entry.id);
+    each.seen.delete(entry.id);
+  }
+  replica.hasOlder = true;
+  if (removed.length) send({ '@type': 'deleteMessages', ids: removed, chatId });
+  scheduleSave(each);
+}
+
+/** An older page, once at a time: Web A scrolled up to the oldest entry here */
+function loadOlder(each: Opened) {
+  const { client } = linkOf(each.replica.id)!;
+  if (!client || !each.replica.hasOlder) return Promise.resolve();
+  each.loadingOlder ??= each.replica.loadOlder(client, OLDER_PAGE)
+    .catch(() => undefined)
+    .finally(() => {
+      each.loadingOlder = undefined;
+    });
+  return each.loadingOlder;
+}
+
+/** A chat's newest entries on disk a moment after they last changed */
+function scheduleSave(each: Opened) {
+  window.clearTimeout(each.saveTimer);
+  each.saveTimer = window.setTimeout(() => {
+    const link = linkOf(each.replica.id);
+    if (!link?.serverId) return;
+    void saveConversation(link.origin, each.replica.id, each.replica.ordered(), each.replica.hasOlder);
+  }, SAVE_DELAY_MS);
+}
+
+/** Its entries are Web A's messages from now on: what Web A kept of the chat is brought up to date */
+function show(each: Opened) {
+  const { replica } = each;
   each.isLoaded = true;
+  each.shownThrough = replica.maxId;
   // Web A keeps a message it has over the history's: what stood for entries as the Dialog's summary, and what its own
   // cache kept from an earlier visit (a tool card before its result), is replaced by the entry's message, or removed
   // when the entry has none (a tool's result, which shows in its call's card). The newest page covers what the cache
@@ -531,8 +664,14 @@ function applyReplica(each: Opened) {
   });
   if (users.length > 0) linkOf(each.replica.id)?.outbox.matchPlacements(each.replica.id, users);
   if (each.isLoaded) {
-    for (const entry of fresh) emitEntry(each, entry);
+    // New ones; an older page's are Web A's to ask for (fetchHistory)
+    for (const entry of fresh) {
+      if (entry.id <= each.shownThrough) continue;
+      emitEntry(each, entry);
+    }
+    each.shownThrough = Math.max(each.shownThrough, each.replica.maxId);
   }
+  if (fresh.length) scheduleSave(each);
   updateNotes(each, fresh);
   if (fresh.some((entry) => entry.kind === 'pi.assistant')) endDraft(each);
   for (const entry of fresh) {
@@ -879,14 +1018,26 @@ export async function fetchHistory(
 ) {
   const each = open(conversationId);
   await each.ready;
-  const messages = each.replica.ordered()
-    .flatMap((entry) => buildRows(entry, contextOf(each)))
-    .reverse();
-  messages.unshift(...outgoingOf(conversationId).reverse());
-  let first = offsetId ? messages.findIndex((message) => message.id < offsetId) : 0;
-  if (first < 0) first = messages.length;
-  first = Math.max(0, first + addOffset);
-  return { messages: messages.slice(first, first + limit), count: messages.length };
+  for (;;) {
+    const messages = each.replica.ordered()
+      .flatMap((entry) => buildRows(entry, contextOf(each)))
+      .reverse();
+    messages.unshift(...outgoingOf(conversationId).reverse());
+    let first = offsetId ? messages.findIndex((message) => message.id < offsetId) : 0;
+    if (first < 0) first = messages.length;
+    first = Math.max(0, first + addOffset);
+    // Past the oldest entry here: the page before it, from the server
+    const hasMore = each.replica.hasOlder && Boolean(linkOf(conversationId)?.client);
+    if (first + limit <= messages.length || !hasMore) {
+      return { messages: messages.slice(first, first + limit), count: messages.length };
+    }
+    const before = each.replica.entries.size;
+    await loadOlder(each);
+    if (each.replica.entries.size === before && !each.replica.hasOlder) continue;
+    if (each.replica.entries.size === before) {
+      return { messages: messages.slice(first, first + limit), count: messages.length };
+    }
+  }
 }
 
 /** Telegram's typing dots for chats with a run going, their own or a subagent's at any depth */

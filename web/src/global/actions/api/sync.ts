@@ -13,6 +13,7 @@ import {
 } from '../../../util/iteratees';
 import { finishWebLogin } from '../../../util/webLogin';
 import { callApi, reconnectApi } from '../../../api/gramjs';
+import { IS_TAU } from '../../../tau/config'; // tau: sync from the cache
 import { getIsSavedDialog } from '../../helpers';
 import {
   addActionHandler, getActions, getGlobal, setGlobal,
@@ -461,7 +462,8 @@ addCallback((global: GlobalState) => {
     return;
   }
 
-  if (connectionState === 'connectionStateReady' && auth.state === 'authorizationStateReady') {
+  if ((connectionState === 'connectionStateReady' || IS_TAU) // tau: also from the cache, while it connects
+    && auth.state === 'authorizationStateReady') {
     getActions().sync();
   }
 

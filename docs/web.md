@@ -186,7 +186,16 @@ web/src/tau/
 - **Data and Storage is tau's** (`components/DataSettings.tsx`, in place of Web A's auto-download settings): the bytes
   of unsent messages (the outboxes and their files in IndexedDB) and drafts (localStorage), and Network Usage, the
   socket's frames per server since Reset Statistics (`api/usage.ts`, one count: a browser does not say whether it is on
-  Wi-Fi). Chat history has no copy in the browser yet, so no per-chat sizes or Clear Cache.
+  Wi-Fi), with Chat History (the entry cache) and Clear Cache, which drops the chats' entries, not the list.
+- **Chats open at once from what the browser has** (docs/chat-open.md, docs/network.md; `db/entries.ts`, iOS's
+  EntryCache): each server's chat list with its version, and each opened chat's newest 300 entries, in IndexedDB a
+  second after they change, by the server's own conversation IDs. A page loaded with a list kept starts with it, its
+  header saying "connecting" (Web A syncs its list while it connects: two `tau:` edits); a chat with entries kept
+  opens with them, and its subscribe (`after` its newest) brings what came since as new messages; with none kept, the
+  newest 100. More missing than that (a `gap`) drops what was kept, here and in Web A, rather than show a hole; older
+  pages (200) come from the server as Web A scrolls up to the oldest entry (`fetchHistory`). The list subscribes with
+  `since` its version. Another database (`hello.serverId`) drops everything kept, and a page that showed it reloads.
+  Docs (`pi.live`, `tau.compactions`) are never kept: a compaction's note shows once the chat is subscribed.
 - **The chat's ⋯ menu is tau's** (`components/ChatMenu.tsx`, in Web A's header menu, with its nested submenus): the
   model, in a picker (`components/ModelPicker.tsx`: Web A's searchable picker in a modal of its own root, recent models
   first, Enter takes the first match), the thinking level (`api/agent.ts`: shown at once, sent in order with the chat's

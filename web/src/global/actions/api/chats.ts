@@ -576,7 +576,8 @@ addActionHandler('loadAllChats', async (global, actions, payload): Promise<void>
 
     global = getGlobal();
 
-    if (global.connectionState !== 'connectionStateReady' || global.auth.state !== 'authorizationStateReady') {
+    if ((global.connectionState !== 'connectionStateReady' && !IS_TAU) // tau: also from the cache, while it connects
+      || global.auth.state !== 'authorizationStateReady') {
       return;
     }
 

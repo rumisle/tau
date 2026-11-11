@@ -39,3 +39,29 @@ test('Data and Storage: drafts and unsent messages here, the bytes of each serve
   await expect(row(host)).toContainText('Sent Zero KB, received Zero KB');
   await expect(content).toContainText('Since ');
 });
+
+test('Chat History is what the opened chats keep here; Clear Cache drops it', async ({ app, api }) => {
+  await api.chat('History', ['keep this one']);
+  await listItem(app, 'History').click();
+  const answer = app.locator('[data-tau-row="assistant"]').filter({ hasText: 'You said: keep this one' });
+  await expect(answer).toBeVisible();
+  // Kept a moment after the chat loaded
+  await expect.poll(() => app.evaluate(() => new Promise<number>((done) => {
+    const request = indexedDB.open('tau-cache');
+    request.onsuccess = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('chats')) return done(0);
+      const count = db.transaction('chats').objectStore('chats').count();
+      count.onsuccess = () => done(count.result);
+    };
+  }))).toBeGreaterThan(2);
+  await openDataAndStorage(app);
+  const content = app.locator('.settings-content');
+  const row = (name: string) => content.locator('.ListItem').filter({ hasText: name });
+  await expect(row('Chat History')).not.toContainText('Zero KB');
+  await row('Clear Cache').click();
+  await app.locator('.confirm-dialog-button').filter({ hasText: /^Clear / }).click();
+  await expect(app.locator('.Notification')).toContainText('cleared');
+  await expect(row('Chat History')).toContainText('Zero KB');
+  await expect(row('Clear Cache')).toContainText('Zero KB');
+});
