@@ -141,6 +141,7 @@ import { parseTranslationCacheKey } from '../../../util/keys/translationKey';
 import { getServerTime } from '../../../util/serverTime';
 import stopEvent from '../../../util/stopEvent';
 import { isElementInViewport } from '../../../util/visibility/isElementInViewport';
+import { IS_TAU } from '../../../tau/config'; // tau: tau's message menu
 import { getStickerDimensions, REM } from '../../common/helpers/mediaDimensions';
 import renderText from '../../common/helpers/renderText';
 import { getCustomEmojiSize } from '../composer/helpers/customEmoji';
@@ -167,6 +168,7 @@ import useMessageReadMetrics from './hooks/useMessageReadMetrics';
 import useMessageTranslation from './hooks/useMessageTranslation';
 import useOuterHandlers from './hooks/useOuterHandlers';
 
+import MessageMenu from '../../../tau/components/MessageMenu'; // tau: tau's message menu
 import Audio from '../../common/Audio';
 import Avatar from '../../common/Avatar';
 import BadgeButton from '../../common/BadgeButton';
@@ -2076,7 +2078,16 @@ const Message = ({
           />
         )}
       </div>
-      {contextMenuAnchor && (
+      {contextMenuAnchor && IS_TAU && ( // tau: tau's message menu
+        <MessageMenu
+          message={message}
+          isOpen={isContextMenuOpen}
+          anchor={contextMenuAnchor}
+          onClose={handleContextMenuClose}
+          onCloseAnimationEnd={handleContextMenuHide}
+        />
+      )}
+      {contextMenuAnchor && !IS_TAU && ( // tau: tau's message menu
         <ContextMenuContainer
           isOpen={isContextMenuOpen}
           anchor={contextMenuAnchor}

@@ -46,4 +46,6 @@ export interface ApiTauContent {
   parts: ApiTauPart[];
   // The last message of a run: its footer, how long the run took
   runEnd?: { workedForMs?: number };
+  // What Copy copies: the answer's Markdown
+  copyText?: string;
 }

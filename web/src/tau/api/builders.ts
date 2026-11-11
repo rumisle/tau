@@ -228,6 +228,7 @@ export function buildMessage(entry: Entry, context: MessageContext): ApiMessage 
         tau: {
           role: 'assistant',
           parts: buildAssistantParts(message, context),
+          copyText: assistantText(message),
           runEnd: isRunEnd
             ? { workedForMs: startAt !== undefined ? message.timestamp - startAt : undefined }
             : undefined,
@@ -247,6 +248,12 @@ export function buildMessage(entry: Entry, context: MessageContext): ApiMessage 
         tau: { role: 'notice', parts: [{ type: 'text', blocks: [buildParagraph(`[${entry.kind}]`)] }] },
       };
   }
+}
+
+/** An answer's text as the model wrote it, Markdown and all: what Copy copies */
+function assistantText(message: any) {
+  return (message.content as any[]).filter((part) => part.type === 'text' && part.text)
+    .map((part) => part.text as string).join('\n\n');
 }
 
 /** An assistant message as tau's row draws it: thinking, Markdown, and a card per tool call */

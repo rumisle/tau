@@ -17,11 +17,13 @@ import { formatDateTime, secondsToDate } from '../../util/localization/dateForma
 import { formatDuration } from './format';
 
 import useSelector from '../../hooks/data/useSelector';
+import useContextMenuHandlers from '../../hooks/useContextMenuHandlers';
 import { useOnIntersect } from '../../hooks/useIntersectionObserver';
 import useLang from '../../hooks/useLang';
 import useShowTransition from '../../hooks/useShowTransition';
 
 import RichContent from '../../components/iv/RichContent';
+import MessageMenu from './MessageMenu';
 import SubagentCard from './SubagentCard';
 import ToolCard from './ToolCard';
 
@@ -62,6 +64,10 @@ const TauMessage = ({
   useUnmountCleanup(() => {
     onMessageUnmount?.(message.id);
   });
+  const {
+    isContextMenuOpen, contextMenuAnchor, handleBeforeContextMenu, handleContextMenu, handleContextMenuClose,
+    handleContextMenuHide,
+  } = useContextMenuHandlers(ref, Boolean(message.isTypingDraft), true);
 
   function renderPart(part: ApiTauPart, index: number) {
     switch (part.type) {
@@ -103,6 +109,8 @@ const TauMessage = ({
       data-message-id={message.id}
       data-tau-row={tau.role}
       data-tau-draft={message.isTypingDraft || undefined}
+      onMouseDown={handleBeforeContextMenu}
+      onContextMenu={handleContextMenu}
     >
       <div ref={bottomMarkerRef} className="bottom-marker" data-message-id={message.id} />
       {tau.parts.map(renderPart)}
@@ -111,6 +119,15 @@ const TauMessage = ({
           <span>{workedFor}</span>
           <span>{formatDateTime(lang, secondsToDate(message.date), { time: 'short' })}</span>
         </div>
+      )}
+      {contextMenuAnchor && (
+        <MessageMenu
+          message={message}
+          isOpen={isContextMenuOpen}
+          anchor={contextMenuAnchor}
+          onClose={handleContextMenuClose}
+          onCloseAnimationEnd={handleContextMenuHide}
+        />
       )}
     </div>
   );

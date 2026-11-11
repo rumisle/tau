@@ -598,6 +598,40 @@ function dropUploads(keys: string[]) {
   }
 }
 
+/** The message on its way a local bubble stands for, if any: what its menu offers (Resend, Delete) depends on it */
+export function outgoingForMessage(chatId: string, localId: number) {
+  for (const [requestId, local] of shown) {
+    if (local.chatId === chatId && local.localIds.includes(localId)) return outbox!.item(requestId);
+  }
+  return undefined;
+}
+
+/**
+ * Delete in a message's menu: a refused one, or one still on its way, which is withdrawn (it never reaches the model,
+ * or the withdraw says it already did)
+ */
+export function deleteOutgoing(requestId: string) {
+  const item = outbox!.item(requestId);
+  if (!item) return;
+  if (item.state.type === 'failed' || !item.wasSent) outbox!.discard(requestId);
+  else outbox!.withdraw(requestId);
+}
+
+/** Resend a refused message: a new one with its text and files, in its place */
+export function resendOutgoing(requestId: string) {
+  const item = outbox!.item(requestId);
+  if (item?.state.type !== 'failed') return;
+  outbox!.enqueue({
+    text: item.text,
+    conversationId: item.conversationId,
+    createRequestId: item.conversationId === undefined ? item.createRequestId : undefined,
+    mode: 'steer',
+    showsInQueue: Boolean(item.conversationId !== undefined && dialogs.dialogs.get(item.conversationId)?.busy),
+    uploads: item.uploads?.map((upload) => ({ ...upload, serverId: undefined })),
+  });
+  outbox!.discard(requestId);
+}
+
 /** Stop: the run ends, and the messages waiting for it come back to the field (docs/sending.md "Stop") */
 export function stop(conversationId: number) {
   const queued = outbox!.itemsOf(conversationId)

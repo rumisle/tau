@@ -15,4 +15,5 @@ export const STRINGS = {
   MenuCompact: 'Compact Context',
   MenuLoading: 'Loading…',
   ThinkingOff: 'Thinking turned off',
+  MenuResend: 'Resend',
 } as const;

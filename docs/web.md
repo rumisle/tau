@@ -147,6 +147,10 @@ web/src/tau/
   what arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web
   A marks a message read only after it has been in view a while, so the server's unread count came back first and the
   open chat's row showed a badge.
+- **A message's menu is tau's** (`components/MessageMenu.tsx`), on a right-click, on answers and the user's bubbles
+  (Web A's `ContextMenuContainer` is left out: replies, reactions, forwarding are Telegram's): Copy, the answer's
+  Markdown, or Copy Selected Text when the selection is in the message; for a message that did not go, its reason,
+  Resend and Delete; one on its way can be deleted (withdrawn).
 - **IDs.** A private chat is keyed by its peer, so each conversation is a user of its own. Several servers are told
   apart as in iOS's MultiStore: the server's slot in the high bits of a conversation's ID, under Telegram's 2^52.
 - **Removed vs dormant.** Nothing of Web A's source is deleted.
