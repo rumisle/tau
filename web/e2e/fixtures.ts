@@ -29,7 +29,7 @@ type Attachment = { id: string; as?: 'image' | 'file' };
 
 export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
   server: [async ({}, use, workerInfo) => {
-    const port = PORTS[workerInfo.workerIndex % PORTS.length];
+    const port = PORTS[workerInfo.parallelIndex % PORTS.length];
     const home = mkdtempSync(join(tmpdir(), 'tau-web-e2e-'));
     const child = spawn(process.execPath, [
       '--no-warnings', join(ROOT, 'server/src/main.ts'), '--memory', '--port', String(port), '--host', '127.0.0.1',

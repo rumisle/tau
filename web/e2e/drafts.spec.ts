@@ -19,23 +19,26 @@ async function type(app: Page, text: string) {
 }
 
 /**
- * Watches the message list from now on, each animation frame: how long, at most, a draft was on screen together with
- * an answer that came after it started
+ * Watches the message list from now on, each animation frame: how long, at most, a draft showed an answer that was in
+ * the chat already. The same answer: the draft's text starts a final row's that came after the watch started, and has
+ * at least half of it (the next run's draft, which starts at once, is another answer)
  */
 function watchOverlap(app: Page) {
   return app.evaluate(() => {
-    const finalRows = () => document.querySelectorAll('[data-tau-row="assistant"]:not([data-tau-draft])').length;
-    const state = { overlap: 0, since: 0, finals: finalRows() };
+    const textsOf = (selector: string) => [...document.querySelectorAll(selector)]
+      .map((row) => (row.textContent ?? '').trim()).filter(Boolean);
+    const before = new Set(textsOf('[data-tau-row="assistant"]:not([data-tau-draft])'));
+    const state = { overlap: 0, since: 0 };
     (window as any).tauOverlap = state;
     const tick = () => {
-      const finals = finalRows();
-      const drafts = document.querySelectorAll('[data-tau-draft]').length;
-      if (finals > state.finals && drafts > 0) {
+      const finals = textsOf('[data-tau-row="assistant"]:not([data-tau-draft])').filter((text) => !before.has(text));
+      const isShownTwice = textsOf('[data-tau-draft]').some((draft) => finals
+        .some((final) => final.startsWith(draft) && draft.length * 2 >= final.length));
+      if (isShownTwice) {
         if (!state.since) state.since = performance.now();
         state.overlap = Math.max(state.overlap, performance.now() - state.since);
       } else {
         state.since = 0;
-        if (drafts === 0) state.finals = finals;
       }
       requestAnimationFrame(tick);
     };
