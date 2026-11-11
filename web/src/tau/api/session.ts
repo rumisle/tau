@@ -615,7 +615,7 @@ function updateDraft(each: Opened) {
   const message = generation?.message;
   const hasContent = message?.content?.some((part: any) => (part.type === 'text' && part.text)
     || (part.type === 'thinking' && part.thinking));
-  if (!hasContent && isAgentWaiting(live)) {
+  if (!hasContent && isAgentWaiting(live, each.replica)) {
     // The τ where the answer will be, in the draft the answer then streams in (iOS's ChatWaitingNode)
     each.waitingDraftId ??= `${live?.run?.taskId ?? 0}-waiting-${each.answered}`;
     each.draftId = each.waitingDraftId;
@@ -655,12 +655,15 @@ function updateDraft(each: Opened) {
 }
 
 /**
- * The agent works and nothing shows it: no answer streams and no call runs (its card has a spinner). The run is the
- * server's, so the τ shows only once the server has the message.
+ * The agent works and nothing shows it: no answer streams, no call runs (its card has a spinner), and the run's answer
+ * is not in yet. The run is the server's, so the τ shows only once the server has the message.
  */
-function isAgentWaiting(live: Record<string, any> | undefined) {
+function isAgentWaiting(live: Record<string, any> | undefined, replica: ConversationReplica) {
   // A compaction says it works itself
   if (!live?.run || live.compactions?.length) return false;
+  // The answer is in: what the run still does after it (a title, a report) is not an answer to wait for
+  const last = replica.entries.get(replica.maxId);
+  if (last?.kind === 'pi.assistant' && (last.model as any[])?.[0]?.stopReason !== 'toolUse') return false;
   const tools: { status?: string }[] = live.tools ?? [];
   return !tools.some((tool) => tool.status !== 'done');
 }
