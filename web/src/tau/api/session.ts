@@ -649,26 +649,38 @@ function refreshTyping() {
   for (const dialog of dialogs.dialogs.values()) {
     if (!isListed(dialog)) continue;
     const chatId = buildChatId(dialog.conversation.id);
-    const isBusy = dialog.busy || hasBusySubagent(dialog.conversation.id);
+    const working = workingSubagents(dialog.conversation.id);
+    const isBusy = dialog.busy || working.length > 0;
     isAnyBusy ||= isBusy;
     send({
       '@type': 'updateChatTypingStatus',
       id: chatId,
       peerId: chatId,
-      // `tauRun`: its own run, which Stop ends (src/tau/selectors.ts)
-      typingStatus: isBusy ? { type: 'typing', timestamp: Date.now(), tauRun: dialog.busy || undefined } : undefined,
+      // `tauRun`: its own run, which Stop ends (src/tau/selectors.ts); `tauText` what the title and the list say
+      typingStatus: isBusy ? {
+        type: 'typing', timestamp: Date.now(), tauRun: dialog.busy || undefined, tauText: activityOf(dialog, working),
+      } : undefined,
     });
   }
   if (isAnyBusy) typingTimer = window.setTimeout(refreshTyping, TYPING_REFRESH_MS);
 }
 
-function hasBusySubagent(conversationId: number, depth = 0): boolean {
-  if (depth > 8) return false;
-  for (const dialog of dialogs.dialogs.values()) {
-    if (dialog.conversation.owner?.conversationId !== conversationId) continue;
-    if (dialog.busy || hasBusySubagent(dialog.conversation.id, depth + 1)) return true;
-  }
-  return false;
+/** The names of a conversation's subagents that work, at any depth (a background subagent is titled "name: task") */
+function workingSubagents(conversationId: number, depth = 0): string[] {
+  if (depth > 8) return [];
+  return dialogs.dialogs.values()
+    .filter((dialog) => dialog.conversation.owner?.conversationId === conversationId)
+    .flatMap((dialog) => [
+      ...(dialog.busy ? [(dialog.title ?? '').split(':')[0] || STRINGS.Subagent] : []),
+      ...workingSubagents(dialog.conversation.id, depth + 1),
+    ]);
+}
+
+/** What a chat's agent does, as iOS's title says it: working; reader working; 2 subagents working */
+export function activityOf(dialog: Dialog, working: string[]) {
+  if (dialog.busy) return STRINGS.Working;
+  if (working.length === 1) return `${working[0]} ${STRINGS.Working}`;
+  return working.length ? `${working.length} ${STRINGS.SubagentsWorking}` : undefined;
 }
 
 // MARK: Sending

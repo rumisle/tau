@@ -8,6 +8,7 @@ import type { LangFn } from '../../util/localization';
 import { getPeerTitle } from '../../global/helpers/peers';
 import { selectPeer } from '../../global/selectors';
 import buildClassName from '../../util/buildClassName';
+import { IS_TAU } from '../../tau/config'; // tau: what the agent does
 import { LOCAL_TGS_URLS } from './helpers/animatedAssets';
 import { REM } from './helpers/mediaDimensions';
 
@@ -122,6 +123,8 @@ function renderEyesIcon() {
 }
 
 function getPrivateTypingStatusContent(lang: LangFn, typingStatus: ApiTypingStatus) {
+  const tauText = IS_TAU ? (typingStatus as { tauText?: string }).tauText : undefined; // tau: what the agent does
+  if (tauText) return tauText; // tau: see above
   switch (typingStatus.type) {
     case 'recordVideo':
       return lang('SendActionRecordVideo');
