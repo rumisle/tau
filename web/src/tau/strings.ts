@@ -27,6 +27,10 @@ export const STRINGS = {
   Working: 'working',
   Subagent: 'subagent',
   SubagentsWorking: 'subagents working',
+  NotificationsAnswers: 'Answers',
+  NotificationsBlocked: 'Blocked in the browser\'s site settings',
+  NotificationsFooter: 'An answer in another chat, or in any chat while this window is in the background, shows as '
+    + 'a notification. Clicking it opens the chat.',
   ServerConnecting: 'Connecting…',
   ServerConnected: 'Connected',
   ServerRefused: 'The server did not take this token',

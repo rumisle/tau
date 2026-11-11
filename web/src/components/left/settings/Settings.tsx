@@ -10,6 +10,7 @@ import { SettingsScreens } from '../../../types';
 
 import { selectTabState } from '../../../global/selectors';
 import { resolveTransitionName } from '../../../util/resolveTransitionName';
+import { IS_TAU } from '../../../tau/config'; // tau: see above
 
 import useTwoFaReducer from '../../../hooks/reducers/useTwoFaReducer';
 import useLastCallback from '../../../hooks/useLastCallback';
@@ -17,6 +18,7 @@ import useScrollNotch from '../../../hooks/useScrollNotch';
 import useSyncEffect from '../../../hooks/useSyncEffect';
 import useSettingsHighlight from './hooks/useSettingsHighlight';
 
+import NotificationSettings from '../../../tau/components/NotificationSettings'; // tau: its own
 import Transition from '../../ui/Transition';
 import SettingsFolders from './folders/SettingsFolders';
 import SettingsPasscode from './passcode/SettingsPasscode';
@@ -331,6 +333,7 @@ const Settings = ({
           <SettingsCustomEmoji isActive={isScreenActive} onReset={handleReset} />
         );
       case SettingsScreens.Notifications:
+        if (IS_TAU) return <NotificationSettings isActive={isScreenActive} onReset={handleReset} />; // tau: its own
         return (
           <SettingsNotifications isActive={isScreenActive} onReset={handleReset} />
         );

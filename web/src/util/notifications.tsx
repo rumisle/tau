@@ -34,6 +34,7 @@ import {
   selectTopicFromMessage,
 } from '../global/selectors';
 import { callApi } from '../api/gramjs';
+import { IS_TAU } from '../tau/config'; // tau: tau's notifications
 import { IS_TAURI } from './browser/globalEnvironment';
 import { IS_SERVICE_WORKER_SUPPORTED, IS_TOUCH_ENV } from './browser/windowEnvironment';
 import jsxToHtml from './element/jsxToHtml';
@@ -54,6 +55,7 @@ function getDeviceToken(subscription: PushSubscription) {
 }
 
 function checkIfPushSupported() {
+  if (IS_TAU) return false; // tau: no Web Push yet: the permission is asked for the page's own notifications
   if (!IS_SERVICE_WORKER_SUPPORTED || IS_TAURI) return false;
 
   if (!('showNotification' in ServiceWorkerRegistration.prototype)) {
@@ -437,6 +439,7 @@ export async function notifyAboutMessage({
   message,
   isReaction = false,
 }: { chat: ApiChat; message: Partial<ApiMessage>; isReaction?: boolean }) {
+  if (IS_TAU) return; // tau: an answer notifies once its run ends, whatever chat is open (src/tau/notifications.ts)
   const global = getGlobal();
   const { hasWebNotifications } = selectSettingsKeys(global);
   if (!checkIfShouldNotify(chat, message)) return;

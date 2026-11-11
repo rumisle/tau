@@ -25,7 +25,9 @@ import { whenLinkTokenStored } from '../boot';
 import { draftsOf } from '../db/drafts';
 import { openOutboxState } from '../db/outbox';
 import { deleteOutboxFile, readOutboxFile, saveOutboxFile } from '../db/outboxFiles';
+import { isLooking, notifyAnswer } from '../notifications';
 import { STRINGS } from '../strings';
+import { AnswerWatch } from './answers';
 import { keptUploadsOf, readUserContent } from './attachments';
 import {
   buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildDraftChat, buildDraftUser, buildMe,
@@ -82,10 +84,13 @@ type ServerLink = {
   status: ServerStatus;
   attempt: number;
   isRemoved?: boolean;
+  // Its chat list's first sync after a connect: the baseline of answers (api/answers.ts)
+  isSyncing?: boolean;
 };
 
 let onUpdate: (update: ApiUpdate) => void = () => undefined;
 const links = new Map<number, ServerLink>();
+const answers = new AnswerWatch();
 // The first server, this origin's, was ready once: Web A has its state, and takes changes as updates
 let wasConnected = false;
 let typingTimer: number | undefined;
@@ -161,6 +166,9 @@ async function addLink(config: ServerConfig) {
   });
   link.dialogs.onChange((changed) => {
     for (const dialog of changed) applyDialog(dialog);
+    for (const answer of answers.changed(changed, Boolean(link.isSyncing))) {
+      notifyAnswer(answer, buildChatId(answer.conversationId));
+    }
   });
   links.set(config.slot, link);
   return link;
@@ -256,7 +264,13 @@ async function connect(link: ServerLink) {
     if (isFirst) send({ '@type': 'updateConnectionState', connectionState: 'connectionStateConnecting' });
     scheduleReconnect(link, 'connecting');
   });
-  await link.dialogs.sync(client);
+  link.isSyncing = true;
+  try {
+    await link.dialogs.sync(client);
+  } finally {
+    link.isSyncing = false;
+  }
+  reportPresence(link);
   // After the chat list's subscribe, which brings every conversation's submission pushes
   link.outbox.connected(client, String(client.hello?.serverId));
   // Back after a dropped socket: its open chats subscribe again from their newest entry
@@ -280,6 +294,24 @@ async function connect(link: ServerLink) {
   }
   refreshTyping();
 }
+
+/**
+ * Whether the user looks at this page, to each server (`client.presence`, docs/notifications.md "Pushes"): it pushes
+ * an answer to the phone only while no client is in the foreground
+ */
+function reportPresence(link: ServerLink) {
+  link.client?.request('client.presence', { active: isLooking() }).catch(() => undefined);
+}
+
+let wasLooking: boolean | undefined;
+function onLookChange() {
+  const looking = isLooking();
+  if (looking === wasLooking) return;
+  wasLooking = looking;
+  for (const link of links.values()) reportPresence(link);
+}
+for (const event of ['focus', 'blur']) window.addEventListener(event, onLookChange);
+document.addEventListener('visibilitychange', onLookChange);
 
 function scheduleReconnect(link: ServerLink, status: AuthStatus & ServerStatus) {
   setStatus(link, status);

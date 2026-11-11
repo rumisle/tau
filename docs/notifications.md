@@ -20,6 +20,15 @@ from TelegramUI, with `ChatNotificationItem` after ChatMessageNotificationItem) 
 opens the chat; banners of one chat replace each other. Settings > Notifications turns banners and their vibration
 off.
 
+## On the web
+
+The web app (docs/web.md) decides as `ServerStore` does (`web/src/tau/api/answers.ts`, from the chat list), and shows
+a system notification (`web/src/tau/notifications.ts`) for any chat but the one on screen while the window has focus,
+as Telegram Desktop does; while the window is in the background, for the open chat too. A click focuses the window
+and opens the chat; one chat's notifications replace each other. Web A's own, one per incoming message, are off. The
+browser's permission is asked at the first click (Web A's way); Settings > Notifications turns them and their sound
+off. The page reports `client.presence { active }` as the window gains or loses focus or the tab shows or hides.
+
 ## Pushes
 
 `server/src/notifier.ts` sees every run end in the commit stream. It pushes, with the account's APNs key, when no client is in
