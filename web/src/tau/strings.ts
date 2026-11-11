@@ -25,6 +25,8 @@ export const STRINGS = {
   Cancel: 'Cancel',
   MenuServers: 'Servers',
   Working: 'working',
+  CompactingStatus: 'compacting',
+  ElapsedFor: 'for',
   Subagent: 'subagent',
   SubagentsWorking: 'subagents working',
   NotificationsAnswers: 'Answers',

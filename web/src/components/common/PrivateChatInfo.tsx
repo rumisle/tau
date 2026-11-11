@@ -205,7 +205,7 @@ const PrivateChatInfo = ({
     }
 
     if (typingStatusByPeerId) {
-      return <TypingStatus typingStatusByPeerId={typingStatusByPeerId} isPrivate />;
+      return <TypingStatus typingStatusByPeerId={typingStatusByPeerId} isPrivate isTauTimed />; // tau: the title
     }
 
     if (isTopic) {

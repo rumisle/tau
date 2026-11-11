@@ -29,7 +29,7 @@ test('a background subagent: the chat free, who works in the title and the list,
   await expect(app.locator('.MiddleHeader')).not.toContainText('working');
 });
 
-test('the chat\'s own run says working', async ({ app, api }) => {
+test('the chat\'s own run says working, and for how long in the title', async ({ app, api }) => {
   await api.chat('Own run', ['hello']);
   await listItem(app, 'Own run').click();
   await app.locator(field).click();
@@ -38,6 +38,9 @@ test('the chat\'s own run says working', async ({ app, api }) => {
   await app.keyboard.press('Enter');
   await expect(app.locator('.MiddleHeader')).toContainText('working');
   await expect(app.locator('.MiddleHeader')).not.toContainText('typing');
+  // The title counts the run from its first second, the chat list does not
+  await expect(app.locator('.MiddleHeader')).toContainText(/working for [1-9]s/);
+  await expect(listItem(app, 'Own run')).not.toContainText('working for');
   gate.open();
 });
 

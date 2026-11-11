@@ -15,6 +15,7 @@ import { REM } from './helpers/mediaDimensions';
 import { useShallowSelector } from '../../hooks/data/useSelector';
 import useLang from '../../hooks/useLang';
 
+import Elapsed from '../../tau/components/Elapsed'; // tau: for how long
 import AnimatedIconWithPreview from './AnimatedIconWithPreview';
 
 import styles from './TypingStatus.module.scss';
@@ -22,12 +23,13 @@ import styles from './TypingStatus.module.scss';
 type OwnProps = {
   typingStatusByPeerId: Record<string, ApiTypingStatus>;
   isPrivate?: boolean;
+  isTauTimed?: boolean; // tau: the title counts how long the agent works
 };
 
 const ICON_SIZE = 1.125 * REM;
 const EYES_ICON_SIZE = 1.25 * REM;
 
-const TypingStatus = ({ typingStatusByPeerId, isPrivate }: OwnProps) => {
+const TypingStatus = ({ typingStatusByPeerId, isPrivate, isTauTimed }: OwnProps) => { // tau: see above
   const lang = useLang();
   const actionFallbackUser = lang('ActionFallbackUser');
   const typingPeerIds = useMemo(() => Object.keys(typingStatusByPeerId), [typingStatusByPeerId]);
@@ -85,7 +87,7 @@ const TypingStatus = ({ typingStatusByPeerId, isPrivate }: OwnProps) => {
       }, { withNodes: true, pluralValue: sortedTypingStatuses.length - 1 });
     }
   } else if (isPrivate) {
-    content = getPrivateTypingStatusContent(lang, latestTypingStatus);
+    content = getPrivateTypingStatusContent(lang, latestTypingStatus, isTauTimed); // tau: see above
   } else {
     content = getGroupTypingStatusContent(lang, latestTypingStatus, user);
   }
@@ -122,9 +124,10 @@ function renderEyesIcon() {
   );
 }
 
-function getPrivateTypingStatusContent(lang: LangFn, typingStatus: ApiTypingStatus) {
-  const tauText = IS_TAU ? (typingStatus as { tauText?: string }).tauText : undefined; // tau: what the agent does
-  if (tauText) return tauText; // tau: see above
+function getPrivateTypingStatusContent(lang: LangFn, typingStatus: ApiTypingStatus, isTauTimed?: boolean) { // tau
+  const { tauText, tauSince } = typingStatus as { tauText?: string; tauSince?: number }; // tau: what the agent does
+  if (tauText && isTauTimed && tauSince) return <Elapsed text={tauText} since={tauSince} />; // tau: for how long
+  if (IS_TAU && tauText) return tauText; // tau: see above
   switch (typingStatus.type) {
     case 'recordVideo':
       return lang('SendActionRecordVideo');

@@ -75,6 +75,9 @@ type Opened = {
   waitingDraftId?: string;
   streamsIn?: { id: string; draftId: string };
   waitTimer?: number;
+  // When its run began (its first input's time) and the compaction now running, for the title's time
+  runSince?: number;
+  compactingSince?: number;
   // Generations answered so far, in the draft's ID: the next generation of a run streams as a draft of its own
   answered: number;
 };
@@ -517,7 +520,38 @@ function applyReplica(each: Opened) {
   if (fresh.some((entry) => entry.kind === 'pi.assistant')) endDraft(each);
   if (fresh.length && each.isLoaded) readOnScreen(each.replica.id, each.replica.maxId);
   updateDraft(each);
+  updateTimes(each);
   emitChange(each.replica.id);
+}
+
+/** When its run and its compaction began, as the title counts them: told to the title when either changes */
+function updateTimes(each: Opened) {
+  const live = each.replica.docs['pi.live'] as Record<string, any> | undefined;
+  const first = live?.run ? each.replica.entries.get(live.run.first) : undefined;
+  const runSince = live?.run
+    ? (first?.model as any[] | undefined)?.[0]?.timestamp ?? each.runSince ?? Date.now() : undefined;
+  const compactingSince = compactionOf(each)?.since;
+  if (runSince === each.runSince && compactingSince === each.compactingSince) return;
+  each.runSince = runSince;
+  each.compactingSince = compactingSince;
+  refreshTyping();
+}
+
+const firstSeen = new Map<number, number>();
+
+/**
+ * The compaction running in a chat, from the server's records (`tau.compactions`, docs/compaction.md) or, without
+ * them, from durable's live status, timed from when this page first saw it
+ */
+export function compactionOf(each: Opened): { taskId: number; since: number } | undefined {
+  const records = (each.replica.docs['tau.compactions'] as { items?: any[] } | undefined)?.items;
+  const running = records?.find((record) => record.state === 'running');
+  if (running) return { taskId: running.taskId, since: running.startedAt };
+  const live = each.replica.docs['pi.live'] as Record<string, any> | undefined;
+  const status = live?.compactions?.[0];
+  if (!status || records?.some((record) => record.taskId === status.taskId)) return undefined;
+  if (!firstSeen.has(status.taskId)) firstSeen.set(status.taskId, Date.now());
+  return { taskId: status.taskId, since: firstSeen.get(status.taskId)! };
 }
 
 function index(each: Opened, entry: Entry) {
@@ -737,15 +771,23 @@ function refreshTyping() {
     if (!isListed(dialog)) continue;
     const chatId = buildChatId(dialog.conversation.id);
     const working = workingSubagents(dialog.conversation.id);
-    const isBusy = dialog.busy || working.length > 0;
+    const each = opened.get(dialog.conversation.id);
+    const compactingSince = dialog.busy ? undefined : each?.compactingSince;
+    const isBusy = dialog.busy || working.length > 0 || compactingSince !== undefined;
     isAnyBusy ||= isBusy;
     send({
       '@type': 'updateChatTypingStatus',
       id: chatId,
       peerId: chatId,
-      // `tauRun`: its own run, which Stop ends (src/tau/selectors.ts); `tauText` what the title and the list say
+      // `tauRun`: its own run, which Stop ends (src/tau/selectors.ts); `tauText` what the title and the list say,
+      // `tauSince` since when, which the title counts
       typingStatus: isBusy ? {
-        type: 'typing', timestamp: Date.now(), tauRun: dialog.busy || undefined, tauText: activityOf(dialog, working),
+        type: 'typing',
+        timestamp: Date.now(),
+        tauRun: dialog.busy || undefined,
+        tauText: compactingSince !== undefined && !working.length
+          ? STRINGS.CompactingStatus : activityOf(dialog, working),
+        tauSince: dialog.busy ? each?.runSince : compactingSince,
       } : undefined,
     });
   }
