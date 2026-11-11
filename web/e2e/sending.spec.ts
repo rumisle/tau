@@ -52,7 +52,7 @@ test('while the agent works, Send steers the run and Stop ends it', SMOKE, async
   await api.chat('Send busy', ['hello']);
   await openChat(app, 'Send busy');
   await type(app, '$ sleep 30');
-  const stop = app.getByRole('button', { name: 'Stop' });
+  const stop = app.getByRole('button', { name: 'Stop', exact: true });
   await expect(stop).toBeVisible();
   // With text in the field, the button sends; the message waits for the run's next step
   await app.locator(field).click();
@@ -77,7 +77,7 @@ test('a message waiting for the run outlives a reload: it shows again, once, and
   await api.chat('Send reload', ['hello']);
   await openChat(app, 'Send reload');
   await type(app, '$ sleep 3');
-  await expect(app.getByRole('button', { name: 'Stop' })).toBeVisible();
+  await expect(app.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   await type(app, 'kept over a reload');
   await expect(panel(app).locator('.icon-check')).toBeVisible();
   await app.reload();

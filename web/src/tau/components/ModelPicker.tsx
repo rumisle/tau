@@ -8,7 +8,6 @@ import { getActions } from '../../global';
 import type { ItemPickerOption } from '../../components/common/pickers/ItemPicker';
 import type { ModelInfo } from '../api/agent';
 
-import captureKeyboardListeners from '../../util/captureKeyboardListeners';
 import {
   agentOf, cachedModels, configureAgent, loadModels, recentModels, rememberModel,
 } from '../api/agent';
@@ -62,12 +61,10 @@ const ModelPicker = ({ chatId, isOpen, onClose }: OwnProps) => {
     onClose();
   });
 
-  useEffect(() => (isOpen ? captureKeyboardListeners({
-    onEnter: (e: KeyboardEvent) => {
-      e.preventDefault();
-      if (ordered[0]) pick(keyOf(ordered[0]));
-    },
-  }) : undefined), [isOpen, ordered, pick]);
+  // Enter takes the first match
+  const takeFirst = useLastCallback(() => {
+    if (ordered[0]) pick(keyOf(ordered[0]));
+  });
 
   return (
     <Modal
@@ -77,6 +74,7 @@ const ModelPicker = ({ chatId, isOpen, onClose }: OwnProps) => {
       className="tau-model-picker"
       isSlim
       hasCloseButton
+      onEnter={takeFirst}
     >
       <ItemPicker
         items={items}
