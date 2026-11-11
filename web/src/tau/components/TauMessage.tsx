@@ -5,6 +5,7 @@
 import {
   memo, useRef, useUnmountCleanup,
 } from '../../lib/teact/teact';
+import { getActions } from '../../global';
 
 import type { ApiMessage } from '../../api/types';
 import type { ObserveFn } from '../../hooks/useIntersectionObserver';
@@ -13,6 +14,7 @@ import type { ApiTauPart } from '../api/types';
 import { getMessageHtmlId } from '../../global/helpers';
 import { selectTheme } from '../../global/selectors';
 import buildClassName from '../../util/buildClassName';
+import { copyTextToClipboard } from '../../util/clipboard';
 import { formatDateTime, secondsToDate } from '../../util/localization/dateFormat';
 import { formatDuration } from './format';
 
@@ -37,6 +39,17 @@ type OwnProps = {
 };
 
 const ANSWER_FONT_ADJUST = 17 / 18;
+
+/** A click on code, inline or a block, copies it, as Telegram's does (not a click that ends a selection) */
+function handleCodeClick(e: React.MouseEvent<HTMLElement>) {
+  const target = e.target as HTMLElement;
+  if (target.closest('button') || !window.getSelection()?.isCollapsed) return;
+  // Inline code is Web A's `code`, a block its CodeBlock's `pre`
+  const code = target.closest<HTMLElement>('code, pre');
+  if (!code) return;
+  copyTextToClipboard(code.innerText.replace(/\n$/, ''));
+  getActions().showNotification({ message: { key: 'TextCopied' } });
+}
 
 const TauMessage = ({
   message,
@@ -69,7 +82,7 @@ const TauMessage = ({
         return <div key={index} className={styles.thinking} data-tau-part="thinking" dir="auto">{part.text}</div>;
       case 'text':
         return (
-          <div key={index} className={styles.text} data-tau-part="text">
+          <div key={index} className={styles.text} data-tau-part="text" onClick={handleCodeClick}>
             <RichContent
               blocks={part.blocks}
               theme={theme}

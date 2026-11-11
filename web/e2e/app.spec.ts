@@ -98,3 +98,16 @@ test('a card per tool: a file written, edited as a diff, read colored by its lan
   // Colored by the file's language: highlight.js's spans, as in a code block
   await expect(card('Read').locator('[class*="hljs"], [class*="token"]').first()).toBeVisible();
 });
+
+test('a click on code copies it, inline or a block, with Telegram\'s toast', async ({ app, api }) => {
+  await app.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await api.chat('Copy code', ['$ echo copied-$((6*7))', 'hello']);
+  await openChat(app, 'Copy code');
+  const answer = app.locator(row).filter({ hasText: 'Ran it' }).last();
+  await answer.locator('pre').filter({ hasText: 'copied-42' }).first().click();
+  await expect(app.getByText('Text copied to clipboard.')).toBeVisible();
+  expect((await app.evaluate(() => navigator.clipboard.readText())).trim()).toBe('copied-42');
+  const inline = app.locator(row).locator('p code').first();
+  await inline.click();
+  expect(await app.evaluate(() => navigator.clipboard.readText())).toBe(await inline.innerText());
+});
