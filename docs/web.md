@@ -158,6 +158,11 @@ web/src/tau/
   arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web A
   marks a message read only after it has been in view a while, so the server's unread count came back first and the open
   chat's row showed a badge.
+- **Drafts are Web A's, kept here** (`db/drafts.ts`): Web A saves a chat's draft through `saveDraft`, which Telegram's
+  server would keep; tau keeps it in localStorage per server, and gives it back with the chat list (`draftsById`), so
+  the list shows Telegram's red "Draft:" and the field has it after a reload. Web A saves when the chat changes, a
+  second after typing stops (ten in Web A), and as the page unloads, at once (Web A waits for a frame that never comes).
+  A send clears it, as Telegram's server does. New Chat keeps one too.
 - **The connection's state is Web A's**, in the chat's header (the chat list's without one): "connecting" while the
   server is away, "waiting for network" when the browser is offline (Web A says the latter for both:
   `hooks/useConnectionStatus.ts`), "updating" never, since a resubscribe brings what is missing at once.

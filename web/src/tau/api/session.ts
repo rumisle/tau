@@ -20,6 +20,7 @@ import {
   probe, readToken, saveToken, serverOrigin, socketProtocols, socketUrl,
 } from '../auth';
 import { whenLinkTokenStored } from '../boot';
+import { draftsOf } from '../db/drafts';
 import { openOutboxState } from '../db/outbox';
 import { deleteOutboxFile, readOutboxFile, saveOutboxFile } from '../db/outboxFiles';
 import { readUserContent } from './attachments';
@@ -852,7 +853,21 @@ export function openNewChat() {
     ?? crypto.randomUUID();
   send({ '@type': 'updateUser', id: DRAFT_CHAT_ID, user: buildDraftUser() });
   send({ '@type': 'updateChat', id: DRAFT_CHAT_ID, chat: buildDraftChat() });
-  getActions().openChat({ id: DRAFT_CHAT_ID });
+  // What was written in it before, kept as any chat's draft. In place before the chat opens: the composer takes a draft
+  // that comes later for the user's own typing, and keeps the field as it is
+  // (Web A keeps a draft in its thread, which the thread's info makes)
+  const draft = draftsOf([DRAFT_CHAT_ID])[DRAFT_CHAT_ID];
+  if (draft) {
+    send({
+      '@type': 'updateThreadInfo',
+      threadInfo: { isCommentsInfo: false, chatId: DRAFT_CHAT_ID, threadId: MAIN_THREAD_ID },
+    });
+    send({
+      '@type': 'draftMessage', chatId: DRAFT_CHAT_ID, threadId: MAIN_THREAD_ID, draft,
+    });
+  }
+  // After the updates, which Web A takes one per microtask
+  window.setTimeout(() => getActions().openChat({ id: DRAFT_CHAT_ID }));
 }
 
 export function isDraftChat(chatId: string) {

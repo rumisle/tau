@@ -1,10 +1,11 @@
 // The `callApi` methods tau answers. Every other method resolves to `undefined`, as a failed GramJS request does, and
 // the UI copes (docs/web.md "What the proof of concept showed").
 import type {
-  ApiAttachment, ApiChat, ApiMediaFormat, ApiMessageEntity, ApiPeer,
+  ApiAttachment, ApiChat, ApiDraft, ApiMediaFormat, ApiMessageEntity, ApiPeer,
 } from '../../api/types';
 
 import { ALL_FOLDER_ID, ARCHIVED_FOLDER_ID } from '../../config';
+import { draftsOf, writeDraft } from '../db/drafts';
 import {
   buildChat, buildChatId, buildReadState, buildThreadInfo, buildUser, entryIdOf,
 } from './builders';
@@ -29,12 +30,13 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
     // undo what an opened chat put in their place
     sendChatListMessages(messages);
     const pinned = listed.filter((dialog) => dialog.pinned).sort((a, b) => b.pinned! - a.pinned!);
+    const chatIds = listed.map((dialog) => buildChatId(dialog.conversation.id));
     return {
-      chatIds: listed.map((dialog) => buildChatId(dialog.conversation.id)),
+      chatIds,
       chats: listed.map(buildChat),
       users: listed.map(buildUser),
       userStatusesById: {},
-      draftsById: {},
+      draftsById: draftsOf(chatIds),
       orderedPinnedIds: pinned.map((dialog) => buildChatId(dialog.conversation.id)),
       totalChatCount: listed.length,
       messages: [],
@@ -75,7 +77,14 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
     // One request with all the message's files (Web A's action sends them so for tau)
     const files = attachments ?? (attachment ? [attachment] : []);
     if (!chat || (!text && !files.length)) return undefined;
+    // Web A clears the draft on its own side only, as Telegram's server clears it on a send
+    writeDraft(chat.id, undefined);
     return sendText(chat.id, text ? toMarkdown(text, entities) : '', files);
+  },
+
+  saveDraft({ chat, draft }: { chat: ApiChat; draft?: ApiDraft }) {
+    writeDraft(chat.id, draft);
+    return true;
   },
 
   sendMessageAction({ peer, action }: { peer: ApiPeer; action: { type: string } }) {

@@ -11,6 +11,7 @@ import {
 } from '../../../../lib/fasterdom/fasterdom';
 import { areDeepEqual } from '../../../../util/areDeepEqual';
 import focusEditableElement from '../../../../util/focusEditableElement';
+import { IS_TAU } from '../../../../tau/config'; // tau: drafts kept on this device (src/tau/db/drafts.ts)
 import {
   buildRichMessageFromFormatted,
   getRichInputAsFormatted,
@@ -24,6 +25,10 @@ import useBackgroundMode from '../../../../hooks/window/useBackgroundMode';
 import useBeforeUnload from '../../../../hooks/window/useBeforeUnload';
 
 let isFrozen = false;
+// tau: a draft is saved a second after typing stops, and at once as the page unloads, where a measure never comes
+const TAU_DRAFT_DEBOUNCE = 1000; // tau: as iOS saves a moment after each change
+let isUnloading = false; // tau: the page unloads
+const scheduleSave = (save: NoneToVoidFunction) => (isUnloading ? save() : requestMeasure(save)); // tau: see above
 
 function freeze() {
   isFrozen = true;
@@ -80,7 +85,7 @@ const useDraft = ({
     const formattedRichMessage = currentRichMessage ? getRichInputAsFormatted(currentRichMessage) : undefined;
 
     if (currentRichMessage && !formattedRichMessage) {
-      requestMeasure(() => {
+      scheduleSave(() => { // tau: at once as the page unloads
         saveDraft({
           chatId: prevState.chatId ?? chatId,
           threadId: prevState.threadId ?? threadId,
@@ -89,7 +94,7 @@ const useDraft = ({
         });
       });
     } else if (formattedRichMessage?.text) {
-      requestMeasure(() => {
+      scheduleSave(() => { // tau: at once as the page unloads
         saveDraft({
           chatId: prevState.chatId ?? chatId,
           threadId: prevState.threadId ?? threadId,
@@ -106,7 +111,9 @@ const useDraft = ({
     }
   });
 
-  const runDebouncedForSaveDraft = useRunDebounced(DRAFT_DEBOUNCE, true, undefined, [chatId, threadId]);
+  const runDebouncedForSaveDraft = useRunDebounced(
+    IS_TAU ? TAU_DRAFT_DEBOUNCE : DRAFT_DEBOUNCE, true, undefined, [chatId, threadId], // tau: sooner
+  );
 
   // Restore draft on chat change
   useLayoutEffectWithPrevDeps(([prevChatId, prevThreadId, prevDraft]) => {
@@ -197,7 +204,11 @@ const useDraft = ({
   ]);
 
   useBackgroundMode(updateDraft);
-  useBeforeUnload(updateDraft);
+  useBeforeUnload(() => { // tau: saved at once
+    isUnloading = IS_TAU; // tau: see above
+    updateDraft(); // tau: see above
+    isUnloading = false; // tau: see above
+  }); // tau: see above
 };
 
 export default useDraft;
