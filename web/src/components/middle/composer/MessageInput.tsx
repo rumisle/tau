@@ -35,6 +35,7 @@ import { CODE_HIGHLIGHTING_CHANGED_META, subscribeToCodeLanguageLoad } from '../
 import { debounce, fastRaf, throttleWith } from '../../../util/schedulers';
 import { getUtf8Length } from '../../../util/textFormat';
 import tiptapStyles from '../../../util/tiptap/styling.module.scss';
+import { IS_TAU } from '../../../tau/config'; // tau: no edits yet
 import renderText from '../../common/helpers/renderText';
 import {
   getRichInputAsFormatted,
@@ -622,7 +623,8 @@ const MessageInput = ({
 
     if (!isComposing && e.key === 'Escape' && isRichInputExpanded) {
       onRichInputCollapse?.();
-    } else if (!isComposing && e.key === 'ArrowUp' && isEmpty && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (!IS_TAU // tau: Up edits the last message once edits fork the chat (d36cb81 in web/PARITY.md)
+      && !isComposing && e.key === 'ArrowUp' && isEmpty && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       editLastMessage();
     }

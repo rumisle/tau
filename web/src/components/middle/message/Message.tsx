@@ -2233,7 +2233,8 @@ export default memo(withGlobal<OwnProps>(
       isSelected = selectIsMessageSelected(global, id);
     }
 
-    const canReply = messageListType === 'thread' && selectCanReplyToMessage(global, message, threadId);
+    const canReply = !IS_TAU // tau: no replies (a double-click selects a word, as on any desktop page)
+      && messageListType === 'thread' && selectCanReplyToMessage(global, message, threadId);
     const activeDownloads = selectActiveDownloads(global);
     const downloadableMedia = selectMessageDownloadableMedia(global, message);
     const isDownloading = downloadableMedia && getIsDownloading(activeDownloads, downloadableMedia);
