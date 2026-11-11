@@ -172,6 +172,16 @@
   color: var(--tau-diff-removed);
 }
 
+// A file read: its text colored by its language, as a command is
+.toolBody {
+  @include codeHighlight.code-highlight-theme;
+  @include codeHighlight.code-highlight-tokens;
+}
+
+.diffAdded {
+  color: var(--tau-diff-added);
+}
+
 .subagent {
   width: calc(100% + 0.5rem);
   max-width: none;

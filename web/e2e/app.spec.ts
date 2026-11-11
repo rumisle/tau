@@ -81,3 +81,20 @@ test('the look: answers at 17 px with iOS\'s line height, thinking at 15, cards 
   await expect(thinking).toHaveCSS('font-size', '15px');
   await expect(app.locator('[data-tau-part="tool"]').first()).toHaveCSS('border-radius', '14px');
 });
+
+test('a card per tool: a file written, edited as a diff, read colored by its language', async ({ app, api }) => {
+  await api.chat('Tool cards', [
+    '!tool write {"path":"notes.ts","content":"export const x = 1;\\nexport const y = 2;"}',
+    '!tool edit {"path":"notes.ts","edits":[{"oldText":"export const x = 1;","newText":"export const x = 3;"}]}',
+    '!tool read path=notes.ts',
+  ]);
+  await openChat(app, 'Tool cards');
+  const card = (tool: string) => app.locator(`[data-tau-tool="${tool}"]`);
+  await expect(card('Write')).toContainText('notes.ts  2 lines');
+  await expect(card('Edit')).toContainText('+1 −1');
+  await expect(card('Edit').locator('[data-tau-diff="removed"]')).toContainText('export const x = 1;');
+  await expect(card('Edit').locator('[data-tau-diff="added"]')).toContainText('export const x = 3;');
+  await expect(card('Read')).toContainText('notes.ts  2 lines');
+  // Colored by the file's language: highlight.js's spans, as in a code block
+  await expect(card('Read').locator('[class*="hljs"], [class*="token"]').first()).toBeVisible();
+});

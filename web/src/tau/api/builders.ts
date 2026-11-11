@@ -277,18 +277,51 @@ function buildToolPart(call: any, startedAt: number, result: any, context?: Mess
       return {
         ...base, title: 'Bash', command: `$ ${String(args.command ?? '').trim()}`, language: 'bash',
       };
-    case 'read':
-      return { ...base, title: 'Read', summary: shortPath(args.path) };
+    case 'read': {
+      // A file reads from its start, colored by its language; an error as it is
+      const lines = output && status === 'done' ? output.split('\n').length : undefined;
+      return {
+        ...base,
+        title: 'Read',
+        summary: lines ? `${shortPath(args.path)}  ${lines} lines` : shortPath(args.path),
+        outputLanguage: status === 'done' ? languageOfPath(args.path) : undefined,
+        isOutputFromStart: true,
+        outputLines: 5,
+      };
+    }
     case 'write': {
       const content = String(args.content ?? '');
       const lines = content ? content.split('\n').length : 0;
       const summary = `${shortPath(args.path)}  ${lines} lines`;
       return {
-        ...base, title: 'Write', summary, command: content, output: undefined,
+        ...base,
+        title: 'Write',
+        summary,
+        command: content,
+        language: languageOfPath(args.path),
+        commandLines: 6,
+        output: status === 'failed' ? output : undefined,
       };
     }
-    case 'edit':
-      return { ...base, title: 'Edit', summary: shortPath(args.path) };
+    case 'edit': {
+      // The result's diff, with line numbers; until it comes, each replacement's old lines and then its new ones
+      const diff = typeof result?.details?.diff === 'string' && result.details.diff
+        ? result.details.diff as string
+        : (Array.isArray(args.edits) ? args.edits : [args]).flatMap((edit: any) => [
+          ...String(edit.oldText ?? '').split('\n').map((line: string) => `-${line}`),
+          ...String(edit.newText ?? '').split('\n').map((line: string) => `+${line}`),
+        ]).join('\n');
+      const diffLines: string[] = diff.split('\n');
+      const added = diffLines.filter((line) => line.startsWith('+')).length;
+      const removed = diffLines.filter((line) => line.startsWith('-')).length;
+      return {
+        ...base,
+        title: 'Edit',
+        summary: `${shortPath(args.path)}  +${added} −${removed}`,
+        diff,
+        output: status === 'failed' ? output : undefined,
+      };
+    }
     case 'subagent': {
       const childId = result?.details?.conversationId;
       const isWorking = !result || (childId !== undefined && context?.isBusy(childId));
@@ -308,6 +341,57 @@ function buildToolPart(call: any, startedAt: number, result: any, context?: Mess
       };
     }
   }
+}
+
+// File names to the languages Web A colors (ios/Tau/Chat/MarkdownText.swift `language(forPath:)`)
+const LANGUAGES: Record<string, string> = {
+  swift: 'swift',
+  py: 'python',
+  ts: 'typescript',
+  mts: 'typescript',
+  cts: 'typescript',
+  tsx: 'typescript',
+  js: 'javascript',
+  mjs: 'javascript',
+  cjs: 'javascript',
+  jsx: 'javascript',
+  json: 'json',
+  md: 'markdown',
+  sh: 'bash',
+  bash: 'bash',
+  zsh: 'bash',
+  rs: 'rust',
+  go: 'go',
+  c: 'c',
+  h: 'c',
+  cc: 'cpp',
+  cpp: 'cpp',
+  cxx: 'cpp',
+  hpp: 'cpp',
+  m: 'objectivec',
+  mm: 'objectivec',
+  java: 'java',
+  kt: 'kotlin',
+  kts: 'kotlin',
+  rb: 'ruby',
+  yml: 'yaml',
+  yaml: 'yaml',
+  toml: 'ini',
+  html: 'xml',
+  xml: 'xml',
+  plist: 'xml',
+  svg: 'xml',
+  css: 'css',
+  scss: 'scss',
+  sql: 'sql',
+};
+
+export function languageOfPath(path: unknown) {
+  const name = (typeof path === 'string' ? path : '').split('/').at(-1)?.toLowerCase() ?? '';
+  if (name === 'dockerfile') return 'dockerfile';
+  if (name === 'makefile') return 'makefile';
+  const extension = name.includes('.') ? name.split('.').at(-1)! : '';
+  return LANGUAGES[extension];
 }
 
 function shortPath(path: unknown) {

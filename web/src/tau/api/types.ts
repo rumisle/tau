@@ -18,6 +18,14 @@ export type ApiTauPart =
     // The command's language, to color it
     language?: string;
     output?: string;
+    // How the output reads: in a language to color (a file read), from its start (a file) or its end (a command)
+    outputLanguage?: string;
+    isOutputFromStart?: boolean;
+    // Lines shown while collapsed, when not the defaults (a command's 3, its output's 6)
+    commandLines?: number;
+    outputLines?: number;
+    // An edit's lines, `+` added and `-` removed, in place of a command
+    diff?: string;
     startedAt?: number;
     status: ApiTauToolStatus;
     durationMs?: number;

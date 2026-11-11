@@ -73,4 +73,29 @@ describe('buildMessage', () => {
     expect(buildMessage(entry(5, 'pi.tool-result', { role: 'toolResult' }), context())).toBeUndefined();
     expect(buildMessage({ id: 6, kind: 'pi.system', conversationId: 7 }, context())).toBeUndefined();
   });
+
+  it('makes a card per tool: a file read colored by its language, a write\'s content, an edit as a diff', () => {
+    const call = (name: string, args: object) => entry(3, 'pi.assistant', {
+      role: 'assistant', stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'c1', name, arguments: args }],
+    });
+    const result = (text: string, details?: object) => new Map([['c1', {
+      toolCallId: 'c1', content: [{ type: 'text', text }], isError: false, details,
+    }]]);
+    const read = buildMessage(call('read', { path: '/w/src/app.ts' }), context(result('a\nb\nc')))!.tau!.parts[0];
+    expect(read).toMatchObject({
+      title: 'Read', summary: '/w/src/app.ts  3 lines', outputLanguage: 'typescript', isOutputFromStart: true,
+    });
+    const writeCall = call('write', { path: '/w/x.py', content: 'def f():\n    pass' });
+    const write = buildMessage(writeCall, context(result('ok')))!.tau!.parts[0];
+    expect(write).toMatchObject({
+      title: 'Write', summary: '/w/x.py  2 lines', command: 'def f():\n    pass', language: 'python',
+    });
+    const edits = { path: '/w/x.ts', edits: [{ oldText: 'a = 1', newText: 'a = 2\nb = 3' }] };
+    // Until the result comes, from the call; then the result's diff
+    expect(buildMessage(call('edit', edits), context())!.tau!.parts[0]).toMatchObject({
+      title: 'Edit', summary: '/w/x.ts  +2 −1', diff: '-a = 1\n+a = 2\n+b = 3',
+    });
+    expect(buildMessage(call('edit', edits), context(result('done', { diff: ' 1 x\n-2 a = 1\n+2 a = 2' })))!
+      .tau!.parts[0]).toMatchObject({ summary: '/w/x.ts  +1 −1', diff: ' 1 x\n-2 a = 1\n+2 a = 2' });
+  });
 });
