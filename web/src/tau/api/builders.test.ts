@@ -21,7 +21,7 @@ describe('buildMessage', () => {
   it('makes the user\'s message an outgoing text message', () => {
     const message = buildMessage(entry(1, 'pi.user', { role: 'user', content: 'hello' }), context())!;
     expect(message).toMatchObject({
-      id: 1, chatId: '7', isOutgoing: true, senderId: ME_ID, content: { text: { text: 'hello' } },
+      id: 32, chatId: '7', isOutgoing: true, senderId: ME_ID, content: { text: { text: 'hello' } },
     });
     expect(message.tau).toBeUndefined();
   });

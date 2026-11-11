@@ -1,6 +1,12 @@
 // Before Web A starts: a `#token=` link's token taken (before Web A's hash routing reads the address), and the page
 // for plain HTTP away from localhost, where the app does not run (docs/web.md "Secure contexts only")
+import { removeAllGlobalCaches } from '../global/cache';
 import { takeLinkToken } from './auth';
+
+// What Web A's cached state means: its messages are keyed by tau's message IDs, so when what an ID names changes, the
+// cache goes. 2: an entry's rows (entryId * 32 + row).
+const CACHE_VERSION = '2';
+const CACHE_VERSION_KEY = 'tau-cache-version';
 
 const linkToken = window.isSecureContext ? takeLinkToken() : undefined;
 
@@ -27,4 +33,11 @@ export function checkSecureContext() {
     machine, http://localhost:${port} works as it is.</p>`;
   document.body.appendChild(page);
   return false;
+}
+
+/** Web A's cached state, gone when it was written under another meaning of tau's IDs */
+export async function clearStaleCaches() {
+  if (localStorage.getItem(CACHE_VERSION_KEY) === CACHE_VERSION) return;
+  await removeAllGlobalCaches();
+  localStorage.setItem(CACHE_VERSION_KEY, CACHE_VERSION);
 }

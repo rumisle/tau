@@ -18,6 +18,22 @@ export const ME_ID = '9000000000';
 // New Chat's draft, a chat until its conversation exists (session.ts)
 export const DRAFT_CHAT_ID = '8999999999';
 const MAX_TOOL_OUTPUT = 2000;
+// Rows per entry: an entry is one message or several (a user's photos, an album of messages as Telegram sends one), so
+// a message's ID is its entry's ID times this, plus its row. Entry IDs stay far below 2^53 / ROWS.
+export const ROWS = 32;
+
+export function messageIdOf(entryId: number, row = 0) {
+  return entryId * ROWS + row;
+}
+
+/** The last ID an entry's rows may take: what is read or sent up to an entry covers all its rows */
+export function lastRowIdOf(entryId: number) {
+  return entryId * ROWS + ROWS - 1;
+}
+
+export function entryIdOf(messageId: number) {
+  return Math.floor(messageId / ROWS);
+}
 
 export function buildChatId(conversationId: number) {
   return String(conversationId);
@@ -83,8 +99,8 @@ export function buildReadState(dialog: Dialog): ThreadReadState {
   return {
     unreadCount: dialog.unreadCount,
     hasUnreadMark: dialog.markedUnread,
-    lastReadInboxMessageId: dialog.read,
-    lastReadOutboxMessageId: dialog.last?.id,
+    lastReadInboxMessageId: dialog.read === undefined ? undefined : lastRowIdOf(dialog.read),
+    lastReadOutboxMessageId: dialog.last === undefined ? undefined : lastRowIdOf(dialog.last.id),
   };
 }
 
@@ -93,7 +109,7 @@ export function buildThreadInfo(dialog: Dialog): ApiThreadInfo {
     isCommentsInfo: false,
     chatId: buildChatId(dialog.conversation.id),
     threadId: MAIN_THREAD_ID,
-    lastMessageId: dialog.last?.id,
+    lastMessageId: dialog.last === undefined ? undefined : messageIdOf(dialog.last.id),
   };
 }
 
@@ -102,7 +118,7 @@ export function buildSummaryMessage(dialog: Dialog): ApiMessage | undefined {
   const { last } = dialog;
   if (!last) return undefined;
   return {
-    id: last.id,
+    id: messageIdOf(last.id),
     chatId: buildChatId(dialog.conversation.id),
     date: Math.floor((last.timestamp ?? dialog.createdAt ?? Date.now()) / 1000),
     isOutgoing: last.role === 'user',
@@ -124,12 +140,18 @@ export type MessageContext = {
 
 const SUBAGENT_REPORT = /^<subagent name="([^"]*)" conversation="(\d+)" status="(\w+)">([\s\S]*)<\/subagent>$/;
 
-/** An entry as a message, or undefined for those the chat does not show */
+/** An entry's messages, in order: none for those the chat does not show, several for an album */
+export function buildRows(entry: Entry, context: MessageContext): ApiMessage[] {
+  const message = buildMessage(entry, context);
+  return message ? [message] : [];
+}
+
+/** An entry's first message, or undefined for those the chat does not show */
 export function buildMessage(entry: Entry, context: MessageContext): ApiMessage | undefined {
   const message = (entry.model as any[] | undefined)?.[0];
   const chatId = buildChatId(entry.conversationId);
   const base = {
-    id: entry.id,
+    id: messageIdOf(entry.id),
     chatId,
     date: Math.floor((message?.timestamp ?? Date.now()) / 1000),
   };

@@ -1,5 +1,5 @@
 /* eslint-disable simple-import-sort/imports -- Sanitize and claim URL login before other startup modules */
-import { checkSecureContext } from './tau/boot'; // tau: a #token= link taken before Web A's routing reads it
+import { checkSecureContext, clearStaleCaches } from './tau/boot'; // tau: tau's checks before Web A starts
 import { getPendingWebLogin } from './util/routing';
 import { webLoginHandoffPromise } from './util/webLoginHandoff';
 import './util/handleError';
@@ -61,6 +61,7 @@ async function init() {
   }
 
   if (!checkSecureContext()) return; // tau: HTTPS or localhost only (docs/web.md "Secure contexts only")
+  await clearStaleCaches(); // tau: Web A's cache, written under an older meaning of tau's IDs
   if (!(window as any).isCompatTestPassed) return;
 
   checkAndAssignPermanentWebVersion();

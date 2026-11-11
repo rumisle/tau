@@ -20,8 +20,8 @@ import { whenLinkTokenStored } from '../boot';
 import { openOutboxState } from '../db/outbox';
 import {
   buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildDraftChat, buildDraftUser, buildMe,
-  buildMessage, buildReadState, buildSummaryMessage, buildThreadInfo, buildUser, DRAFT_CHAT_ID,
-  userText,
+  buildMessage, buildReadState, buildRows, buildSummaryMessage, buildThreadInfo, buildUser, DRAFT_CHAT_ID, lastRowIdOf,
+  messageIdOf, userText,
 } from './builders';
 import { buildOutgoingMessage } from './outgoing';
 
@@ -219,7 +219,7 @@ export function chatListMessage(dialog: Dialog): ApiMessage | undefined {
   // Opening: its last message comes once it is loaded
   if (!each.isLoaded) return undefined;
   for (const entry of each.replica.ordered().reverse()) {
-    const message = buildMessage(entry, contextOf(each));
+    const message = buildRows(entry, contextOf(each)).at(-1);
     if (message) return message;
   }
   return undefined;
@@ -235,7 +235,7 @@ function summaryOf(dialog: Dialog) {
   if (!message) return undefined;
   const id = dialog.conversation.id;
   if (!summarized.has(id)) summarized.set(id, new Set());
-  summarized.get(id)!.add(message.id);
+  summarized.get(id)!.add(dialog.last!.id);
   return message;
 }
 
@@ -296,15 +296,14 @@ async function load(each: Opened) {
   let last: ApiMessage | undefined;
   for (const id of [...stale].sort((a, b) => a - b)) {
     const entry = replica.entries.get(id);
-    const message = entry && buildMessage(entry, contextOf(each));
-    if (message) {
+    const rows = entry ? buildRows(entry, contextOf(each)) : [];
+    for (const message of rows) {
       last = message;
       send({
-        '@type': 'updateMessage', chatId, id, message, isFull: true,
+        '@type': 'updateMessage', chatId, id: message.id, message, isFull: true,
       });
-    } else {
-      removed.push(id);
     }
+    if (rows.length === 0) removed.push(messageIdOf(id));
   }
   if (removed.length > 0) send({ '@type': 'deleteMessages', ids: removed, chatId });
   if (last) send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage: last });
@@ -345,15 +344,14 @@ function emitEntry(each: Opened, entry: Entry) {
   if (entry.kind === 'pi.tool-result') {
     // The result shows in its call's message, which changes
     const call = each.replica.entries.get(each.callEntries.get((entry.model as any[])[0].toolCallId)!);
-    const message = call && buildMessage(call, contextOf(each));
-    if (message) {
+    for (const message of call ? buildRows(call, contextOf(each)) : []) {
       send({
         '@type': 'updateMessage', chatId, id: message.id, message, isFull: true,
       });
     }
     return;
   }
-  const message = buildMessage(entry, contextOf(each));
+  const [message, ...more] = buildRows(entry, contextOf(each));
   if (!message) return;
   const sent = entry.kind === 'pi.user' ? outbox?.placedAs(entry.conversationId, entry.id) : undefined;
   const local = sent && shown.get(sent.requestId);
@@ -370,13 +368,19 @@ function emitEntry(each: Opened, entry: Entry) {
       localId: local.localId,
       message: { ...message, sendingState: undefined },
     });
-    return;
+  } else {
+    send({
+      '@type': 'newMessage', chatId, id: message.id, message,
+    });
   }
-  send({
-    '@type': 'newMessage', chatId, id: message.id, message,
-  });
+  for (const row of more) {
+    send({
+      '@type': 'newMessage', chatId, id: row.id, message: row,
+    });
+  }
+  const lastRow = more.at(-1) ?? message;
   // At once, not after Web A's 350 ms for an open chat: a typing draft is numbered after the chat's last message
-  send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage: message });
+  send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage: lastRow });
 }
 
 /**
@@ -450,9 +454,8 @@ export async function fetchHistory(
   const each = open(conversationId);
   await each.ready;
   const messages = each.replica.ordered()
-    .reverse()
-    .map((entry) => buildMessage(entry, contextOf(each)))
-    .filter((message): message is ApiMessage => Boolean(message));
+    .flatMap((entry) => buildRows(entry, contextOf(each)))
+    .reverse();
   messages.unshift(...outgoingOf(conversationId).reverse());
   let first = offsetId ? messages.findIndex((message) => message.id < offsetId) : 0;
   if (first < 0) first = messages.length;
@@ -528,7 +531,8 @@ function bubblesOf(chatId: string, items: OutgoingMessage[]) {
 
 function showAs(item: OutgoingMessage, chatId: string) {
   const conversationId = Number(chatId);
-  let last = opened.get(conversationId)?.replica.maxId ?? dialogs.dialogs.get(conversationId)?.last?.id ?? 0;
+  const lastEntry = opened.get(conversationId)?.replica.maxId ?? dialogs.dialogs.get(conversationId)?.last?.id;
+  let last = lastEntry === undefined ? 0 : lastRowIdOf(lastEntry);
   for (const each of shown.values()) if (each.chatId === chatId) last = Math.max(last, each.localId);
   const local = { chatId, localId: last + LOCAL_ID_STEP, state: '' };
   shown.set(item.requestId, local);
