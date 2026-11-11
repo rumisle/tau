@@ -1,3 +1,10 @@
+<!-- tau: this tree is tau's vendored copy of Web A; what is tau's, and how it is updated -->
+> **tau's copy of Telegram Web A** ([Ajaxy/telegram-tt](https://github.com/Ajaxy/telegram-tt), GPL-3.0-or-later),
+> at the commit in `UPSTREAM`, as tau's web client (`../docs/web.md`). Upstream's files are as upstream has them
+> except at `tau:` marks; tau's own code is `src/tau/` and `e2e/`. `node ../scripts/web/upstream.ts diff` shows tau's
+> edits, `update [commit]` takes a newer upstream. Develop with `../scripts/web/dev.sh` and `test.sh`, not the
+> commands below, which are upstream's for Telegram.
+
 # Telegram Web A
 
 This project won the first prize 🥇 at [Telegram Lightweight Client Contest](https://contest.com/javascript-web-3) and now is an official Telegram client available to anyone at [web.telegram.org/a](https://web.telegram.org/a).

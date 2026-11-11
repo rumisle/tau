@@ -1,7 +1,7 @@
 # tau
 
 A coding agent built on [pi-durable](https://github.com/earendil-works/pi/tree/main/packages/durable). The iOS client
-is built from Telegram's components.
+is built from Telegram's components, the web client from Telegram Web A.
 
 ## Requirements
 
@@ -43,6 +43,22 @@ tau status
 
 TestFlight by invitation, or build `ios/` (ios/README.md). Add the server in Settings > Servers.
 
+## Web
+
+The server serves the web client on its port: [Telegram Web A](https://github.com/Ajaxy/telegram-tt) with tau's data
+layer and rows (`web/`, docs/web.md). Browsers run it over HTTPS or on localhost only:
+
+- On the server's machine: `http://localhost:7878`.
+- Elsewhere: `tailscale serve --bg 7878` on the server's machine, then `https://<machine>.<tailnet>.ts.net`.
+
+`tau setup` prints both as links with the token in them (`/#token=…`); without one, the app asks for the token.
+
+```bash
+scripts/web/dev.sh      # a dev server and the app with hot reload: http://127.0.0.1:1234
+scripts/web/test.sh     # static checks, unit tests, end-to-end tests
+scripts/web/build.sh    # web/dist, which the server serves from a checkout
+```
+
 ## Notifications
 
 TestFlight build: ask for a relay token, then add to `~/.config/tau/flags`:
@@ -59,5 +75,5 @@ AGENTS.md.
 
 ## License
 
-GPL v3 or later. Built on Telegram-iOS (GPL v2 or later) and Telegram Desktop's wallpaper (GPL v3); third-party
-notices are kept with each copied part (`ios/ThirdParty`).
+GPL v3 or later. Built on Telegram-iOS (GPL v2 or later), Telegram Desktop's wallpaper (GPL v3) and Telegram Web A
+(GPL v3 or later); third-party notices are kept with each copied part (`ios/ThirdParty`, `web/LICENSE`).
