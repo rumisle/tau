@@ -113,3 +113,28 @@ test('Stop and Send from Send\'s menu; idle, Send has no menu', async ({ app, ap
   await app.getByRole('button', { name: 'Send Message' }).click({ button: 'right' });
   await expect(app.locator('.CustomSendMenu')).toHaveCount(0);
 });
+
+test('after a failed run the queue is held, not busy: no Stop, no working, and the next message takes it', async ({ app, api }) => {
+  const id = await api.chat('Held', ['hello']);
+  await app.locator('.chat-list .fullName').getByText('Held', { exact: true }).click();
+  const gate = api.gate();
+  await type(app, gate.command);
+  await expect(app.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  // A steer the model fails on, and a follow-up behind it, which the failed run leaves in the inbox
+  await type(app, '!fatal no key');
+  await api.client.request('conversation.submit', {
+    conversationId: id, requestId: crypto.randomUUID(), content: 'later please', whenBusy: 'followUp',
+  });
+  await expect(panel(app)).toContainText('later please');
+  gate.open();
+  await expect(app.locator('[data-tau-part="error"]')).toBeVisible();
+  await expect(panel(app)).toContainText('Follow-up, waits for your next message');
+  await expect(app.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+  await expect(app.locator('.MiddleHeader')).not.toContainText('working');
+  // Send sends: a bubble, not the queue, and its run takes the held follow-up first
+  await type(app, 'next one');
+  await expect(own(app, 'next one')).toBeVisible();
+  await expect(app.locator('[data-tau-row="assistant"]').filter({ hasText: 'You said: next one' })).toBeVisible();
+  await expect(own(app, 'later please')).toBeVisible();
+  await expect(panel(app)).toHaveCount(0);
+});

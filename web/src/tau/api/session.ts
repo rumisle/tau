@@ -1134,6 +1134,17 @@ export function queueOf(conversationId: number): QueuedMessage[] {
   return buildQueue(inbox as JsonObject[], outbox.itemsOf(conversationId), Boolean(each?.isSynced));
 }
 
+/**
+ * Whether the queue is held: a run failed and no run works, so its messages wait for the next one (the user's next
+ * message, or Retry), which takes them first (durable's `afterFailedRun`). Not busy: no Stop, no working, Send sends.
+ */
+export function isQueueHeld(conversationId: number) {
+  const each = opened.get(conversationId);
+  const live = each?.replica.docs['pi.live'] as { run?: unknown; runFailure?: unknown } | undefined;
+  return Boolean(live && live.run === undefined && live.runFailure !== undefined
+    && !dialogs.dialogs.get(conversationId)?.busy);
+}
+
 /** Another device's queued message, taken back by its submission ID in the conversation's order */
 function withdrawOther(conversationId: number, queued: QueuedMessage) {
   if (queued.submissionId === undefined) return Promise.resolve(false);

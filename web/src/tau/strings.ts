@@ -91,6 +91,8 @@ export const STRINGS = {
   QueueSteer: 'Steer',
   QueueFollowUp: 'Follow-up',
   QueueHint: 'Waiting for the agent: click for what can be done with it',
+  // After a failed run: the queue waits for the next message, which starts a run that takes it first
+  QueueHeld: 'waits for your next message',
   QueueEdit: 'Edit',
   QueueAsFollowUp: 'Send as Follow-up',
   QueueAsSteer: 'Send as Steer',

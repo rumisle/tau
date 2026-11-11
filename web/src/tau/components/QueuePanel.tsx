@@ -12,7 +12,7 @@ import type { QueuedMessage } from '../api/queue';
 import buildClassName from '../../util/buildClassName';
 import { queuedPreview } from '../api/queue';
 import {
-  moveQueued, onConversationChange, queueOf, sendQueuedNow, withdrawQueued,
+  isQueueHeld, moveQueued, onConversationChange, queueOf, sendQueuedNow, withdrawQueued,
 } from '../api/session';
 import { STRINGS } from '../strings';
 
@@ -47,12 +47,17 @@ const QueuePanel = ({ chatId }: OwnProps) => {
 const QueueBar = ({ chatId }: OwnProps) => {
   const conversationId = Number(chatId);
   const [queue, setQueue] = useState<QueuedMessage[]>(() => queueOf(conversationId));
+  const [isHeld, setIsHeld] = useState(() => isQueueHeld(conversationId));
   const ref = useRef<HTMLDivElement>();
 
   useEffect(() => {
-    setQueue(queueOf(conversationId));
+    const update = () => {
+      setQueue(queueOf(conversationId));
+      setIsHeld(isQueueHeld(conversationId));
+    };
+    update();
     return onConversationChange((id) => {
-      if (id === conversationId) setQueue(queueOf(conversationId));
+      if (id === conversationId) update();
     });
   }, [conversationId]);
 
@@ -98,7 +103,7 @@ const QueueBar = ({ chatId }: OwnProps) => {
         </MenuItem>
         <MenuItem icon="send" onClick={run(() => sendQueuedNow(conversationId, queued))}>
           <MenuItemTitle>{STRINGS.QueueSendNow}</MenuItemTitle>
-          <MenuItemSubtitle>{STRINGS.QueueSendNowNote}</MenuItemSubtitle>
+          {!isHeld && <MenuItemSubtitle>{STRINGS.QueueSendNowNote}</MenuItemSubtitle>}
         </MenuItem>
         <MenuSeparator />
         <MenuItem icon="delete" destructive onClick={run(() => withdraw(queued, false))}>
@@ -137,7 +142,7 @@ const QueueBar = ({ chatId }: OwnProps) => {
           <div className="message-text">
             <p className="embedded-text-wrapper">{queuedPreview(first)}</p>
             <div className="message-title">
-              {titleOf(first)}
+              {isHeld ? `${titleOf(first)}, ${STRINGS.QueueHeld}` : titleOf(first)}
               <Icon
                 name={first.isSending ? 'message-pending' : 'check'}
                 className="tau-queue-status"

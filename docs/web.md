@@ -136,7 +136,9 @@ web/src/tau/
   Steer or Follow-up, the first one's text, the clock or a check, the pinned bar's segments for several; this device's
   and other devices' (`pi.inbox`). × withdraws one; a click or a right-click opens Edit, Send as Follow-up or Steer,
   Send Now, Delete (a submenu each when several). Send's menu is a right-click on Send while the agent works (iOS: a
-  long press): Send as Follow-up, Stop and Send; Web A's Send Without Sound and Schedule are left out.
+  long press): Send as Follow-up, Stop and Send; Web A's Send Without Sound and Schedule are left out. After a failed
+  run the queue is held (`isQueueHeld`: a `runFailure`, no run): "Follow-up, waits for your next message", and the chat
+  is not busy (no Stop, no working); the next message, or Retry, starts a run that takes it first.
 - **The τ while the agent works and has written nothing** (`components/WaitingTau.tsx`, iOS's ChatWaitingNode): a
   typing draft whose only part is `waiting`, sent while the run is on and no call runs; the answer then streams in the
   same draft (`streamsIn` maps its generation's draft ID to the τ's), and it is sent again every 5 s against Web A's
