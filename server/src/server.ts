@@ -70,6 +70,9 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 			const path = url.pathname;
 			const isApi = path === "/auth" || path === "/files" || path.startsWith("/files/");
 			if (!isApi && options.web?.handle(request, response)) return;
+			// The web app served by another tau server reaches this one's API too (docs/web.md "Several servers"):
+			// any origin may, since the bearer token, not a cookie, is what authorizes.
+			if (allowCrossOrigin(request, response)) return;
 			if (!authorized(request, options.token)) return fail(request, response, 401, "unauthorized", "A token is needed");
 			if (path === "/auth") {
 				response.writeHead(204, { "Cache-Control": "no-store" });
@@ -161,6 +164,24 @@ function requestUrl(request: IncomingMessage): URL | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/** CORS for the API: the response names the asking origin; a preflight is answered here (true) */
+function allowCrossOrigin(request: IncomingMessage, response: ServerResponse): boolean {
+	const origin = request.headers.origin;
+	if (origin === undefined) return false;
+	response.setHeader("Access-Control-Allow-Origin", origin);
+	response.setHeader("Vary", "Origin");
+	response.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Range, Content-Length, Accept-Ranges");
+	if (request.method !== "OPTIONS") return false;
+	response.writeHead(204, {
+		"Access-Control-Allow-Methods": "GET, HEAD, POST, PUT",
+		"Access-Control-Allow-Headers": "Authorization, Content-Type, Range",
+		"Access-Control-Max-Age": "600",
+	});
+	response.end();
+	request.resume();
+	return true;
 }
 
 function fail(request: IncomingMessage, response: ServerResponse, status: number, code: string, message: string): void {

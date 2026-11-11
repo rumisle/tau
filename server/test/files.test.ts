@@ -88,6 +88,19 @@ describe("files", () => {
 		assert.equal(await part.text(), "world");
 		assert.equal((await fetch(`${base}/files/${"0".repeat(32)}`, { headers })).status, 404);
 		assert.equal((await fetch(`${base}/files/${file.id}`)).status, 401);
+		// From the web app another server served: CORS, its preflight answered before any token
+		const preflight = await fetch(`${base}/files?name=x`, {
+			method: "OPTIONS",
+			headers: { Origin: "https://other.example", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization" },
+		});
+		assert.equal(preflight.status, 204);
+		assert.equal(preflight.headers.get("access-control-allow-origin"), "https://other.example");
+		assert.match(preflight.headers.get("access-control-allow-headers") ?? "", /Authorization/);
+		const across = await fetch(`${base}/files/${file.id}`, { headers: { ...headers, Origin: "https://other.example" } });
+		assert.equal(across.headers.get("access-control-allow-origin"), "https://other.example");
+		assert.equal(await across.text(), "hello world");
+		const refused = await fetch(`${base}/files/${file.id}`, { headers: { Origin: "https://other.example" } });
+		assert.equal(refused.status, 401);
 		// Over the limit: refused, and nothing stays.
 		const big = await upload("big.bin", new Uint8Array(65 * 1024));
 		assert.equal(big.status, 413);
