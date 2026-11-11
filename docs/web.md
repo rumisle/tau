@@ -131,8 +131,10 @@ web/src/tau/
   works; the composer shows Stop for it unless the field has text (Send steers then); Stop withdraws the queued
   messages back to the field and aborts the run.
 - **The chat's ⋯ menu is tau's** (`components/ChatMenu.tsx`, in Web A's header menu, with its nested submenus): the
-  model and thinking level (`api/agent.ts`: shown at once, sent in order with the chat's messages, believed until the
-  `pi.agent` doc agrees, as iOS's `ServerStore.agent`), and Compact Context, never repeated after a lost connection.
+  model, in a picker (`components/ModelPicker.tsx`: Web A's searchable picker in a modal of its own root, recent models
+  first, Enter takes the first match), and thinking level (`api/agent.ts`: shown at once, sent in order with the chat's
+  messages, believed until the `pi.agent` doc agrees, as iOS's `ServerStore.agent`), and Compact Context, never repeated
+  after a lost connection.
 - **Photos and files are Web A's media.** A user entry's attachments block names its kept files: one is a message with
   the photo or document and the caption; several an album (a message each, grouped: photos apart from files). Message
   IDs leave room for it: an entry's rows are `entryId * 32 + row`. Web A's media loader asks `downloadMedia` for

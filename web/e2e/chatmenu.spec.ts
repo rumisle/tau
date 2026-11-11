@@ -1,5 +1,5 @@
-// The chat's ⋯ menu (ios/Tau/Chat/ChatController.swift openChatMenu): the model and thinking level, shown at once and
-// answering the next message, and Compact Context.
+// The chat's ⋯ menu (ios/Tau/Chat/ChatController.swift openChatMenu): the model (its picker, searchable) and thinking
+// level, shown at once and answering the next message, and Compact Context.
 import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures.ts';
@@ -35,7 +35,16 @@ test('the menu picks the thinking level and the model; the next answer comes fro
 
   await pick(app, 'Thinking', /^High$/);
   await expect(app.getByText('Thinking set to High')).toBeVisible();
-  await pick(app, 'Model', 'Dev parrot');
+  // The model picker: a search, Enter takes the first match
+  await app.getByRole('button', { name: 'More options' }).click();
+  await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Model' }).click();
+  const picker = app.locator('.tau-model-picker');
+  await expect(picker.getByText('Dev echo')).toBeVisible();
+  await picker.getByRole('textbox').fill('parrot');
+  await expect(picker.locator('.ItemPickerItem')).toHaveCount(1);
+  await app.keyboard.press('Enter');
+  await expect(picker).toHaveCount(0);
+  await expect(app.getByText('Model: Dev parrot')).toBeVisible();
   await send(app, 'which model');
   await expect(app.locator(row).filter({ hasText: 'which model' }).last()).toContainText('dev/parrot, thinking high');
 
@@ -54,4 +63,17 @@ test('Compact Context compacts the conversation', async ({ app, api }) => {
     const { entries } = await api.client.request('conversation.history', { conversationId: id, limit: 50 });
     return entries.some((entry: { kind: string }) => entry.kind === 'pi.compaction');
   }).toBe(true);
+});
+
+test('the model picker lists the recent models first', async ({ app, api }) => {
+  await api.chat('Picker recent', ['hello']);
+  await app.locator('.chat-list .fullName').getByText('Picker recent', { exact: true }).click();
+  await app.getByRole('button', { name: 'More options' }).click();
+  await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Model' }).click();
+  const picker = app.locator('.tau-model-picker');
+  await picker.locator('.ItemPickerItem').filter({ hasText: 'Dev parrot' }).click();
+  await expect(picker).toHaveCount(0);
+  await app.getByRole('button', { name: 'More options' }).click();
+  await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Model' }).click();
+  await expect(app.locator('.tau-model-picker .ItemPickerItem').first()).toContainText('Dev parrot');
 });

@@ -3,10 +3,10 @@
 import { memo, useEffect, useState } from '../../lib/teact/teact';
 import { getActions } from '../../global';
 
-import type { Agent, ModelInfo } from '../api/agent';
+import type { Agent } from '../api/agent';
 
 import {
-  agentOf, cachedModels, compact, configureAgent, loadModels, modelName, onAgentChange, thinkingLevels,
+  agentOf, compact, configureAgent, loadModels, modelName, onAgentChange, thinkingLevels,
   thinkingTitle,
 } from '../api/agent';
 import { STRINGS } from '../strings';
@@ -15,6 +15,7 @@ import Menu from '../../components/ui/Menu';
 import MenuItem, { MenuItemSubtitle, MenuItemTitle } from '../../components/ui/MenuItem';
 import MenuSeparator from '../../components/ui/MenuSeparator';
 import NestedMenuItem from '../../components/ui/NestedMenuItem';
+import { openModelPicker } from './ModelPicker';
 
 type OwnProps = {
   chatId: string;
@@ -31,15 +32,11 @@ const ChatMenu = ({
   chatId, isOpen, x, y, shouldCloseFast, canSearch, onSearch, onClose,
 }: OwnProps) => {
   const [agent, setAgent] = useState<Agent>(() => agentOf(chatId));
-  const [models, setModels] = useState<ModelInfo[] | undefined>(cachedModels);
+  useEffect(() => onAgentChange(() => setAgent(agentOf(chatId))), [chatId]);
 
-  useEffect(() => onAgentChange(() => {
-    setAgent(agentOf(chatId));
-    setModels(cachedModels());
-  }), [chatId]);
-
+  // Names and thinking levels come with the models; their load is an agent change
   useEffect(() => {
-    void loadModels().then(setModels);
+    void loadModels();
   }, []);
 
   const pick = (change: Parameters<typeof configureAgent>[1], toast: string) => {
@@ -47,9 +44,6 @@ const ChatMenu = ({
     getActions().showNotification({ message: toast });
     onClose();
   };
-
-  const isCurrentModel = (model: ModelInfo) => model.provider === agent.model?.provider
-    && model.id === agent.model?.modelId;
 
   return (
     <Menu
@@ -60,22 +54,16 @@ const ChatMenu = ({
       shouldCloseFast={shouldCloseFast}
     >
       {canSearch && <MenuItem icon="search" onClick={onSearch}>{STRINGS.MenuSearch}</MenuItem>}
-      <NestedMenuItem
+      <MenuItem
         icon="settings"
-        submenu={models ? models.map((model) => (
-          <MenuItem
-            key={`${model.provider}/${model.id}`}
-            icon={isCurrentModel(model) ? 'check' : 'placeholder'}
-            onClick={() => pick({ model: { provider: model.provider, modelId: model.id } }, `Model: ${model.name}`)}
-          >
-            <MenuItemTitle>{model.name}</MenuItemTitle>
-            <MenuItemSubtitle>{model.provider}</MenuItemSubtitle>
-          </MenuItem>
-        )) : <MenuItem disabled>{STRINGS.MenuLoading}</MenuItem>}
+        onClick={() => {
+          onClose();
+          openModelPicker(chatId);
+        }}
       >
         <MenuItemTitle>{STRINGS.MenuModel}</MenuItemTitle>
         <MenuItemSubtitle>{modelName(agent.model)}</MenuItemSubtitle>
-      </NestedMenuItem>
+      </MenuItem>
       <NestedMenuItem
         icon="timer"
         submenu={thinkingLevels(agent).map((level) => (

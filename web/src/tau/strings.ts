@@ -17,4 +17,5 @@ export const STRINGS = {
   ThinkingOff: 'Thinking turned off',
   MenuResend: 'Resend',
   MenuHide: 'Hide',
+  ModelSearch: 'Search models',
 } as const;

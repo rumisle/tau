@@ -70,6 +70,23 @@ export function modelName(model?: ModelRef) {
   return modelInfo(model)?.name ?? model.modelId;
 }
 
+// Models picked lately, newest first, on this device (iOS keeps its recent models so)
+const RECENT_KEY = 'tau-recent-models';
+const RECENT_COUNT = 5;
+
+export function recentModels(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]') as string[];
+  } catch {
+    return [];
+  }
+}
+
+export function rememberModel(key: string) {
+  const next = [key, ...recentModels().filter((each) => each !== key)].slice(0, RECENT_COUNT);
+  localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+}
+
 /** The levels the chat's model has, `off` first (pi-ai's getSupportedThinkingLevels) */
 export function thinkingLevels(agent: Agent) {
   return modelInfo(agent.model)?.thinkingLevels ?? FALLBACK_LEVELS;
