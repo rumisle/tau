@@ -85,6 +85,13 @@ test('a message waiting for the run outlives a reload: it shows again, once, and
 test('what is typed is sent as typed: no dash for `--`, no guillemets for `<<`', async ({ app, api }) => {
   await api.chat('Send as typed', ['hello']);
   await openChat(app, 'Send as typed');
-  await type(app, 'git log --oneline << EOF');
-  await expect(own(app, 'git log --oneline << EOF')).toBeVisible();
+  await app.locator(field).click();
+  await app.keyboard.type('also check the `--fast` flag: git log --oneline << EOF');
+  // Web A's placeholder fades out as the text comes (200 ms), never over it for good
+  await expect(app.locator('.placeholder-text').last()).toHaveCSS('opacity', '0');
+  await app.keyboard.press('Enter');
+  // The bubble, and what the model got (the dev model's thinking quotes it)
+  await expect(own(app, 'also check the `--fast` flag: git log --oneline << EOF')).toBeVisible();
+  await expect(app.locator('[data-tau-part="thinking"]')
+    .filter({ hasText: 'The user said "also check the `--fast` flag: git log --oneline << EOF"' }).last()).toBeVisible();
 });
