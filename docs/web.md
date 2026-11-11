@@ -1,7 +1,8 @@
-# The web client (design, not built)
+# The web client
 
 The plan for tau in a browser: Telegram Web A (github.com/Ajaxy/telegram-tt, GPL-3.0-or-later) as the UI, as the iOS
-app takes Telegram-iOS, with a data layer of tau's own written the Telegram way. Nothing here is built yet. A proof of
+app takes Telegram-iOS, with a data layer of tau's own written the Telegram way. M0 is built (section 6, "M0 as built");
+parity comes by walking tau's history. A proof of
 concept is in the `tau-poc` branch of a scratch clone of Web A (its `TAU-NOTES.md`). It is kept as a reference; its
 findings are below.
 
@@ -43,7 +44,7 @@ web/                      Web A's tree at the commit in web/UPSTREAM, filtered (
   e2e/                    tau's: Playwright tests (section 4)
   UPSTREAM                the upstream commit, and the filter's rules
 client/                   tau's: the protocol client, shared by web/ and the server's tests (section 2)
-scripts/web/              tau's: dev, test, build, update-upstream, upstream-diff
+scripts/web/              tau's: dev.sh, test.sh, build.sh, upstream.ts (import, update, diff), parity.sh
 ```
 
 - **Filtered.** Only the files a build needs come in: no `dist/` (222 MB in upstream's tree, rebuilt on every upstream
@@ -58,9 +59,9 @@ scripts/web/              tau's: dev, test, build, update-upstream, upstream-dif
   included, because it cannot filter.
 - **Edits in place, not patch files.** iOS keeps both the edited tree and `telegram-patches/*.patch` because
   `vendor_telegram.py` rewrites the tree from a checkout. Here the tree is the truth. The diff against the pristine
-  upstream commit is the record of tau's edits (`scripts/web/upstream-diff.sh` prints it), so there is no second copy
-  to drift.
-- **Taking an update** (`scripts/web/update-upstream.sh <commit>`): fetch upstream's old and new commits into a
+  upstream commit is the record of tau's edits (`node scripts/web/upstream.ts diff` prints it), so there is no second
+  copy to drift.
+- **Taking an update** (`node scripts/web/upstream.ts update [commit]`): fetch upstream's old and new commits into a
   shallow clone in `vendor/telegram-tt` (gitignored, as `vendor/pi` is). Apply the filter to both. Then, per file:
   - changed upstream, untouched by tau: take upstream's;
   - touched by tau, unchanged upstream: keep tau's;
@@ -77,7 +78,7 @@ scripts/web/              tau's: dev, test, build, update-upstream, upstream-dif
 
 ```
 client/                     Pure TypeScript, no Node or DOM: runs in the browser, in Node and in tests
-  protocol.ts               the wire types (moved from server/src/protocol.ts; the server imports them from here)
+  protocol.ts               the wire types a client reads (the server keeps its own, with its validation)
   ops.ts                    the protocol's ops, a standalone implementation, as server/src/client.ts's is, to keep
                             the spec honest
   connection.ts             one socket: requests by ID, pushes, hello with the first requests behind it, ping,
@@ -129,8 +130,8 @@ web/src/tau/
   - Each edit is marked with a `tau:` comment that says why (`// tau:` in TS, `{/* tau: */}` in JSX, `// tau:` in SCSS).
   - Nothing is reformatted.
   - Whole replacements are new files in `src/tau`, reached through an alias or a hook, never edited copies.
-  - `scripts/web/upstream-diff.sh --check` (in `scripts/web/test.sh`) fails on a changed hunk without a `tau:` mark,
-    and prints how many upstream files differ: a number to keep small (13 in the proof of concept).
+  - `node scripts/web/upstream.ts diff --check` (in `scripts/web/test.sh`) fails on a changed hunk without a `tau:`
+    mark, and prints how many upstream files differ: a number to keep small (13 in the proof of concept, 16 in M0).
   - Theme colors override Web A's with `!important`, because Web A sets them inline on `<html>`; that is in
     `tau.scss`, not in Web A's styles.
 
@@ -194,7 +195,7 @@ One server comes first; the IDs leave room for several from the start.
 | `web/src/tau` | Vitest (Web A's runner, with its Vite transforms and jsdom) | builders: entries and docs to `Api*` objects (each tool's card, thinking, subagents, the run's end, streaming drafts); the IndexedDB store over `fake-indexeddb` | < 5 s |
 | end to end | Playwright, headless Chromium (WebKit for Safari before a release) | the built app, served by a dev tau server with the dev model, driven as a user: open, read, send, steer, stop, edit, search, files, reconnect | smoke < 60 s, all < 3 min on 4 workers |
 | look | Playwright screenshots | baselines per theme of fixed transcripts; layout assertions in iOS's points | in the e2e run |
-| static | TypeScript 7 (`tsc` from the server's devDependencies) over all of `web/` and `client/`; ESLint and Stylelint on `src/tau`, `e2e/` and the files `upstream-diff` lists | | < 10 s |
+| static | TypeScript 7 (`tsc` from the server's devDependencies) over all of `web/` and `client/`; ESLint and Stylelint on `src/tau` and the files `upstream.ts diff` lists; `web/e2e` by its own tsconfig | | < 10 s |
 
 - **End to end, isolated.** Each Playwright worker starts its own server, as `ios/scripts/uitests.py` gives each
   simulator one: `--memory`, a port from `TAU_WEB_PORTS` (default 7960 to 7967, apart from iOS's 7979 and 7991 to
@@ -222,16 +223,19 @@ One command each, from the repository root:
 
 | Command | Does |
 |---|---|
-| `scripts/web/dev.sh` | A dev tau server (`--memory` or `--db /tmp/tau-web-dev.db`, port 7990, `dev/echo`, `--watch`) and Vite's dev server with hot reload on 1234. Vite proxies the WebSocket and `/files` to the server, so dev is same-origin as production. Ctrl-C stops both. `--model`, `--port`, `--db` pass through. |
-| `scripts/web/test.sh` | Static checks, then `client/` and `web/src/tau` unit tests, then the e2e smoke. `--all`: every e2e test. `--update-screenshots`. Used before every commit that touches `web/` or `client/`. |
-| `scripts/web/build.sh` | `vite build` into `web/dist` (gitignored), without emoji images, statistics or source maps. |
+| `scripts/web/dev.sh` | A dev tau server (`--db /tmp/tau-web-dev.db` or `--memory`, port 7990, `dev/echo`, restarted by `node --watch`) and Vite's dev server with hot reload on 1234, which proxies `/socket`, `/auth` and `/files` to the server, so dev is same-origin as production. Ctrl-C stops both. `--port`, `--web-port`, `--db`, `--memory`, `--model`; other options go to the server. |
+| `scripts/web/test.sh` | Static checks, `client/` and `web/src/tau` unit tests, then the e2e tests, building the app first when its sources are newer. `scripts/web/test.sh unit e2e -- -g transcript` runs some steps and passes options to Playwright. Run before every commit that touches `web/` or `client/`. |
+| `scripts/web/build.sh [dir]` | `vite build` into `web/dist` (gitignored) or `dir`, without emoji images (the system's are used) or source maps. |
 | `scripts/build-release.sh` | As now, plus the web build copied into the release as `web/`. `check-release.ts` also fetches `/` and an asset from the started server. One tarball (2.3 MB today, about 8 MB with the app), so a server always serves the app built for its protocol. |
 | `scripts/release.sh` | Unchanged: publishes that tarball. |
-| `scripts/web/update-upstream.sh [commit]` | Takes Web A's upstream to a commit (by default the tip of its master), as in section 1, and runs the tests. |
-| `scripts/web/upstream-diff.sh` | tau's edits to Web A's files as a diff against the pristine commit; `--check` fails on an unmarked hunk. |
+| `node scripts/web/upstream.ts update [commit]` | Takes Web A's upstream to a commit (by default the tip of its master), as in section 1. |
+| `node scripts/web/upstream.ts diff` | tau's edits to Web A's files as a diff against the pristine commit; `--check` fails on an unmarked hunk, `--stat` lists the files. |
+| `scripts/web/parity.sh` | The history walk's checklist, `web/PARITY.md` (section 6). |
 
-- **Install.** `scripts/setup-pi.sh` as now, then `npm ci` in `web/` and in `client/`. `scripts/web/dev.sh` runs
-  `npm ci` itself when `package-lock.json` is newer than `node_modules`.
+- **Install.** `scripts/setup-pi.sh` and `npm ci` in `server/` as now (which links `client/`). The web scripts run
+  `npm ci` in `web/` themselves when its `package-lock.json` is newer than its `node_modules`, and in `web/e2e`
+  when it has none; Playwright's Chromium comes with `npx playwright install chromium` once. `vendor/telegram-tt`
+  (for `upstream.ts diff --check` and updates) is fetched by the first `upstream.ts` command that needs it.
 - **Upstream updates.** About monthly, and before a release that needs an upstream fix. Each takes one commit:
   1. run the update script;
   2. resolve its conflicts, which are in marked hunks only, so each is a hook to put back;
@@ -253,6 +257,50 @@ One command each, from the repository root:
 - The first e2e tests.
 
 M0 delivers the proof of concept's read-only client, served by tau and tested.
+
+**M0 as built**, where it differs from the plan above or taught something:
+
+- **`client/`** has the connection (on any WHATWG socket; `server/src/client.ts` runs it on `ws`), the replica, the
+  chat list by version, ops, and the wire types a client reads (`client/src/protocol.ts`; the server keeps its own
+  with its validation). The outbox and the persistence interfaces come with the history walk's sending and cache
+  commits. Node resolves `tau-client/*` through a `file:` dependency, Web A through a tsconfig path.
+- **`web/src/tau`**:
+  - `api/`: `connector.ts`, `methods.ts`, `session.ts` (the state over tau-client), `builders.ts`, `markdown.ts`,
+    `types.ts`;
+  - `components/`: TauMessage, ToolCard, SubagentCard, Connect;
+  - `styles/tau.scss`;
+  - `auth.ts` (token, socket URL, `/auth`), `boot.ts` (the `#token=` link, the page for plain HTTP), `config.ts`
+    (`IS_TAU`), `strings.ts`.
+
+  Web A's edits are 16 files, 111 lines.
+- **A chat not open gets its Dialog as Telegram's server sends a dialog**: `updateUser`, `updateThreadInfo`,
+  `updateChat` with its read state, and the summary as `updateChatLastMessage`, never `newMessage`. A `newMessage`
+  per summary made Web A take the history it had for whole, while the summaries skip entries (a tool call between
+  two summaries never showed). Web A asks `requestChatUpdate` for a chat it learned of from an update; the session
+  answers with the same. When a chat opens, each summary it showed is replaced by its entry's message
+  (`updateMessage`, `isFull`) or removed (`deleteMessages`, for a tool's result).
+- **A typing draft is numbered right without a timer.** The session sends `updateChatLastMessage` with each
+  `newMessage`, so Web A's last message ID moves at once, not 350 ms later.
+- **Web A asks Telegram's servers for "websync"** (`t.me/_websync_`) once signed in; it is off (`src/util/websync.ts`).
+  An e2e fixture fails any test whose page asks another origin for anything.
+- **Web A's `vitest.config.ts` names a setup file its repository ignores**, so tau's unit tests run with their own
+  config (`web/tau.vitest.config.ts`).
+- **TypeScript 7 differs from Web A's 6 in one place** (an `@ts-expect-error` it finds unused). The edit there is
+  `@ts-ignore`, which both accept.
+- **Tests**: the server's 117 (3 new, for the app, `/auth` and the subprotocol); `client/`'s 3; Vitest's 4 for the
+  builders; Playwright's 6 (the link, the connect screen, a transcript, streaming, plain HTTP, the look's numbers).
+
+Timings on the development machine (warm caches; a cold `npm ci` of `web/` downloads about 400 MB):
+
+| Workflow | Time |
+|---|---|
+| `scripts/web/dev.sh`: both servers up | 1 s (Vite's first page load compiles Web A's modules on demand: about 10 s once) |
+| `scripts/web/test.sh` | 8 s: static 2 s (with TypeScript's incremental cache; 6 s without), unit 2 s, e2e 5 s on 4 workers; plus the build's 13 s when the sources changed |
+| `scripts/web/build.sh` | 13 s; 15 MB unpacked |
+| `scripts/build-release.sh` (server bundle, app, release check) | 6 s; 8.3 MB packed, 2.3 MB before |
+| `node scripts/web/upstream.ts diff --check` | 0.2 s |
+| `node scripts/web/upstream.ts update` | under 1 s past the fetch; a test update to the proof of concept's branch reported 10 files to resolve, each with diff3 markers |
+| server tests | 47 s, as before |
 
 **Then parity by walking tau's history**, not by a roadmap. tau's commits, oldest first, are the iOS app's, the
 protocol's and the server's features and fixes. Each commit message says what changed and why, often what went wrong

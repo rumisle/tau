@@ -18,6 +18,8 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `server/` | The server: `src/host.ts` (Harness setup), `src/connection.ts` (protocol), `src/dialogs.ts` (chat list), `src/subagent.ts` (the subagent tool), `src/titles.ts` (automatic titles) |
 | `client/` | The protocol client in TypeScript, no Node or DOM: the connection, a conversation's replica (cache, holes, ops), the chat list by version; the state machine the iOS app implements, shared by the web app and the server's tests |
 | `server/src/client.ts` | That client on Node's `ws`, for the tests and the CLI |
+| `web/` | The web client: Telegram Web A at the commit in `web/UPSTREAM`, edited only at `tau:` marks; tau's own code in `web/src/tau`, its end-to-end tests in `web/e2e` (docs/web.md) |
+| `scripts/web/` | The web client's workflows: `dev.sh`, `test.sh`, `build.sh`, `upstream.ts` (import, update, diff of Web A), `parity.sh` (`web/PARITY.md`) |
 | `relay/` | The push relay, a Cloudflare Worker that holds the APNs key, for servers without it (docs/notifications.md) |
 | `vendor/pi` | pi at the commit in `PI_REVISION` (gitignored); the server links durable, pi-ai, and chord from it |
 | `scripts/setup-pi.sh` | Clones and builds `vendor/pi`; `--latest` moves `PI_REVISION` to pi's main |
@@ -55,7 +57,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/appearance.md` | Themes and accent colors, as Telegram's Appearance: each built-in theme with its own accent, the Live Activity in it |
 | `docs/typography.md` | How answers are set: clreq's and Butterick's rules, what Core Text does and what tau adds, and iOS's text size |
 | `docs/edits-and-forks.md` | Design notes, not built: edit as versions in one chat, fork as another chat, and what subagents do in each |
-| `docs/web.md` | The web client (design, not built): Telegram Web A vendored in `web/` with marked edits, a shared `client/` package, served by the server on its port; tests, workflows, M0 then a walk through tau's history (`web/PARITY.md`), risks |
+| `docs/web.md` | The web client: Telegram Web A vendored in `web/` with marked edits, a shared `client/` package, served by the server on its port; tests, workflows, M0 then a walk through tau's history (`web/PARITY.md`), risks |
 
 ## Run from the source
 
@@ -72,6 +74,8 @@ npm start -- --host 0.0.0.0 --token-file ~/.config/tau/token  # reachable from t
 npm test
 npm run check
 cd ../client && npm test && npm run check   # the shared client
+scripts/web/dev.sh                          # the web client with hot reload, on a dev server (docs/web.md)
+scripts/web/test.sh
 ```
 
 A server reachable beyond loopback runs commands for anyone who reaches it, so it must have a token: `--token-file`
