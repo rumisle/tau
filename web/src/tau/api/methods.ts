@@ -4,15 +4,15 @@ import type {
   ApiAttachment, ApiChat, ApiMediaFormat, ApiMessageEntity, ApiPeer,
 } from '../../api/types';
 
-import { ALL_FOLDER_ID } from '../../config';
+import { ALL_FOLDER_ID, ARCHIVED_FOLDER_ID } from '../../config';
 import {
-  buildChat, buildChatId, buildReadState, buildThreadInfo, buildUser,
+  buildChat, buildChatId, buildReadState, buildThreadInfo, buildUser, entryIdOf,
 } from './builders';
 import { downloadMedia } from './media';
 import { toMarkdown } from './outgoing';
 import {
-  chatListMessage, dialogs, draftHistory, fetchHistory, isDraftChat, isListed, requestDialog, sendChatListMessages,
-  sendText, stop,
+  chatListMessage, dialogs, draftHistory, fetchHistory, isDraftChat, isListed, mark, markRead, requestDialog,
+  sendChatListMessages, sendText, stop,
 } from './session';
 
 // Telegram's seven peer colors, which its server sends with `help.getPeerColors`; without them avatars are black
@@ -81,6 +81,20 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
   sendMessageAction({ peer, action }: { peer: ApiPeer; action: { type: string } }) {
     // The composer's Stop, which Web A has for a bot's streamed answer and tau for the whole run (src/tau/selectors.ts)
     if (action.type === 'stopDraft') stop(Number(peer.id));
+  },
+
+  // The chat list's and the chat's read state (docs/protocol.md conversation.read, conversation.mark); Web A shows each
+  // change at once and the Dialog that comes back confirms it
+  markMessageListRead({ chat, maxId }: { chat: ApiChat; maxId?: number }) {
+    if (maxId) markRead(chat.id, entryIdOf(maxId));
+  },
+
+  toggleDialogUnread({ chat, hasUnreadMark }: { chat: ApiChat; hasUnreadMark?: boolean }) {
+    mark(chat.id, { unread: Boolean(hasUnreadMark) });
+  },
+
+  toggleChatArchived({ chat, folderId }: { chat: ApiChat; folderId: number }) {
+    mark(chat.id, { archived: folderId === ARCHIVED_FOLDER_ID });
   },
 
   requestChatUpdate({ chat }: { chat: ApiChat }) {

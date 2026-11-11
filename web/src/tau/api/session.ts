@@ -12,6 +12,7 @@ import type { ApiAttachment, ApiMessage, ApiUpdate } from '../../api/types';
 import type { MessageContext } from './builders';
 import { MAIN_THREAD_ID } from '../../api/types';
 
+import { ALL_FOLDER_ID, ARCHIVED_FOLDER_ID } from '../../config';
 import { selectCurrentMessageList } from '../../global/selectors';
 import {
   probe, readToken, saveToken, serverOrigin, socketProtocols, socketUrl,
@@ -205,6 +206,9 @@ function applyDialog(dialog: Dialog) {
 function sendDialog(dialog: Dialog) {
   const id = dialog.conversation.id;
   const chatId = buildChatId(id);
+  // Archived or back: Web A moves a chat between its lists on this, not on the chat's folder (read before it changes)
+  const known = getGlobal().chats.byId[chatId];
+  const isMoved = known !== undefined && (known.folderId === ARCHIVED_FOLDER_ID) !== Boolean(dialog.archived);
   send({ '@type': 'updateUser', id: chatId, user: buildUser(dialog) });
   send({ '@type': 'updateThreadInfo', threadInfo: buildThreadInfo(dialog) });
   send({
@@ -215,6 +219,11 @@ function sendDialog(dialog: Dialog) {
   send({
     '@type': 'updateThreadReadState', chatId, threadId: MAIN_THREAD_ID, readState: buildReadState(dialog),
   });
+  if (isMoved) {
+    send({
+      '@type': 'updateChatListType', id: chatId, folderId: dialog.archived ? ARCHIVED_FOLDER_ID : ALL_FOLDER_ID,
+    });
+  }
   if (!opened.has(id) && dialog.last) {
     send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage: summaryOf(dialog)! });
   }
@@ -721,6 +730,20 @@ function restoreToField(conversationId: number, text: string) {
     });
   }
   restoring.get(conversationId)!.push(text);
+}
+
+// MARK: Read state and the chat list's marks
+
+/** The user has seen the chat up to this entry; the server moves `read` forward only */
+export function markRead(chatId: string, entryId: number) {
+  if (isDraftChat(chatId) || !client) return;
+  void client.request('conversation.read', { conversationId: Number(chatId), at: entryId }).catch(() => undefined);
+}
+
+/** Mark as Unread or as Read, Archive: on every device, from the next Dialog on */
+export function mark(chatId: string, marks: { unread?: boolean; archived?: boolean }) {
+  if (isDraftChat(chatId)) return;
+  void outbox!.request('conversation.mark', { conversationId: Number(chatId) }, marks).catch(() => undefined);
 }
 
 // MARK: For tau's own UI (agent.ts, the chat menu)

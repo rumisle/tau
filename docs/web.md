@@ -140,6 +140,9 @@ web/src/tau/
   text and every file, one request, as iOS sends it); photos go at most 2000 pixels as JPEG, the bytes wait in
   IndexedDB beside the outbox (`db/outboxFiles.ts`), which uploads them one by one before the submit. The attach menu
   has Photo or Video and File.
+- **Read state and marks** go through Web A's own calls: its debounced `markMessageListRead` is `conversation.read`,
+  Mark as Unread and Read are `conversation.mark { unread }`, Archive `{ archived }`. Web A moves a chat between its
+  lists on `updateChatListType`, which a Dialog that changed its `archived` sends.
 - **IDs.** A private chat is keyed by its peer, so each conversation is a user of its own. Several servers are told
   apart as in iOS's MultiStore: the server's slot in the high bits of a conversation's ID, under Telegram's 2^52.
 - **Removed vs dormant.** Nothing of Web A's source is deleted.
