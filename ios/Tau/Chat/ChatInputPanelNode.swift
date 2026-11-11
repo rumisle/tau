@@ -396,7 +396,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
         if let editing = self.editingText {
             self.accessoryView.update(content: InputAccessoryPanelView.Content(id: "edit", title: "Edit Message", text: editing, status: .none, count: 1), theme: theme, animated: animated)
         } else if let first = self.queue.first {
-            let title: String
+            var title: String
             var text = first.text
             if text.isEmpty {
                 text = first.imageCount == 1 ? "Photo" : "\(first.imageCount) Photos"
@@ -409,6 +409,10 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             case .newContext:
                 title = "New Context"
                 text = "The model forgets this chat"
+            }
+            if first.isHeld {
+                // Behind a run that failed: it goes with the next message.
+                title = "Waits for your next message"
             }
             let status: InputAccessoryPanelView.Status = first.mode == .newContext ? .none : (first.isSending ? .sending : .queued)
             self.accessoryView.update(content: InputAccessoryPanelView.Content(id: first.id, title: title, text: text, status: status, count: self.queue.count), theme: theme, animated: animated)

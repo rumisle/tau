@@ -1559,6 +1559,116 @@ final class SendingUITests: XCTestCase {
         self.shot("retry-2-earlier")
     }
 
+    /// A chat whose run failed with a follow-up queued behind it, which durable holds until the next input (its
+    /// `settings.afterFailedRun`): a tool runs, a steer makes the model fail after it, a follow-up waits.
+    private func heldChat(_ title: String) throws -> Int {
+        let server = try DevServerClient(url: devServer)
+        let id = try server.create(title)
+        _ = try server.submit(id, "$ sleep 4")
+        sleep(1)
+        try server.request("conversation.submit", ["conversationId": id, "requestId": UUID().uuidString, "content": "!fatal stop", "whenBusy": "steer"])
+        try server.request("conversation.submit", ["conversationId": id, "requestId": UUID().uuidString, "content": "held follow-up", "whenBusy": "followUp"])
+        let held = waitUntil(30) {
+            guard let docs = (try? server.request("conversation.subscribe", ["conversationId": id]))?.object("docs") else {
+                return false
+            }
+            let live = docs.object("pi.live") ?? [:]
+            let inbox = docs.object("pi.inbox")?["items"] as? [Any] ?? []
+            return live["run"] == nil && live["runFailure"] != nil && !inbox.isEmpty
+        }
+        XCTAssertTrue(held, "the run failed with the follow-up held")
+        return id
+    }
+
+    /// Held inputs are not work: after a failed run the chat is idle (no timer, no Stop, the error card), the held
+    /// follow-up shows in the queue panel as waiting for the next message, and the next message goes out normally,
+    /// the held one before it.
+    func testHeldAfterFailedRun() throws {
+        let id = try self.heldChat("Held")
+        self.launch(["-openChat", "\(id)"])
+        XCTAssertTrue(self.app.waitForIdle(timeout: 10), "idle, not working")
+        settle()
+        self.shot("held-0-idle")
+        let card = self.app.descendants(matching: .any).matching(identifier: "modelError").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5.0), "the run's error card")
+        let title = self.app.staticTexts["accessoryTitle"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "the queue panel")
+        XCTAssertEqual(title.label, "Waits for your next message")
+        XCTAssertEqual(self.accessoryText, "held follow-up")
+        self.focusInput()
+        self.type("next one")
+        self.shot("held-1-typing")
+        self.send()
+        XCTAssertTrue(self.userMessage("held follow-up").waitForExistence(timeout: 15), "the held follow-up goes in")
+        XCTAssertTrue(self.app.waitForEcho("next one"))
+        self.app.waitForIdle()
+        settle()
+        self.shot("held-2-sent")
+        XCTAssertFalse(title.exists && title.isHittable, "nothing queued")
+        XCTAssertEqual(self.userMessages("next one").count, 1, "sent once")
+        let held = self.userMessages("held follow-up").first?.frame.minY ?? 0
+        let next = self.userMessages("next one").first?.frame.minY ?? 0
+        XCTAssertLessThan(held, next, "the held follow-up before the new message")
+    }
+
+    /// Retry on the failed run's card continues it with what was held behind it.
+    func testHeldRetry() throws {
+        let id = try self.heldChat("Held retry")
+        self.launch(["-openChat", "\(id)"])
+        XCTAssertTrue(self.app.waitForIdle(timeout: 10), "idle, not working")
+        let card = self.app.descendants(matching: .any).matching(identifier: "modelError").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5.0), "the run's error card")
+        XCTAssertEqual(card.value as? String, "retry")
+        let frame = card.frame
+        self.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.maxY - 20.0)).tap()
+        XCTAssertTrue(self.app.waitForEcho("held follow-up"), "the held follow-up goes in and is answered")
+        self.app.waitForIdle()
+        settle()
+        self.shot("held-3-retried")
+        let title = self.app.staticTexts["accessoryTitle"].firstMatch
+        XCTAssertFalse(title.exists && title.isHittable, "nothing queued")
+    }
+
+    /// A compaction that fails says so once, as it happens, in words (not the provider's JSON); reopening the chat
+    /// says nothing again, and the transcript's row keeps the error.
+    func testCompactionFailureOnce() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!compact-fail please")
+        self.send()
+        self.app.waitForIdle()
+        settle()
+        self.openChatMenu()
+        settle()
+        self.app.descendants(matching: .any)["Compact Context"].firstMatch.tap()
+        let toasts = self.app.descendants(matching: .any)["chatToasts"].firstMatch
+        XCTAssertTrue(waitUntil(20) { toasts.exists && toasts.label.contains("could not be compacted") }, "the failure said as it happens")
+        usleep(500_000)
+        self.shot("compactfail-0-toast")
+        XCTAssertTrue(toasts.label.contains("could not be compacted: 400: prompt is too long"), toasts.label)
+        XCTAssertFalse(toasts.label.contains("{"), "no JSON: \(toasts.label)")
+        let pill = self.app.descendants(matching: .any).matching(identifier: "compactionPill").firstMatch
+        XCTAssertTrue(pill.waitForExistence(timeout: 10), "the compaction's row")
+        XCTAssertEqual(pill.label, "Compaction failed: 400: prompt is too long")
+        // Reopened: no toast; the row says it.
+        self.point(0.1, 0.08).tap()
+        settle()
+        self.point(0.5, 0.24).tap()
+        self.app.waitForChat()
+        sleep(3)
+        self.shot("compactfail-1-reopened")
+        XCTAssertFalse(toasts.exists && toasts.label.contains("could not be compacted"), "no toast on reopening")
+        XCTAssertEqual(pill.label, "Compaction failed: 400: prompt is too long")
+        // And after a relaunch.
+        self.launch([])
+        self.point(0.5, 0.24).tap()
+        self.app.waitForChat()
+        sleep(3)
+        self.shot("compactfail-2-relaunched")
+        XCTAssertFalse(toasts.exists && toasts.label.contains("could not be compacted"), "no toast after a relaunch")
+        XCTAssertTrue(pill.waitForExistence(timeout: 5), "the row after a relaunch")
+    }
+
     private func userMessages(_ text: String) -> [XCUIElement] {
         return self.app.descendants(matching: .any).matching(identifier: "userMessage").matching(NSPredicate(format: "label == %@", text)).allElementsBoundByIndex
     }

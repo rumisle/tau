@@ -30,6 +30,14 @@ enum ModelErrorText {
         return prefix.isEmpty ? found : "\(prefix): \(found)"
     }
 
+    /// A compaction's error (`pi.live.compactionFailure`, `tau.compactions`): durable's "Summarization failed: "
+    /// left out (what failed is said around it), the provider's error cleaned as a model error's.
+    static func compaction(_ raw: String) -> String {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "Summarization failed:"
+        return self.clean(text.hasPrefix(prefix) ? String(text.dropFirst(prefix.count)) : text)
+    }
+
     private static let kinds: [(pattern: String, reason: String)] = [
         ("overloaded|at capacity|high demand|server_busy|servers are currently busy", "overloaded"),
         ("rate.?limit|too many requests|\\b429\\b|resourceexhausted", "rate limited"),

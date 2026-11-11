@@ -1560,7 +1560,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         case "empty":
                             titleText = "Nothing to compact"
                         default:
-                            titleText = "Compaction failed" + (error.map { ": \($0)" } ?? "")
+                            titleText = "Compaction failed" + (error.map { ": \(ModelErrorText.compaction($0))" } ?? "")
                         }
                     default:
                         break

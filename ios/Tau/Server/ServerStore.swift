@@ -787,7 +787,8 @@ final class ServerStore: ConversationStore, TauServer {
                 text = latest.photoCount > 1 ? "\(latest.photoCount) Photos" : "Photo"
             }
         }
-        return DialogModel.Outgoing(text: text, date: latest.date, failed: self.hasFailedMessage(id))
+        let held = (self.replicas[id]?.isHeld ?? false) && items.allSatisfy { if case .queued = $0.state { return true } else { return false } }
+        return DialogModel.Outgoing(text: text, date: latest.date, failed: self.hasFailedMessage(id), held: held)
     }
 
     private func publishDialogs() {
@@ -1099,8 +1100,7 @@ final class ServerStore: ConversationStore, TauServer {
             } else if params["after"] == nil {
                 replica.hasOlder = value.bool("hasOlder") ?? false
             }
-            replica.docs = value.object("docs") ?? [:]
-            replica.docsAreStale = false
+            replica.applySnapshot(docs: value.object("docs") ?? [:])
             replica.head = value.int("head")
             replica.upsert(value.objects("entries"))
             replica.submissions = [:]
@@ -1289,10 +1289,12 @@ final class ServerStore: ConversationStore, TauServer {
         if let replica = self.replicas[realId], replica.isBusy || (replica.docsAreStale && self.dialogs[realId]?.busy == true) {
             return true
         }
+        // What a failed run left in the inbox waits for this message, which starts the run that takes it first.
+        let held = self.replicas[realId]?.isHeld ?? false
         return self.outbox.items(for: realId).contains { item in
             switch item.state {
             case .queued:
-                return true
+                return !held
             case .pending:
                 return item.showsInQueue
             default:

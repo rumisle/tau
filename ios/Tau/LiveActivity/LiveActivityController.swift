@@ -212,7 +212,7 @@ final class LiveActivityController {
                 continue
             }
             row.chat.title = dialog.title
-            let working = dialog.busy || !dialog.workingSubagents.isEmpty || (dialog.outgoing != nil && !dialog.hasFailedMessage)
+            let working = dialog.busy || !dialog.workingSubagents.isEmpty || (dialog.outgoing.map { !$0.held } == true && !dialog.hasFailedMessage)
             if dialog.hasFailedMessage {
                 row.chat.state = .failed
                 row.chat.detail = "The message was not sent"

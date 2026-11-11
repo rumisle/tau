@@ -51,8 +51,28 @@ final class ConversationReplica {
         return self.entries.keys.sorted().compactMap { self.entries[$0] }
     }
 
+    /// A compaction failure that a live commit brought while the chat was subscribed (its task ID): announced once.
+    /// Not one a subscribe's snapshot shows, which may be hours old; the transcript keeps it as the compaction's row.
+    private(set) var announcedCompactionFailure: Int?
+
+    /// A subscribe's docs: current from here on. A compaction failure in them is old news.
+    func applySnapshot(docs: JSONObject) {
+        self.docs = docs
+        self.docsAreStale = false
+        self.announcedCompactionFailure = nil
+    }
+
     /// Applies one `conv.commit` push as a whole.
     func apply(commit push: JSONObject) {
+        let failureBefore = self.live.object("compactionFailure")?.int("taskId")
+        defer {
+            let failure = self.live.object("compactionFailure")?.int("taskId")
+            if failure == nil {
+                self.announcedCompactionFailure = nil
+            } else if failure != failureBefore {
+                self.announcedCompactionFailure = failure
+            }
+        }
         if let docs = push.object("docs") {
             self.docs = docs
         }
@@ -74,8 +94,16 @@ final class ConversationReplica {
         return self.docsAreStale ? [:] : self.docs.object("pi.live") ?? [:]
     }
 
+    /// A run going on or about to start: not inputs held after a failed run, which wait for the next input (durable's
+    /// `settings.afterFailedRun`), however long that takes.
     var isBusy: Bool {
-        return self.live["run"] != nil || !self.inboxItems.isEmpty
+        return self.live["run"] != nil || (!self.inboxItems.isEmpty && !self.isHeld)
+    }
+
+    /// Inputs held after the latest run failed (`pi.live.runFailure`, no run): the next input starts a run that takes
+    /// them first, as the failure card's Retry does.
+    var isHeld: Bool {
+        return self.live["run"] == nil && self.live["runFailure"] != nil && !self.inboxItems.isEmpty
     }
 
     /// What became of each compaction (`tau.compactions`, server/src/compactions.ts): kept by the server, so read even
@@ -203,10 +231,10 @@ enum TranscriptBuilder {
                 if case .withdrawing = item.state {
                     continue
                 }
-                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.photoCount, isSending: false, outgoingId: item.requestId, submissionId: submissionId))
+                result.append(QueuedMessage(id: item.requestId, mode: item.mode == .steer ? .steer : .followUp, text: item.text, imageCount: item.photoCount, isSending: false, outgoingId: item.requestId, submissionId: submissionId, isHeld: replica.isHeld))
             } else {
                 let (text, images) = self.userContent(raw["content"])
-                result.append(QueuedMessage(id: "s\(submissionId)", mode: mode, text: text, imageCount: images.count, isSending: false, outgoingId: nil, submissionId: submissionId))
+                result.append(QueuedMessage(id: "s\(submissionId)", mode: mode, text: text, imageCount: images.count, isSending: false, outgoingId: nil, submissionId: submissionId, isHeld: replica.isHeld))
             }
         }
         for item in items.sorted(by: { $0.seq < $1.seq }) where !shown.contains(item.requestId) {
@@ -657,13 +685,14 @@ enum TranscriptBuilder {
         // A run waiting on a compaction (past the blocking threshold): what holds the user up is the compaction.
         let blocksRun = replica.live["run"] != nil && live.objects("compactions").contains { $0.bool("blocking") == true }
         let queue = self.queue(replica: replica, items: items)
-        // The agent works, or something waits for it: a message on its way is not that.
-        var state = ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || !queue.isEmpty, queued: queue, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
+        // The agent works, or something waits for it: a message on its way is not that, nor what a failed run left
+        // waiting for the next message.
+        var state = ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || queue.contains { !$0.isHeld }, queued: queue, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
         state.isSynced = replica.isSynced
         state.stablePrefix = StablePrefix(token: token, count: stableCount)
         state.compactionBlocksRun = blocksRun
         state.runStartedAt = replica.isBusy ? turnStart : nil
-        if let failure = live.object("compactionFailure"), let taskId = failure.int("taskId") {
+        if let failure = live.object("compactionFailure"), let taskId = failure.int("taskId"), replica.announcedCompactionFailure == taskId {
             state.compactionFailure = CompactionFailure(taskId: taskId, error: failure.string("error") ?? "")
         }
         // The backoff, or the request after it; the error before it when the transcript has it.

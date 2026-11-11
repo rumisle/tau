@@ -179,13 +179,15 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self.controllerNode.inputPanelNode.isBusy = state.busy
             self.updateTitle(busy: state.busy)
             self.updateTitleTimer()
-            // A compaction that failed says so once, as a toast; one from before this chat opened stays quiet.
+            // A compaction that failed says so once, as a toast, when a live commit brings it while the chat is
+            // subscribed (ConversationReplica.announcedCompactionFailure); one from before stays quiet, its row in the
+            // transcript says it.
             let failure = state.compactionFailure?.taskId
             if self.seenCompactionFailure == nil {
                 self.seenCompactionFailure = .some(failure)
             } else if let failure, self.seenCompactionFailure != .some(failure) {
                 self.seenCompactionFailure = .some(failure)
-                self.presentToast(.info(title: nil, text: "The context could not be compacted: \(state.compactionFailure?.error ?? "")", timeout: nil, customUndoText: nil))
+                self.presentToast(.info(title: nil, text: "The context could not be compacted: \(ModelErrorText.compaction(state.compactionFailure?.error ?? ""))", timeout: nil, customUndoText: nil))
             }
         }))
         if !self.isPreview {
@@ -772,11 +774,35 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
     private weak var currentToast: UndoOverlayController?
 
     func presentToast(_ content: UndoOverlayContent, action: @escaping (UndoOverlayAction) -> Bool = { _ in return false }) {
+        self.recordToastForTests(content)
         let replacing = self.currentToast != nil
         self.currentToast?.dismiss()
         let controller = UndoOverlayController(presentationData: self.theme.presentationData, content: content, elevatedLayout: false, animateInAsReplacement: replacing, action: action)
         self.currentToast = controller
         self.present(controller, in: .current)
+    }
+
+    /// For the UI tests (`-uiTesting`): the toasts this chat showed, as the label of an element (`chatToasts`), since a
+    /// toast is not one.
+    private lazy var toastTestView: UIView? = {
+        guard UserDefaults.standard.bool(forKey: "uiTesting"), !self.isPreview, self.isNodeLoaded else {
+            return nil
+        }
+        let view = UIView(frame: CGRect(x: 2.0, y: 0.0, width: 1.0, height: 1.0))
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = "chatToasts"
+        view.accessibilityLabel = ""
+        self.view.addSubview(view)
+        return view
+    }()
+
+    private func recordToastForTests(_ content: UndoOverlayContent) {
+        guard let view = self.toastTestView else {
+            return
+        }
+        let text = String(describing: content)
+        view.accessibilityLabel = (view.accessibilityLabel ?? "").isEmpty ? text : (view.accessibilityLabel ?? "") + "\n" + text
     }
 
     // MARK: - Sending and editing

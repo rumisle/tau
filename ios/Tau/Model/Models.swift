@@ -50,6 +50,8 @@ struct DialogModel: Equatable {
         var text: String
         var date: Date
         var failed: Bool
+        /// Queued behind a run that failed: nothing works on it until the next message.
+        var held: Bool = false
     }
 
     var isUnread: Bool {
@@ -315,6 +317,8 @@ struct QueuedMessage: Equatable {
     /// The outgoing message this device sent; nil when another device sent it.
     var outgoingId: String?
     var submissionId: Int?
+    /// In the server's inbox behind a run that failed: it goes with the next message (or Retry).
+    var isHeld: Bool = false
 }
 
 /// What a chat screen renders: committed entries plus the answer still streaming (`pi.live.generation`).

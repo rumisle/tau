@@ -694,8 +694,8 @@ final class ChatControllerNode: ASDisplayNode {
     private let selectionTapDelegate = SimultaneousGestureDelegate()
 
     /// For the UI tests (`-uiTesting`): what the chat is doing, as an element they wait on instead of sleeping:
-    /// "loading" until its transcript is known, "busy" while the agent works, streams, has messages queued or a message
-    /// is on its way, else "idle".
+    /// "loading" until its transcript is known, "busy" while the agent works, streams, has messages queued (not held
+    /// behind a failed run) or a message is on its way, else "idle".
     private lazy var testStateView: UIView? = {
         guard UserDefaults.standard.bool(forKey: "uiTesting"), !self.isPreview else {
             return nil
@@ -767,7 +767,7 @@ final class ChatControllerNode: ASDisplayNode {
         guard let view = self.testStateView else {
             return
         }
-        let busy = state.busy || state.streaming != nil || !state.queued.isEmpty || state.messages.contains(where: { $0.delivery == .sending })
+        let busy = state.busy || state.streaming != nil || state.queued.contains { !$0.isHeld } || state.messages.contains(where: { $0.delivery == .sending })
         view.accessibilityValue = !state.isLoaded ? "loading" : busy ? "busy" : "idle"
     }
 
