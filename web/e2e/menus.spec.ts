@@ -3,7 +3,7 @@
 // Resend and Delete.
 import type { Page } from '@playwright/test';
 
-import { expect, test } from './fixtures.ts';
+import { expect, SMOKE, test } from './fixtures.ts';
 
 const answer = '[data-tau-row="assistant"]:not([data-tau-draft])';
 
@@ -15,7 +15,7 @@ async function openChat(app: Page, title: string) {
 const menu = (app: Page) => app.locator('.tau-message-menu');
 const clipboard = (app: Page) => app.evaluate(() => navigator.clipboard.readText());
 
-test('Copy on an answer copies its Markdown; with part of it selected, the selection', async ({ app, api }) => {
+test('Copy on an answer copies its Markdown; with part of it selected, the selection', SMOKE, async ({ app, api }) => {
   await app.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await api.chat('Menu copy', ['hello']);
   await openChat(app, 'Menu copy');

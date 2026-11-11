@@ -2,7 +2,7 @@
 // comes while the chat is open, the page for plain HTTP, and the look's numbers from ios/Tau/Chat/ChatMessageItem.swift.
 import type { Page } from '@playwright/test';
 
-import { expect, test, TOKEN } from './fixtures.ts';
+import { expect, SMOKE, test, TOKEN } from './fixtures.ts';
 
 const row = '[data-tau-row="assistant"]';
 
@@ -10,7 +10,7 @@ function openChat(app: Page, title: string) {
   return app.locator('.chat-list .fullName').getByText(title, { exact: true }).click();
 }
 
-test('a #token= link signs in, and leaves the address bar', async ({ app, api }) => {
+test('a #token= link signs in, and leaves the address bar', SMOKE, async ({ app, api }) => {
   await api.chat('Link sign-in', ['hello from the link test']);
   await expect(app.locator('.chat-list').getByText('Link sign-in')).toBeVisible();
   expect(new URL(app.url()).hash).toBe('');
@@ -33,7 +33,7 @@ test('without a token the connect screen asks; a wrong one is refused, the right
   await expect(page.locator('.chat-list').getByText('Connect screen')).toBeVisible();
 });
 
-test('a transcript: the user\'s bubbles, answers as tau\'s rows, thinking, a tool card with its output', async ({ app, api }) => {
+test('a transcript: the user\'s bubbles, answers, thinking, a tool card', SMOKE, async ({ app, api }) => {
   await api.chat('Transcript', ['hello transcript', '$ echo e2e-$((6*7))']);
   await openChat(app, 'Transcript');
   await expect(app.locator('.Message.own').getByText('hello transcript')).toBeVisible();
@@ -47,7 +47,7 @@ test('a transcript: the user\'s bubbles, answers as tau\'s rows, thinking, a too
   await expect(app.locator(row).last().locator('[data-tau-part="footer"]')).toBeVisible();
 });
 
-test('an answer that comes while the chat is open streams in and stays', async ({ app, api }) => {
+test('an answer that comes while the chat is open streams in and stays', SMOKE, async ({ app, api }) => {
   const id = await api.chat('Live', ['first']);
   await openChat(app, 'Live');
   await expect(app.locator(row).filter({ hasText: 'You said: first' })).toBeVisible();

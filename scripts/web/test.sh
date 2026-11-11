@@ -4,7 +4,8 @@
 #            edited; every edit to Web A marked `tau:` (scripts/web/upstream.ts diff --check, when vendor/telegram-tt is)
 #   unit     client/ (node:test), web/src/tau (Vitest)
 #   e2e      the built app against dev servers (web/e2e, Playwright); built first when its sources are newer
-# Usage: scripts/web/test.sh [static|unit|e2e]... [-- playwright options]
+#   smoke    e2e's tests tagged @smoke only (open, read, send, steer and stop, files, a new chat), under 15 s
+# Usage: scripts/web/test.sh [static|unit|e2e|smoke]... [-- playwright options]
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 web="$root/web"
@@ -54,6 +55,11 @@ e2e() {
 		timed build "$root/scripts/web/build.sh" > /dev/null
 	fi
 	(cd "$web/e2e" && node_modules/.bin/playwright test "${pass[@]}")
+}
+
+smoke() {
+	pass=(--grep @smoke "${pass[@]}")
+	e2e
 }
 
 for step in "${steps[@]}"; do timed "$step" "$step"; done

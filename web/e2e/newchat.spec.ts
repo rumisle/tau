@@ -1,8 +1,8 @@
 // New Chat (docs/sending.md "Edits and drafts"): a draft until its first message, then the conversation, opened in
 // the draft's place and named after its first answer.
-import { expect, test } from './fixtures.ts';
+import { expect, SMOKE, test } from './fixtures.ts';
 
-test('New Chat opens a draft; its first message creates the conversation, which opens with the answer', async ({ app, api }) => {
+test('New Chat is a draft; its first message makes the chat, opened with the answer', SMOKE, async ({ app, api }) => {
   await api.chat('Before', ['hello']);
   await expect(app.locator('.chat-list').getByText('Before', { exact: true })).toBeVisible();
   await app.locator('.chat-list').hover();

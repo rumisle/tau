@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test';
 import type { TauClient } from '../../client/src/connection.ts';
 import type { Dialog } from '../../client/src/protocol.ts';
 
-import { expect, test } from './fixtures.ts';
+import { expect, SMOKE, test } from './fixtures.ts';
 
 // A chat's row by its title (the Archived Chats row lists the titles it holds)
 const listItem = (app: Page, title: string) => app.locator('.chat-list .ListItem')
@@ -24,7 +24,7 @@ async function menu(app: Page, title: string, item: string) {
   await expect(items).toHaveCount(0);
 }
 
-test('an answer is unread until the chat is open; then the server has it read, with no unread divider', async ({ app, api }) => {
+test('an answer is unread until the chat is open, then read on the server; no divider', SMOKE, async ({ app, api }) => {
   const id = await api.chat('Read me', ['hello']);
   // Telegram's unread badge, the count alone
   const badge = listItem(app, 'Read me').getByText('1', { exact: true });

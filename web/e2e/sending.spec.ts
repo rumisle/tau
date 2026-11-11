@@ -2,7 +2,7 @@
 // it and its checks once it is in the transcript; while the agent works, Send steers and Stop ends the run.
 import type { Page } from '@playwright/test';
 
-import { expect, test } from './fixtures.ts';
+import { expect, SMOKE, test } from './fixtures.ts';
 
 // Answers, without the typing draft that streamed them
 const row = '[data-tau-row="assistant"]:not([data-tau-draft])';
@@ -21,7 +21,7 @@ async function type(app: Page, text: string) {
 
 const own = (app: Page, text: string) => app.locator('.Message.own').filter({ hasText: text });
 
-test('a message sent in an idle chat: the bubble at once, then two checks and the answer, once', async ({ app, api }) => {
+test('a message sent in an idle chat: the bubble, then two checks and the answer', SMOKE, async ({ app, api }) => {
   await api.chat('Send idle', ['hello']);
   await openChat(app, 'Send idle');
   await type(app, 'sent from the web');
@@ -46,7 +46,7 @@ test('the field\'s Markdown reaches the model as written', async ({ app, api }) 
   await expect(thinking.filter({ hasText: 'The user said "run `ls -la` and **bold**"' }).last()).toBeVisible();
 });
 
-test('while the agent works, Send steers the run and Stop ends it', async ({ app, api }) => {
+test('while the agent works, Send steers the run and Stop ends it', SMOKE, async ({ app, api }) => {
   await api.chat('Send busy', ['hello']);
   await openChat(app, 'Send busy');
   await type(app, '$ sleep 30');

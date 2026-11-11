@@ -101,6 +101,9 @@ export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
 
 export { expect };
 
+// The smoke subset (`scripts/web/test.sh smoke`): open, read, send, steer and stop, files, a new chat; kept under 15 s
+export const SMOKE = { tag: '@smoke' };
+
 function listening(child: ChildProcess) {
   return new Promise<void>((done, fail) => {
     let output = '';

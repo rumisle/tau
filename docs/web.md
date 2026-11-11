@@ -234,7 +234,7 @@ One server comes first; the IDs leave room for several from the start.
 |---|---|---|---|
 | `client/` | `node:test`, as the server's tests | replica, holes and resume, ops, the dialog list by version, the outbox state machine with a fake connection and store, against the protocol's examples | < 2 s |
 | `web/src/tau` | Vitest (Web A's runner, with its Vite transforms and jsdom) | builders: entries and docs to `Api*` objects (each tool's card, thinking, subagents, the run's end, streaming drafts); the IndexedDB store over `fake-indexeddb` | < 5 s |
-| end to end | Playwright, headless Chromium (WebKit for Safari before a release) | the built app, served by a dev tau server with the dev model, driven as a user: open, read, send, steer, stop, edit, search, files, reconnect | smoke < 60 s, all < 3 min on 4 workers |
+| end to end | Playwright, headless Chromium (WebKit for Safari before a release) | the built app, served by a dev tau server with the dev model, driven as a user: open, read, send, steer, stop, edit, search, files, reconnect | smoke (`@smoke`, `test.sh smoke`) < 15 s, all < 3 min on 4 workers |
 | look | Playwright screenshots | baselines per theme of fixed transcripts; layout assertions in iOS's points | in the e2e run |
 | static | TypeScript 7 (`tsc` from the server's devDependencies) over all of `web/` and `client/`; ESLint and Stylelint on `src/tau` and the files `upstream.ts diff` lists; `web/e2e` by its own tsconfig | | < 10 s |
 

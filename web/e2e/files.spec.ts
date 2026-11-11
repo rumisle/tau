@@ -5,7 +5,7 @@ import { deflateSync } from 'node:zlib';
 
 import type { Page } from '@playwright/test';
 
-import { expect, test } from './fixtures.ts';
+import { expect, SMOKE, test } from './fixtures.ts';
 
 /** A PNG of one color, `width` by `height` */
 function png(width: number, height: number, rgb: [number, number, number]) {
@@ -76,7 +76,7 @@ test('two photos and a file: an album of the photos with the caption, the file a
   await expect(app.locator('#MediaViewer img').first()).toHaveAttribute('src', /^blob:/);
 });
 
-test('photos and a file sent from the composer: uploaded, one message each, the album once', async ({ app, api }) => {
+test('photos and a file from the composer: uploaded, a message each, the album once', SMOKE, async ({ app, api }) => {
   await api.chat('Send files', ['hello']);
   await openChat(app, 'Send files');
   // Photos: the paperclip's Photo or Video, Web A's attachment modal, a caption, Send
