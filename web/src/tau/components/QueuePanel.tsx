@@ -142,7 +142,7 @@ const QueueBar = ({ chatId }: OwnProps) => {
           <div className="message-text">
             <p className="embedded-text-wrapper">{queuedPreview(first)}</p>
             <div className="message-title">
-              {isHeld ? `${titleOf(first)}, ${STRINGS.QueueHeld}` : titleOf(first)}
+              {isHeld ? STRINGS.QueueHeld : titleOf(first)}
               <Icon
                 name={first.isSending ? 'message-pending' : 'check'}
                 className="tau-queue-status"

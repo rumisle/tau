@@ -132,7 +132,7 @@ test('after a failed run the queue is held, not busy: no Stop, no working, and t
   await expect(panel(app)).toContainText('later please');
   gate.open();
   await expect(app.locator('[data-tau-part="error"]')).toBeVisible();
-  await expect(panel(app)).toContainText('Follow-up, waits for your next message');
+  await expect(panel(app)).toContainText('Waits for your next message');
   await expect(app.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
   await expect(app.locator('.MiddleHeader')).not.toContainText('working');
   // Send sends: a bubble, not the queue, and its run takes the held follow-up first
