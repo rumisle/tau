@@ -1769,6 +1769,20 @@ export type ServerInfo = { slot: number; origin: string; status: ServerStatus };
 
 // MARK: Search
 
+const RECENT_CHATS = 10;
+
+/**
+ * Search's empty state: the chats found before (Web A's search history), then the most recently active ones, as
+ * Telegram shows when there is no history
+ */
+export function recentChatIds(found: string[] = []) {
+  const listed = dialogs.ordered().filter((dialog) => isListed(dialog) && !dialog.archived)
+    .sort((a, b) => (b.last?.timestamp ?? b.createdAt ?? 0) - (a.last?.timestamp ?? a.createdAt ?? 0))
+    .map((dialog) => buildChatId(dialog.conversation.id));
+  const known = new Set(listed);
+  return [...new Set([...found.filter((id) => known.has(id)), ...listed])].slice(0, RECENT_CHATS);
+}
+
 export type SearchHit = { kind: string; entryId?: number; time: number; text: string; ranges: [number, number][] };
 export type SearchResult = { conversationId: number; score: number; hits: SearchHit[] };
 

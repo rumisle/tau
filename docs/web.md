@@ -172,8 +172,9 @@ web/src/tau/
   pages merged by score, each its conversation's best part; a result is the chat's own row when its replica is loaded,
   else the server's excerpt, which the row replaces as the chat opens. A chat's search is Web A's (its list of matches,
   Up and Down), without a jump to a date. Found words are marked in tau's rows with the CSS Custom Highlight API
-  (`components/searchHighlight.ts`), Web A's bubbles and results by Web A, both in tau's pink; Telegram's tabs, its
-  strip of chats and its "All chats" filter are hidden.
+  (`components/searchHighlight.ts`), Web A's bubbles (with the chat list's query too) and results by Web A, both in
+  tau's pink; Telegram's tabs, its strip of chats and its "All chats" filter are hidden. An empty search lists the
+  chats found before, then the most recently active (`recentChatIds`).
 - **An answer is a system notification** (docs/notifications.md "On the web"): tau's, decided on the chat list when a
   run ends, in place of Web A's per message; Settings > Notifications is tau's (`components/NotificationSettings.tsx`).
 - **Data and Storage is tau's** (`components/DataSettings.tsx`, in place of Web A's auto-download settings): the bytes

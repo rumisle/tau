@@ -31,12 +31,18 @@ test('the chat list\'s search: chats by title, then messages with their words ma
   const found = results.filter({ hasText: 'Garden' }).first();
   await expect(found).toContainText('quokka visited the garden');
   await expect(found.locator('.matching-text-highlight').first()).toHaveText(/quokka/i);
+  // In tau's pink, not Telegram's blue
+  await expect(found.locator('.matching-text-highlight').first())
+    .toHaveCSS('background-color', 'rgba(235, 108, 164, 0.25)');
 
   await found.click();
   await expect(app.locator('.MiddleHeader')).toContainText('Garden');
   // The chat's own rows in the found entry's place, not the excerpt; its words marked
   await expect(app.locator(answers).filter({ hasText: 'You said: a quokka visited the garden' })).toBeVisible();
   await expect.poll(() => marked(app)).toBeGreaterThan(0);
+  // The user's own bubble, the hit itself, marked too
+  await expect(app.locator('.Message.own').filter({ hasText: 'a quokka visited the garden' })
+    .locator('.matching-text-highlight')).toHaveText('quokka');
   // Closed, the marks go
   await app.locator('#LeftColumn').getByRole('button', { name: 'Return to chat list' }).click();
   await expect.poll(() => marked(app)).toBe(0);
@@ -58,4 +64,14 @@ test('a chat\'s own search lists its matches newest first and goes to each', asy
   await expect(app.locator('.Message.own').filter({ hasText: 'the axolotl sleeps' })
     .locator('.matching-text-highlight')).toHaveText('axolotl');
   await expect.poll(() => marked(app)).toBeGreaterThan(0);
+});
+
+test('an empty search shows the most recently active chats', async ({ app, api }) => {
+  await api.chat('Older recent', ['hello']);
+  await api.chat('Newest recent', ['hello']);
+  await expect(app.locator('.chat-list .fullName').getByText('Newest recent', { exact: true })).toBeVisible();
+  await app.locator('#telegram-search-input').click();
+  const recent = app.locator('.LeftSearch .search-section').filter({ hasText: 'Recent' });
+  await expect(recent.locator('.ListItem').first()).toContainText('Newest recent');
+  await expect(recent.locator('.ListItem').nth(1)).toContainText('Older recent');
 });

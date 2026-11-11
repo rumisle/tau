@@ -5,6 +5,8 @@ import {
 import { getActions, withGlobal } from '../../../global';
 
 import { throttle } from '../../../util/schedulers';
+import { recentChatIds } from '../../../tau/api/session'; // tau: recent chats
+import { IS_TAU } from '../../../tau/config'; // tau: see above
 
 import ListTopPeers from '../../common/ListTopPeers';
 import Island from '../../gili/layout/Island';
@@ -77,7 +79,8 @@ const RecentContacts = ({
 export default memo(withGlobal<OwnProps>(
   (global): Complete<StateProps> => {
     const topPeerIds = global.topPeerCategories.correspondents?.peerIds;
-    const { recentlyFoundChatIds } = global;
+    const recentlyFoundChatIds = IS_TAU // tau: then the most recently active chats
+      ? recentChatIds(global.recentlyFoundChatIds) : global.recentlyFoundChatIds; // tau: see above
 
     return {
       topPeerIds,

@@ -142,6 +142,7 @@ import { getServerTime } from '../../../util/serverTime';
 import stopEvent from '../../../util/stopEvent';
 import { isElementInViewport } from '../../../util/visibility/isElementInViewport';
 import { IS_TAU } from '../../../tau/config'; // tau: tau's message menu
+import { selectTauSearchHighlight } from '../../../tau/selectors'; // tau: found words marked
 import { getStickerDimensions, REM } from '../../common/helpers/mediaDimensions';
 import renderText from '../../common/helpers/renderText';
 import { getCustomEmojiSize } from '../composer/helpers/customEmoji';
@@ -2219,7 +2220,7 @@ export default memo(withGlobal<OwnProps>(
     } = (isFocused && focusedMessage) || {};
 
     const middleSearch = selectCurrentMiddleSearch(global);
-    const highlight = middleSearch?.results?.query
+    const highlight = IS_TAU ? selectTauSearchHighlight(global) : middleSearch?.results?.query // tau: and the list's
       && `${middleSearch.isHashtag ? '#' : ''}${middleSearch.results.query}`;
 
     const singleEmoji = getMessageSingleRegularEmoji(message);
