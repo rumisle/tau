@@ -81,3 +81,10 @@ test('a message waiting for the run outlives a reload: it shows again, once, and
   await expect(own(app, 'kept over a reload')).toHaveCount(1);
   await expect(own(app, 'kept over a reload').locator('.icon-message-read')).toBeVisible();
 });
+
+test('what is typed is sent as typed: no dash for `--`, no guillemets for `<<`', async ({ app, api }) => {
+  await api.chat('Send as typed', ['hello']);
+  await openChat(app, 'Send as typed');
+  await type(app, 'git log --oneline << EOF');
+  await expect(own(app, 'git log --oneline << EOF')).toBeVisible();
+});

@@ -17,6 +17,7 @@ import {
 import { IS_IOS, IS_MAC_OS } from '../util/browser/windowEnvironment';
 import { getDefaultPatternColor } from '../util/wallpaper';
 import { DEFAULT_APP_CONFIG } from '../limits';
+import { IS_TAU } from '../tau/config'; // tau: `--` is a command's flag, not a dash
 import { INITIAL_BROWSER_STATE } from './helpers/browser';
 
 export const INITIAL_PERFORMANCE_STATE_MAX: PerformanceType = {
@@ -100,7 +101,7 @@ export const INITIAL_SHARED_STATE: SharedState = {
     animationLevel: ANIMATION_LEVEL_DEFAULT,
     foldersPosition: FOLDERS_POSITION_DEFAULT,
     messageSendKeyCombo: 'enter',
-    shouldReplaceTextShortcuts: true,
+    shouldReplaceTextShortcuts: !IS_TAU, // tau: `--` is a command's flag, not a dash
     performance: INITIAL_PERFORMANCE_STATE_MAX,
     shouldSkipBrowserCloseConfirmation: false,
     language: 'en',
