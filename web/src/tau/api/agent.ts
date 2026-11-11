@@ -113,8 +113,16 @@ function fromPatch(base: Agent, patch?: JsonObject): Agent {
 }
 
 /** The chat's agent: a choice just made, else its `pi.agent` doc, else the chat list's model, else the defaults */
+/** The agent a chat shows as an AgentPatch, which a create or a fork asks for */
+export function agentPatchOf(chatId: string): JsonObject {
+  const { model, thinkingLevel } = agentOf(chatId);
+  // The protocol clears a field with null (AgentPatch)
+  // eslint-disable-next-line no-null/no-null
+  return { ...(model && { model }), thinkingLevel: thinkingLevel === 'off' ? null : thinkingLevel };
+}
+
 export function agentOf(chatId: string): Agent {
-  if (isDraftChat(chatId)) return fromPatch(defaults(), draftState().agent);
+  if (isDraftChat(chatId)) return fromPatch(defaults(), draftState(chatId).agent);
   const conversationId = Number(chatId);
   const doc = docsOf(conversationId)?.['pi.agent'] as { model?: ModelRef; thinkingLevel?: string } | undefined;
   const stored = doc?.model ? { model: doc.model, thinkingLevel: doc.thinkingLevel ?? 'off' } : undefined;
@@ -149,9 +157,9 @@ export function configureAgent(chatId: string, change: { model?: ModelRef; think
   const outbox = getOutbox();
   if (isDraftChat(chatId)) {
     // Not created yet: the create asks for it, or, already on its way, a configure follows it
-    setDraftAgent(patch);
-    const { requestId } = draftState();
-    if (requestId && outbox.create(requestId) && !outbox.updateCreate(requestId, { agent: draftState().agent })) {
+    setDraftAgent(chatId, patch);
+    const { requestId, agent } = draftState(chatId);
+    if (requestId && outbox.create(requestId) && !outbox.updateCreate(requestId, { agent })) {
       void outbox.request('conversation.configure', { createRequestId: requestId }, { agent: patch }).catch(() => {});
     }
     return;

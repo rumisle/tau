@@ -76,7 +76,8 @@ export function buildOutgoingRows(
     if (upload.kind === 'photo') {
       photos.push({
         mediaType: 'photo',
-        id: `local-${upload.key}`,
+        // Without the bytes here (a kept file an edit carries again), the server's
+        id: !blobUrls.has(upload.key) && upload.serverId ? upload.serverId : `local-${upload.key}`,
         date: base.date,
         sizes: [{ type: 'x', width: upload.width ?? 1000, height: upload.height ?? 750 }],
         blobUrl: blobUrls.get(upload.key),
@@ -84,7 +85,7 @@ export function buildOutgoingRows(
     } else {
       documents.push({
         mediaType: 'document',
-        id: `local-${upload.key}`,
+        id: upload.serverId ?? `local-${upload.key}`,
         fileName: upload.name,
         size: upload.size,
         mimeType: upload.mimeType,

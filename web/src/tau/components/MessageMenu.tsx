@@ -1,6 +1,6 @@
 // A message's context menu, tau's in place of Web A's (ios/Tau/Chat/ChatController.swift, "Context menu"): Copy, or
 // Copy Selected Text when part of the message is selected (Telegram's text selection lifted into the menu); for a
-// message that did not go, the reason, Resend and Delete; one on its way can be deleted.
+// message that did not go, the reason, Resend and Delete; one on its way can be deleted; the user's message, Edit.
 import { memo, useRef } from '../../lib/teact/teact';
 import { getActions } from '../../global';
 
@@ -9,7 +9,10 @@ import type { IAnchorPosition } from '../../types';
 
 import { getMessageHtmlId } from '../../global/helpers';
 import { copyTextToClipboard } from '../../util/clipboard';
-import { deleteOutgoing, outgoingForMessage, resendOutgoing } from '../api/session';
+import { isLocalMessageId } from '../../util/keys/messageKey';
+import {
+  deleteOutgoing, isDraftChat, outgoingForMessage, resendOutgoing,
+} from '../api/session';
 import { STRINGS } from '../strings';
 
 import useLang from '../../hooks/useLang';
@@ -49,6 +52,8 @@ const MessageMenu = ({
   const text = message.tau?.copyText ?? message.content.text?.text ?? '';
   const outgoing = outgoingForMessage(message.chatId, message.id);
   const isFailed = outgoing?.state.type === 'failed';
+  // The user's message in the transcript: an edit forks the chat before it (Web A's edit in the field, then a fork)
+  const canEdit = message.isOutgoing && !outgoing && !isLocalMessageId(message.id) && !isDraftChat(message.chatId);
 
   const getTriggerElement = useLastCallback(() => document.getElementById(getMessageHtmlId(message.id)));
   const getRootElement = useLastCallback(() => document.querySelector('.MessageList') ?? document.body);
@@ -100,6 +105,17 @@ const MessageMenu = ({
         <MenuItem icon="copy" onClick={() => copy(selected)}>{lang('ContextCopySelected')}</MenuItem>
       ) : text && (
         <MenuItem icon="copy" onClick={() => copy(text)}>{lang('Copy')}</MenuItem>
+      )}
+      {canEdit && (
+        <MenuItem
+          icon="edit"
+          onClick={() => {
+            getActions().startEditingMessage({ messageId: message.id });
+            onClose();
+          }}
+        >
+          {lang('Edit')}
+        </MenuItem>
       )}
       {outgoing && (outgoing.state.type === 'failed' || outgoing.state.type === 'pending'
         || outgoing.state.type === 'queued') && (

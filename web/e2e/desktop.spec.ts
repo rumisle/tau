@@ -1,5 +1,5 @@
 // Desktop conventions (docs/web.md "Desktop, not iOS gestures"): a double-click selects a word and starts no reply,
-// Up in an empty field does nothing until edits come, files dropped on the chat are sent as the paperclip sends them.
+// files dropped on the chat are sent as the paperclip sends them. (Up in an empty field edits: edits.spec.ts.)
 import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures.ts';
@@ -11,15 +11,11 @@ async function openChat(app: Page, title: string) {
   await expect(app.locator(field)).toBeVisible();
 }
 
-test('a double-click on a bubble selects a word, with no reply; Up in an empty field edits nothing', async ({ app, api }) => {
+test('a double-click on a bubble selects a word, with no reply', async ({ app, api }) => {
   await api.chat('Desktop keys', ['first message']);
   await openChat(app, 'Desktop keys');
   await app.locator('.Message.own').filter({ hasText: 'first message' }).locator('.text-content').dblclick();
   expect((await app.evaluate(() => window.getSelection()?.toString()))?.trim()).toMatch(/^(first|message)$/);
-  await expect(app.locator('.ComposerEmbeddedMessage')).toHaveCount(0);
-  await app.locator(field).click();
-  await app.keyboard.press('ArrowUp');
-  await expect(app.locator(field)).toHaveText('');
   await expect(app.locator('.ComposerEmbeddedMessage')).toHaveCount(0);
 });
 

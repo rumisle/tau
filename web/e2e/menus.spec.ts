@@ -39,8 +39,8 @@ test('the user\'s bubble has tau\'s menu, not Telegram\'s', async ({ app, api })
   await api.chat('Menu bubble', ['a message of mine']);
   await openChat(app, 'Menu bubble');
   await app.locator('.Message.own').filter({ hasText: 'a message of mine' }).click({ button: 'right' });
-  await expect(menu(app).locator('.MenuItem')).toHaveText(['Copy']);
-  await menu(app).locator('.MenuItem').click();
+  await expect(menu(app).locator('.MenuItem')).toHaveText(['Copy', 'Edit']);
+  await menu(app).locator('.MenuItem').filter({ hasText: 'Copy' }).click();
   expect(await clipboard(app)).toBe('a message of mine');
 });
 

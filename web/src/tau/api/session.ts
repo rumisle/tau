@@ -23,11 +23,13 @@ import { whenLinkTokenStored } from '../boot';
 import { draftsOf } from '../db/drafts';
 import { openOutboxState } from '../db/outbox';
 import { deleteOutboxFile, readOutboxFile, saveOutboxFile } from '../db/outboxFiles';
-import { readUserContent } from './attachments';
+import { STRINGS } from '../strings';
+import { keptUploadsOf, readUserContent } from './attachments';
 import {
   buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildDraftChat, buildDraftUser, buildMe,
-  buildMessage, buildReadState, buildRows, buildSummaryMessage, buildThreadInfo, buildUser, DRAFT_CHAT_ID, lastRowIdOf,
-  messageIdOf,
+  buildMessage, buildReadState, buildRows, buildSummaryMessage, buildThreadInfo, buildTitle, buildUser, DRAFT_CHAT_ID,
+  entryIdOf,
+  lastRowIdOf, messageIdOf,
 } from './builders';
 import { buildOutgoingRows, outgoingRowCount, prepareUploads } from './outgoing';
 import { buildQueue, isInQueue } from './queue';
@@ -87,8 +89,6 @@ const shown = new Map<string, { chatId: string; localIds: number[]; state: strin
 const blobUrls = new Map<string, string>();
 let outbox: Outbox | undefined;
 // New Chat's create, until it is sent, and the agent picked in it (an AgentPatch)
-let draftRequestId: string | undefined;
-let draftAgent: JsonObject | undefined;
 const changeListeners = new Set<(conversationId?: number) => void>();
 
 dialogs.onChange((changed) => {
@@ -576,7 +576,7 @@ function hasBusySubagent(conversationId: number, depth = 0): boolean {
 export async function sendText(chatId: string, text: string, attachments: ApiAttachment[] = []) {
   const uploads = attachments.length ? await keepUploads(attachments) : undefined;
   if (isDraftChat(chatId)) {
-    sendToDraft(text, uploads);
+    sendToDraft(chatId, text, uploads);
     return;
   }
   const conversationId = Number(chatId);
@@ -780,7 +780,9 @@ function bubblesOf(chatId: string, items: OutgoingMessage[]) {
 
 function showAs(item: OutgoingMessage, chatId: string) {
   const conversationId = Number(chatId);
-  const lastEntry = opened.get(conversationId)?.replica.maxId ?? dialogs.dialogs.get(conversationId)?.last?.id;
+  // An edit's fork shows the original up to the fork: its bubbles come after that
+  const lastEntry = draftChats.get(chatId)?.forkAt
+    ?? opened.get(conversationId)?.replica.maxId ?? dialogs.dialogs.get(conversationId)?.last?.id;
   let last = lastEntry === undefined ? 0 : lastRowIdOf(lastEntry);
   for (const each of shown.values()) if (each.chatId === chatId) last = Math.max(last, ...each.localIds);
   const localIds = Array.from({ length: outgoingRowCount(item) }, (_, row) => last + (row + 1) * LOCAL_ID_STEP);
@@ -841,71 +843,186 @@ function refreshBubbles(chatId: string, list: OutgoingMessage[]) {
   }
 }
 
-// MARK: New Chat
+// MARK: Draft chats
 
 /**
- * New Chat is a draft until its first message (docs/sending.md "Edits and drafts"): a chat of its own, not listed,
- * whose messages wait in the outbox for the conversation's create. One at a time, as iOS keeps one: what a reload left
- * unsent is still in it.
+ * A chat not created yet (docs/sending.md "Edits and drafts"): a chat of its own, not listed, whose messages wait in
+ * the outbox for the conversation's create. New Chat is one, one at a time as iOS keeps one: what a reload left unsent
+ * is still in it. An edit is another: a fork before the edited message, showing the original up to there.
  */
-export function openNewChat() {
-  draftRequestId ??= outbox!.state.creates.find((create) => create.forkOf === undefined)?.requestId
-    ?? crypto.randomUUID();
-  send({ '@type': 'updateUser', id: DRAFT_CHAT_ID, user: buildDraftUser() });
-  send({ '@type': 'updateChat', id: DRAFT_CHAT_ID, chat: buildDraftChat() });
+type DraftChat = {
+  chatId: string;
+  title: string;
+  requestId?: string;
+  // The agent it shows (an AgentPatch), which its create asks for
+  agent?: JsonObject;
+  forkOf?: number;
+  forkAt?: number;
+  // Its history was asked for: until then its bubbles wait for it, since Web A asks for no history once it has a message
+  isLoaded?: boolean;
+};
+
+const draftChats = new Map<string, DraftChat>();
+let lastForkChat = 0;
+
+function newChatDraft() {
+  let draft = draftChats.get(DRAFT_CHAT_ID);
+  if (!draft) {
+    const left = outbox!.state.creates.find((create) => create.forkOf === undefined);
+    draft = {
+      chatId: DRAFT_CHAT_ID, title: STRINGS.NewChat, requestId: left?.requestId, agent: left?.agent,
+    };
+    draftChats.set(DRAFT_CHAT_ID, draft);
+  }
+  return draft;
+}
+
+/** Web A's chat for a draft, with what was written in it, then opened */
+function showDraftChat(draft: DraftChat, isEdit = false) {
+  send({ '@type': 'updateUser', id: draft.chatId, user: buildDraftUser(draft.chatId, draft.title) });
+  send({ '@type': 'updateChat', id: draft.chatId, chat: buildDraftChat(draft.chatId, draft.title) });
+  // A fork starts read up to the fork, as the server's does: Web A opens a chat at its last read message
+  if (draft.forkAt !== undefined) {
+    send({
+      '@type': 'updateThreadInfo',
+      threadInfo: { isCommentsInfo: false, chatId: draft.chatId, threadId: MAIN_THREAD_ID },
+    });
+    send({
+      '@type': 'updateThreadReadState',
+      chatId: draft.chatId,
+      threadId: MAIN_THREAD_ID,
+      readState: {
+        unreadCount: 0,
+        lastReadInboxMessageId: lastRowIdOf(draft.forkAt),
+        lastReadOutboxMessageId: lastRowIdOf(draft.forkAt),
+      },
+    });
+  }
   // What was written in it before, kept as any chat's draft. In place before the chat opens: the composer takes a draft
   // that comes later for the user's own typing, and keeps the field as it is
   // (Web A keeps a draft in its thread, which the thread's info makes)
-  const draft = draftsOf([DRAFT_CHAT_ID])[DRAFT_CHAT_ID];
-  if (draft) {
+  const written = draftsOf([draft.chatId])[draft.chatId];
+  if (written) {
     send({
       '@type': 'updateThreadInfo',
-      threadInfo: { isCommentsInfo: false, chatId: DRAFT_CHAT_ID, threadId: MAIN_THREAD_ID },
+      threadInfo: { isCommentsInfo: false, chatId: draft.chatId, threadId: MAIN_THREAD_ID },
     });
     send({
-      '@type': 'draftMessage', chatId: DRAFT_CHAT_ID, threadId: MAIN_THREAD_ID, draft,
+      '@type': 'draftMessage', chatId: draft.chatId, threadId: MAIN_THREAD_ID, draft: written,
     });
   }
-  // After the updates, which Web A takes one per microtask
-  window.setTimeout(() => getActions().openChat({ id: DRAFT_CHAT_ID }));
+  // After the updates, which Web A takes one per microtask; an edit's draft in the chat's place, as iOS's (42ea67a)
+  window.setTimeout(() => getActions().openChat({ id: draft.chatId, shouldReplaceLast: isEdit }));
+}
+
+export function openNewChat() {
+  const draft = newChatDraft();
+  draft.requestId ??= crypto.randomUUID();
+  showDraftChat(draft);
 }
 
 export function isDraftChat(chatId: string) {
-  return chatId === DRAFT_CHAT_ID;
+  return chatId === DRAFT_CHAT_ID || draftChats.has(chatId);
 }
 
-/** The draft's messages, newest first, as a history page */
-export function draftHistory() {
-  if (!draftRequestId) return [];
-  return bubblesOf(DRAFT_CHAT_ID, outbox!.itemsOfCreate(draftRequestId)).reverse();
+/** A draft's messages, newest first, as a history page: a fork's start with the original's rows up to the fork */
+export function draftHistory(chatId: string, offsetId: number | undefined, addOffset: number, limit: number) {
+  const draft = chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId);
+  if (!draft?.requestId) return { messages: [], count: 0 };
+  draft.isLoaded = true;
+  const messages = bubblesOf(chatId, outbox!.itemsOfCreate(draft.requestId)).reverse();
+  const parent = draft.forkOf === undefined ? undefined : opened.get(draft.forkOf);
+  if (parent && draft.forkAt !== undefined) {
+    const inherited = parent.replica.ordered().filter((entry) => entry.id <= draft.forkAt!)
+      .flatMap((entry) => buildRows(entry, contextOf(parent)))
+      .map((message) => ({ ...message, chatId }));
+    messages.push(...inherited.reverse());
+  }
+  // As fetchHistory pages
+  let first = offsetId ? messages.findIndex((message) => message.id < offsetId) : 0;
+  if (first < 0) first = messages.length;
+  first = Math.max(0, first + addOffset);
+  return { messages: messages.slice(first, first + limit), count: messages.length };
 }
 
-function sendToDraft(text: string, uploads?: Upload[]) {
-  draftRequestId ??= crypto.randomUUID();
-  // Named after its first answer; the server's default model, as iOS's New Chat without a pick
-  outbox!.enqueueCreate({ requestId: draftRequestId, autoTitle: true, agent: draftAgent });
+function sendToDraft(chatId: string, text: string, uploads?: Upload[]) {
+  const draft = chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId)!;
+  draft.requestId ??= crypto.randomUUID();
+  // New Chat: named after its first answer; the server's default model, as iOS's New Chat without a pick
+  outbox!.enqueueCreate({ requestId: draft.requestId, autoTitle: true, agent: draft.agent });
   outbox!.enqueue({
-    text, createRequestId: draftRequestId, mode: 'steer', uploads,
+    text, createRequestId: draft.requestId, mode: 'steer', uploads,
   });
 }
 
+/**
+ * An edit of the user's message (docs/sending.md "Edits and drafts"): a fork before it, with the new text and the
+ * original's files as its first message, through the outbox as a create; with the agent the chat shows, since a fork
+ * starts with the one the original had back then. The fork's draft opens in the chat's place until the fork exists.
+ * Editing the first message is a new chat with the same agent.
+ */
+export function editMessage(chatId: string, messageId: number, text: string, agent: JsonObject) {
+  const conversationId = Number(chatId);
+  const parent = opened.get(conversationId);
+  const entryId = entryIdOf(messageId);
+  const entry = parent?.replica.entries.get(entryId);
+  if (!parent || entry?.kind !== 'pi.user') return;
+  const uploads = keptUploadsOf((entry.model as any[] | undefined)?.[0]?.content);
+  const at = Math.max(...parent.replica.ordered().map((each) => each.id).filter((id) => id < entryId));
+  const dialog = dialogs.dialogs.get(conversationId);
+  const title = dialog ? buildTitle(dialog) : STRINGS.NewChat;
+  let draft: DraftChat;
+  if (!Number.isFinite(at)) {
+    draft = newChatDraft();
+    draft.requestId ??= crypto.randomUUID();
+    draft.agent = { ...draft.agent, ...agent };
+  } else {
+    draft = {
+      chatId: String(Number(DRAFT_CHAT_ID) - ++lastForkChat),
+      title,
+      requestId: crypto.randomUUID(),
+      agent,
+      forkOf: conversationId,
+      forkAt: at,
+    };
+    draftChats.set(draft.chatId, draft);
+    outbox!.enqueueCreate({
+      requestId: draft.requestId!, title, agent, forkOf: conversationId, forkAt: at,
+    });
+  }
+  // Web A's chat first: the message's bubble is an update for it
+  showDraftChat(draft, true);
+  sendToDraft(draft.chatId, text, uploads);
+}
+
 function refreshDraft() {
-  if (draftRequestId) refreshBubbles(DRAFT_CHAT_ID, outbox!.itemsOfCreate(draftRequestId));
+  for (const draft of [newChatDraft(), ...draftChats.values()]) {
+    if (draft.requestId && (draft.isLoaded || draft.forkOf === undefined)) {
+      refreshBubbles(draft.chatId, outbox!.itemsOfCreate(draft.requestId));
+    }
+  }
 }
 
 /** The draft is a conversation now: its messages show there, and the chat opens in the draft's place */
 function onCreated(create: PendingCreate, conversationId: number) {
-  if (create.requestId !== draftRequestId) return;
-  draftRequestId = undefined;
-  draftAgent = undefined;
+  const draft = [...draftChats.values()].find((each) => each.requestId === create.requestId);
+  if (!draft) return;
+  if (draft.chatId === DRAFT_CHAT_ID) {
+    draft.requestId = undefined;
+    draft.agent = undefined;
+  } else {
+    draftChats.delete(draft.chatId);
+  }
+  const { chatId } = draft;
   const wasOpen = Object.values(getGlobal().byTabId)
-    .some(({ id: tabId }) => selectCurrentMessageList(getGlobal(), tabId)?.chatId === DRAFT_CHAT_ID);
-  const gone = [...shown].filter(([, local]) => local.chatId === DRAFT_CHAT_ID);
+    .some(({ id: tabId }) => selectCurrentMessageList(getGlobal(), tabId)?.chatId === chatId);
+  const gone = [...shown].filter(([, local]) => local.chatId === chatId);
   for (const [requestId] of gone) shown.delete(requestId);
   if (gone.length > 0) {
-    send({ '@type': 'deleteMessages', ids: gone.flatMap(([, local]) => local.localIds), chatId: DRAFT_CHAT_ID });
+    send({ '@type': 'deleteMessages', ids: gone.flatMap(([, local]) => local.localIds), chatId });
   }
-  if (wasOpen) getActions().openChat({ id: buildChatId(conversationId) });
+  // In the draft's place: Back does not lead to a draft that is gone
+  if (wasOpen) getActions().openChat({ id: buildChatId(conversationId), shouldReplaceLast: true });
 }
 
 /** A message reached the model; when its entry already shows on its own, the bubble that stood for it goes */
@@ -1041,12 +1158,16 @@ export function docsOf(conversationId: number) {
   return opened.get(conversationId)?.replica.docs;
 }
 
-export function draftState() {
-  return { requestId: draftRequestId, agent: draftAgent };
+/** A draft chat's create and the agent it shows */
+export function draftState(chatId: string) {
+  const draft = chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId);
+  return { requestId: draft?.requestId, agent: draft?.agent };
 }
 
-export function setDraftAgent(agent: JsonObject) {
-  draftAgent = { ...draftAgent, ...agent };
+export function setDraftAgent(chatId: string, agent: JsonObject) {
+  const draft = chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId);
+  if (!draft) return;
+  draft.agent = { ...draft.agent, ...agent };
   emitChange(undefined);
 }
 

@@ -1,6 +1,8 @@
 // A user message's photos and files as Web A's media (docs/files.md, docs/media.md): the attachments block names each
 // kept file by path, whose directory is its ID; photos of messages older than files are the entry's image references.
 // Several are an album, as Telegram sends them: a message each, grouped.
+import type { Upload } from 'tau-client/outbox';
+
 import type { ApiDocument, ApiMessage, ApiPhoto } from '../../api/types';
 
 // server/src/attachments.ts's format
@@ -78,6 +80,26 @@ export function readUserContent(content: unknown, conversationId: number, entryI
     });
   }
   return { text: texts.join('\n'), photos, documents };
+}
+
+/** A user message's kept files as uploads done already, for a message that carries them again (an edit) */
+export function keptUploadsOf(content: unknown): Upload[] {
+  const parts = Array.isArray(content) ? content : [];
+  const lines = parts.filter((part) => part.type === 'text').map((part) => parseAttachments(part.text))
+    .find(Boolean) ?? [];
+  return lines.flatMap((line) => {
+    const id = fileIdFromPath(line.path);
+    if (!id) return [];
+    return [{
+      kind: line.kind === 'image' ? 'photo' as const : 'file' as const,
+      key: `kept-${id}`,
+      name: line.path.split('/').at(-1) ?? 'file',
+      size: line.bytes,
+      mimeType: line.mimeType,
+      ...(line.width !== undefined && { width: line.width, height: line.height }),
+      serverId: id,
+    }];
+  });
 }
 
 function buildPhoto(id: string, date: number, width = 1000, height = 750): ApiPhoto {

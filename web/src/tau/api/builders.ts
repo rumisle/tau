@@ -66,22 +66,23 @@ export function buildMe(): ApiUser {
   };
 }
 
-export function buildDraftUser(): ApiUser {
+/** A draft chat's peer: New Chat's, or an edit's fork before it exists */
+export function buildDraftUser(id = DRAFT_CHAT_ID, title: string = STRINGS.NewChat): ApiUser {
   return {
-    id: DRAFT_CHAT_ID,
+    id,
     isMin: false,
     type: 'userTypeRegular',
-    firstName: STRINGS.NewChat,
+    firstName: title,
     phoneNumber: '',
     noStatus: true,
   };
 }
 
-export function buildDraftChat(): ApiChat {
+export function buildDraftChat(id = DRAFT_CHAT_ID, title: string = STRINGS.NewChat): ApiChat {
   return {
-    id: DRAFT_CHAT_ID,
+    id,
     type: 'chatTypePrivate',
-    title: STRINGS.NewChat,
+    title,
   };
 }
 

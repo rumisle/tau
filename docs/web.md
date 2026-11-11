@@ -158,6 +158,12 @@ web/src/tau/
   arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web A
   marks a message read only after it has been in view a while, so the server's unread count came back first and the open
   chat's row showed a badge.
+- **An edit forks the chat** (docs/sending.md "Edits and drafts"): Edit in a user message's menu, or Up in an empty
+  field, is Web A's edit in the field; sending it is Web A's `editMessage`, which tau takes as a fork before the message
+  (`session.editMessage`): a create in the outbox with the agent the chat shows and the new text, carrying the
+  original's kept files, as its first message. Until the fork exists its draft chat (an ID of its own, below New Chat's)
+  shows the original up to the fork, read, and the new message with the clock, in the chat's place; then the fork opens
+  in the draft's. Editing the first message is a New Chat with the chat's agent.
 - **Drafts are Web A's, kept here** (`db/drafts.ts`): Web A saves a chat's draft through `saveDraft`, which Telegram's
   server would keep; tau keeps it in localStorage per server, and gives it back with the chat list (`draftsById`), so
   the list shows Telegram's red "Draft:" and the field has it after a reload. Web A saves when the chat changes, a

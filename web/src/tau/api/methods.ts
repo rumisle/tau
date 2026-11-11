@@ -1,19 +1,20 @@
 // The `callApi` methods tau answers. Every other method resolves to `undefined`, as a failed GramJS request does, and
 // the UI copes (docs/web.md "What the proof of concept showed").
 import type {
-  ApiAttachment, ApiChat, ApiDraft, ApiMediaFormat, ApiMessageEntity, ApiPeer,
+  ApiAttachment, ApiChat, ApiDraft, ApiMediaFormat, ApiMessage, ApiMessageEntity, ApiPeer,
 } from '../../api/types';
 
 import { ALL_FOLDER_ID, ARCHIVED_FOLDER_ID } from '../../config';
 import { draftsOf, writeDraft } from '../db/drafts';
+import { agentPatchOf } from './agent';
 import {
   buildChat, buildChatId, buildReadState, buildThreadInfo, buildUser, entryIdOf,
 } from './builders';
 import { downloadMedia } from './media';
 import { toMarkdown } from './outgoing';
 import {
-  chatListMessage, dialogs, draftHistory, fetchHistory, isDraftChat, isListed, mark, markRead, requestDialog,
-  sendChatListMessages, sendText, stop,
+  chatListMessage, dialogs, draftHistory, editMessage, fetchHistory, isDraftChat, isListed, mark, markRead,
+  requestDialog, sendChatListMessages, sendText, stop,
 } from './session';
 
 // Telegram's seven peer colors, which its server sends with `help.getPeerColors`; without them avatars are black
@@ -54,9 +55,9 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
     chat, offsetId, addOffset, limit,
   }: { chat: ApiChat; offsetId?: number; addOffset?: number; limit: number }) {
     if (isDraftChat(chat.id)) {
-      const messages = offsetId ? [] : draftHistory();
+      const { messages, count } = draftHistory(chat.id, offsetId, addOffset ?? 0, limit);
       return {
-        messages, users: [], chats: [], count: messages.length, topics: [],
+        messages, users: [], chats: [], count, topics: [],
       };
     }
     const { messages, count } = await fetchHistory(Number(chat.id), offsetId, addOffset ?? 0, limit);
@@ -80,6 +81,14 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
     // Web A clears the draft on its own side only, as Telegram's server clears it on a send
     writeDraft(chat.id, undefined);
     return sendText(chat.id, text ? toMarkdown(text, entities) : '', files);
+  },
+
+  // An edit of the user's message: a fork before it (docs/sending.md "Edits and drafts")
+  editMessage({
+    chat, message, text, entities,
+  }: { chat: ApiChat; message: ApiMessage; text?: string; entities?: ApiMessageEntity[] }) {
+    if (!text) return;
+    editMessage(chat.id, message.id, toMarkdown(text, entities), agentPatchOf(chat.id));
   },
 
   saveDraft({ chat, draft }: { chat: ApiChat; draft?: ApiDraft }) {

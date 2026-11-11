@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildMediaRows, mediaSource, parseAttachments, readUserContent } from './attachments';
+import {
+  buildMediaRows, keptUploadsOf, mediaSource, parseAttachments, readUserContent,
+} from './attachments';
 
 const ID_A = '7f3a'.padEnd(32, '0');
 const ID_B = 'a81c'.padEnd(32, '1');
@@ -57,5 +59,20 @@ describe('attachments', () => {
       [289, 'tau9p', true, undefined],
       [290, 'tau9d', undefined, undefined],
     ]);
+  });
+
+  it('carries a message\'s kept files again, as uploads done already (an edit)', () => {
+    const content = [{ type: 'text', text: 'see these' }, { type: 'text', text: BLOCK }];
+    expect(keptUploadsOf(content)).toEqual([
+      {
+        kind: 'photo', key: `kept-${ID_A}`, name: 'IMG & co.jpg', size: 812044, mimeType: 'image/jpeg', width: 2000,
+        height: 1500, serverId: ID_A,
+      },
+      {
+        kind: 'file', key: `kept-${ID_B}`, name: 'report.pdf', size: 1204331, mimeType: 'application/pdf',
+        serverId: ID_B,
+      },
+    ]);
+    expect(keptUploadsOf('plain text')).toEqual([]);
   });
 });
