@@ -1,0 +1,16 @@
+{
+	"name": "tau-client",
+	"private": true,
+	"type": "module",
+	"description": "tau's protocol client (docs/protocol.md, docs/network.md): the connection, a conversation's replica, the chat list by version. Pure TypeScript, for the browser, Node and tests. Type-checked with the server's TypeScript and Node types (scripts.check).",
+	"engines": {
+		"node": ">=22.18"
+	},
+	"exports": {
+		"./*": "./src/*.ts"
+	},
+	"scripts": {
+		"check": "../server/node_modules/.bin/tsc --noEmit",
+		"test": "node --no-warnings --test test/*.test.ts"
+	}
+}

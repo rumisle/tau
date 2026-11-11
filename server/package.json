@@ -18,6 +18,7 @@
 		"@earendil-works/pi-durable": "file:../vendor/pi/packages/durable",
 		"@earendil-works/pi-schema": "file:../vendor/pi/packages/schema",
 		"proper-lockfile": "4.1.2",
+		"tau-client": "file:../client",
 		"ws": "8.21.0",
 		"yaml": "2.9.0"
 	},

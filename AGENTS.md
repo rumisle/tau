@@ -16,7 +16,8 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 |---|---|
 | `ios/` | The iOS app: Telegram-iOS's own UI code (themes, context menus, attachment menu) around ported chat screens (see ios/README.md) |
 | `server/` | The server: `src/host.ts` (Harness setup), `src/connection.ts` (protocol), `src/dialogs.ts` (chat list), `src/subagent.ts` (the subagent tool), `src/titles.ts` (automatic titles) |
-| `server/src/client.ts` | Reference client in TypeScript: the state machine the iOS app implements (cache, holes, ops) |
+| `client/` | The protocol client in TypeScript, no Node or DOM: the connection, a conversation's replica (cache, holes, ops), the chat list by version; the state machine the iOS app implements, shared by the web app and the server's tests |
+| `server/src/client.ts` | That client on Node's `ws`, for the tests and the CLI |
 | `relay/` | The push relay, a Cloudflare Worker that holds the APNs key, for servers without it (docs/notifications.md) |
 | `vendor/pi` | pi at the commit in `PI_REVISION` (gitignored); the server links durable, pi-ai, and chord from it |
 | `scripts/setup-pi.sh` | Clones and builds `vendor/pi`; `--latest` moves `PI_REVISION` to pi's main |
@@ -70,6 +71,7 @@ npm start -- --memory --dev-tps 20          # throwaway storage, slow streaming
 npm start -- --host 0.0.0.0 --token-file ~/.config/tau/token  # reachable from the phone: clients need the token
 npm test
 npm run check
+cd ../client && npm test && npm run check   # the shared client
 ```
 
 A server reachable beyond loopback runs commands for anyone who reaches it, so it must have a token: `--token-file`
