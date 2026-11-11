@@ -1,6 +1,8 @@
 // The `callApi` methods tau answers. Every other method resolves to `undefined`, as a failed GramJS request does, and
 // the UI copes (docs/web.md "What the proof of concept showed").
-import type { ApiChat, ApiMediaFormat, ApiMessageEntity, ApiPeer } from '../../api/types';
+import type {
+  ApiAttachment, ApiChat, ApiMediaFormat, ApiMessageEntity, ApiPeer,
+} from '../../api/types';
 
 import { ALL_FOLDER_ID } from '../../config';
 import {
@@ -61,9 +63,19 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
     };
   },
 
-  sendMessage({ chat, text, entities }: { chat?: ApiChat; text?: string; entities?: ApiMessageEntity[] }) {
-    if (!chat || !text) return;
-    sendText(chat.id, toMarkdown(text, entities));
+  sendMessage({
+    chat, text, entities, attachments, attachment,
+  }: {
+    chat?: ApiChat;
+    text?: string;
+    entities?: ApiMessageEntity[];
+    attachments?: ApiAttachment[];
+    attachment?: ApiAttachment;
+  }) {
+    // One request with all the message's files (Web A's action sends them so for tau)
+    const files = attachments ?? (attachment ? [attachment] : []);
+    if (!chat || (!text && !files.length)) return undefined;
+    return sendText(chat.id, text ? toMarkdown(text, entities) : '', files);
   },
 
   sendMessageAction({ peer, action }: { peer: ApiPeer; action: { type: string } }) {

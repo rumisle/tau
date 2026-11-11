@@ -69,6 +69,7 @@ import { formatStarsAsText } from '../../../util/localization/format';
 import { debounce, onTickEnd, rafPromise } from '../../../util/schedulers';
 import { getServerTime } from '../../../util/serverTime';
 import { callApi, cancelApiProgress } from '../../../api/gramjs';
+import { IS_TAU } from '../../../tau/config'; // tau: a message is one request with all its files
 import { selectTauStoppableRun } from '../../../tau/selectors'; // tau: Stop for the run
 import {
   getIsSavedDialog,
@@ -714,6 +715,11 @@ addActionHandler('sendMessage', async (global, actions, payload): Promise<void> 
 
   if (!payload.scheduledAt && !isStoryReply) {
     actions.animateMessageSending({ chatId: chatId!, threadId: threadId!, tabId });
+  }
+
+  if (IS_TAU) { // tau: a message is one request with all its files (src/tau/api/methods.ts)
+    await callApi('sendMessage', params);
+    return;
   }
 
   const isSingle = (!payload.attachments || payload.attachments.length <= 1) && !isForwarding;

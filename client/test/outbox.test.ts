@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RequestError } from "../src/connection.ts";
-import { Outbox, type OutboxState } from "../src/outbox.ts";
+import { Outbox, type OutboxState, type Upload, UploadError } from "../src/outbox.ts";
 
 /** A server that holds every request until the test answers it, and a clock and timers the test moves. */
-function harness(state?: OutboxState) {
+function harness(state?: OutboxState, upload?: (upload: Upload) => Promise<string>) {
 	const requests: { method: string; params: any; resolve: (value: unknown) => void; reject: (error: Error) => void }[] = [];
 	const client = {
 		request: (method: string, params: any) => new Promise((resolve, reject) => requests.push({ method, params, resolve, reject })),
@@ -19,7 +19,9 @@ function harness(state?: OutboxState) {
 		newId: () => `r${++ids}`,
 		now: () => 1000,
 		delay: (ms, run) => void timers.push({ ms, run }),
+		upload,
 		events: {
+			removed: (item, keys) => void (keys.length > 0 && events.push(`removed ${item.requestId} ${keys.join(",")}`)),
 			restored: (id, text) => void events.push(`restored ${id} ${text}`),
 			placed: (item, entry) => void events.push(`placed ${item.requestId} ${entry}`),
 			notice: (id, text) => void events.push(`notice ${id} ${text}`),
@@ -256,4 +258,65 @@ test("a push from another device's Stop takes a queued message back to the field
 	outbox.apply({ id: 7, status: "unanswered", reason: "aborted" });
 	assert.equal(outbox.items.length, 0);
 	assert.deepEqual(events, ["restored 1 queued"]);
+});
+
+const photo = (key: string): Upload => ({ kind: "photo", key, name: "photo.jpg", size: 10, mimeType: "image/jpeg", width: 4, height: 3 });
+
+test("a message's files are uploaded one by one, then submitted with their IDs; a network failure waits", async () => {
+	const uploads: string[] = [];
+	let failNext = true;
+	const { outbox, client, next, timers, settle, events } = harness(undefined, async (upload) => {
+		uploads.push(upload.key);
+		if (failNext) {
+			failNext = false;
+			throw new TypeError("Failed to fetch");
+		}
+		return `id-${upload.key}`;
+	});
+	outbox.connected(client, "db");
+	outbox.enqueue({ text: "", conversationId: 1, uploads: [photo("a"), { ...photo("b"), kind: "file", name: "notes.txt" }] });
+	await settle();
+	assert.equal(timers.at(-1)?.ms, 1000, "the network failed: tried again after a second");
+	timers.at(-1)!.run();
+	const submit = await next();
+	assert.deepEqual(uploads, ["a", "a", "b"]);
+	assert.deepEqual(submit.params.attachments, [{ id: "id-a", as: "image" }, { id: "id-b", as: "file" }]);
+	assert.equal(submit.params.content, "");
+	submit.resolve(record({ requestId: "r1", status: "placed", entry: 5 }));
+	await settle();
+	outbox.settle("r1");
+	assert.deepEqual(events.at(-1), "removed r1 a,b");
+});
+
+test("a file the server refuses fails the message; one it swept is uploaded again", async () => {
+	let refuse = true;
+	const uploaded: string[] = [];
+	const { outbox, client, next, settle } = harness(undefined, async (upload) => {
+		uploaded.push(upload.key);
+		if (refuse && upload.key === "big") throw new UploadError(413, "Too large");
+		return `id-${upload.key}`;
+	});
+	outbox.connected(client, "db");
+	outbox.enqueue({ text: "", conversationId: 1, uploads: [photo("big")] });
+	await settle();
+	assert.deepEqual(outbox.item("r1")?.state, { type: "failed", code: "too_large", message: "Too large" });
+
+	refuse = false;
+	outbox.enqueue({ text: "again", conversationId: 2, uploads: [photo("kept")] });
+	(await next()).reject(new RequestError("file_missing", "no such file"));
+	const again = await next();
+	assert.deepEqual(uploaded, ["big", "kept", "kept"], "uploaded again");
+	assert.deepEqual(again.params.attachments, [{ id: "id-kept", as: "image" }]);
+});
+
+test("an entry matches a message with files by its caption and how many files it has", async () => {
+	const { outbox, client, next, settle } = harness(undefined, async (upload) => `id-${upload.key}`);
+	outbox.connected(client, "db");
+	outbox.enqueue({ text: "", conversationId: 1, uploads: [photo("a")] });
+	(await next()).resolve(record({ id: 1, requestId: "r1", status: "queued" }));
+	await settle();
+	outbox.matchPlacements(1, [{ id: 10, text: "a text message", files: 0 }]);
+	assert.equal(outbox.item("r1")?.state.type, "queued");
+	outbox.matchPlacements(1, [{ id: 11, text: "", files: 1 }]);
+	assert.deepEqual(outbox.item("r1")?.state, { type: "placed", entryId: 11 });
 });

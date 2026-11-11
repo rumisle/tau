@@ -2,13 +2,13 @@
 // replica per opened chat (tau-client), turned into `apiUpdate`s as GramJS's update handler sends them.
 import { TauClient } from 'tau-client/connection';
 import { DialogList } from 'tau-client/dialogs';
-import type { OutgoingMessage, PendingCreate } from 'tau-client/outbox';
-import { Outbox } from 'tau-client/outbox';
+import type { OutgoingMessage, PendingCreate, Upload } from 'tau-client/outbox';
+import { Outbox, UploadError } from 'tau-client/outbox';
 import type { Dialog, Entry, JsonObject } from 'tau-client/protocol';
 import { ConversationReplica } from 'tau-client/replica';
 import { getActions, getGlobal } from '../../global';
 
-import type { ApiMessage, ApiUpdate } from '../../api/types';
+import type { ApiAttachment, ApiMessage, ApiUpdate } from '../../api/types';
 import type { MessageContext } from './builders';
 import { MAIN_THREAD_ID } from '../../api/types';
 
@@ -18,12 +18,14 @@ import {
 } from '../auth';
 import { whenLinkTokenStored } from '../boot';
 import { openOutboxState } from '../db/outbox';
+import { deleteOutboxFile, readOutboxFile, saveOutboxFile } from '../db/outboxFiles';
+import { readUserContent } from './attachments';
 import {
   buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildDraftChat, buildDraftUser, buildMe,
   buildMessage, buildReadState, buildRows, buildSummaryMessage, buildThreadInfo, buildUser, DRAFT_CHAT_ID, lastRowIdOf,
-  messageIdOf, userText,
+  messageIdOf,
 } from './builders';
-import { buildOutgoingMessage } from './outgoing';
+import { buildOutgoingRows, outgoingRowCount, prepareUploads } from './outgoing';
 
 // The PoC reads a transcript whole, in pages of the server's largest
 const PAGE = 500;
@@ -65,7 +67,9 @@ const summarized = new Map<number, Set<number>>();
 // The call that started each subagent, by the subagent's conversation
 const subagentCalls = new Map<number, { parentId: number; callId: string }>();
 // Messages on their way as Web A has them: their local message and the state it shows, by request ID
-const shown = new Map<string, { chatId: string; localId: number; state: string }>();
+const shown = new Map<string, { chatId: string; localIds: number[]; state: string }>();
+// Object URLs of the bytes of the outbox's photos and files, by upload key, while a message has them
+const blobUrls = new Map<string, string>();
 let outbox: Outbox | undefined;
 // New Chat's create, until it is sent, and the agent picked in it (an AgentPatch)
 let draftRequestId: string | undefined;
@@ -81,10 +85,17 @@ export async function start(callback: (update: ApiUpdate) => void) {
   await whenLinkTokenStored();
   token = await readToken(serverOrigin());
   const { state, persist } = await openOutboxState(serverOrigin());
+  // The bytes of what a reload left unsent, for its bubbles
+  for (const upload of state.items.flatMap((item) => item.uploads ?? [])) {
+    const blob = await readOutboxFile(upload.key);
+    if (blob) blobUrls.set(upload.key, URL.createObjectURL(blob));
+  }
   outbox = new Outbox({
     state,
     persist,
+    upload: uploadFile,
     events: {
+      removed: (_item, keys) => dropUploads(keys),
       changed: (conversationId) => {
         if (conversationId !== undefined) refreshOutgoing(conversationId);
         else refreshDraft();
@@ -313,8 +324,11 @@ function applyReplica(each: Opened) {
   const fresh = each.replica.ordered().filter((entry) => !each.seen.has(entry.id));
   for (const entry of fresh) index(each, entry);
   // Before they show: a message on its way becomes its entry in one step, not a duplicate first
-  const users = fresh.filter((entry) => entry.kind === 'pi.user')
-    .map((entry) => ({ id: entry.id, text: userText((entry.model as any[])[0]?.content) }));
+  const users = fresh.filter((entry) => entry.kind === 'pi.user').map((entry) => {
+    const content = (entry.model as any[])[0]?.content;
+    const { text, photos, documents } = readUserContent(content, entry.conversationId, entry.id, 0);
+    return { id: entry.id, text, files: photos.length + documents.length };
+  });
   if (users.length > 0) outbox?.matchPlacements(each.replica.id, users);
   if (each.isLoaded) {
     for (const entry of fresh) emitEntry(each, entry);
@@ -351,34 +365,33 @@ function emitEntry(each: Opened, entry: Entry) {
     }
     return;
   }
-  const [message, ...more] = buildRows(entry, contextOf(each));
-  if (!message) return;
+  const rows = buildRows(entry, contextOf(each));
+  if (!rows.length) return;
   const sent = entry.kind === 'pi.user' ? outbox?.placedAs(entry.conversationId, entry.id) : undefined;
   const local = sent && shown.get(sent.requestId);
   if (sent) {
     shown.delete(sent.requestId);
     outbox!.settle(sent.requestId);
   }
-  if (local) {
-    // The bubble that was on its way is the entry now: Telegram's send succeeded (its handler keeps what the local
-    // message had, the clock too, unless the entry's message says otherwise)
-    send({
-      '@type': 'updateMessageSendSucceeded',
-      chatId,
-      localId: local.localId,
-      message: { ...message, sendingState: undefined },
-    });
-  } else {
-    send({
-      '@type': 'newMessage', chatId, id: message.id, message,
-    });
-  }
-  for (const row of more) {
-    send({
-      '@type': 'newMessage', chatId, id: row.id, message: row,
-    });
-  }
-  const lastRow = more.at(-1) ?? message;
+  const localIds = local?.localIds ?? [];
+  rows.forEach((message, row) => {
+    if (row < localIds.length) {
+      // The bubble that was on its way is the entry now: Telegram's send succeeded (its handler keeps what the local
+      // message had, the clock too, unless the entry's message says otherwise)
+      send({
+        '@type': 'updateMessageSendSucceeded',
+        chatId,
+        localId: localIds[row],
+        message: { ...message, sendingState: undefined },
+      });
+    } else {
+      send({
+        '@type': 'newMessage', chatId, id: message.id, message,
+      });
+    }
+  });
+  if (localIds.length > rows.length) send({ '@type': 'deleteMessages', ids: localIds.slice(rows.length), chatId });
+  const lastRow = rows.at(-1)!;
   // At once, not after Web A's 350 ms for an open chat: a typing draft is numbered after the chat's last message
   send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage: lastRow });
 }
@@ -496,15 +509,50 @@ function hasBusySubagent(conversationId: number, depth = 0): boolean {
 // MARK: Sending
 
 /** The composer's Send: a message to the conversation, steering a run that works (docs/sending.md) */
-export function sendText(chatId: string, text: string) {
+export async function sendText(chatId: string, text: string, attachments: ApiAttachment[] = []) {
+  const uploads = attachments.length ? await keepUploads(attachments) : undefined;
   if (isDraftChat(chatId)) {
-    sendToDraft(text);
+    sendToDraft(text, uploads);
     return;
   }
   const conversationId = Number(chatId);
   outbox!.enqueue({
-    text, conversationId, mode: 'steer', showsInQueue: Boolean(dialogs.dialogs.get(conversationId)?.busy),
+    text, conversationId, mode: 'steer', showsInQueue: Boolean(dialogs.dialogs.get(conversationId)?.busy), uploads,
   });
+}
+
+/** The composer's files, kept beside the outbox before the message is: a reload or a crash still sends them */
+async function keepUploads(attachments: ApiAttachment[]) {
+  const prepared = await prepareUploads(attachments, crypto.randomUUID());
+  for (const { upload, blob } of prepared) {
+    await saveOutboxFile(upload.key, blob);
+    blobUrls.set(upload.key, URL.createObjectURL(blob));
+  }
+  return prepared.map(({ upload }) => upload);
+}
+
+/** `POST /files` for the outbox: the file's ID, or an UploadError when the server refuses it */
+async function uploadFile(upload: Upload) {
+  const blob = await readOutboxFile(upload.key);
+  if (!blob) throw new UploadError(400, `${upload.name} is missing`);
+  const response = await fetch(`${serverOrigin()}/files?name=${encodeURIComponent(upload.name)}`, {
+    method: 'POST', headers: authHeaders(), body: blob,
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => undefined);
+    throw new UploadError(response.status, error?.error?.message ?? `${upload.name} was refused`);
+  }
+  return ((await response.json()) as { id: string }).id;
+}
+
+/** What a message that left the outbox kept for its files goes */
+function dropUploads(keys: string[]) {
+  for (const key of keys) {
+    void deleteOutboxFile(key);
+    const url = blobUrls.get(key);
+    if (url) URL.revokeObjectURL(url);
+    blobUrls.delete(key);
+  }
 }
 
 /** Stop: the run ends, and the messages waiting for it come back to the field (docs/sending.md "Stop") */
@@ -522,10 +570,10 @@ function outgoingOf(conversationId: number) {
 function bubblesOf(chatId: string, items: OutgoingMessage[]) {
   return items
     .filter((item) => item.state.type !== 'placed' && item.state.type !== 'withdrawing')
-    .map((item) => {
+    .flatMap((item) => {
       const local = shown.get(item.requestId) ?? showAs(item, chatId);
       local.state = stateOf(item);
-      return buildOutgoingMessage(item, chatId, local.localId);
+      return buildOutgoingRows(item, chatId, local.localIds, blobUrls);
     });
 }
 
@@ -533,8 +581,9 @@ function showAs(item: OutgoingMessage, chatId: string) {
   const conversationId = Number(chatId);
   const lastEntry = opened.get(conversationId)?.replica.maxId ?? dialogs.dialogs.get(conversationId)?.last?.id;
   let last = lastEntry === undefined ? 0 : lastRowIdOf(lastEntry);
-  for (const each of shown.values()) if (each.chatId === chatId) last = Math.max(last, each.localId);
-  const local = { chatId, localId: last + LOCAL_ID_STEP, state: '' };
+  for (const each of shown.values()) if (each.chatId === chatId) last = Math.max(last, ...each.localIds);
+  const localIds = Array.from({ length: outgoingRowCount(item) }, (_, row) => last + (row + 1) * LOCAL_ID_STEP);
+  const local = { chatId, localIds, state: '' };
   shown.set(item.requestId, local);
   return local;
 }
@@ -557,7 +606,7 @@ function refreshBubbles(chatId: string, list: OutgoingMessage[]) {
     const item = items.get(requestId);
     if (!item || item.state.type === 'withdrawing') {
       shown.delete(requestId);
-      gone.push(local.localId);
+      gone.push(...local.localIds);
     }
   }
   if (gone.length > 0) send({ '@type': 'deleteMessages', ids: gone, chatId });
@@ -567,23 +616,26 @@ function refreshBubbles(chatId: string, list: OutgoingMessage[]) {
     if (!local) {
       const fresh = showAs(item, chatId);
       fresh.state = stateOf(item);
-      const message = buildOutgoingMessage(item, chatId, fresh.localId);
-      send({
-        '@type': 'newMessage', chatId, id: message.id, message,
-      });
+      for (const message of buildOutgoingRows(item, chatId, fresh.localIds, blobUrls)) {
+        send({
+          '@type': 'newMessage', chatId, id: message.id, message,
+        });
+      }
       continue;
     }
     const state = stateOf(item);
     if (state === local.state) continue;
     local.state = state;
-    if (item.state.type === 'failed') {
-      send({
-        '@type': 'updateMessageSendFailed', chatId, localId: local.localId, error: item.state.message,
-      });
-    } else {
-      send({
-        '@type': 'updateMessage', chatId, id: local.localId, message: buildOutgoingMessage(item, chatId, local.localId),
-      });
+    for (const message of buildOutgoingRows(item, chatId, local.localIds, blobUrls)) {
+      if (item.state.type === 'failed') {
+        send({
+          '@type': 'updateMessageSendFailed', chatId, localId: message.id, error: item.state.message,
+        });
+      } else {
+        send({
+          '@type': 'updateMessage', chatId, id: message.id, message,
+        });
+      }
     }
   }
 }
@@ -613,11 +665,13 @@ export function draftHistory() {
   return bubblesOf(DRAFT_CHAT_ID, outbox!.itemsOfCreate(draftRequestId)).reverse();
 }
 
-function sendToDraft(text: string) {
+function sendToDraft(text: string, uploads?: Upload[]) {
   draftRequestId ??= crypto.randomUUID();
   // Named after its first answer; the server's default model, as iOS's New Chat without a pick
   outbox!.enqueueCreate({ requestId: draftRequestId, autoTitle: true, agent: draftAgent });
-  outbox!.enqueue({ text, createRequestId: draftRequestId, mode: 'steer' });
+  outbox!.enqueue({
+    text, createRequestId: draftRequestId, mode: 'steer', uploads,
+  });
 }
 
 function refreshDraft() {
@@ -634,7 +688,7 @@ function onCreated(create: PendingCreate, conversationId: number) {
   const gone = [...shown].filter(([, local]) => local.chatId === DRAFT_CHAT_ID);
   for (const [requestId] of gone) shown.delete(requestId);
   if (gone.length > 0) {
-    send({ '@type': 'deleteMessages', ids: gone.map(([, local]) => local.localId), chatId: DRAFT_CHAT_ID });
+    send({ '@type': 'deleteMessages', ids: gone.flatMap(([, local]) => local.localIds), chatId: DRAFT_CHAT_ID });
   }
   if (wasOpen) getActions().openChat({ id: buildChatId(conversationId) });
 }
@@ -646,7 +700,7 @@ function onPlaced(item: OutgoingMessage, entryId: number) {
   const local = shown.get(item.requestId);
   shown.delete(item.requestId);
   outbox!.settle(item.requestId);
-  if (local) send({ '@type': 'deleteMessages', ids: [local.localId], chatId: local.chatId });
+  if (local) send({ '@type': 'deleteMessages', ids: local.localIds, chatId: local.chatId });
 }
 
 // Texts withdrawn back to the field, gathered per chat: Stop returns all its queued messages at once

@@ -24,6 +24,7 @@ import buildClassName from '../../../util/buildClassName';
 import { getDebugLogs } from '../../../util/debugConsole';
 import { validateFiles } from '../../../util/files';
 import { openSystemFilesDialog } from '../../../util/systemFilesDialog';
+import { IS_TAU } from '../../../tau/config'; // tau: photos and files only
 
 import useSelector from '../../../hooks/data/useSelector';
 import useFlag from '../../../hooks/useFlag';
@@ -300,7 +301,7 @@ const AttachMenu = ({
                       {lang(!canSendDocuments && canSendAudios ? 'InputAttachPopoverMusic' : 'AttachDocument')}
                     </MenuItem>
                   )}
-                {canSendAudios && !editingMessage && (
+                {!IS_TAU && canSendAudios && !editingMessage && ( // tau: photos and files only
                   <MenuItem icon="music" onClick={handleMusicSelect}>{lang('AttachMusic')}</MenuItem>
                 )}
                 {canSendDocuments && shouldCollectDebugLogs && (
@@ -313,13 +314,13 @@ const AttachMenu = ({
             {canAttachPolls && !editingMessage && (
               <MenuItem icon="poll" onClick={handlePollCreate}>{lang('Poll')}</MenuItem>
             )}
-            {canAttachToDoLists && !editingMessage && (
+            {!IS_TAU && canAttachToDoLists && !editingMessage && ( // tau: photos and files only
               <MenuItem icon="select" onClick={onTodoListCreate}>{lang('TitleToDoList')}</MenuItem>
             )}
-            {canInsertDate && !editingMessage && (
+            {!IS_TAU && canInsertDate && !editingMessage && ( // tau: photos and files only
               <MenuItem icon="calendar" onClick={handleDateMenuClick}>{lang('GiftInfoDate')}</MenuItem>
             )}
-            {canExpandRichInput && (
+            {!IS_TAU && canExpandRichInput && ( // tau: photos and files only
               <MenuItem icon="article" onClick={onRichInputExpand}>{lang('AttachmentMenuArticle')}</MenuItem>
             )}
             {canSendMoney && !editingMessage && (

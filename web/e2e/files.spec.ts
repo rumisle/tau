@@ -75,3 +75,44 @@ test('two photos and a file: an album of the photos with the caption, the file a
   await album.locator('.media-inner').first().click();
   await expect(app.locator('#MediaViewer img').first()).toHaveAttribute('src', /^blob:/);
 });
+
+test('photos and a file sent from the composer: uploaded, one message each, the album once', async ({ app, api }) => {
+  await api.chat('Send files', ['hello']);
+  await openChat(app, 'Send files');
+  // Photos: the paperclip's Photo or Video, Web A's attachment modal, a caption, Send
+  await app.getByRole('button', { name: 'Add attachment' }).hover();
+  // What tau sends: photos and files, nothing else of Telegram's (music, checklists, dates, articles)
+  await expect(app.locator('.AttachMenu .MenuItem')).toHaveText(['Photo or Video', 'File']);
+  const chooser = app.waitForEvent('filechooser');
+  await app.locator('.AttachMenu .MenuItem').filter({ hasText: /Photo/ }).click();
+  await (await chooser).setFiles([
+    { name: 'green.png', mimeType: 'image/png', buffer: Buffer.from(png(64, 48, [40, 200, 40])) },
+    { name: 'gray.png', mimeType: 'image/png', buffer: Buffer.from(png(48, 64, [128, 128, 128])) },
+  ]);
+  const modal = app.locator('.modal-dialog').filter({ hasText: 'Send 2 Photos' });
+  await expect(modal).toBeVisible();
+  await modal.getByRole('textbox').click();
+  await app.keyboard.type('two photos');
+  await app.keyboard.press('Enter');
+  // The model got both, as images, with the caption
+  const thinking = app.locator('[data-tau-part="thinking"]').last();
+  await expect(thinking).toContainText('two photos');
+  await expect(app.locator('[data-tau-row="assistant"]:not([data-tau-draft])').last()).toContainText('[image][image]');
+  await expect(app.locator('.Message.own .Album img.full-media')).toHaveCount(2);
+  await expect(app.locator('.Message.own').filter({ hasText: 'two photos' })).toHaveCount(1);
+  await expect(app.locator('.Message.own').filter({ hasText: 'two photos' }).locator('.icon-message-read')).toBeVisible();
+
+  // A file: the paperclip's File, sent as it is
+  await app.getByRole('button', { name: 'Add attachment' }).hover();
+  const fileChooser = app.waitForEvent('filechooser');
+  await app.locator('.AttachMenu .MenuItem').filter({ hasText: 'File' }).click();
+  await (await fileChooser).setFiles([{ name: 'plan.md', mimeType: 'text/markdown', buffer: Buffer.from('# Plan\n') }]);
+  await expect(app.locator('.modal-dialog').filter({ hasText: 'plan.md' })).toBeVisible();
+  await app.keyboard.press('Enter');
+  await expect(app.locator('[data-tau-row="assistant"]:not([data-tau-draft])').last()).toContainText('[plan.md]');
+  const file = app.locator('.Message.own .File').filter({ hasText: 'plan.md' });
+  await expect(file).toHaveCount(1);
+  await expect(file.locator('xpath=ancestor::*[contains(@class,"Message")][1]').locator('.icon-message-read'))
+    .toBeVisible();
+  await app.screenshot({ path: '/tmp/tau-shots/web-walk/8-sent-files.png' });
+});
