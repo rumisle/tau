@@ -128,8 +128,13 @@ web/src/tau/
   without its menu) is a draft chat with an ID of its own, not listed, whose messages wait in the outbox for the
   conversation's create; once created, the conversation opens in its place.
 - **Stop is Web A's Stop for a bot's streamed answer.** The chat's typing status carries `tauRun` while its own run
-  works; the composer shows Stop for it unless the field has text (Send steers then); Stop withdraws the queued
-  messages back to the field and aborts the run.
+  works; the composer shows Stop for it unless the field has text (Send steers then); Stop withdraws the queued messages
+  back to the field and aborts the run. **The queue** (`components/QueuePanel.tsx`, `api/queue.ts`): while the agent
+  works, messages wait above the field in Web A's embedded-message bar, where a reply shows, not in the chat: Steer or
+  Follow-up, the first one's text, the clock or a check, the pinned bar's segments for several; this device's and other
+  devices' (`pi.inbox`). × withdraws one; a click or a right-click opens Edit, Send as Follow-up or Steer, Send Now,
+  Delete (a submenu each when several). Send's menu is a right-click on Send while the agent works (iOS: a long press):
+  Send as Follow-up, Stop and Send; Web A's Send Without Sound and Schedule are left out.
 - **The chat's ⋯ menu is tau's** (`components/ChatMenu.tsx`, in Web A's header menu, with its nested submenus): the
   model, in a picker (`components/ModelPicker.tsx`: Web A's searchable picker in a modal of its own root, recent models
   first, Enter takes the first match), the thinking level (`api/agent.ts`: shown at once, sent in order with the chat's

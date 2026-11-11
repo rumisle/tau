@@ -106,3 +106,26 @@
 .MenuItem.tau-usage-row.disabled {
   opacity: 1 !important;
 }
+
+// The queued messages above the field (components/QueuePanel.tsx), in Web A's embedded-message bar
+.tau-queue-panel {
+  .message-title {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+  }
+
+  .tau-queue-status {
+    font-size: 1rem;
+  }
+
+  // Several: the pinned messages bar's segments in place of the line
+  &.several .EmbeddedMessage {
+    gap: 0.375rem;
+    padding-inline-start: 0.375rem;
+
+    &::before {
+      display: none;
+    }
+  }
+}

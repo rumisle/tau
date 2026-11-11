@@ -2,7 +2,7 @@
 // replica per opened chat (tau-client), turned into `apiUpdate`s as GramJS's update handler sends them.
 import { TauClient } from 'tau-client/connection';
 import { DialogList } from 'tau-client/dialogs';
-import type { OutgoingMessage, PendingCreate, Upload } from 'tau-client/outbox';
+import type { OutgoingMessage, PendingCreate, SendMode, Upload } from 'tau-client/outbox';
 import { Outbox, UploadError } from 'tau-client/outbox';
 import type { Dialog, Entry, JsonObject } from 'tau-client/protocol';
 import { ConversationReplica } from 'tau-client/replica';
@@ -10,6 +10,7 @@ import { getActions, getGlobal } from '../../global';
 
 import type { ApiAttachment, ApiMessage, ApiUpdate } from '../../api/types';
 import type { MessageContext } from './builders';
+import type { QueuedMessage } from './queue';
 import { MAIN_THREAD_ID } from '../../api/types';
 
 import { ALL_FOLDER_ID, ARCHIVED_FOLDER_ID } from '../../config';
@@ -28,6 +29,7 @@ import {
   messageIdOf,
 } from './builders';
 import { buildOutgoingRows, outgoingRowCount, prepareUploads } from './outgoing';
+import { buildQueue, isInQueue } from './queue';
 
 // The PoC reads a transcript whole, in pages of the server's largest
 const PAGE = 500;
@@ -49,6 +51,8 @@ type Opened = {
   replica: ConversationReplica;
   ready: Promise<void>;
   isLoaded: boolean;
+  // Its docs are current: subscribed on this connection
+  isSynced: boolean;
   // Entries already turned into messages or folded into one (a tool result into its call)
   seen: Set<number>;
   // Tool results by call ID, and the entry each call is in
@@ -109,6 +113,7 @@ export async function start(callback: (update: ApiUpdate) => void) {
       changed: (conversationId) => {
         if (conversationId !== undefined) refreshOutgoing(conversationId);
         else refreshDraft();
+        emitChange(conversationId);
       },
       created: onCreated,
       placed: onPlaced,
@@ -169,6 +174,7 @@ async function connect() {
   });
   void client.closed.then(() => {
     if (client === current) outbox!.disconnected();
+    for (const each of opened.values()) each.isSynced = false;
     client = undefined;
     send({ '@type': 'updateConnectionState', connectionState: 'connectionStateConnecting' });
     scheduleReconnect('connecting');
@@ -291,7 +297,13 @@ function open(conversationId: number) {
   if (each) return each;
   const replica = new ConversationReplica(conversationId);
   each = {
-    replica, ready: Promise.resolve(), isLoaded: false, seen: new Set(), results: new Map(), callEntries: new Map(),
+    replica,
+    ready: Promise.resolve(),
+    isLoaded: false,
+    isSynced: false,
+    seen: new Set(),
+    results: new Map(),
+    callEntries: new Map(),
     answered: 0,
   };
   const current = each;
@@ -305,6 +317,7 @@ function open(conversationId: number) {
 async function syncReplica(each: Opened) {
   const { replica } = each;
   await replica.sync(client!, { limit: PAGE });
+  each.isSynced = true;
   const unsettled = new Set<number>();
   for (const record of replica.submissions.values()) {
     if (record.status === 'queued' || record.status === 'placed') unsettled.add(record.id as number);
@@ -566,9 +579,35 @@ export async function sendText(chatId: string, text: string, attachments: ApiAtt
     return;
   }
   const conversationId = Number(chatId);
+  const how = nextSend.get(chatId);
+  nextSend.delete(chatId);
+  if (how === 'stopAndSend') {
+    // After the abort in the conversation's order: the run is over, so it goes to the chat, not the queue
+    interrupt(conversationId);
+    outbox!.enqueue({
+      text, conversationId, mode: 'steer', showsInQueue: false, uploads,
+    });
+    return;
+  }
   outbox!.enqueue({
-    text, conversationId, mode: 'steer', showsInQueue: Boolean(dialogs.dialogs.get(conversationId)?.busy), uploads,
+    text,
+    conversationId,
+    mode: how ?? 'steer',
+    showsInQueue: Boolean(dialogs.dialogs.get(conversationId)?.busy),
+    uploads,
   });
+}
+
+// How the next Send of a chat goes, from Send's menu: Web A's send takes no mode, so it waits here a moment
+const nextSend = new Map<string, SendMode | 'stopAndSend'>();
+const NEXT_SEND_MS = 1000;
+
+/** Send's menu while the agent works: the field's message as a follow-up, or after stopping the run */
+export function sendNextAs(chatId: string, how: SendMode | 'stopAndSend') {
+  nextSend.set(chatId, how);
+  window.setTimeout(() => {
+    if (nextSend.get(chatId) === how) nextSend.delete(chatId);
+  }, NEXT_SEND_MS);
 }
 
 /** The composer's files, kept beside the outbox before the message is: a reload or a crash still sends them */
@@ -641,9 +680,81 @@ export function resendOutgoing(requestId: string) {
 
 /** Stop: the run ends, and the messages waiting for it come back to the field (docs/sending.md "Stop") */
 export function stop(conversationId: number) {
-  const queued = outbox!.itemsOf(conversationId)
-    .filter((item) => item.showsInQueue && (item.state.type === 'queued' || item.state.type === 'pending'));
-  void outbox!.interrupt(conversationId, { restoring: queued.map((item) => item.requestId) }).catch(() => undefined);
+  interrupt(conversationId);
+}
+
+/**
+ * Stops the run: this device's queued messages are withdrawn in order and come back to the field; the abort withdraws
+ * the other devices' ones, which come back too. `sendNow`: one of this device's goes to the chat instead.
+ */
+function interrupt(conversationId: number, sendNow?: string) {
+  const queue = queueOf(conversationId);
+  const own = queue.flatMap((queued) => (queued.outgoingId ? [queued.outgoingId] : []));
+  // Pending ones the panel shows, and those it does not yet (a reload before the inbox came)
+  for (const item of outbox!.itemsOf(conversationId)) {
+    if (isInQueue(item) && !own.includes(item.requestId)) own.push(item.requestId);
+  }
+  const others = queue.filter((queued) => !queued.outgoingId && queued.text);
+  void outbox!.interrupt(conversationId, { restoring: own, sendNow }).then(() => {
+    for (const queued of others) restoreToField(conversationId, queued.text);
+  }).catch(() => undefined);
+}
+
+// MARK: The queue
+
+/** The messages waiting for the agent in a conversation, in the panel's order */
+export function queueOf(conversationId: number): QueuedMessage[] {
+  if (!outbox) return [];
+  const each = opened.get(conversationId);
+  const inbox = each?.isSynced ? ((each.replica.docs['pi.inbox'] as JsonObject | undefined)?.items ?? []) : [];
+  return buildQueue(inbox as JsonObject[], outbox.itemsOf(conversationId), Boolean(each?.isSynced));
+}
+
+/** Another device's queued message, taken back by its submission ID in the conversation's order */
+function withdrawOther(conversationId: number, queued: QueuedMessage) {
+  if (queued.submissionId === undefined) return Promise.resolve(false);
+  const params = { submissionId: queued.submissionId };
+  return outbox!.request<{ result: string }>('submission.abort', { conversationId }, params)
+    .then(({ result }) => result === 'aborted', () => false);
+}
+
+/** Delete, or Edit (`restore`: its text comes back to the field). False when the model has it already. */
+export function withdrawQueued(conversationId: number, queued: QueuedMessage, restore: boolean) {
+  if (queued.outgoingId) return outbox!.withdraw(queued.outgoingId, { restore });
+  void withdrawOther(conversationId, queued).then((withdrawn) => {
+    if (withdrawn && restore) restoreToField(conversationId, queued.text);
+  });
+  return true;
+}
+
+/** Send as Follow-up, or as Steer: withdrawn, then queued anew */
+export function moveQueued(conversationId: number, queued: QueuedMessage, mode: SendMode) {
+  if (queued.outgoingId) {
+    outbox!.move(queued.outgoingId, mode);
+    return;
+  }
+  void withdrawOther(conversationId, queued).then((withdrawn) => {
+    if (withdrawn) {
+      outbox!.enqueue({
+        text: queued.text, conversationId, mode, showsInQueue: true,
+      });
+    }
+  });
+}
+
+/** Send Now: the run stops and this message goes to the chat; the others come back to the field */
+export function sendQueuedNow(conversationId: number, queued: QueuedMessage) {
+  if (queued.outgoingId) {
+    interrupt(conversationId, queued.outgoingId);
+    return;
+  }
+  void withdrawOther(conversationId, queued).then((withdrawn) => {
+    if (!withdrawn) return;
+    interrupt(conversationId);
+    outbox!.enqueue({
+      text: queued.text, conversationId, mode: 'steer', showsInQueue: false,
+    });
+  });
 }
 
 /** Bubbles for the messages of a conversation on their way, oldest first, numbered after its entries */
@@ -651,9 +762,14 @@ function outgoingOf(conversationId: number) {
   return bubblesOf(buildChatId(conversationId), outbox!.itemsOf(conversationId));
 }
 
+// A message on its way is a bubble unless it is in the transcript, withdrawn, or waiting in the queue's panel
+function isBubble(item: OutgoingMessage) {
+  return item.state.type !== 'placed' && item.state.type !== 'withdrawing' && !isInQueue(item);
+}
+
 function bubblesOf(chatId: string, items: OutgoingMessage[]) {
   return items
-    .filter((item) => item.state.type !== 'placed' && item.state.type !== 'withdrawing')
+    .filter(isBubble)
     .flatMap((item) => {
       const local = shown.get(item.requestId) ?? showAs(item, chatId);
       local.state = stateOf(item);
@@ -688,14 +804,14 @@ function refreshBubbles(chatId: string, list: OutgoingMessage[]) {
   for (const [requestId, local] of shown) {
     if (local.chatId !== chatId) continue;
     const item = items.get(requestId);
-    if (!item || item.state.type === 'withdrawing') {
+    if (!item || (item.state.type !== 'placed' && !isBubble(item))) {
       shown.delete(requestId);
       gone.push(...local.localIds);
     }
   }
   if (gone.length > 0) send({ '@type': 'deleteMessages', ids: gone, chatId });
   for (const item of items.values()) {
-    if (item.state.type === 'placed' || item.state.type === 'withdrawing') continue;
+    if (!isBubble(item)) continue;
     const local = shown.get(item.requestId);
     if (!local) {
       const fresh = showAs(item, chatId);

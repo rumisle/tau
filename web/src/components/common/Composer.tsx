@@ -150,6 +150,7 @@ import stopEvent from '../../util/stopEvent';
 import { getUtf8Length } from '../../util/textFormat';
 import { EMPTY_RICH_MEDIA_CAPTION } from '../../util/tiptap/richMedia';
 import windowSize from '../../util/windowSize';
+import { sendNextAs } from '../../tau/api/session'; // tau: Send's menu
 import { IS_TAU } from '../../tau/config'; // tau: Telegram-only UI left out
 import { selectTauStoppableRun } from '../../tau/selectors'; // tau: Stop for the run
 import applyIosAutoCapitalizationFix from '../middle/composer/helpers/applyIosAutoCapitalizationFix';
@@ -198,6 +199,8 @@ import useRichMedia from '../middle/composer/hooks/useRichMedia';
 import useVideoRecording from '../middle/composer/hooks/useVideoRecording';
 import useVoiceRecording from '../middle/composer/hooks/useVoiceRecording';
 
+import QueuePanel from '../../tau/components/QueuePanel'; // tau: the queued messages above the field
+import TauSendMenu from '../../tau/components/SendMenu'; // tau: Send's menu while the agent works
 import AttachmentModal from '../middle/composer/AttachmentModal.async';
 import AttachMenu from '../middle/composer/AttachMenu';
 import BotCommandMenu from '../middle/composer/BotCommandMenu.async';
@@ -1256,7 +1259,8 @@ const Composer = ({
     onForward, shouldForceShowEditing, isInScheduledList, hasInputContent, isRichInputExpansionActive,
     isInMessageList, stoppableTypingDraftId,
   ]);
-  const canShowCustomSendMenu = !isInScheduledList;
+  const canShowCustomSendMenu = !isInScheduledList
+    && (!IS_TAU || Boolean(stoppableTypingDraftId)); // tau: Send's menu only while the agent works
 
   const {
     isContextMenuOpen: isCustomSendMenuOpen,
@@ -2847,6 +2851,7 @@ const Composer = ({
             threadId={threadId}
             messageListType={messageListType}
           />
+          {IS_TAU && <QueuePanel chatId={chatId} />/* tau: the queued messages above the field */}
           {!isRichInputExpansionActive && (
             <WebPagePreview
               chatId={chatId}
@@ -3292,7 +3297,24 @@ const Composer = ({
           onStop={handleStopEffect}
         />
       )}
-      {canShowCustomSendMenu && (
+      {IS_TAU && canShowCustomSendMenu && ( // tau: Send's menu
+        <TauSendMenu
+          isOpen={isCustomSendMenuOpen}
+          onFollowUp={() => {
+            handleContextMenuClose();
+            sendNextAs(chatId, 'followUp');
+            void handleSend();
+          }}
+          onStopAndSend={() => {
+            handleContextMenuClose();
+            sendNextAs(chatId, 'stopAndSend');
+            void handleSend();
+          }}
+          onClose={handleContextMenuClose}
+          onCloseAnimationEnd={handleContextMenuHide}
+        />
+      )}
+      {!IS_TAU && canShowCustomSendMenu && ( // tau: Web A's Send menu left out
         <CustomSendMenu
           isOpen={isCustomSendMenuOpen}
           canSchedule={canSchedule && isInMessageList && !isViewOnceEnabled}

@@ -20,6 +20,8 @@ async function type(app: Page, text: string) {
 }
 
 const own = (app: Page, text: string) => app.locator('.Message.own').filter({ hasText: text });
+// The messages waiting for the agent, above the field
+const panel = (app: Page) => app.locator('.tau-queue-panel');
 
 test('a message sent in an idle chat: the bubble, then two checks and the answer', SMOKE, async ({ app, api }) => {
   await api.chat('Send idle', ['hello']);
@@ -57,12 +59,17 @@ test('while the agent works, Send steers the run and Stop ends it', SMOKE, async
   await app.keyboard.type('a steer');
   await expect(stop).toHaveCount(0);
   await app.keyboard.press('Enter');
-  await expect(own(app, 'a steer')).toBeVisible();
+  // Waiting above the field, not in the chat, with a check once the server holds it
+  await expect(panel(app)).toContainText('Steer');
+  await expect(panel(app)).toContainText('a steer');
+  await expect(panel(app).locator('.icon-check')).toBeVisible();
+  await expect(own(app, 'a steer')).toHaveCount(0);
   await expect(stop).toBeVisible();
   await stop.click();
   await expect(stop).toHaveCount(0);
-  // Queued when the run stopped: back in the field, out of the chat
+  // Queued when the run stopped: back in the field
   await expect(app.locator(field)).toHaveText('a steer');
+  await expect(panel(app)).toHaveCount(0);
   await expect(own(app, 'a steer')).toHaveCount(0);
 });
 
@@ -72,10 +79,10 @@ test('a message waiting for the run outlives a reload: it shows again, once, and
   await type(app, '$ sleep 3');
   await expect(app.getByRole('button', { name: 'Stop' })).toBeVisible();
   await type(app, 'kept over a reload');
-  await expect(own(app, 'kept over a reload').locator('.icon-check')).toBeVisible();
+  await expect(panel(app).locator('.icon-check')).toBeVisible();
   await app.reload();
   await openChat(app, 'Send reload');
-  await expect(own(app, 'kept over a reload')).toHaveCount(1);
+  await expect(panel(app)).toContainText('kept over a reload');
   await expect(app.locator('[data-tau-part="thinking"]').filter({ hasText: 'kept over a reload' }).last())
     .toBeVisible({ timeout: 15_000 });
   await expect(own(app, 'kept over a reload')).toHaveCount(1);
