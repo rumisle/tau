@@ -1,7 +1,7 @@
 // WebSocket transport: one Connection per socket, optional bearer token.
 import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 import { Connection } from "./connection.ts";
@@ -61,22 +61,25 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 	const connections = new Set<Connection>();
 	// HTTP for files (src/http-files.ts) behind the same token, `/auth` to ask whether a token is taken (204 or 401),
 	// and the web app (src/http-web.ts) without one; the WebSocket upgrades on the same port.
+	// Anyone who reaches the port may send anything: nothing a request carries may throw out of here, where it would
+	// end the process. A request it cannot read is a 400; a failure of the server's own, a 500 and a log line.
 	const http = createServer((request, response) => {
-		const path = new URL(request.url ?? "/", "http://localhost").pathname;
-		const isApi = path === "/auth" || path === "/files" || path.startsWith("/files/");
-		if (!isApi && options.web?.handle(request, response)) return;
-		if (!authorized(request, options.token)) {
-			response.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-			response.end(JSON.stringify({ error: { code: "unauthorized", message: "A token is needed" } }));
-			request.resume();
-			return;
+		try {
+			const url = requestUrl(request);
+			if (url === undefined) return fail(request, response, 400, "bad_request", "The request's path cannot be read");
+			const path = url.pathname;
+			const isApi = path === "/auth" || path === "/files" || path.startsWith("/files/");
+			if (!isApi && options.web?.handle(request, response)) return;
+			if (!authorized(request, options.token)) return fail(request, response, 401, "unauthorized", "A token is needed");
+			if (path === "/auth") {
+				response.writeHead(204, { "Cache-Control": "no-store" });
+				response.end();
+				return;
+			}
+			handleFiles(host.files, request, response).catch((error: unknown) => failed(request, response, error));
+		} catch (error) {
+			failed(request, response, error);
 		}
-		if (path === "/auth") {
-			response.writeHead(204, { "Cache-Control": "no-store" });
-			response.end();
-			return;
-		}
-		void handleFiles(host.files, request, response);
 	});
 	// A large upload over a slow link takes as long as it takes; a stalled one is cut after a few minutes.
 	http.requestTimeout = 0;
@@ -89,7 +92,14 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 		// Above the content limits of conversation.submit, so too much content is refused with `too_large` instead
 		// of closing the socket, which the client would take for a network failure and retry forever.
 		maxPayload: 96 * 1024 * 1024,
-		verifyClient: ({ req }: { req: IncomingMessage }) => authorized(req, options.token),
+		verifyClient: ({ req }: { req: IncomingMessage }) => {
+			try {
+				return authorized(req, options.token);
+			} catch (error) {
+				console.error(`refused a WebSocket on a failure: ${error instanceof Error ? error.stack : String(error)}`);
+				return false;
+			}
+		},
 		// A browser's socket offers `tau.v1` beside its token, and must be answered with one it offered.
 		handleProtocols: (protocols) => (protocols.has(PROTOCOL) ? PROTOCOL : false),
 	});
@@ -144,17 +154,41 @@ export async function serve(host: Host, options: ServerOptions = {}): Promise<Se
 const PROTOCOL = "tau.v1";
 const TOKEN_PROTOCOL = "tau.token.";
 
+/** The request's URL, or undefined when its target cannot be read as one (`//`, `http://[`). */
+function requestUrl(request: IncomingMessage): URL | undefined {
+	try {
+		return new URL(request.url ?? "/", "http://localhost");
+	} catch {
+		return undefined;
+	}
+}
+
+function fail(request: IncomingMessage, response: ServerResponse, status: number, code: string, message: string): void {
+	if (!response.headersSent) {
+		response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+		response.end(JSON.stringify({ error: { code, message } }));
+	} else {
+		response.destroy();
+	}
+	request.resume();
+}
+
+function failed(request: IncomingMessage, response: ServerResponse, error: unknown): void {
+	console.error(`${request.method} ${request.url} failed: ${error instanceof Error ? error.stack : String(error)}`);
+	fail(request, response, 500, "internal", "The server failed");
+}
+
 function authorized(request: IncomingMessage, token: string | undefined): boolean {
 	if (token === undefined) return true;
 	const header = request.headers.authorization;
-	const url = new URL(request.url ?? "/", "http://localhost");
+	const url = requestUrl(request);
 	const offered = (request.headers["sec-websocket-protocol"] ?? "").split(",").map((each) => each.trim());
 	const inProtocol = offered.find((each) => each.startsWith(TOKEN_PROTOCOL));
 	const given = header?.startsWith("Bearer ")
 		? header.slice(7)
 		: inProtocol !== undefined
 			? Buffer.from(inProtocol.slice(TOKEN_PROTOCOL.length), "base64url").toString()
-			: url.searchParams.get("token");
+			: url?.searchParams.get("token");
 	if (given === null || given === undefined) return false;
 	const a = Buffer.from(given);
 	const b = Buffer.from(token);

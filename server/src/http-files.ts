@@ -8,8 +8,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { FileError, type FileStore, type StoredFile } from "./files.ts";
 
 export async function handleFiles(store: FileStore, request: IncomingMessage, response: ServerResponse): Promise<void> {
-	const url = new URL(request.url ?? "/", "http://localhost");
 	try {
+		const url = new URL(request.url ?? "/", "http://localhost");
 		if (url.pathname === "/files" && (request.method === "POST" || request.method === "PUT")) {
 			const declared = request.headers["content-length"] === undefined ? undefined : Number(request.headers["content-length"]);
 			const file = await store.upload(url.searchParams.get("name") ?? "file", request, Number.isFinite(declared) ? declared : undefined);

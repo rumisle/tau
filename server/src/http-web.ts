@@ -42,18 +42,34 @@ export class WebApp {
 		return existsSync(join(dir, "index.html")) ? new WebApp(dir) : undefined;
 	}
 
-	/** Serves a GET or HEAD for the app; false for anything else, which the server handles. */
+	/**
+	 * Serves a GET or HEAD for the app; false for anything else, which the server handles. Whatever the request's path
+	 * holds, it answers or declines, and never throws: a path it cannot decode is a 400.
+	 */
 	handle(request: IncomingMessage, response: ServerResponse): boolean {
 		if (request.method !== "GET" && request.method !== "HEAD") return false;
-		const path = decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname);
+		let path: string;
+		try {
+			path = decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname);
+		} catch {
+			return answer(response, 400, "Bad request");
+		}
+		// A NUL makes the file system calls throw
+		if (path.includes("\0")) return answer(response, 400, "Bad request");
 		let file = normalize(join(this.dir, path));
 		if (file !== this.dir && !file.startsWith(this.dir + sep)) return false;
 		if (!isFile(file)) {
 			// A path the app routes (or a file it does not have, which then says so itself)
-			if (extname(path) !== "") return notFound(response);
+			if (extname(path) !== "") return answer(response, 404, "Not found");
 			file = join(this.dir, "index.html");
 		}
-		const size = statSync(file).size;
+		let size: number;
+		try {
+			size = statSync(file).size;
+		} catch {
+			// Gone between the two looks (a new build replacing this one)
+			return answer(response, 404, "Not found");
+		}
 		response.writeHead(200, {
 			"Content-Type": TYPES[extname(file)] ?? "application/octet-stream",
 			"Content-Length": size,
@@ -63,7 +79,7 @@ export class WebApp {
 			// Web A's index.html has its Content-Security-Policy (web/vite.config.ts buildCsp)
 		});
 		if (request.method === "HEAD") response.end();
-		else createReadStream(file).pipe(response);
+		else createReadStream(file).on("error", () => response.destroy()).pipe(response);
 		return true;
 	}
 }
@@ -76,8 +92,8 @@ function isFile(path: string): boolean {
 	}
 }
 
-function notFound(response: ServerResponse): true {
-	response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-	response.end("Not found");
+function answer(response: ServerResponse, status: number, text: string): true {
+	response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+	response.end(text);
 	return true;
 }
