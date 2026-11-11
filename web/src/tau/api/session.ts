@@ -2,7 +2,9 @@
 // replica per opened chat (tau-client), turned into `apiUpdate`s as GramJS's update handler sends them.
 import { TauClient } from 'tau-client/connection';
 import { DialogList } from 'tau-client/dialogs';
-import type { Dialog, Entry } from 'tau-client/protocol';
+import type { OutgoingMessage } from 'tau-client/outbox';
+import { Outbox } from 'tau-client/outbox';
+import type { Dialog, Entry, JsonObject } from 'tau-client/protocol';
 import { ConversationReplica } from 'tau-client/replica';
 
 import type { ApiMessage, ApiUpdate } from '../../api/types';
@@ -13,16 +15,22 @@ import {
   probe, readToken, saveToken, serverOrigin, socketProtocols, socketUrl,
 } from '../auth';
 import { whenLinkTokenStored } from '../boot';
+import { openOutboxState } from '../db/outbox';
 import {
   buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildMe, buildMessage, buildReadState,
-  buildSummaryMessage, buildThreadInfo, buildUser,
+  buildSummaryMessage, buildThreadInfo, buildUser, userText,
 } from './builders';
+import { buildOutgoingMessage } from './outgoing';
 
 // The PoC reads a transcript whole, in pages of the server's largest
 const PAGE = 500;
 // Web A drops a typing status a few seconds after it came, as Telegram's clients send theirs again every few seconds
 const TYPING_REFRESH_MS = 4000;
 const RECONNECT_MS = [500, 1000, 2000, 5000];
+// Web A's local message IDs: a fraction above the chat's last message
+const LOCAL_ID_STEP = 1e-6;
+// Messages an opened chat refreshes in Web A's state, newest first: as many as a chat shows
+const REFRESHED_ON_OPEN = 50;
 
 export type AuthStatus = 'connecting' | 'needsToken' | 'wrongToken' | 'unreachable' | 'ready';
 
@@ -53,6 +61,9 @@ const opened = new Map<number, Opened>();
 const summarized = new Map<number, Set<number>>();
 // The call that started each subagent, by the subagent's conversation
 const subagentCalls = new Map<number, { parentId: number; callId: string }>();
+// Messages on their way as Web A has them: their local message and the state it shows, by request ID
+const shown = new Map<string, { chatId: string; localId: number; state: string }>();
+let outbox: Outbox | undefined;
 
 dialogs.onChange((changed) => {
   for (const dialog of changed) applyDialog(dialog);
@@ -62,6 +73,18 @@ export async function start(callback: (update: ApiUpdate) => void) {
   onUpdate = callback;
   await whenLinkTokenStored();
   token = await readToken(serverOrigin());
+  const { state, persist } = await openOutboxState(serverOrigin());
+  outbox = new Outbox({
+    state,
+    persist,
+    events: {
+      changed: (conversationId) => {
+        if (conversationId !== undefined) refreshOutgoing(conversationId);
+      },
+      placed: onPlaced,
+      restored: restoreToField,
+    },
+  });
   await connect();
 }
 
@@ -110,12 +133,19 @@ async function connect() {
     return;
   }
   attempt = 0;
+  const current = client;
+  current.on((push) => {
+    if (push.event === 'submission') outbox!.apply(push.record as JsonObject);
+  });
   void client.closed.then(() => {
+    if (client === current) outbox!.disconnected();
     client = undefined;
     send({ '@type': 'updateConnectionState', connectionState: 'connectionStateConnecting' });
     scheduleReconnect('connecting');
   });
   await dialogs.sync(client);
+  // After the chat list's subscribe, which brings every conversation's submission pushes
+  outbox!.connected(client, String(client.hello?.serverId));
   if (!wasConnected) {
     wasConnected = true;
     send({ '@type': 'updateApiReady' });
@@ -123,7 +153,7 @@ async function connect() {
     send({ '@type': 'updateCurrentUser', currentUser: buildMe(), currentUserFullInfo: {} });
   } else {
     // Back after a dropped socket: open chats subscribe again from their newest entry
-    for (const each of opened.values()) void each.replica.sync(client, { limit: PAGE });
+    for (const each of opened.values()) void syncReplica(each);
   }
   setAuthStatus('ready');
   // Web A syncs (`loadAllChats`, then `fetchChats`) once connected and authorized
@@ -159,12 +189,44 @@ function sendDialog(dialog: Dialog) {
   send({
     '@type': 'updateChat', id: chatId, chat: buildChat(dialog), readState: buildReadState(dialog),
   });
+  // Web A takes a chat's read state from this, not from `updateChat`: unread counts, and the checks of what the
+  // agent has read (everything in the transcript)
+  send({
+    '@type': 'updateThreadReadState', chatId, threadId: MAIN_THREAD_ID, readState: buildReadState(dialog),
+  });
   if (!opened.has(id) && dialog.last) {
-    const message = buildSummaryMessage(dialog)!;
-    if (!summarized.has(id)) summarized.set(id, new Set());
-    summarized.get(id)!.add(message.id);
-    send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage: message });
+    send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage: summaryOf(dialog)! });
   }
+}
+
+/**
+ * A chat's last message for the chat list: its entry's message once the chat is open, else the Dialog's summary,
+ * which the entry's message replaces when it opens (Web A keeps a message it has over the history's)
+ */
+export function chatListMessage(dialog: Dialog): ApiMessage | undefined {
+  const each = opened.get(dialog.conversation.id);
+  if (!each) return summaryOf(dialog);
+  // Opening: its last message comes once it is loaded
+  if (!each.isLoaded) return undefined;
+  for (const entry of each.replica.ordered().reverse()) {
+    const message = buildMessage(entry, contextOf(each));
+    if (message) return message;
+  }
+  return undefined;
+}
+
+/** The chat list's last messages, as updates: Web A stores them under messages it may have already, not over them */
+export function sendChatListMessages(messages: ApiMessage[]) {
+  for (const message of messages) send({ '@type': 'updateChatLastMessage', id: message.chatId, lastMessage: message });
+}
+
+function summaryOf(dialog: Dialog) {
+  const message = buildSummaryMessage(dialog);
+  if (!message) return undefined;
+  const id = dialog.conversation.id;
+  if (!summarized.has(id)) summarized.set(id, new Set());
+  summarized.get(id)!.add(message.id);
+  return message;
 }
 
 /** Web A asks for a chat it knows only from an update: what the server has of it now */
@@ -192,24 +254,41 @@ function open(conversationId: number) {
   return each;
 }
 
-async function load(each: Opened) {
+/** Subscribes a replica on the current connection; the outbox learns what became of the messages it has */
+async function syncReplica(each: Opened) {
   const { replica } = each;
   await replica.sync(client!, { limit: PAGE });
+  const unsettled = new Set<number>();
+  for (const record of replica.submissions.values()) {
+    if (record.status === 'queued' || record.status === 'placed') unsettled.add(record.id as number);
+    outbox!.apply(record);
+  }
+  outbox!.refreshSettled(replica.id, unsettled);
+}
+
+async function load(each: Opened) {
+  const { replica } = each;
+  await syncReplica(each);
   while (replica.hasOlder) await replica.loadOlder(client!, PAGE);
   while (replica.holes.length > 0) await replica.fillHole(client!, PAGE);
   each.isLoaded = true;
-  // Web A keeps a message it has: what stood for entries as the Dialog's summary is replaced by the entry's message,
-  // or removed when the entry has none (a tool's result, which shows in its call's card)
+  // Web A keeps a message it has over the history's: what stood for entries as the Dialog's summary, and what its own
+  // cache kept from an earlier visit (a tool card before its result), is replaced by the entry's message, or removed
+  // when the entry has none (a tool's result, which shows in its call's card). The newest page covers what the cache
+  // keeps.
   const chatId = buildChatId(replica.id);
   const stale = new Set(summarized.get(replica.id));
   const lastId = dialogs.dialogs.get(replica.id)?.last?.id;
   if (lastId !== undefined) stale.add(lastId);
+  for (const entry of replica.ordered().slice(-REFRESHED_ON_OPEN)) stale.add(entry.id);
   summarized.delete(replica.id);
   const removed: number[] = [];
-  for (const id of stale) {
+  let last: ApiMessage | undefined;
+  for (const id of [...stale].sort((a, b) => a - b)) {
     const entry = replica.entries.get(id);
     const message = entry && buildMessage(entry, contextOf(each));
     if (message) {
+      last = message;
       send({
         '@type': 'updateMessage', chatId, id, message, isFull: true,
       });
@@ -218,11 +297,16 @@ async function load(each: Opened) {
     }
   }
   if (removed.length > 0) send({ '@type': 'deleteMessages', ids: removed, chatId });
+  if (last) send({ '@type': 'updateChatLastMessage', id: chatId, lastMessage: last });
 }
 
 function applyReplica(each: Opened) {
   const fresh = each.replica.ordered().filter((entry) => !each.seen.has(entry.id));
   for (const entry of fresh) index(each, entry);
+  // Before they show: a message on its way becomes its entry in one step, not a duplicate first
+  const users = fresh.filter((entry) => entry.kind === 'pi.user')
+    .map((entry) => ({ id: entry.id, text: userText((entry.model as any[])[0]?.content) }));
+  if (users.length > 0) outbox?.matchPlacements(each.replica.id, users);
   if (each.isLoaded) {
     for (const entry of fresh) emitEntry(each, entry);
   }
@@ -260,6 +344,23 @@ function emitEntry(each: Opened, entry: Entry) {
   }
   const message = buildMessage(entry, contextOf(each));
   if (!message) return;
+  const sent = entry.kind === 'pi.user' ? outbox?.placedAs(entry.conversationId, entry.id) : undefined;
+  const local = sent && shown.get(sent.requestId);
+  if (sent) {
+    shown.delete(sent.requestId);
+    outbox!.settle(sent.requestId);
+  }
+  if (local) {
+    // The bubble that was on its way is the entry now: Telegram's send succeeded (its handler keeps what the local
+    // message had, the clock too, unless the entry's message says otherwise)
+    send({
+      '@type': 'updateMessageSendSucceeded',
+      chatId,
+      localId: local.localId,
+      message: { ...message, sendingState: undefined },
+    });
+    return;
+  }
   send({
     '@type': 'newMessage', chatId, id: message.id, message,
   });
@@ -331,7 +432,7 @@ function refreshSubagentCard(conversationId: number) {
   });
 }
 
-/** Messages of an opened chat, newest first, as `messages.getHistory` pages them */
+/** Messages of an opened chat, newest first, as `messages.getHistory` pages them; then those on their way */
 export async function fetchHistory(
   conversationId: number, offsetId: number | undefined, addOffset: number, limit: number,
 ) {
@@ -341,6 +442,7 @@ export async function fetchHistory(
     .reverse()
     .map((entry) => buildMessage(entry, contextOf(each)))
     .filter((message): message is ApiMessage => Boolean(message));
+  messages.unshift(...outgoingOf(conversationId).reverse());
   let first = offsetId ? messages.findIndex((message) => message.id < offsetId) : 0;
   if (first < 0) first = messages.length;
   first = Math.max(0, first + addOffset);
@@ -361,7 +463,8 @@ function refreshTyping() {
       '@type': 'updateChatTypingStatus',
       id: chatId,
       peerId: chatId,
-      typingStatus: isBusy ? { type: 'typing', timestamp: Date.now() } : undefined,
+      // `tauRun`: its own run, which Stop ends (src/tau/selectors.ts)
+      typingStatus: isBusy ? { type: 'typing', timestamp: Date.now(), tauRun: dialog.busy || undefined } : undefined,
     });
   }
   if (isAnyBusy) typingTimer = window.setTimeout(refreshTyping, TYPING_REFRESH_MS);
@@ -374,6 +477,120 @@ function hasBusySubagent(conversationId: number, depth = 0): boolean {
     if (dialog.busy || hasBusySubagent(dialog.conversation.id, depth + 1)) return true;
   }
   return false;
+}
+
+// MARK: Sending
+
+/** The composer's Send: a message to the conversation, steering a run that works (docs/sending.md) */
+export function sendText(conversationId: number, text: string) {
+  outbox!.enqueue({
+    text, conversationId, mode: 'steer', showsInQueue: Boolean(dialogs.dialogs.get(conversationId)?.busy),
+  });
+}
+
+/** Stop: the run ends, and the messages waiting for it come back to the field (docs/sending.md "Stop") */
+export function stop(conversationId: number) {
+  const queued = outbox!.itemsOf(conversationId)
+    .filter((item) => item.showsInQueue && (item.state.type === 'queued' || item.state.type === 'pending'));
+  void outbox!.interrupt(conversationId, { restoring: queued.map((item) => item.requestId) }).catch(() => undefined);
+}
+
+/** Bubbles for the messages of a conversation on their way, oldest first, numbered after its entries */
+function outgoingOf(conversationId: number) {
+  const chatId = buildChatId(conversationId);
+  return outbox!.itemsOf(conversationId)
+    .filter((item) => item.state.type !== 'placed' && item.state.type !== 'withdrawing')
+    .map((item) => {
+      const local = shown.get(item.requestId) ?? showAs(item, chatId);
+      local.state = stateOf(item);
+      return buildOutgoingMessage(item, chatId, local.localId);
+    });
+}
+
+function showAs(item: OutgoingMessage, chatId: string) {
+  const conversationId = Number(chatId);
+  let last = opened.get(conversationId)?.replica.maxId ?? dialogs.dialogs.get(conversationId)?.last?.id ?? 0;
+  for (const each of shown.values()) if (each.chatId === chatId) last = Math.max(last, each.localId);
+  const local = { chatId, localId: last + LOCAL_ID_STEP, state: '' };
+  shown.set(item.requestId, local);
+  return local;
+}
+
+function stateOf(item: OutgoingMessage) {
+  return item.state.type === 'failed' ? 'failed' : item.state.type === 'queued' ? 'queued' : 'pending';
+}
+
+/** What Web A shows of a conversation's messages on their way follows the outbox: new ones, states, the withdrawn */
+function refreshOutgoing(conversationId: number) {
+  const each = opened.get(conversationId);
+  if (!each?.isLoaded) return;
+  const chatId = buildChatId(conversationId);
+  const items = new Map(outbox!.itemsOf(conversationId).map((item) => [item.requestId, item]));
+  const gone: number[] = [];
+  for (const [requestId, local] of shown) {
+    if (local.chatId !== chatId) continue;
+    const item = items.get(requestId);
+    if (!item || item.state.type === 'withdrawing') {
+      shown.delete(requestId);
+      gone.push(local.localId);
+    }
+  }
+  if (gone.length > 0) send({ '@type': 'deleteMessages', ids: gone, chatId });
+  for (const item of items.values()) {
+    if (item.state.type === 'placed' || item.state.type === 'withdrawing') continue;
+    const local = shown.get(item.requestId);
+    if (!local) {
+      const fresh = showAs(item, chatId);
+      fresh.state = stateOf(item);
+      const message = buildOutgoingMessage(item, chatId, fresh.localId);
+      send({
+        '@type': 'newMessage', chatId, id: message.id, message,
+      });
+      continue;
+    }
+    const state = stateOf(item);
+    if (state === local.state) continue;
+    local.state = state;
+    if (item.state.type === 'failed') {
+      send({
+        '@type': 'updateMessageSendFailed', chatId, localId: local.localId, error: item.state.message,
+      });
+    } else {
+      send({
+        '@type': 'updateMessage', chatId, id: local.localId, message: buildOutgoingMessage(item, chatId, local.localId),
+      });
+    }
+  }
+}
+
+/** A message reached the model; when its entry already shows on its own, the bubble that stood for it goes */
+function onPlaced(item: OutgoingMessage, entryId: number) {
+  const each = item.conversationId === undefined ? undefined : opened.get(item.conversationId);
+  if (!each?.seen.has(entryId)) return;
+  const local = shown.get(item.requestId);
+  shown.delete(item.requestId);
+  outbox!.settle(item.requestId);
+  if (local) send({ '@type': 'deleteMessages', ids: [local.localId], chatId: local.chatId });
+}
+
+// Texts withdrawn back to the field, gathered per chat: Stop returns all its queued messages at once
+const restoring = new Map<number, string[]>();
+
+function restoreToField(conversationId: number, text: string) {
+  if (!restoring.has(conversationId)) {
+    restoring.set(conversationId, []);
+    window.setTimeout(() => {
+      const texts = restoring.get(conversationId)!;
+      restoring.delete(conversationId);
+      send({
+        '@type': 'draftMessage',
+        chatId: buildChatId(conversationId),
+        threadId: MAIN_THREAD_ID,
+        draft: { text: { text: texts.join('\n\n') }, isLocal: true },
+      });
+    });
+  }
+  restoring.get(conversationId)!.push(text);
 }
 
 function send(update: object) {

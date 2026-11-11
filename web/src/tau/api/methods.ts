@@ -1,13 +1,14 @@
 // The `callApi` methods tau answers. Every other method resolves to `undefined`, as a failed GramJS request does, and
 // the UI copes (docs/web.md "What the proof of concept showed").
-import type { ApiChat } from '../../api/types';
+import type { ApiChat, ApiMessageEntity, ApiPeer } from '../../api/types';
 
 import { ALL_FOLDER_ID } from '../../config';
 import {
-  buildChat, buildChatId, buildReadState, buildSummaryMessage, buildThreadInfo, buildUser,
+  buildChat, buildChatId, buildReadState, buildThreadInfo, buildUser,
 } from './builders';
+import { toMarkdown } from './outgoing';
 import {
-  dialogs, fetchHistory, isListed, requestDialog,
+  chatListMessage, dialogs, fetchHistory, isListed, requestDialog, sendChatListMessages, sendText, stop,
 } from './session';
 
 // Telegram's seven peer colors, which its server sends with `help.getPeerColors`; without them avatars are black
@@ -17,9 +18,12 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
   fetchChats({ archived }: { archived?: boolean }) {
     const listed = dialogs.ordered()
       .filter((dialog) => isListed(dialog) && Boolean(dialog.archived) === Boolean(archived));
-    // Nothing is cached yet, so the chat list's last messages are the Dialogs' summaries; an opened chat replaces its
-    // with the entry (session.ts)
-    const messages = listed.map(buildSummaryMessage).filter((message) => message !== undefined);
+    // The Dialogs' summaries, but for chats open already, which may have opened first (Web A opens the chat it showed
+    // last at once)
+    const messages = listed.map(chatListMessage).filter((message) => message !== undefined);
+    // Not in the result: Web A's `loadAllChats` puts a result's messages over those it has, a while later, which would
+    // undo what an opened chat put in their place
+    sendChatListMessages(messages);
     const pinned = listed.filter((dialog) => dialog.pinned).sort((a, b) => b.pinned! - a.pinned!);
     return {
       chatIds: listed.map((dialog) => buildChatId(dialog.conversation.id)),
@@ -29,7 +33,7 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
       draftsById: {},
       orderedPinnedIds: pinned.map((dialog) => buildChatId(dialog.conversation.id)),
       totalChatCount: listed.length,
-      messages,
+      messages: [],
       notifyExceptionById: {},
       lastMessageByChatId: Object.fromEntries(messages.map((message) => [message.chatId, message.id])),
       isFullyLoaded: true,
@@ -47,6 +51,16 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
     return {
       messages, users: [], chats: [], count, topics: [],
     };
+  },
+
+  sendMessage({ chat, text, entities }: { chat?: ApiChat; text?: string; entities?: ApiMessageEntity[] }) {
+    if (!chat || !text) return;
+    sendText(Number(chat.id), toMarkdown(text, entities));
+  },
+
+  sendMessageAction({ peer, action }: { peer: ApiPeer; action: { type: string } }) {
+    // The composer's Stop, which Web A has for a bot's streamed answer and tau for the whole run (src/tau/selectors.ts)
+    if (action.type === 'stopDraft') stop(Number(peer.id));
   },
 
   requestChatUpdate({ chat }: { chat: ApiChat }) {

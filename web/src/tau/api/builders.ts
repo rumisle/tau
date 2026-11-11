@@ -284,7 +284,7 @@ function buildToolBlock(call: any, result: any) {
   };
 }
 
-function userText(content: unknown): string {
+export function userText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content.map((part) => (part.type === 'text' ? part.text : part.type === 'image' ? '[image]' : ''))

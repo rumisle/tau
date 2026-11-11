@@ -151,6 +151,7 @@ import { getUtf8Length } from '../../util/textFormat';
 import { EMPTY_RICH_MEDIA_CAPTION } from '../../util/tiptap/richMedia';
 import windowSize from '../../util/windowSize';
 import { IS_TAU } from '../../tau/config'; // tau: Telegram-only UI left out
+import { selectTauStoppableRun } from '../../tau/selectors'; // tau: Stop for the run
 import applyIosAutoCapitalizationFix from '../middle/composer/helpers/applyIosAutoCapitalizationFix';
 import buildAttachment, {
   buildGifAttachment,
@@ -1234,7 +1235,8 @@ const Composer = ({
     }
 
     if (isInMessageList && stoppableTypingDraftId && !editingMessage && !isInScheduledList && !isForwarding
-      && !activeVoiceRecording && !activeVideoRecording) {
+      && !activeVoiceRecording && !activeVideoRecording
+      && !(IS_TAU && hasInputContent)) { // tau: with text in the field, Send steers the run
       return MainButtonState.Stop;
     }
 
@@ -3549,7 +3551,8 @@ export default memo(withGlobal<OwnProps>(
       isAppConfigLoaded,
       insertingPeerIdMention,
       isRichInputExpanded: tabState.isRichInputExpanded,
-      stoppableTypingDraftId: selectStoppableTypingDraftId(global, chatId, threadId),
+      stoppableTypingDraftId: selectStoppableTypingDraftId(global, chatId, threadId)
+        ?? selectTauStoppableRun(global, chatId, threadId), // tau: Stop for the run
       mediaEditorMessage,
     };
   },

@@ -115,6 +115,18 @@ web/src/tau/
   - streaming goes through Web A's typing draft, which carries `tau` content too;
   - tau's own fields go in one optional `ApiMessage.tau`, while `content.richMessage` is still filled for previews,
     copy and search.
+  - the chat list's last messages go as `updateChatLastMessage`, not in `fetchChats`' result: `loadAllChats` puts a
+    result's messages over those Web A has, a while after, undoing what a chat that opened meanwhile put there;
+  - read states go as `updateThreadReadState` (Web A takes none from `updateChat`): unread counts, and the two checks
+    of a user's message, which the agent has read once it is in the transcript.
+- **Sending is the outbox's** (`client/outbox.ts`, docs/sending.md's rules). Web A's `sendMessage` call enqueues; the
+  bubble is a local message (a fraction above the chat's last ID) with Telegram's clock, one check once queued, the red
+  badge when refused, and `updateMessageSendSucceeded` when its entry comes, matched by text before the record if need
+  be. The outbox lasts in IndexedDB, one per tab (`db/outbox.ts`): each tab holds a Web Lock, and a tab that opens
+  adopts the outboxes of tabs gone, so a reload or a crash sends what was left.
+- **Stop is Web A's Stop for a bot's streamed answer.** The chat's typing status carries `tauRun` while its own run
+  works; the composer shows Stop for it unless the field has text (Send steers then); Stop withdraws the queued
+  messages back to the field and aborts the run.
 - **IDs.** A private chat is keyed by its peer, so each conversation is a user of its own. Several servers are told
   apart as in iOS's MultiStore: the server's slot in the high bits of a conversation's ID, under Telegram's 2^52.
 - **Removed vs dormant.** Nothing of Web A's source is deleted.

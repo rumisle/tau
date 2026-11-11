@@ -69,6 +69,7 @@ import { formatStarsAsText } from '../../../util/localization/format';
 import { debounce, onTickEnd, rafPromise } from '../../../util/schedulers';
 import { getServerTime } from '../../../util/serverTime';
 import { callApi, cancelApiProgress } from '../../../api/gramjs';
+import { selectTauStoppableRun } from '../../../tau/selectors'; // tau: Stop for the run
 import {
   getIsSavedDialog,
   getUserFullName,
@@ -1618,7 +1619,8 @@ addActionHandler('reportMessages', async (global, actions, payload): Promise<voi
 
 addActionHandler('stopTypingDraft', async (global, actions, payload): Promise<void> => {
   const { chatId, threadId, randomId } = payload;
-  const draftId = selectStoppableTypingDraftId(global, chatId, threadId);
+  const draftId = selectStoppableTypingDraftId(global, chatId, threadId)
+    ?? selectTauStoppableRun(global, chatId, threadId); // tau: Stop for the run
   const peer = selectPeer(global, chatId);
   if (!peer || draftId !== randomId) return;
 
