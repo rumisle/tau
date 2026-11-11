@@ -16,6 +16,8 @@ import {
 import { STRINGS } from '../strings';
 import { formatDuration, formatElapsed } from './format';
 
+import useIntervalForceUpdate from '../../hooks/schedulers/useIntervalForceUpdate';
+
 import Avatar from '../../components/common/Avatar';
 import Menu from '../../components/ui/Menu';
 import MenuItem, { MenuItemSubtitle, MenuItemTitle } from '../../components/ui/MenuItem';
@@ -52,6 +54,8 @@ function subagentsSummary(subagents: ReturnType<typeof subagentsOf>) {
   return subagents.length === 1 ? `1 ${STRINGS.Subagent}` : `${subagents.length} ${STRINGS.Subagents}`;
 }
 
+const TICK_MS = 1000;
+
 function UsageRow({ title, value }: { title: string; value: string }) {
   return (
     <MenuItem disabled className="tau-usage-row">
@@ -68,6 +72,8 @@ const ChatMenu = ({
   useEffect(() => onAgentChange(() => setAgent(agentOf(chatId))), [chatId]);
   const usage = usageOf(chatId);
   const subagents = isOpen ? subagentsOf(chatId) : [];
+  // While it is open, the working ones' times keep going, row by row in place
+  useIntervalForceUpdate(subagents.some((each) => each.isBusy) ? TICK_MS : undefined);
 
   // Names and thinking levels come with the models; their load is an agent change
   useEffect(() => {

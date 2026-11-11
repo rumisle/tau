@@ -78,6 +78,8 @@ test('the ⋯ menu lists the chat\'s subagents, what each does and for how long;
   await expect(rows.nth(0)).toContainText('done-one');
   await expect(rows.nth(0)).toContainText(/worked [\d.]+s, echo finished/);
   await expect(rows.nth(1)).toContainText(/busy-one.*working( for \d+s)?, \$ until/);
+  // Its time keeps going while the list is open
+  await expect(rows.nth(1)).toContainText(/working for [2-9]s/);
   await rows.nth(1).click();
   // Its own conversation, working, not in the chat list
   await expect(app.locator('.MiddleHeader')).toContainText('busy-one');
