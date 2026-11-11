@@ -685,6 +685,11 @@ export function currentClient() {
   return client;
 }
 
+/** The headers a request beside the socket carries (`/files`) */
+export function authHeaders(): Record<string, string> {
+  return token === undefined ? {} : { authorization: `Bearer ${token}` };
+}
+
 export function getOutbox() {
   return outbox!;
 }

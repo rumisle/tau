@@ -132,6 +132,11 @@ web/src/tau/
 - **The chat's ⋯ menu is tau's** (`components/ChatMenu.tsx`, in Web A's header menu, with its nested submenus): the
   model and thinking level (`api/agent.ts`: shown at once, sent in order with the chat's messages, believed until the
   `pi.agent` doc agrees, as iOS's `ServerStore.agent`), and Compact Context, never repeated after a lost connection.
+- **Photos and files are Web A's media.** A user entry's attachments block names its kept files: one is a message with
+  the photo or document and the caption; several an album (a message each, grouped: photos apart from files). Message
+  IDs leave room for it: an entry's rows are `entryId * 32 + row`. Web A's media loader asks `downloadMedia` for
+  `photo<id>` and `document<id>`, which fetches `/files/<id>` with the token (or `media.get` for an entry's image), and
+  keeps it in the Cache API: files and entries never change.
 - **IDs.** A private chat is keyed by its peer, so each conversation is a user of its own. Several servers are told
   apart as in iOS's MultiStore: the server's slot in the high bits of a conversation's ID, under Telegram's 2^52.
 - **Removed vs dormant.** Nothing of Web A's source is deleted.

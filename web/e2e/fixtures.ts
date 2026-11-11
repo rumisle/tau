@@ -21,8 +21,11 @@ type Api = {
   /** A new chat with `messages` sent one after another, each answered */
   chat(title: string, messages: string[]): Promise<number>;
   /** Sends a message and waits for its answer */
-  send(conversationId: number, content: string, options?: { wait?: boolean }): Promise<void>;
+  send(conversationId: number, content: string, options?: { wait?: boolean; attachments?: Attachment[] }): Promise<void>;
+  /** Uploads a file as `POST /files` does for a message: its ID */
+  upload(name: string, bytes: Uint8Array): Promise<string>;
 };
+type Attachment = { id: string; as?: 'image' | 'file' };
 
 export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
   server: [async ({}, use, workerInfo) => {
@@ -43,11 +46,13 @@ export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
   api: async ({ server }, use) => {
     const protocols = ['tau.v1', `tau.token.${Buffer.from(TOKEN).toString('base64url')}`];
     const client = await TauClient.open(new WebSocket(`ws://127.0.0.1:${server.port}/socket`, protocols));
-    const send = async (conversationId: number, content: string, { wait = true } = {}) => {
+    const send = async (
+      conversationId: number, content: string, { wait = true, attachments }: { wait?: boolean; attachments?: Attachment[] } = {},
+    ) => {
       const replica = new ConversationReplica(conversationId);
       await replica.sync(client);
       const { submission } = await client.request('conversation.submit', {
-        conversationId, requestId: crypto.randomUUID(), content,
+        conversationId, requestId: crypto.randomUUID(), content, ...(attachments && { attachments }),
       });
       if (!wait) return;
       await new Promise<void>((done) => {
@@ -63,6 +68,12 @@ export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
     await use({
       client,
       send,
+      async upload(name, bytes) {
+        const response = await fetch(`${server.origin}/files?name=${encodeURIComponent(name)}`, {
+          method: 'POST', headers: { authorization: `Bearer ${TOKEN}` }, body: new Blob([bytes as Uint8Array<ArrayBuffer>]),
+        });
+        return ((await response.json()) as { id: string }).id;
+      },
       async chat(title, messages) {
         const { dialog } = await client.request<{ dialog: Dialog }>('conversation.create', {
           title, requestId: crypto.randomUUID(),

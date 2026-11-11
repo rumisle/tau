@@ -1,11 +1,12 @@
 // The `callApi` methods tau answers. Every other method resolves to `undefined`, as a failed GramJS request does, and
 // the UI copes (docs/web.md "What the proof of concept showed").
-import type { ApiChat, ApiMessageEntity, ApiPeer } from '../../api/types';
+import type { ApiChat, ApiMediaFormat, ApiMessageEntity, ApiPeer } from '../../api/types';
 
 import { ALL_FOLDER_ID } from '../../config';
 import {
   buildChat, buildChatId, buildReadState, buildThreadInfo, buildUser,
 } from './builders';
+import { downloadMedia } from './media';
 import { toMarkdown } from './outgoing';
 import {
   chatListMessage, dialogs, draftHistory, fetchHistory, isDraftChat, isListed, requestDialog, sendChatListMessages,
@@ -72,6 +73,10 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
 
   requestChatUpdate({ chat }: { chat: ApiChat }) {
     requestDialog(chat.id);
+  },
+
+  downloadMedia({ url, mediaFormat }: { url: string; mediaFormat: ApiMediaFormat }) {
+    return downloadMedia(url, mediaFormat);
   },
 
   fetchChatFolders() {

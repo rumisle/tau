@@ -11,6 +11,7 @@ import { MAIN_THREAD_ID } from '../../api/types';
 
 import { ARCHIVED_FOLDER_ID } from '../../config';
 import { STRINGS } from '../strings';
+import { buildMediaRows, readUserContent } from './attachments';
 import { buildMarkdownBlocks, buildParagraph } from './markdown';
 
 // The user's own account. Conversation IDs are entry IDs, far below it.
@@ -142,12 +143,35 @@ const SUBAGENT_REPORT = /^<subagent name="([^"]*)" conversation="(\d+)" status="
 
 /** An entry's messages, in order: none for those the chat does not show, several for an album */
 export function buildRows(entry: Entry, context: MessageContext): ApiMessage[] {
+  const media = userMediaRows(entry);
+  if (media) return media;
   const message = buildMessage(entry, context);
   return message ? [message] : [];
 }
 
+/** A user message's rows when it has photos or files: the media, the caption with them */
+function userMediaRows(entry: Entry) {
+  if (entry.kind !== 'pi.user') return undefined;
+  const message = (entry.model as any[] | undefined)?.[0];
+  const date = Math.floor((message?.timestamp ?? Date.now()) / 1000);
+  const { text, photos, documents } = readUserContent(message?.content, entry.conversationId, entry.id, date);
+  if (!photos.length && !documents.length) return undefined;
+  return buildMediaRows(
+    {
+      chatId: buildChatId(entry.conversationId), date, isOutgoing: true, senderId: ME_ID,
+    },
+    (row) => messageIdOf(entry.id, row),
+    entry.id,
+    text,
+    photos,
+    documents,
+  );
+}
+
 /** An entry's first message, or undefined for those the chat does not show */
 export function buildMessage(entry: Entry, context: MessageContext): ApiMessage | undefined {
+  const media = userMediaRows(entry);
+  if (media) return media[0];
   const message = (entry.model as any[] | undefined)?.[0];
   const chatId = buildChatId(entry.conversationId);
   const base = {
