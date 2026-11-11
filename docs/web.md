@@ -355,6 +355,17 @@ web client is in the same repository, so a commit after the walk catches up does
 - **What a web commit does:** the behavior and its lessons, in Web A's terms. It is not a port of the Swift: where
   Web A's machinery already does a thing (scrolling, date groups, context menus), the line is `done` once the web
   client behaves as the commit says, or `n/a` if Web A did so already.
+- **Desktop, not iOS gestures.** The web client is a desktop app: a commit brings what a feature achieves, in the
+  desktop's form, not the iOS gesture that does it there; where Web A has the desktop behavior, it is Web A's.
+  - Desktop idioms: right-click context menus; hover actions and tooltips; native text selection and copy (drag to
+    select, across rows; Cmd/Ctrl+C); keyboard shortcuts as Telegram Desktop and Web have them (Enter and
+    Shift+Enter, Esc, Up to edit the last message, Cmd+K); the scroll wheel; dropping files; focus that follows the
+    keyboard.
+  - Not brought over: long-press, swipes, tap-the-status-bar, haptics, and click-to-act on content a desktop user
+    selects (a click on text places the caret or starts a selection; a code block copies from Web A's button shown on
+    hover, inline code does nothing special). An iOS gesture becomes a context-menu item, a hover button or a
+    keyboard shortcut.
+  - `web/PARITY.md` says where a feature's desktop form differs from iOS's (`desktop:` in its line).
 - **Tests come with it.** A commit with an iOS UI test or a server test gets its e2e or unit counterpart when the
   behavior is the web's too.
 

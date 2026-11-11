@@ -3,8 +3,10 @@
 // Sizes are iOS points as CSS pixels (ios/Tau/Chat/ChatMessageItem.swift); colors are tau's theme (src/styles/tau.scss)
 
 .root {
+  // Desktop: everything an answer shows is text to select and copy, thinking and cards too (Web A's list makes a
+  // message's frame unselectable)
+  user-select: text;
   position: relative;
-
   // Text 16 pt from the screen's edge (`freeTextInset`); the list has 8 px of its own on a phone. Rows are 3 pt apart
   // as tool cards are, text 6 (`mergedTop`), and about 10 after the user's bubble.
   padding: 0.1875rem 0.5rem;

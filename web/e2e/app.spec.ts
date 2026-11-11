@@ -99,15 +99,46 @@ test('a card per tool: a file written, edited as a diff, read colored by its lan
   await expect(card('Read').locator('[class*="hljs"], [class*="token"]').first()).toBeVisible();
 });
 
-test('a click on code copies it, inline or a block, with Telegram\'s toast', async ({ app, api }) => {
+test('desktop copying: a code block\'s copy button on hover; selection across answers and Ctrl+C; cards', async ({ app, api }) => {
   await app.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await api.chat('Copy code', ['$ echo copied-$((6*7))', 'hello']);
   await openChat(app, 'Copy code');
-  const answer = app.locator(row).filter({ hasText: 'Ran it' }).last();
-  await answer.locator('pre').filter({ hasText: 'copied-42' }).first().click();
-  await expect(app.getByText('Text copied to clipboard.')).toBeVisible();
-  expect((await app.evaluate(() => navigator.clipboard.readText())).trim()).toBe('copied-42');
-  const inline = app.locator(row).locator('p code').first();
-  await inline.click();
-  expect(await app.evaluate(() => navigator.clipboard.readText())).toBe(await inline.innerText());
+  const clipboard = () => app.evaluate(() => navigator.clipboard.readText());
+  // A click on code is a click: it copies nothing
+  await app.evaluate(() => navigator.clipboard.writeText('before'));
+  const block = app.locator(row).filter({ hasText: 'Ran it' }).last().locator('.CodeBlock').first();
+  await block.locator('pre').click();
+  await app.locator(row).locator('p code').first().click();
+  expect(await clipboard()).toBe('before');
+  // Hovered, the block shows its copy button
+  await block.hover();
+  await block.getByTitle('Copy').click();
+  expect((await clipboard()).trim()).toBe('copied-42');
+  // A drag from one answer into the next selects across them; Ctrl+C copies it
+  const first = app.locator(row).filter({ hasText: 'Ran it' }).last().locator('p').first();
+  const second = app.locator(row).filter({ hasText: 'You said: hello' }).last().locator('p').first();
+  const from = (await first.boundingBox())!;
+  const to = (await second.boundingBox())!;
+  await app.mouse.move(from.x + 1, from.y + from.height / 2);
+  await app.mouse.down();
+  await app.mouse.move(to.x + to.width - 2, to.y + to.height / 2, { steps: 8 });
+  await app.mouse.up();
+  await app.keyboard.press('ControlOrMeta+C');
+  const copied = await clipboard();
+  expect(copied).toContain('Ran it');
+  expect(copied).toContain('copied-42');
+  expect(copied).toContain('You said: hello');
+  // A tool card opens on a click, but not on a drag that selects its text
+  await app.evaluate(() => window.getSelection()?.removeAllRanges());
+  const card = app.locator('[data-tau-part="tool"]').first();
+  const box = (await card.locator('pre').boundingBox())!;
+  await app.mouse.move(box.x + 2, box.y + 4);
+  await app.mouse.down();
+  await app.mouse.move(box.x + box.width / 2, box.y + box.height - 4, { steps: 5 });
+  await app.mouse.up();
+  expect(await app.evaluate(() => window.getSelection()?.toString())).toContain('echo copied');
+  await expect(card).not.toHaveAttribute('data-tau-expanded');
+  // A click on it (which ends the selection) opens it
+  await card.locator('pre').click();
+  await expect(card).toHaveAttribute('data-tau-expanded');
 });
