@@ -92,6 +92,8 @@ export function buildChat(dialog: Dialog): ApiChat {
     title: buildTitle(dialog),
     folderId: dialog.archived ? ARCHIVED_FOLDER_ID : undefined,
     isListed: true,
+    // Shown again after Hide, which Web A takes as leaving the chat
+    isNotJoined: false,
     creationDate: dialog.createdAt ? Math.floor(dialog.createdAt / 1000) : undefined,
   };
 }

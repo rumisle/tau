@@ -202,7 +202,12 @@ function applyDialog(dialog: Dialog) {
   emitChange(id);
   refreshTyping();
   if (dialog.conversation.owner) refreshSubagentCard(id);
-  if (!isListed(dialog) || !wasConnected) return;
+  if (!wasConnected) return;
+  if (!isListed(dialog)) {
+    // Hidden (here or on another device): out of Web A's lists
+    if (dialog.hidden && isInWebAList(buildChatId(id))) send({ '@type': 'updateChatLeave', id: buildChatId(id) });
+    return;
+  }
   sendDialog(dialog);
 }
 
@@ -217,7 +222,9 @@ function sendDialog(dialog: Dialog) {
   const chatId = buildChatId(id);
   // Archived or back: Web A moves a chat between its lists on this, not on the chat's folder (read before it changes)
   const known = getGlobal().chats.byId[chatId];
-  const isMoved = known !== undefined && (known.folderId === ARCHIVED_FOLDER_ID) !== Boolean(dialog.archived);
+  // Archived or back, or shown again after Hide: into the list it belongs in
+  const isMoved = known !== undefined && ((known.folderId === ARCHIVED_FOLDER_ID) !== Boolean(dialog.archived)
+    || !isInWebAList(chatId));
   send({ '@type': 'updateUser', id: chatId, user: buildUser(dialog) });
   send({ '@type': 'updateThreadInfo', threadInfo: buildThreadInfo(dialog) });
   send({
@@ -851,8 +858,18 @@ function readStateOf(dialog: Dialog) {
   return { ...readState, unreadCount: 0, lastReadInboxMessageId: lastRowIdOf(dialog.last.id) };
 }
 
+function isInWebAList(chatId: string) {
+  const { listIds } = getGlobal().chats;
+  return Boolean(listIds.active?.includes(chatId) || listIds.archived?.includes(chatId));
+}
+
+/** Hide: the chat leaves every list on every device; kept, as durable deletes no conversation */
+export function hide(chatId: string) {
+  mark(chatId, { hidden: true });
+}
+
 /** Mark as Unread or as Read, Archive: on every device, from the next Dialog on */
-export function mark(chatId: string, marks: { unread?: boolean; archived?: boolean }) {
+export function mark(chatId: string, marks: { unread?: boolean; archived?: boolean; hidden?: boolean }) {
   if (isDraftChat(chatId)) return;
   void outbox!.request('conversation.mark', { conversationId: Number(chatId) }, marks).catch(() => undefined);
 }

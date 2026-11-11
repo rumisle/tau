@@ -78,3 +78,16 @@ test('the open chat reads what arrives: its row never shows a badge, another cha
   await app.waitForTimeout(500);
   expect(await app.evaluate(() => (window as any).tauBadgeSeen)).toBe(false);
 });
+
+test('the chat list\'s menu has tau\'s items; Hide takes the chat out of the list, on every device', async ({ app, api }) => {
+  const id = await api.chat('Hide me', ['hello']);
+  await listItem(app, 'Hide me').click({ button: 'right' });
+  const items = app.locator('.MenuItem:visible');
+  await expect(items).toHaveText(['Open in New Tab', 'Quick Preview', 'Mark as Read', 'Archive', 'Hide']);
+  await items.filter({ hasText: 'Hide' }).click();
+  await expect(listItem(app, 'Hide me')).toHaveCount(0);
+  await expect.poll(async () => (await dialogOf(api, id)).hidden).toBe(true);
+  // Shown again from another device: back in the list
+  await api.client.request('conversation.mark', { conversationId: id, hidden: false });
+  await expect(listItem(app, 'Hide me')).toBeVisible();
+});

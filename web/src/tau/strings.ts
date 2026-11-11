@@ -16,4 +16,5 @@ export const STRINGS = {
   MenuLoading: 'Loading…',
   ThinkingOff: 'Thinking turned off',
   MenuResend: 'Resend',
+  MenuHide: 'Hide',
 } as const;

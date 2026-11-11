@@ -143,10 +143,12 @@ web/src/tau/
   has Photo or Video and File.
 - **Read state and marks** go through Web A's own calls: its debounced `markMessageListRead` is `conversation.read`,
   Mark as Unread and Read are `conversation.mark { unread }`, Archive `{ archived }`. Web A moves a chat between its
-  lists on `updateChatListType`, which a Dialog that changed its `archived` sends. A chat open in a visible tab reads
-  what arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web
-  A marks a message read only after it has been in view a while, so the server's unread count came back first and the
-  open chat's row showed a badge.
+  lists on `updateChatListType`, which a Dialog that changed its `archived` sends. The chat list's menu is iOS's in Web
+  A's: Open in New Tab, Quick Preview, Mark as Read or Unread, Archive, Hide (`conversation.mark { hidden }`, which Web
+  A takes as leaving the chat; Telegram's Mute and Delete Chat are left out). A chat open in a visible tab reads what
+  arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web A
+  marks a message read only after it has been in view a while, so the server's unread count came back first and the open
+  chat's row showed a badge.
 - **A message's menu is tau's** (`components/MessageMenu.tsx`), on a right-click, on answers and the user's bubbles
   (Web A's `ContextMenuContainer` is left out: replies, reactions, forwarding are Telegram's): Copy, the answer's
   Markdown, or Copy Selected Text when the selection is in the message; for a message that did not go, its reason,
