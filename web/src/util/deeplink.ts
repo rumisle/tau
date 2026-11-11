@@ -1,0 +1,375 @@
+import { getActions, getGlobal } from '../global';
+
+import type {
+  ApiChatType, ApiFormattedText, LinkContext,
+} from '../api/types';
+import type { DeepLinkMethod } from './deepLinkParser';
+import { LeftColumnContent } from '../types';
+
+import {
+  API_CHAT_TYPES, RE_TG_LINK, TON_CURRENCY_CODE, WALLET_BOT_USERNAME,
+} from '../config';
+import { IS_BAD_URL_PARSER } from './browser/globalEnvironment';
+import { RE_TON_TRANSFER_LINK, tryParseDeepLink } from './deepLinkParser';
+import { parseTonTransferLink } from './tonAddress';
+import { buildTonConnectLinkFromStartApp, isTonConnectLink, parseTonConnectLink } from './tonConnectLink';
+
+function openTonConnectLink(url: string) {
+  const actions = getActions();
+
+  void parseTonConnectLink(url).then((request) => {
+    actions.openWalletTonConnect(request);
+  }).catch(() => {
+    actions.showNotification({ message: { key: 'WalletConnectInvalid' } });
+  });
+}
+
+export const processDeepLink = (url: string, linkContext?: LinkContext): boolean => {
+  const actions = getActions();
+
+  // Claimed even without the wallet, or `ton://…` would go through the `https` parsing
+  const isWalletAvailable = getGlobal().appConfig.isWalletAvailable;
+
+  if (isTonConnectLink(url)) {
+    if (isWalletAvailable) openTonConnectLink(url);
+
+    return true;
+  }
+
+  const transferLink = parseTonTransferLink(url);
+
+  if (transferLink) {
+    if (!isWalletAvailable) return true;
+
+    actions.openWalletModal({
+      initialRecipient: transferLink.address ?? '',
+      initialAmount: transferLink.amount,
+      initialComment: transferLink.comment,
+      isInitialCommentEncrypted: transferLink.isCommentEncrypted,
+    });
+
+    return true;
+  }
+
+  // Must not fall through to the `t.me` parsing, which would read the path as the `transfer` username
+  if (RE_TON_TRANSFER_LINK.test(url)) {
+    if (isWalletAvailable) actions.showNotification({ message: { key: 'WalletSendInvalidAddress' } });
+
+    return true;
+  }
+
+  const parsedLink = tryParseDeepLink(url);
+  if (parsedLink) {
+    switch (parsedLink.type) {
+      case 'languageLink':
+        actions.openLanguageModal({ langCode: parsedLink.langCode });
+        return true;
+      case 'privateMessageLink':
+        actions.openPrivateChannel({
+          id: parsedLink.channelId,
+          threadId: parsedLink.threadId,
+          messageId: parsedLink.messageId,
+          commentId: parsedLink.commentId,
+          timestamp: parsedLink.timestamp,
+          linkContext,
+        });
+        return true;
+      case 'publicMessageLink': {
+        actions.openChatByUsername({
+          username: parsedLink.username,
+          threadId: parsedLink.threadId,
+          messageId: parsedLink.messageId,
+          commentId: parsedLink.commentId,
+          timestamp: parsedLink.timestamp,
+          linkContext,
+        });
+        return true;
+      }
+      case 'publicUsernameOrBotLink': {
+        // A dApp addresses the wallet through the wallet bot's link; without the wallet it opens the bot
+        const tonConnectUrl = isWalletAvailable && parsedLink.username.toLowerCase() === WALLET_BOT_USERNAME
+          && parsedLink.startApp ? buildTonConnectLinkFromStartApp(parsedLink.startApp) : undefined;
+
+        if (tonConnectUrl) {
+          openTonConnectLink(tonConnectUrl);
+
+          return true;
+        }
+
+        const choose = parseChooseParameter(parsedLink.choose);
+
+        actions.openChatByUsername({
+          username: parsedLink.username,
+          startParam: parsedLink.start,
+          startGroup: parsedLink.startGroup,
+          ref: parsedLink.ref,
+          text: parsedLink.text,
+          startApp: parsedLink.startApp,
+          mode: parsedLink.mode,
+          startAttach: parsedLink.startAttach,
+          attach: parsedLink.attach,
+          choose,
+          originalParts: [parsedLink.username, parsedLink.appName],
+          isDirect: parsedLink.isDirect,
+        });
+        return true;
+      }
+      case 'privateChannelLink': {
+        actions.openPrivateChannel({
+          id: parsedLink.channelId,
+        });
+        return true;
+      }
+      case 'businessChatLink':
+        actions.resolveBusinessChatLink({
+          slug: parsedLink.slug,
+        });
+        return true;
+      case 'premiumReferrerLink':
+        actions.openPremiumModal();
+        return true;
+      case 'premiumMultigiftLink':
+        actions.openGiftRecipientPicker();
+        return true;
+      case 'chatBoostLink':
+        actions.processBoostParameters({
+          usernameOrId: (parsedLink.username || parsedLink.id)!,
+          isPrivate: Boolean(parsedLink.id),
+        });
+        return true;
+      case 'giftUniqueLink':
+        actions.openUniqueGiftBySlug({ slug: parsedLink.slug });
+        return true;
+      case 'giftAuctionLink':
+        actions.openGiftAuctionBySlug({ slug: parsedLink.slug });
+        return true;
+      case 'settings': {
+        switch (parsedLink.path?.split('/')[0]) {
+          case 'premium':
+            actions.openPremiumModal();
+            return true;
+          case 'stars':
+            actions.openStarsBalanceModal({});
+            return true;
+          case 'ton':
+            actions.openStarsBalanceModal({ currency: TON_CURRENCY_CODE });
+            return true;
+          case 'send-gift':
+            actions.openGiftRecipientPicker();
+            return true;
+        }
+
+        if (parsedLink.path) {
+          actions.openSettingsLink({ path: parsedLink.path });
+        } else {
+          actions.openLeftColumnContent({ contentKey: LeftColumnContent.Settings });
+        }
+        return true;
+      }
+      case 'stars':
+        actions.openStarsBalanceModal({});
+        return true;
+      case 'ton':
+        actions.openStarsBalanceModal({ currency: TON_CURRENCY_CODE });
+        return true;
+      case 'sendGramsLink': {
+        if (!isWalletAvailable) break;
+
+        const tonConnectUrl = parsedLink.startApp ? buildTonConnectLinkFromStartApp(parsedLink.startApp) : undefined;
+
+        if (tonConnectUrl) {
+          openTonConnectLink(tonConnectUrl);
+
+          return true;
+        }
+
+        actions.openWalletTransferLink({
+          to: parsedLink.to,
+          amount: parsedLink.amount,
+          comment: parsedLink.comment,
+          isCommentEncrypted: parsedLink.isCommentEncrypted,
+        });
+
+        return true;
+      }
+      case 'oauth':
+        if (linkContext?.type !== 'inner') return false;
+        actions.requestLinkUrlAuth({ url: parsedLink.url });
+        return true;
+      case 'newBotLink':
+        actions.openBotCreationModal({
+          managerUsername: parsedLink.managerUsername,
+          suggestedName: parsedLink.name,
+          suggestedUsername: parsedLink.username,
+        });
+        return true;
+      default:
+        break;
+    }
+  }
+
+  if (!url.match(RE_TG_LINK)) {
+    return false;
+  }
+
+  const urlToParse = IS_BAD_URL_PARSER ? url.replace(/^tg:\/\//, 'https://') : url;
+
+  const {
+    protocol, searchParams, hostname,
+  } = new URL(urlToParse);
+
+  if (protocol !== 'tg:') return false;
+
+  const method = hostname as DeepLinkMethod;
+  const params = Object.fromEntries(searchParams);
+
+  const {
+    checkChatInvite,
+    openChatByUsername,
+    openChatByPhoneNumber,
+    openStickerSet,
+    joinVoiceChatByLink,
+    openInvoice,
+    openChatWithDraft,
+    checkChatlistInvite,
+    openStoryViewerByUsername,
+    checkGiftCode,
+    openStarsBalanceModal,
+  } = actions;
+
+  switch (method) {
+    case 'resolve': {
+      const {
+        domain, phone, post, comment, voicechat, livestream, start, startattach, attach, thread, topic,
+        appname, startapp, mode, story, text,
+      } = params;
+
+      const threadId = Number(thread) || Number(topic) || undefined;
+
+      if (domain !== 'telegrampassport') {
+        if (appname) {
+          openChatByUsername({
+            username: domain,
+            startApp: startapp,
+            mode,
+            originalParts: [domain, appname],
+            text,
+          });
+        } else if (params.hasOwnProperty('voicechat') || params.hasOwnProperty('livestream')) {
+          joinVoiceChatByLink({
+            username: domain,
+            inviteHash: voicechat || livestream,
+          });
+        } else if (phone) {
+          openChatByPhoneNumber({
+            phoneNumber: phone,
+            startAttach: startattach,
+            attach,
+            text,
+          });
+        } else if (story) {
+          openStoryViewerByUsername({ username: domain, storyId: Number(story) });
+        } else {
+          openChatByUsername({
+            username: domain,
+            messageId: post ? Number(post) : undefined,
+            commentId: comment ? Number(comment) : undefined,
+            startParam: start,
+            mode,
+            startAttach: startattach,
+            attach,
+            threadId,
+          });
+        }
+      }
+      break;
+    }
+    case 'bg': {
+      // const {
+      //   slug, color, rotation, mode, intensity, bg_color: bgColor, gradient,
+      // } = params;
+      break;
+    }
+    case 'join': {
+      const { invite } = params;
+
+      checkChatInvite({ hash: invite });
+      break;
+    }
+    case 'addemoji':
+    case 'addstickers': {
+      const { set } = params;
+
+      openStickerSet({
+        stickerSetInfo: {
+          shortName: set,
+        },
+      });
+      break;
+    }
+    case 'addstyle': {
+      const { set } = params;
+      if (!set) return false;
+      actions.openAiTonePreview({ slug: set });
+      break;
+    }
+    case 'share':
+    case 'msg':
+    case 'msg_url': {
+      const { url: urlParam, text } = params;
+      openChatWithDraft({ text: formatShareText(urlParam, text) });
+      break;
+    }
+    case 'addlist': {
+      checkChatlistInvite({ slug: params.slug });
+      break;
+    }
+
+    case 'login': {
+      // const { code, token } = params;
+      break;
+    }
+
+    case 'invoice': {
+      const { slug } = params;
+      openInvoice({ type: 'slug', slug });
+      break;
+    }
+
+    case 'stars_topup': {
+      const { balance, purpose } = params;
+      const balanceNeeded = Number(balance);
+      if (!balanceNeeded || balanceNeeded < 0) return true;
+
+      openStarsBalanceModal({ topup: { balanceNeeded, purpose } });
+      break;
+    }
+
+    case 'giftcode': {
+      const { slug } = params;
+      checkGiftCode({ slug });
+      break;
+    }
+    default:
+      // Unsupported deeplink
+      return false;
+  }
+  return true;
+};
+
+export function formatShareText(url?: string, text?: string, title?: string): ApiFormattedText {
+  return {
+    text: [url, title, text].filter(Boolean).join('\n'),
+  };
+}
+
+function parseChooseParameter(choose?: string) {
+  if (!choose) return undefined;
+  const types = choose.toLowerCase().split(' ').flatMap((type) => {
+    if (type === 'groups') {
+      return ['chats', 'groups'];
+    }
+    return [type];
+  });
+  return types.filter((type): type is ApiChatType => API_CHAT_TYPES.includes(type as ApiChatType));
+}

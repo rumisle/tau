@@ -1,0 +1,4 @@
+.root :global(.modal-dialog),
+.root :global(.modal-content) {
+  overflow: hidden;
+}

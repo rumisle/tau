@@ -1,0 +1,132 @@
+import type { ApiTypeCurrencyAmount } from '../../api/types';
+import type { LangFn } from './types';
+
+import { STARS_ICON_PLACEHOLDER, TON_CURRENCY_CODE } from '../../config';
+import { convertTonFromNanos, formatTonFromNanos, formatTonShortFromNanos } from '../../util/formatCurrency';
+import buildClassName from '../buildClassName';
+
+import GramIcon from '../../components/common/icons/GramIcon';
+import Icon from '../../components/common/icons/Icon';
+import StarIcon from '../../components/common/icons/StarIcon';
+
+export const NEXT_ARROW_REPLACEMENT = {
+  '>': <Icon name="next-link" className="link-arrow-icon" />,
+};
+export const PREVIOUS_ARROW_REPLACEMENT = {
+  '<': <Icon name="previous-link" className="link-arrow-icon" />,
+};
+
+export function formatStarsAsText(lang: LangFn, amount: number) {
+  return lang('StarsAmountText', { amount }, { pluralValue: amount });
+}
+
+export function formatTonAsText(lang: LangFn, nanos: bigint) {
+  const amount = convertTonFromNanos(nanos);
+  return lang('GramAmountText', { amount: lang.preciseNumber(amount) }, { pluralValue: amount });
+}
+
+export function formatTonTextFromNanos(lang: LangFn, nanos: bigint, isShort?: boolean) {
+  const amount = isShort ? formatTonShortFromNanos(nanos) : formatTonFromNanos(nanos);
+
+  return lang('GramAmountText', { amount }, { pluralValue: convertTonFromNanos(nanos) });
+}
+
+export function formatTonShortParts(lang: LangFn, nanos: bigint): [whole: string, fraction?: string] {
+  const parts = lang.internalFormatters.preciseNumber.formatToParts(Number(formatTonShortFromNanos(nanos)));
+  const decimalIndex = parts.findIndex(({ type }) => type === 'decimal');
+  if (decimalIndex === -1) return [joinNumberParts(parts)];
+
+  return [joinNumberParts(parts.slice(0, decimalIndex)), joinNumberParts(parts.slice(decimalIndex))];
+}
+
+function joinNumberParts(parts: Intl.NumberFormatPart[]) {
+  return parts.map(({ value }) => value).join('');
+}
+
+export function formatTonAsIcon(
+  lang: LangFn,
+  // Nanotons, or an amount already formatted for display
+  amount: bigint | string,
+  options?: {
+    className?: string;
+    containerClassName?: string;
+    withWrapper?: boolean;
+    isMono?: boolean;
+    withIconLast?: boolean;
+  }) {
+  const {
+    className, containerClassName, withWrapper, isMono, withIconLast,
+  } = options || {};
+  const formattedAmount = typeof amount === 'bigint' ? convertTonFromNanos(amount) : amount;
+  const icon = (
+    <GramIcon
+      isMono={isMono}
+      className={buildClassName('in-text-icon', withIconLast && 'in-text-icon-last', className)}
+    />
+  );
+  const key = withIconLast ? 'GramAmountIconLast' : 'GramAmount';
+
+  if (containerClassName || withWrapper) {
+    return (
+      <span className={containerClassName}>
+        {lang(key, { amount: formattedAmount }, {
+          withNodes: true,
+          specialReplacement: {
+            '💎': icon,
+          },
+        })}
+      </span>
+    );
+  }
+
+  return lang(key, { amount: formattedAmount }, {
+    withNodes: true,
+    specialReplacement: {
+      '💎': icon,
+    },
+  });
+}
+
+export function formatStarsAsIcon(lang: LangFn, amount: number | string, options?: {
+  asFont?: boolean;
+  className?: string;
+  containerClassName?: string;
+  withWrapper?: boolean;
+  withIconLast?: boolean;
+}) {
+  const { asFont, className, containerClassName, withWrapper, withIconLast } = options || {};
+  const iconClassName = buildClassName(withIconLast && 'in-text-icon-last', className);
+  const icon = asFont
+    ? <Icon name="star" className={buildClassName('in-text-icon', iconClassName)} />
+    : <StarIcon type="gold" className={iconClassName} size="adaptive" />;
+  const key = withIconLast ? 'StarsAmountIconLast' : 'StarsAmount';
+
+  if (containerClassName || withWrapper) {
+    return (
+      <span className={containerClassName}>
+        {lang(key, { amount }, {
+          withNodes: true,
+          specialReplacement: {
+            [STARS_ICON_PLACEHOLDER]: icon,
+          },
+        })}
+      </span>
+    );
+  }
+
+  return lang(key, { amount }, {
+    withNodes: true,
+    specialReplacement: {
+      [STARS_ICON_PLACEHOLDER]: icon,
+    },
+  });
+}
+
+export function formatCurrencyAmountAsText(lang: LangFn, currencyAmount: ApiTypeCurrencyAmount) {
+  if (currencyAmount.currency === TON_CURRENCY_CODE) {
+    return formatTonAsText(lang, currencyAmount.amount);
+  }
+
+  const amount = currencyAmount.amount + currencyAmount.nanos / 1e9;
+  return formatStarsAsText(lang, amount);
+}

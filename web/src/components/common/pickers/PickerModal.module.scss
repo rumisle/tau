@@ -1,0 +1,30 @@
+.content {
+  display: flex;
+  flex-direction: column;
+}
+
+.fixedHeight .content {
+  height: 90vh;
+}
+
+.buttonWrapper {
+  position: relative;
+  padding-top: 0.75rem;
+}
+
+.islands {
+  :global(.modal-dialog) {
+    border-radius: 2.5rem;
+    background-color: var(--color-background-secondary);
+  }
+
+  .content {
+    padding: 0 1rem 1rem;
+  }
+}
+
+.confirmButton {
+  width: 100%;
+  height: 3rem;
+  border-radius: var(--border-radius-island);
+}

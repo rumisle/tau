@@ -1,0 +1,10 @@
+# Telegram Web A (https://github.com/Ajaxy/telegram-tt, GPL-3.0-or-later), vendored by scripts/web/upstream.ts.
+# `commit`: the upstream commit web/ is at. `exclude`: what a build does not need (a path, or a directory with /).
+commit 6002824b6532f3d913997ce496d9ab5f9b86bc22
+exclude dist/
+exclude tauri/
+exclude deploy/
+exclude .github/
+exclude .husky/
+exclude public/build-stats.json
+exclude public/statoscope-report.html
