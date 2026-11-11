@@ -15,19 +15,19 @@ for the web to do). `scripts/web/parity.sh` appends new commits as `todo`.
 - `514b560` done eb9cfd0 (idempotent sends; replicas, tool cards, thinking since M0); entry cache, paging, edits with 59f32bf, d36cb81, 42ea67a — iOS: connect to the tau server: WebSocket client, conversation replicas with ops, entry cache, drafts, idempo…
 - `899e78e` n/a: the server; subagent cards since M0, titles in 82e0bd1 — server: subagent tool (durable's foreground subagent), automatic conversation titles
 - `f4c44f5` done eb9cfd0 (Stop); Connecting and subagent cards since M0 — iOS: stop button, Connecting/Updating title, subagent cards; server: subagent conversations named after their…
-- `14e19eb` todo — iOS: title menu (model, thinking, compact, new context) in Telegram's context menu
+- `14e19eb` done 408e6d9 (model, thinking, compact; New Context left the iOS menu since) — iOS: title menu (model, thinking, compact, new context) in Telegram's context menu
 - `3ae1b86` done 82e0bd1 (New Chat); projects and folders superseded (c79f769); server settings n/a, one server per origin — iOS: New Chat with recent projects and a server folder browser; server settings; accessible settings rows
 - `17f7875` n/a: Web A's scroll-down button, which counts unread messages (with read state, c8ba53b) — iOS: Telegram's scroll-to-bottom button with a count of new messages; scroll restore waits for its message
 - `5bfb40f` n/a: iOS navigation — iOS: hold the push until the first messages are laid out, as Telegram's chat does
-- `0bdb90f` todo — iOS: Telegram's attachment menu (AttachmentController + MediaPickerScreen) with LegacyComponents' camera tile…
-- `262a544` todo — iOS: drop the hand-written attachment picker
-- `f13741d` todo — docs: iOS README for the Telegram components, server connection and vendoring; protocol: autoTitle, subagents
-- `842318b` todo — iOS: photos fill their bubble and the caption wraps to them
-- `772a19f` todo — server: photos read Photo in the chat list; iOS: save the scroll position when the app goes to the background
-- `42ea67a` todo — iOS: an edit's fork replaces the chat after the keyboard is down
-- `0ace4b0` todo — iOS: default server wss://tau.example.ts.net (a Tailscale service in front of the Mac's server)
-- `bf23232` todo — iOS: default server ws://nest.example.ts.net:7878; allow plain WebSockets to *.ts.net and the local network
-- `c8ba53b` todo — Read state, Mark as Unread, Archived Chats with Telegram's swipe actions and badge; server-wide default model…
+- `0bdb90f` done 17ec48a (Web A's attach menu: Photo or Video, File; its modal with a caption) — iOS: Telegram's attachment menu (AttachmentController + MediaPickerScreen) with LegacyComponents' camera tile…
+- `262a544` n/a: iOS only — iOS: drop the hand-written attachment picker
+- `f13741d` n/a: iOS docs; the protocol's autoTitle in 82e0bd1, subagents since M0 — docs: iOS README for the Telegram components, server connection and vendoring; protocol: autoTitle, subagents
+- `842318b` done d1e20ab (Web A's albums lay photos out with the caption) — iOS: photos fill their bubble and the caption wraps to them
+- `772a19f` n/a: the list shows the server's summary (Photo); Web A keeps a chat's scroll — server: photos read Photo in the chat list; iOS: save the scroll position when the app goes to the background
+- `42ea67a` skip: edits come with d36cb81 — iOS: an edit's fork replaces the chat after the keyboard is down
+- `0ace4b0` n/a: iOS default server; the web app talks to the server that served it — iOS: default server wss://tau.example.ts.net (a Tailscale service in front of the Mac's server)
+- `bf23232` n/a: iOS default server and ATS — iOS: default server ws://nest.example.ts.net:7878; allow plain WebSockets to *.ts.net and the local network
+- `c8ba53b` done a1c51ed (read state, Mark as Unread, Archived Chats; Web A's context menu for the swipes); default model and Duplicate with their settings and menu commits — Read state, Mark as Unread, Archived Chats with Telegram's swipe actions and badge; server-wide default model…
 - `de31b48` todo — iOS: Telegram's media viewer (GalleryUI's pager, zoom, swipe to dismiss and transitions) for sent photos
 - `53cd7ce` todo — iOS: syntax highlighting with Telegram's libprisma, code block titles and colors as Telegram's, indentation k…
 - `963a651` todo — iOS: LaTeX in answers (SwiftMath), inline on the text baseline and display blocks
