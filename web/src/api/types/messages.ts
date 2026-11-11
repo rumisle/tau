@@ -1,3 +1,4 @@
+import type { ApiTauContent } from '../../tau/api/types'; // tau: tau's content of a message
 import type { ThreadId, ThreadReadState, WebPageMediaSize } from '../../types';
 import type {
   ApiBotInlineMediaResult,
@@ -843,6 +844,7 @@ export interface ApiMessage {
   summaryLanguageCode?: string;
   fromRank?: string;
 
+  tau?: ApiTauContent; // tau: what tau's row draws (src/tau/components/TauMessage.tsx)
   isTypingDraft?: boolean; // Local field
   typingDraft?: {
     canStop?: true;

@@ -1303,7 +1303,9 @@ addActionHandler('apiUpdate', (global, actions, update): ActionReturnType => {
       return removeTypingDraftEntries(global, chatId, threadId, [entry]);
     }
     case 'updateChatTypingDraft': {
-      const { id, chatId, threadId = MAIN_THREAD_ID, text, richMessage, canStop, shouldKeepOnStop } = update;
+      const {
+        id, chatId, threadId = MAIN_THREAD_ID, text, richMessage, canStop, shouldKeepOnStop, tau, // tau: its content
+      } = update;
       const thread = selectThread(global, chatId, threadId);
       if (!thread) return undefined;
 
@@ -1343,6 +1345,7 @@ addActionHandler('apiUpdate', (global, actions, update): ActionReturnType => {
           editDate: getServerTime(),
           typingDraft: { canStop, shouldKeepOnStop },
           shouldSkipTypingAnimation: undefined,
+          tau, // tau: the draft streams in tau's row
         });
         rescheduleDraftRemoval();
         return global;
@@ -1361,6 +1364,7 @@ addActionHandler('apiUpdate', (global, actions, update): ActionReturnType => {
         richMessage,
       });
       newMessage.typingDraft = { canStop, shouldKeepOnStop };
+      newMessage.tau = tau; // tau: the draft streams in tau's row
       newMessage.shouldSkipTypingAnimation = replacedDrafts.length ? true : undefined;
 
       actions.apiUpdate({

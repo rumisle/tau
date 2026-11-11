@@ -1,0 +1,101 @@
+// tau's theme over Web A's, after the iOS app's (ios/Tau/Theme/Theme.swift): the chat on a plain color, text on it
+// without bubbles, cards in the incoming bubble's color, the user's bubbles in the accent's tint. Light is Telegram's
+// Classic with tau's pink accent; dark is the tinted night the iOS screenshots show.
+
+:root.theme-light {
+  --tau-chat-bg: #e5eaee;
+  --tau-text: #000000;
+  --tau-text-secondary: #8d8e93;
+  --tau-card-bg: #ffffff;
+  --tau-card-title: #000000;
+  --tau-card-text: #8d8e93;
+  --tau-accent: #eb6ca4;
+  --tau-accent-quote: rgba(235, 108, 164, 0.1);
+  --tau-diff-removed: #d0453a;
+  --tau-code-bg: rgba(0, 0, 0, 0.04);
+
+  --color-chat-active: #eb6ca4 !important;
+  --color-chat-active-greyed: #f3a9ca !important;
+  --color-active: #eb6ca4 !important;
+  --color-primary-shade: #d95e95 !important;
+  --color-primary-tint: rgba(235, 108, 164, 0.1) !important;
+  --color-primary-opacity: rgba(235, 108, 164, 0.12) !important;
+  --color-primary-opacity-hover: rgba(235, 108, 164, 0.25) !important;
+  --color-code: #d4528d !important;
+  --color-primary: #eb6ca4 !important;
+  --color-links: #d4528d !important;
+  --color-background-own: #fbe0ec !important;
+  --color-background-own-selected: #f3c6da !important;
+  --color-message-meta-own: #b9668b !important;
+  --color-accent-own: #c9568a !important;
+  --color-text-meta-colored: #b9668b !important;
+}
+
+:root.theme-dark {
+  --tau-chat-bg: #1e1517;
+  --tau-text: #e6ebf0;
+  --tau-text-secondary: #93838c;
+  --tau-card-bg: #38262c;
+  --tau-card-title: #ffffff;
+  --tau-card-text: #93838c;
+  --tau-accent: #eb6ca4;
+  --tau-accent-quote: rgba(235, 108, 164, 0.16);
+  --tau-diff-removed: #ff6b6b;
+  --tau-code-bg: rgba(255, 255, 255, 0.05);
+
+  --color-chat-active: #895e70 !important;
+  --color-chat-active-greyed: #6b4a58 !important;
+  --color-active: #eb6ca4 !important;
+  --color-primary-shade: #d95e95 !important;
+  --color-primary-tint: rgba(235, 108, 164, 0.1) !important;
+  --color-primary-opacity: rgba(235, 108, 164, 0.12) !important;
+  --color-primary-opacity-hover: rgba(235, 108, 164, 0.25) !important;
+  --color-code: #f08fbb !important;
+  --color-primary: #eb6ca4 !important;
+  --color-links: #f08fbb !important;
+  --color-background: #241a1d !important;
+  --color-background-secondary: #1e1517 !important;
+  --color-chat-hover: #2e2226 !important;
+  --color-background-own: #895e70 !important;
+  --color-background-own-selected: #9c6c80 !important;
+  --color-message-meta-own: rgba(255, 255, 255, 0.6) !important;
+  --color-accent-own: #ffffff !important;
+  --color-text-meta-colored: rgba(255, 255, 255, 0.6) !important;
+}
+
+// The chat on its plain color, no pattern or gradient
+#Main {
+  background: var(--tau-chat-bg) !important;
+}
+
+// Web A sets its theme's colors and the text size inline on <html>, so these need `!important`. The user's text at
+// iOS's 17 pt.
+:root {
+  --message-text-size: 17px !important;
+}
+
+// Date and service pills: Telegram's service color on a plain light background, a lift of white on a dark one
+:root.theme-light #Main {
+  --action-message-bg: rgba(112, 128, 144, 0.45) !important;
+}
+
+:root.theme-dark #Main {
+  --action-message-bg: rgba(255, 255, 255, 0.08) !important;
+}
+
+// The page for plain HTTP away from localhost (src/tau/boot.ts), before any of Web A's styles apply
+.tau-insecure {
+  max-width: 36rem;
+  margin: 15vh auto;
+  padding: 0 1.5rem;
+
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  color: var(--tau-text, #000000);
+
+  pre {
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    background: rgba(127, 127, 127, 0.15);
+  }
+}

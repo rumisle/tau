@@ -159,7 +159,7 @@ addActionHandler('markBotTrusted', (global, actions, payload): ActionReturnType 
   const tabState = selectTabState(global, tabId);
   if (tabState.botTrustRequest?.onConfirm) {
     const { action, payload: callbackPayload } = tabState.botTrustRequest.onConfirm;
-    // @ts-expect-error -- No idea how to type this properly
+    // @ts-ignore -- No idea how to type this properly (tau: TypeScript 7 finds no error here, 6 does)
     actions[action]({
       ...(callbackPayload),
       isWriteAllowed,

@@ -41,6 +41,7 @@ import useResizeObserver from '../../hooks/useResizeObserver';
 import useMessageObservers from './hooks/useMessageObservers';
 import useScrollHooks from './hooks/useScrollHooks';
 
+import TauMessage from '../../tau/components/TauMessage'; // tau: tau's row
 import Icon from '../common/icons/Icon';
 import MiniTable, { type TableEntry } from '../common/MiniTable';
 import ActionMessage from './message/ActionMessage';
@@ -421,6 +422,22 @@ const MessageListContent = ({
           const shouldShowGuestAvatar = isPrivate && !withUsers && Boolean(message.guestChatViaId);
           const isJustAdded = addedMessageIdSet?.has(message.id)
             || Boolean(album?.messages.some(({ id }) => addedMessageIdSet?.has(id)));
+
+          // tau: an answer is tau's own row, as the iOS app draws it
+          if (message.tau) {
+            return compact([
+              message.id === memoUnreadDividerBeforeIdRef.current && unreadDivider,
+              <TauMessage
+                key={key}
+                message={message}
+                isLastInList={position.isLastInList}
+                isJustAdded={isJustAdded}
+                observeIntersectionForBottom={observeIntersectionForReading}
+                observeIntersectionForLoading={observeIntersectionForLoading}
+                onMessageUnmount={onMessageUnmount}
+              />,
+            ]);
+          }
 
           return compact([
             message.id === memoUnreadDividerBeforeIdRef.current && unreadDivider,

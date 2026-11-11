@@ -6,4 +6,4 @@ export {
   updateFullLocalDb,
   updateLocalDb,
   setShouldEnableDebugLog,
-} from './worker/connector';
+} from '../../tau/api/connector'; // tau: the UI's API is tau's server (docs/web.md), not GramJS's worker

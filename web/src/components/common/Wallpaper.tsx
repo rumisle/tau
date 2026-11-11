@@ -6,6 +6,7 @@ import type { IThemeSettings, ThemeKey } from '../../types';
 import { selectPerformanceSettingsValue, selectTheme, selectThemeValues } from '../../global/selectors';
 import buildClassName from '../../util/buildClassName';
 import buildStyle from '../../util/buildStyle';
+import { IS_TAU } from '../../tau/config'; // tau: Telegram-only UI left out
 
 import useChatBackground from '../../hooks/useChatBackground';
 
@@ -73,8 +74,13 @@ const Wallpaper = ({
       inert={inert}
       onClick={onClick}
     >
-      <div className={buildClassName(background.backgroundClassNames, bgClassName)} style={background.backgroundStyle}>
-        {background.hasGradient && (
+      {/* tau: the chat is on a plain color (src/tau/styles/tau.scss), without the pattern or the gradient */}
+      <div
+        className={buildClassName(background.backgroundClassNames, bgClassName)}
+        style={background.backgroundStyle}
+        hidden={IS_TAU && backgroundMode !== 'lockScreen'}
+      >
+        {background.hasGradient && !(IS_TAU && backgroundMode !== 'lockScreen') && (
           <canvas
             // A canvas can hold only one context type, so switching between the animated (WebGL)
             // and static (2D) renderers must recreate the element

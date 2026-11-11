@@ -9,6 +9,7 @@ import { type Target, viteStaticCopy } from 'vite-plugin-static-copy';
 import { watchAndRun } from 'vite-plugin-watch-and-run';
 
 import buildGitInfoPlugin from './plugins/gitInfo.ts';
+import { IS_TAU } from './src/tau/config.ts'; // tau: Telegram-only parts left out
 import packageJson from './package.json' with { type: 'json' };
 
 const DIR_NAME = dirname(fileURLToPath(import.meta.url));
@@ -40,7 +41,8 @@ const WATCHED_STATIC_COPY_TARGETS: Target[] = [
     rename: { stripBase: true },
   },
 ];
-const UNWATCHED_STATIC_COPY_TARGETS: Target[] = [
+// tau: no emoji images (IS_EMOJI_SUPPORTED, src/util/browser/windowEnvironment.ts)
+const UNWATCHED_STATIC_COPY_TARGETS: Target[] = IS_TAU ? [] : [
   {
     src: normalizePath(resolve(DIR_NAME, 'node_modules/emoji-data-ios/img-apple-64/**/*')),
     dest: '.',
@@ -166,7 +168,7 @@ export default defineConfig(({ mode }): UserConfig => {
 
   const shouldCollectWorkerReportBundles = bundleStatsVisualizerValue === '1' || bundleStatsValue === '1';
 
-  if (appEnv !== 'test' && (!telegramApiId || !telegramApiHash)) {
+  if (!IS_TAU && appEnv !== 'test' && (!telegramApiId || !telegramApiHash)) { // tau: GramJS is not used
     throw new Error('Missing required Telegram API credentials');
   }
 
@@ -215,6 +217,9 @@ export default defineConfig(({ mode }): UserConfig => {
       warmup: {
         clientFiles: DEV_BUNDLE_WARMUP_CLIENT_FILES,
       },
+      // tau: the dev tau server behind the same origin, as in production; the shared client beside web/
+      proxy: buildTauProxy(env.TAU_DEV_SERVER || 'http://127.0.0.1:7990'),
+      fs: { allow: [DIR_NAME, resolve(DIR_NAME, '../client')] },
       watch: {
         ignored: DEV_SERVER_WATCH_IGNORES,
       },
@@ -282,6 +287,15 @@ function parseBundleReportHook(hook: unknown): BundleReportHook | undefined {
   return hook.handler as BundleReportHook;
 }
 
+// tau: what the app asks of its server, proxied to the dev tau server: the socket, the token check, files
+function buildTauProxy(target: string) {
+  return {
+    '/socket': { target, ws: true },
+    '/auth': { target },
+    '/files': { target },
+  };
+}
+
 function setViteEnv(env: Record<string, string>) {
   Object.entries(env).forEach(([key, value]) => {
     process.env[key] = value;
@@ -289,9 +303,11 @@ function setViteEnv(env: Record<string, string>) {
 }
 
 function buildCsp(appEnv: string) {
+  // tau: connect-src takes the socket on localhost, where it is ws:
   return `
   default-src 'self';
-  connect-src 'self' wss://*.web.telegram.org blob: http: https: wss: ${appEnv === 'development' ? 'ipc:' : ''};
+  connect-src 'self' wss://*.web.telegram.org blob: http: https: wss: ${appEnv === 'development' ? 'ipc:' : ''}
+    ws://localhost:* ws://127.0.0.1:*;
   script-src 'self' 'wasm-unsafe-eval'
     https://t.me/_websync_ https://telegram.me/_websync_ https://telegram.dog/_websync_;
   worker-src 'self'${appEnv === 'development' ? ' blob:' : ''};

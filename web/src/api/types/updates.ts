@@ -6,6 +6,7 @@ import type {
   VideoRotation,
   VideoState,
 } from '../../lib/vibecalls';
+import type { ApiTauContent } from '../../tau/api/types'; // tau: a typing draft's tau content
 import type { ThreadId, ThreadReadState, TranslationTone } from '../../types';
 import type { RegularLangFnParameters } from '../../util/localization';
 import type { ApiBotCommand, ApiBotMenuButton } from './bots';
@@ -157,6 +158,7 @@ export type ApiUpdateChatTypingDraft = {
   chatId: string;
   id: string;
   threadId?: ThreadId;
+  tau?: ApiTauContent; // tau: a streaming answer in tau's row
   canStop?: true;
   shouldKeepOnStop?: true;
 } & ({

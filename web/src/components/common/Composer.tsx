@@ -150,6 +150,7 @@ import stopEvent from '../../util/stopEvent';
 import { getUtf8Length } from '../../util/textFormat';
 import { EMPTY_RICH_MEDIA_CAPTION } from '../../util/tiptap/richMedia';
 import windowSize from '../../util/windowSize';
+import { IS_TAU } from '../../tau/config'; // tau: Telegram-only UI left out
 import applyIosAutoCapitalizationFix from '../middle/composer/helpers/applyIosAutoCapitalizationFix';
 import buildAttachment, {
   buildGifAttachment,
@@ -3165,7 +3166,8 @@ const Composer = ({
               getPlaybackEl={renderedVideoRecording?.getPlaybackEl}
             />
           )}
-          {((!isComposerBlocked || canSendGifs || canSendStickers) && !isNeedPremium && !isAccountFrozen) && (
+          {/* tau: no emoji, sticker or GIF menu */}
+          {!IS_TAU && (!isComposerBlocked || canSendGifs || canSendStickers) && !isNeedPremium && !isAccountFrozen && (
             <SymbolMenuButton
               chatId={chatId}
               threadId={threadId}

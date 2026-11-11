@@ -23,6 +23,7 @@ import { checkSessionLocked, hasStoredSession } from '../util/sessions';
 import { getActionMessageBg, getWallpaperBaseColor } from '../util/wallpaper';
 import { handoffWebLogin } from '../util/webLoginHandoff';
 import { updateSizes } from '../util/windowSize';
+import { IS_TAU } from '../tau/config'; // tau: tau's connect screen
 
 import useTauriDrag from '../hooks/tauri/useTauriDrag';
 import useAppLayout from '../hooks/useAppLayout';
@@ -34,6 +35,7 @@ import usePrevious from '../hooks/usePrevious';
 import { useSignalEffect } from '../hooks/useSignalEffect';
 import { getIsInBackground } from '../hooks/window/useBackgroundMode';
 
+import Connect from '../tau/components/Connect'; // tau: tau's connect screen
 import Auth from './auth/Auth';
 import Notifications from './common/Notifications';
 import UiLoader from './common/UiLoader';
@@ -213,7 +215,7 @@ const App = ({
   function renderContent() {
     switch (activeKey) {
       case AppScreens.auth:
-        return <Auth />;
+        return IS_TAU ? <Connect /> : <Auth />; // tau: tau's connect screen in place of Telegram's login
       case AppScreens.main:
         return <Main isMobile={isMobile} />;
       case AppScreens.lock:

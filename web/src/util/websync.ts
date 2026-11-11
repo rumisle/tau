@@ -1,6 +1,7 @@
 import { getGlobal } from '../global';
 
 import { APP_CODE_NAME, DEBUG } from '../config';
+import { IS_TAU } from '../tau/config'; // tau: no requests to Telegram
 import { IS_TAURI } from './browser/globalEnvironment';
 import { hasStoredSession } from './sessions';
 
@@ -28,7 +29,7 @@ const saveSync = (authed: boolean) => {
 let lastTimeout: number | undefined;
 
 export const forceWebsync = (authed: boolean) => {
-  if (IS_TAURI) return undefined;
+  if (IS_TAURI || IS_TAU) return undefined; // tau: no requests to Telegram
   const currentTs = getTs();
 
   const { canRedirect, ts } = JSON.parse(localStorage.getItem(WEBSYNC_KEY) || '{}');
@@ -76,7 +77,7 @@ export function stopWebsync() {
 }
 
 export function startWebsync() {
-  if (DEBUG || IS_TAURI) {
+  if (DEBUG || IS_TAURI || IS_TAU) { // tau: no requests to Telegram
     return;
   }
 

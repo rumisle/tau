@@ -1,4 +1,5 @@
 /* eslint-disable simple-import-sort/imports -- Sanitize and claim URL login before other startup modules */
+import { checkSecureContext } from './tau/boot'; // tau: a #token= link taken before Web A's routing reads it
 import { getPendingWebLogin } from './util/routing';
 import { webLoginHandoffPromise } from './util/webLoginHandoff';
 import './util/handleError';
@@ -39,6 +40,7 @@ import App from './components/App';
 
 import './assets/fonts/roboto.css';
 import './styles/index.scss';
+import './tau/styles/tau.scss'; // tau: tau's theme over Web A's
 
 if (STRICTERDOM_ENABLED) {
   enableStrict();
@@ -58,6 +60,7 @@ async function init() {
     console.log('>>> INIT');
   }
 
+  if (!checkSecureContext()) return; // tau: HTTPS or localhost only (docs/web.md "Secure contexts only")
   if (!(window as any).isCompatTestPassed) return;
 
   checkAndAssignPermanentWebVersion();

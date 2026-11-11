@@ -2,6 +2,7 @@ import {
   IS_TEST, PRODUCTION_HOSTNAME, SVG_NAMESPACE, VIDEO_RECORDING_MIME_TYPE,
 } from '../../config';
 import { requestForcedReflow, requestMutation } from '../../lib/fasterdom/fasterdom.ts';
+import { IS_TAU } from '../../tau/config'; // tau: the system's emoji
 import { IS_TAURI } from './globalEnvironment';
 
 const MIN_CHROMIUM_TUCK_VERSION = 149;
@@ -80,7 +81,8 @@ export const IS_VIDEO_RECORDING_SUPPORTED = Boolean(
   && (MediaRecorder.isTypeSupported(VIDEO_RECORDING_MIME_TYPE)
     || MediaRecorder.isTypeSupported('video/mp4')),
 );
-export const IS_EMOJI_SUPPORTED = PLATFORM_ENV && (IS_MAC_OS || IS_IOS) && isLastEmojiVersionSupported();
+// tau: the system's emoji everywhere, so a build ships without Telegram's 100 MB of emoji images
+export const IS_EMOJI_SUPPORTED = IS_TAU || (PLATFORM_ENV && (IS_MAC_OS || IS_IOS) && isLastEmojiVersionSupported());
 
 export const IS_SERVICE_WORKER_SUPPORTED = 'serviceWorker' in navigator;
 

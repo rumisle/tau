@@ -31,6 +31,7 @@ import { IS_MULTIACCOUNT_SUPPORTED, IS_TAURI } from '../../../util/browser/globa
 import { getPromptInstall } from '../../../util/installPrompt';
 import { switchPermanentWebVersion } from '../../../util/permanentWebVersion';
 import { getSystemTheme } from '../../../util/systemTheme';
+import { IS_TAU } from '../../../tau/config'; // tau: Telegram-only UI left out
 
 import useFlag from '../../../hooks/useFlag';
 import { useFolderManagerForUnreadCounters } from '../../../hooks/useFolderManager';
@@ -188,18 +189,9 @@ const LeftSideMenuItems = ({
           <MenuSeparator />
         </>
       )}
-      <MenuItem
-        icon="user"
-        onClick={handleSelectMyProfile}
-      >
-        {lang('MenuMyProfile')}
-      </MenuItem>
-      <MenuItem
-        icon="saved-messages"
-        onClick={handleSelectSaved}
-      >
-        {lang('MenuSavedMessages')}
-      </MenuItem>
+      {/* tau: no profile or saved messages */}
+      {!IS_TAU && <MenuItem icon="user" onClick={handleSelectMyProfile}>{lang('MenuMyProfile')}</MenuItem>}
+      {!IS_TAU && <MenuItem icon="saved-messages" onClick={handleSelectSaved}>{lang('MenuSavedMessages')}</MenuItem>}
       {archiveSettings.isHidden && (
         <MenuItem
           icon="archive"
@@ -211,13 +203,9 @@ const LeftSideMenuItems = ({
           )}
         </MenuItem>
       )}
-      <MenuItem
-        icon="group"
-        onClick={onSelectContacts}
-      >
-        {lang('MenuContacts')}
-      </MenuItem>
-      {isWalletAvailable && (
+      {/* tau: no contacts or wallet */}
+      {!IS_TAU && <MenuItem icon="group" onClick={onSelectContacts}>{lang('MenuContacts')}</MenuItem>}
+      {!IS_TAU && isWalletAvailable && (
         <MenuItem
           icon="gram-outline"
           onClick={handleOpenWallet}

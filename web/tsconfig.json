@@ -5,7 +5,8 @@
       "@teact": ["./src/lib/teact/teact.ts"],
       "@teact/*": ["./src/lib/teact/*"],
       "@gili/*": ["./src/components/gili/*"],
-      "qr-code-styling": ["./src/@types/qr-code-styling"]
+      "qr-code-styling": ["./src/@types/qr-code-styling"],
+      "tau-client/*": ["../client/src/*"] // tau: the protocol client shared with the server (docs/web.md)
     },
     "types": [
       "dom-chromium-ai",
