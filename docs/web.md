@@ -151,7 +151,22 @@ web/src/tau/
   sent here (focused wherever the view was) or on another device (when the view is at the end), and keeps it through
   the τ, streaming, calls and reconnects until a newer message is sent. A draft's first frame does not scroll to its
   end, and an answer that outgrew the view leaves it where it is. A chat opened mid-run opens at its end. The reading
-  position's other parts (where a chat opens, turns, the return stack) apply in their desktop form.
+  position's other parts apply in their desktop form, below.
+- **The reading position, desktop** (docs/reading-position.md; `readingPosition.ts`, one hook in Web A's
+  `MessageList` and its opening scroll, `reading.ts` for what is kept in localStorage):
+  - *Seen* is on screen with the tab visible: the frontier (the newest message on screen and how far down it) moves
+    as rows are laid out in view, never back; the server reads the newest entry seen (`seenThrough`, at most every two
+    seconds), and the open chat's row counts the answers after it that were laid out when it was measured, so an
+    answer that lands on screen never shows a count, and one below the view does until it is scrolled to.
+  - *Where a chat opens*: the view left (the message at the bottom of the screen and how much of it was above the
+    bottom), at the end too, then down so the last lines seen sit near the top when what follows them is unseen,
+    judged on the frontier from before it opened, again as the subscribe brings what came since unless the user
+    scrolled. A chat never left here opens as Web A opens it. No "new messages" divider.
+  - *Turns*: Mod+Up (Cmd on a Mac, Ctrl elsewhere; Web A's own use of it, reply to the previous message, means
+    nothing in tau) goes to the start of the turn above, a message of the user's, pushing the view it left from;
+    the down button and Mod+Down go back to the last such point, else to the end; Mod+Shift+Down to the end. A point
+    whose row is on screen again is dropped once a jump ends (Web A's scroll animation, which its bottom snap needs).
+    A field with text keeps its own Mod+Up and Down. iOS's status bar tap and haptics have no desktop form.
 - **Compaction shows as it goes** (iOS's service rows): while one runs, a pill over the end of the chat above the
   field (`components/CompactionPill.tsx`, in the queue's place, so Web A's composer has no other hook) with the τ and
   its time, the title "compacting for 12s" and the ⋯ menu's Compacting Context… disabled; the chat goes on meanwhile.
@@ -229,8 +244,8 @@ web/src/tau/
   hidden }`, which Web A takes as leaving the chat; Telegram's Mute and Delete Chat are left out), and Pin to Top (`{
   pinned: <now> }`, so the latest pin is on top across servers; Web A orders a list's pinned chats by
   `updatePinnedChatIds`, sent as the Dialogs change, and has no limit on them here). A chat open in a visible tab reads
-  what arrives, as iOS does (the newest entry, at most every two seconds), and its Dialogs show it read meanwhile: Web A
-  marks a message read only after it has been in view a while, so the server's unread count came back first and the open
+  what is on screen (the reading position's seen frontier, above), and its Dialogs show that meanwhile: Web A marks a
+  message read only after it has been in view a while, so the server's unread count came back first and the open
   chat's row showed a badge.
 - **An edit forks the chat** (docs/sending.md "Edits and drafts"): Edit in a user message's menu, or Up in an empty
   field, is Web A's edit in the field; sending it is Web A's `editMessage`, which tau takes as a fork before the message

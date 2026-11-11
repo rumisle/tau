@@ -35,6 +35,7 @@ import { CODE_HIGHLIGHTING_CHANGED_META, subscribeToCodeLanguageLoad } from '../
 import { debounce, fastRaf, throttleWith } from '../../../util/schedulers';
 import { getUtf8Length } from '../../../util/textFormat';
 import tiptapStyles from '../../../util/tiptap/styling.module.scss';
+import { IS_TAU } from '../../../tau/config'; // tau: Mod+Up and Down go through turns
 import renderText from '../../common/helpers/renderText';
 import {
   getRichInputAsFormatted,
@@ -610,7 +611,7 @@ const MessageInput = ({
     const { isComposing } = e;
 
     const isEmpty = richEditor.isEmpty();
-    if (!isComposing && isEmpty && (e.metaKey || e.ctrlKey)) {
+    if (!IS_TAU && !isComposing && isEmpty && (e.metaKey || e.ctrlKey)) { // tau: turns (src/tau/readingPosition.ts)
       const targetIndexDelta = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : undefined;
       if (targetIndexDelta) {
         e.preventDefault();

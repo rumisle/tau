@@ -8,6 +8,8 @@ import type { RegularLangKey } from '../../types/language';
 import { selectChat, selectCurrentMessageList, selectCurrentMiddleSearch } from '../../global/selectors';
 import { selectThreadReadState } from '../../global/selectors/threads';
 import buildClassName from '../../util/buildClassName';
+import { IS_TAU } from '../../tau/config'; // tau: the down button goes back to the last return point
+import { tauScrollDown } from '../../tau/readingPosition'; // tau: see above
 
 import useLastCallback from '../../hooks/useLastCallback';
 
@@ -114,6 +116,7 @@ const FloatingActionButtons = ({
     if (!withScrollDown) {
       return;
     }
+    if (IS_TAU && chatId && tauScrollDown(chatId)) return; // tau: back to the last return point
 
     if (messageListType === 'thread') {
       focusNextReply();

@@ -76,6 +76,7 @@ import getOffsetToContainer from '../../util/visibility/getOffsetToContainer';
 import { isSentHere } from '../../tau/api/session'; // tau: see above
 import { IS_TAU } from '../../tau/config'; // tau: no unread divider (docs/reading-position.md)
 import { type TailBaseline, tauLiveTailStart } from '../../tau/liveTail'; // tau: where the live tail starts
+import { tauOpeningScrollTop, useTauReadingPosition } from '../../tau/readingPosition'; // tau: reading position
 import { REM } from '../common/helpers/mediaDimensions';
 import { groupMessages } from './helpers/groupMessages';
 import { requestMessageListReflow } from './helpers/messageListReflow';
@@ -308,6 +309,7 @@ const MessageList = ({
   const isRestricted = restrictionReasons.length > 0;
 
   const containerRef = useRef<HTMLDivElement>();
+  useTauReadingPosition(containerRef, chatId, IS_TAU && type === 'thread'); // tau: seen, the view, turns
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -1190,6 +1192,8 @@ const MessageList = ({
         });
       }
 
+      const tauOpening = IS_TAU && !prevRenderMessageIds?.length && renderMessageIds?.length // tau: where it opens
+        ? tauOpeningScrollTop(chatId, container) : undefined; // tau: see above
       let newScrollTop!: number;
       let isParkedForSendCollapse = false;
       if (liveTailElement) {
@@ -1211,6 +1215,8 @@ const MessageList = ({
             newScrollTop -= revealShift;
           }
         }
+      } else if (tauOpening !== undefined) { // tau: see above
+        newScrollTop = tauOpening; // tau: see above
       } else if (anchor) {
         const newAnchorTop = anchor.getBoundingClientRect().top;
         newScrollTop = scrollTop + (newAnchorTop - (anchorTopRef.current || 0));
@@ -1224,7 +1230,7 @@ const MessageList = ({
       }
 
       const isBottomAnchored = !liveTailElement && !shouldFocusLiveTail && typingDraftScrollTop === undefined
-        && !shouldRevealTypingDraft && !anchor && !unreadDivider;
+        && !shouldRevealTypingDraft && !anchor && !unreadDivider && tauOpening === undefined; // tau: see above
       if (isBottomAnchored || isParkedForSendCollapse) {
         newScrollTop += reserveDelta;
       }
@@ -1292,6 +1298,7 @@ const MessageList = ({
     isCurrentLastMessageIncomingTypingDraft,
     isCurrentLastMessageOwnSent,
     isTauSentHere, // tau: see above
+    chatId, // tau: where it opens
     getContainerHeight,
     prevContainerHeightRef,
     noMessageSendingAnimation,

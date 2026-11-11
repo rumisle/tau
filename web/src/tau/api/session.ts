@@ -30,6 +30,7 @@ import {
 import { openOutboxState } from '../db/outbox';
 import { deleteOutboxFile, readOutboxFile, saveOutboxFile } from '../db/outboxFiles';
 import { isLooking, notifyAnswer } from '../notifications';
+import { frontierOf } from '../reading';
 import { STRINGS } from '../strings';
 import { AnswerWatch } from './answers';
 import { keptUploadsOf, readUserContent } from './attachments';
@@ -73,6 +74,9 @@ type Opened = {
   shownThrough: number;
   // An older page on its way
   loadingOlder?: Promise<void>;
+  // The newest entry laid out in the list when the seen frontier was last measured: what came after is not yet judged
+  // unseen
+  judgedThrough?: number;
   saveTimer?: number;
   // Its docs are current: subscribed on this connection
   isSynced: boolean;
@@ -831,7 +835,6 @@ function applyReplica(each: Opened) {
     }
   }
   flushErrors(each);
-  if (fresh.length && each.isLoaded) readOnScreen(each.replica.id, each.replica.maxId);
   updateDraft(each);
   updateTimes(each);
   emitChange(each.replica.id);
@@ -1946,9 +1949,36 @@ function isOnScreen(conversationId: number) {
 }
 
 /**
- * A chat on screen reads what arrives, as iOS does (docs/protocol.md conversation.read): the newest entry, at most
- * every two seconds; meanwhile its Dialogs show it read, so its row never shows a badge for what is on screen
+ * What the user saw of a chat on screen (docs/reading-position.md "Seen, precisely"), from the reading position's
+ * frontier (src/tau/readingPosition.ts): the newest entry seen at all is read on the server, at most every two
+ * seconds, and the chat's read state is the answers after it that were laid out when it was measured
  */
+export function seenThrough(chatId: string, entryId: number, laidOutThrough: number) {
+  const conversationId = Number(chatId);
+  const each = opened.get(conversationId);
+  if (!each) return;
+  each.judgedThrough = Math.max(each.judgedThrough ?? 0, laidOutThrough);
+  readOnScreen(conversationId, entryId);
+  const dialog = dialogs.dialogs.get(conversationId);
+  if (dialog && isListed(dialog)) {
+    send({
+      '@type': 'updateThreadReadState', chatId, threadId: MAIN_THREAD_ID, readState: readStateOf(dialog),
+    });
+  }
+}
+
+/** The answers with text after an entry, up to one, as the server counts unread ones (at most 99) */
+function answersBetween(each: Opened, after: number, through: number) {
+  let count = 0;
+  for (const entry of each.replica.entries.values()) {
+    if (entry.id <= after || entry.id > through || entry.kind !== 'pi.assistant') continue;
+    const content = (entry.model as any[] | undefined)?.[0]?.content;
+    if (Array.isArray(content) && content.some((part) => part.type === 'text' && part.text?.trim())) count++;
+  }
+  return Math.min(count, 99);
+}
+
+/** Tells the server what was seen, at most every two seconds per chat: the newest of it then */
 function readOnScreen(conversationId: number, newest: number | undefined) {
   if (!newest || !isOnScreen(conversationId)) return;
   if ((dialogs.dialogs.get(conversationId)?.read ?? 0) >= newest) return;
@@ -1967,16 +1997,24 @@ function readOnScreen(conversationId: number, newest: number | undefined) {
 }
 
 // Back on screen: what came meanwhile is read now
-document.addEventListener('visibilitychange', () => {
-  for (const each of opened.values()) if (each.isLoaded) readOnScreen(each.replica.id, each.replica.maxId);
-});
-
+/**
+ * A chat's read state for Web A: the server's, but for a chat on screen, whose seen frontier is ahead of the server's
+ * marker: the answers after it, of those laid out when the frontier was last measured (one that just came is judged at
+ * the next measure, so the open chat's row shows no count for an answer that lands on screen)
+ */
 function readStateOf(dialog: Dialog) {
   const readState = buildReadState(dialog);
-  if (!dialog.last || !isOnScreen(dialog.conversation.id)) return readState;
-  // Shown read, so it is read: the server hears it too
-  readOnScreen(dialog.conversation.id, dialog.last.id);
-  return { ...readState, unreadCount: 0, lastReadInboxMessageId: lastRowIdOf(dialog.last.id) };
+  const id = dialog.conversation.id;
+  const each = opened.get(id);
+  if (!dialog.last || !each || !isOnScreen(id)) return readState;
+  const frontier = frontierOf(buildChatId(id));
+  const seen = Math.max(frontier ? entryIdOf(frontier.id) : 0, dialog.read ?? 0);
+  const judged = Math.max(each.judgedThrough ?? 0, seen);
+  return {
+    ...readState,
+    unreadCount: answersBetween(each, seen, judged),
+    lastReadInboxMessageId: lastRowIdOf(seen),
+  };
 }
 
 function isInWebAList(chatId: string) {
