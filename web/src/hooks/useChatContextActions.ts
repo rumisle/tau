@@ -15,7 +15,7 @@ import { IS_TAURI } from '../util/browser/globalEnvironment';
 import { IS_OPEN_IN_NEW_TAB_SUPPORTED } from '../util/browser/windowEnvironment';
 import { isUserId } from '../util/entities/ids';
 import { buildCollectionByCallback, compact } from '../util/iteratees';
-import { buildTauHideAction } from '../tau/chatActions'; // tau: the chat list's menu
+import { buildTauHideAction, buildTauRenameAction } from '../tau/chatActions'; // tau: the chat list's menu
 import { IS_TAU } from '../tau/config'; // tau: the chat list's menu
 import useSelector, { useShallowSelector } from './data/useSelector';
 import useLang from './useLang';
@@ -239,8 +239,8 @@ const useChatContextActions = ({
 
     if (IS_TAU) { // tau: the chat list's menu (iOS's ChatListController): what tau's chats have
       return compact<MenuItemContextAction>([
-        actionOpenInNewTab, actionQuickPreview, actionMarkAsRead, actionMarkAsUnread, actionArchive,
-        buildTauHideAction(chat.id),
+        actionOpenInNewTab, actionQuickPreview, buildTauRenameAction(chat.id), actionMarkAsRead, actionMarkAsUnread,
+        actionArchive, buildTauHideAction(chat.id),
       ]);
     }
 

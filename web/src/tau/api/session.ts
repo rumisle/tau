@@ -224,8 +224,12 @@ function applyDialog(dialog: Dialog) {
  * is the chat's last message until it opens, not a message in its history (`newMessage` would make the history Web A
  * has of it look whole, with the entries between missing).
  */
-function sendDialog(dialog: Dialog) {
-  const id = dialog.conversation.id;
+function sendDialog(given: Dialog) {
+  const id = given.conversation.id;
+  // A rename shows at once and stands until the server's Dialog has it
+  const renamed = titleOverrides.get(id);
+  if (renamed !== undefined && given.title === renamed) titleOverrides.delete(id);
+  const dialog = renamed !== undefined && given.title !== renamed ? { ...given, title: renamed } : given;
   const chatId = buildChatId(id);
   // Archived or back: Web A moves a chat between its lists on this, not on the chat's folder (read before it changes)
   const known = getGlobal().chats.byId[chatId];
@@ -858,6 +862,8 @@ type DraftChat = {
   agent?: JsonObject;
   forkOf?: number;
   forkAt?: number;
+  // Named by the user, not after its first answer
+  isTitleManual?: boolean;
   // Its history was asked for: until then its bubbles wait for it, since Web A asks for no history once it has a message
   isLoaded?: boolean;
 };
@@ -949,8 +955,12 @@ export function draftHistory(chatId: string, offsetId: number | undefined, addOf
 function sendToDraft(chatId: string, text: string, uploads?: Upload[]) {
   const draft = chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId)!;
   draft.requestId ??= crypto.randomUUID();
-  // New Chat: named after its first answer; the server's default model, as iOS's New Chat without a pick
-  outbox!.enqueueCreate({ requestId: draft.requestId, autoTitle: true, agent: draft.agent });
+  // New Chat: named after its first answer unless renamed; the server's default model, as iOS's New Chat without a pick
+  outbox!.enqueueCreate({
+    requestId: draft.requestId,
+    ...(draft.isTitleManual ? { title: draft.title, autoTitle: false } : { autoTitle: true }),
+    agent: draft.agent,
+  });
   outbox!.enqueue({
     text, createRequestId: draft.requestId, mode: 'steer', uploads,
   });
@@ -1134,6 +1144,51 @@ function readStateOf(dialog: Dialog) {
 function isInWebAList(chatId: string) {
   const { listIds } = getGlobal().chats;
   return Boolean(listIds.active?.includes(chatId) || listIds.archived?.includes(chatId));
+}
+
+// MARK: Rename
+
+const titleOverrides = new Map<number, string>();
+const MAX_TITLE = 64;
+
+/** A title as the server keeps it: whitespace collapsed, at most 64 characters; empty for none */
+export function normalizeTitle(title: string) {
+  return title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE);
+}
+
+/**
+ * Rename (docs/protocol.md conversation.rename): shown at once, sent in the conversation's order through the outbox,
+ * and believed until the server's Dialog agrees; a draft's create takes it, or a rename follows the create
+ */
+export function rename(chatId: string, given: string) {
+  const title = normalizeTitle(given);
+  if (!title) return;
+  const draft = isDraftChat(chatId) ? (chatId === DRAFT_CHAT_ID ? newChatDraft() : draftChats.get(chatId)) : undefined;
+  if (draft) {
+    draft.title = title;
+    send({ '@type': 'updateUser', id: chatId, user: buildDraftUser(chatId, title) });
+    send({ '@type': 'updateChat', id: chatId, chat: buildDraftChat(chatId, title) });
+    draft.isTitleManual = true;
+    // Not sent yet: its create takes it, when it goes; on its way: a rename follows it
+    const { requestId } = draft;
+    if (!requestId || !outbox!.create(requestId)) return;
+    if (!outbox!.updateCreate(requestId, { title, autoTitle: false })) {
+      void outbox!.request('conversation.rename', { createRequestId: requestId }, { title }).catch(() => {});
+    }
+    return;
+  }
+  const conversationId = Number(chatId);
+  const dialog = dialogs.dialogs.get(conversationId);
+  if (!dialog) return;
+  titleOverrides.set(conversationId, title);
+  sendDialog(dialog);
+  outbox!.request('conversation.rename', { conversationId }, { title }).catch(() => {
+    // Refused: the server's title again
+    if (titleOverrides.get(conversationId) !== title) return;
+    titleOverrides.delete(conversationId);
+    const current = dialogs.dialogs.get(conversationId);
+    if (current) sendDialog(current);
+  });
 }
 
 /** Hide: the chat leaves every list on every device; kept, as durable deletes no conversation */

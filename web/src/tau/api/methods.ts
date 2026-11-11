@@ -14,7 +14,7 @@ import { downloadMedia } from './media';
 import { toMarkdown } from './outgoing';
 import {
   chatListMessage, dialogs, draftHistory, editMessage, fetchHistory, isDraftChat, isListed, mark, markRead,
-  requestDialog, sendChatListMessages, sendText, stop,
+  rename, requestDialog, sendChatListMessages, sendText, stop,
 } from './session';
 
 // Telegram's seven peer colors, which its server sends with `help.getPeerColors`; without them avatars are black
@@ -89,6 +89,11 @@ export const methods: Record<string, (...args: any[]) => unknown> = {
   }: { chat: ApiChat; message: ApiMessage; text?: string; entities?: ApiMessageEntity[] }) {
     if (!text) return;
     editMessage(chat.id, message.id, toMarkdown(text, entities), agentPatchOf(chat.id));
+  },
+
+  // Rename, through Web A's `updateChat` action (src/tau/components/RenameModal.tsx)
+  updateChatTitle(chat: ApiChat, title: string) {
+    rename(chat.id, title);
   },
 
   saveDraft({ chat, draft }: { chat: ApiChat; draft?: ApiDraft }) {

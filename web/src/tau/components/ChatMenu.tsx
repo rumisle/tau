@@ -1,7 +1,7 @@
 // The chat's ⋯ menu, in place of Web A's header menu (ios/Tau/Chat/ChatController.swift openChatMenu): Search, the
 // model and thinking level with their submenus, Compact Context, in Web A's Menu with its nested submenus.
 import { memo, useEffect, useState } from '../../lib/teact/teact';
-import { getActions } from '../../global';
+import { getActions, getGlobal } from '../../global';
 
 import type { Agent } from '../api/agent';
 
@@ -17,6 +17,7 @@ import MenuItem, { MenuItemSubtitle, MenuItemTitle } from '../../components/ui/M
 import MenuSeparator from '../../components/ui/MenuSeparator';
 import NestedMenuItem from '../../components/ui/NestedMenuItem';
 import { openModelPicker } from './ModelPicker';
+import { openRename } from './RenameModal';
 
 type OwnProps = {
   chatId: string;
@@ -119,6 +120,15 @@ const ChatMenu = ({
         <MenuItemTitle>{STRINGS.MenuUsage}</MenuItemTitle>
         <MenuItemSubtitle>{summarizeUsage(usage)}</MenuItemSubtitle>
       </NestedMenuItem>
+      <MenuItem
+        icon="edit"
+        onClick={() => {
+          onClose();
+          openRename(chatId, getGlobal().chats.byId[chatId]?.title ?? '');
+        }}
+      >
+        {STRINGS.MenuRename}
+      </MenuItem>
       <MenuItem
         icon="replace"
         onClick={() => {

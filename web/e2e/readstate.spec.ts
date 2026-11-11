@@ -92,7 +92,7 @@ test('the chat list\'s menu has tau\'s items; Hide takes the chat out of the lis
   const id = await api.chat('Hide me', ['hello']);
   await listItem(app, 'Hide me').click({ button: 'right' });
   const items = app.locator('.MenuItem:visible');
-  await expect(items).toHaveText(['Open in New Tab', 'Quick Preview', 'Mark as Read', 'Archive', 'Hide']);
+  await expect(items).toHaveText(['Open in New Tab', 'Quick Preview', 'Rename', 'Mark as Read', 'Archive', 'Hide']);
   await items.filter({ hasText: 'Hide' }).click();
   await expect(listItem(app, 'Hide me')).toHaveCount(0);
   await expect.poll(async () => (await dialogOf(api, id)).hidden).toBe(true);

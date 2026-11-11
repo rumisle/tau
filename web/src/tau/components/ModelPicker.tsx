@@ -96,6 +96,7 @@ const ModelPicker = ({ chatId, isOpen, onClose }: OwnProps) => {
 const Memo = memo(ModelPicker);
 
 let root: HTMLDivElement | undefined;
+let opened = 0;
 
 /** Opens the picker for a chat, over everything */
 export function openModelPicker(chatId: string) {
@@ -107,10 +108,13 @@ export function openModelPicker(chatId: string) {
   const render = (isOpen: boolean) => TeactDOM.render(
     <Memo chatId={chatId} isOpen={isOpen} onClose={() => close()} />, container,
   );
+  const token = ++opened;
   const close = () => {
     render(false);
-    // After the modal's closing animation
-    window.setTimeout(() => TeactDOM.render(undefined, container), CLOSE_MS);
+    // After the modal's closing animation, unless it opened again meanwhile
+    window.setTimeout(() => {
+      if (opened === token) TeactDOM.render(undefined, container);
+    }, CLOSE_MS);
   };
   render(true);
 }

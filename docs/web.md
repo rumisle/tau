@@ -142,6 +142,11 @@ web/src/tau/
   the spend, the numbers a level down, as iOS counts them: `computeUsage`), and Compact Context, never repeated after a
   lost connection. Its changes and notices are Web A's toasts, as iOS's are Telegram's: "Model changed to **…**",
   "Thinking set to **…**", "Compacting the context".
+- **Rename** (`components/RenameModal.tsx`), in the chat's ⋯ menu and the chat list's: a small dialog with the title
+  selected, Enter saves, Esc cancels; Web A's `updateChat` action carries it to `updateChatTitle`, so the toast's Undo
+  is that action with the title before. Shown at once and believed until the Dialog agrees (`session.rename`), in the
+  conversation's order through the outbox; a draft's create takes it, so a renamed New Chat is not named after its first
+  answer.
 - **Photos and files are Web A's media.** A user entry's attachments block names its kept files: one is a message with
   the photo or document and the caption; several an album (a message each, grouped: photos apart from files). Message
   IDs leave room for it: an entry's rows are `entryId * 32 + row`. Web A's media loader asks `downloadMedia` for
