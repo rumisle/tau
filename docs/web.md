@@ -112,7 +112,8 @@ web/src/tau/
   turn them into `Api*` objects and `apiUpdate`s, as GramJS's builders turn MTProto's. Rules from the proof of concept:
   - a message ID's content changes only through `updateMessage` with `isFull`;
   - the chat list's last message is built from the cached entry, never the Dialog's summary unless nothing is cached;
-  - streaming goes through Web A's typing draft, which carries `tau` content too;
+  - streaming goes through Web A's typing draft, which carries `tau` content too; the entry's `newMessage` removes it
+    (Stopped is for a generation that ends without one: after the entry it would draw the answer twice for a second);
   - tau's own fields go in one optional `ApiMessage.tau`, while `content.richMessage` is still filled for previews,
     copy and search.
   - the chat list's last messages go as `updateChatLastMessage`, not in `fetchChats`' result: `loadAllChats` puts a

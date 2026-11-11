@@ -14,6 +14,7 @@ import { MAIN_THREAD_ID } from '../../api/types';
 
 import { ALL_FOLDER_ID, ARCHIVED_FOLDER_ID } from '../../config';
 import { selectCurrentMessageList } from '../../global/selectors';
+import { isLocalMessageId } from '../../util/keys/messageKey';
 import {
   probe, readToken, saveToken, serverOrigin, socketProtocols, socketUrl,
 } from '../auth';
@@ -37,6 +38,8 @@ const RECONNECT_MS = [500, 1000, 2000, 5000];
 const LOCAL_ID_STEP = 1e-6;
 // Messages an opened chat refreshes in Web A's state, newest first: as many as a chat shows
 const REFRESHED_ON_OPEN = 50;
+// When drafts an answer replaced are looked for again in Web A's state
+const DRAFT_SWEEP_MS = 300;
 
 export type AuthStatus = 'connecting' | 'needsToken' | 'wrongToken' | 'unreachable' | 'ready';
 
@@ -50,6 +53,8 @@ type Opened = {
   results: Map<string, any>;
   callEntries: Map<string, number>;
   draftId?: string;
+  // Generations answered so far, in the draft's ID: the next generation of a run streams as a draft of its own
+  answered: number;
 };
 
 let onUpdate: (update: ApiUpdate) => void = () => undefined;
@@ -276,6 +281,7 @@ function open(conversationId: number) {
   const replica = new ConversationReplica(conversationId);
   each = {
     replica, ready: Promise.resolve(), isLoaded: false, seen: new Set(), results: new Map(), callEntries: new Map(),
+    answered: 0,
   };
   const current = each;
   opened.set(conversationId, each);
@@ -342,6 +348,7 @@ function applyReplica(each: Opened) {
   if (each.isLoaded) {
     for (const entry of fresh) emitEntry(each, entry);
   }
+  if (fresh.some((entry) => entry.kind === 'pi.assistant')) endDraft(each);
   updateDraft(each);
   emitChange(each.replica.id);
 }
@@ -406,6 +413,28 @@ function emitEntry(each: Opened, entry: Entry) {
 }
 
 /**
+ * A generation's entry came: its draft is gone. Web A's `newMessage` for the entry removes the thread's drafts at once
+ * (a Stopped after it would delete the draft again, with an animation, a second after the entry is drawn: the answer
+ * twice meanwhile). Without the entry's message (a chat still loading), Stopped removes it. Whatever came between,
+ * no draft outlives its answer: a moment later any still in Web A's state goes.
+ */
+function endDraft(each: Opened) {
+  each.answered += 1;
+  if (!each.draftId) return;
+  const chatId = buildChatId(each.replica.id);
+  if (!each.isLoaded) send({ '@type': 'updateChatTypingDraftStopped', chatId, id: each.draftId });
+  each.draftId = undefined;
+  window.setTimeout(() => {
+    if (each.draftId) return;
+    const byId = getGlobal().messages.byChatId[chatId]?.byId ?? {};
+    const stale = Object.values(byId)
+      .filter((message) => message.isTypingDraft && isLocalMessageId(message.id))
+      .map((message) => message.id);
+    if (stale.length) send({ '@type': 'deleteMessages', ids: stale, chatId });
+  }, DRAFT_SWEEP_MS);
+}
+
+/**
  * The answer streaming in `pi.live.generation` as Telegram's typing draft (a bot's streamed message), in tau's row:
  * the final entry's `newMessage` takes its place
  */
@@ -423,7 +452,7 @@ function updateDraft(each: Opened) {
     }
     return;
   }
-  each.draftId = `${live?.run?.taskId ?? 0}-${generation.attempt ?? 0}`;
+  each.draftId = `${live?.run?.taskId ?? 0}-${generation.attempt ?? 0}-${each.answered}`;
   send({
     '@type': 'updateChatTypingDraft',
     chatId,

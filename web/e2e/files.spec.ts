@@ -107,12 +107,11 @@ test('photos and a file sent from the composer: uploaded, one message each, the 
   const fileChooser = app.waitForEvent('filechooser');
   await app.locator('.AttachMenu .MenuItem').filter({ hasText: 'File' }).click();
   await (await fileChooser).setFiles([{ name: 'plan.md', mimeType: 'text/markdown', buffer: Buffer.from('# Plan\n') }]);
-  await expect(app.locator('.modal-dialog').filter({ hasText: 'plan.md' })).toBeVisible();
+  await app.locator('.modal-dialog').filter({ hasText: 'plan.md' }).getByRole('textbox').click();
   await app.keyboard.press('Enter');
   await expect(app.locator('[data-tau-row="assistant"]:not([data-tau-draft])').last()).toContainText('[plan.md]');
   const file = app.locator('.Message.own .File').filter({ hasText: 'plan.md' });
   await expect(file).toHaveCount(1);
   await expect(file.locator('xpath=ancestor::*[contains(@class,"Message")][1]').locator('.icon-message-read'))
     .toBeVisible();
-  await app.screenshot({ path: '/tmp/tau-shots/web-walk/8-sent-files.png' });
 });
