@@ -18,6 +18,13 @@ async function send(app: Page, text: string) {
   await app.keyboard.press('Enter');
 }
 
+/** The model picker, from the ⋯ menu's Model submenu */
+async function openPicker(app: Page) {
+  await app.getByRole('button', { name: 'More options' }).click();
+  await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Model' }).hover();
+  await app.locator('.MenuItem').filter({ hasText: 'All Models…' }).click();
+}
+
 async function pick(app: Page, item: string, choice: RegExp | string) {
   await app.getByRole('button', { name: 'More options' }).click();
   await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: item }).hover();
@@ -41,8 +48,7 @@ test('the menu picks the thinking level and the model; the next answer comes fro
   await pick(app, 'Thinking', /^High$/);
   await expect(app.locator('.Notification').filter({ hasText: 'Thinking set to High' })).toBeVisible();
   // The model picker: a search, Enter takes the first match
-  await app.getByRole('button', { name: 'More options' }).click();
-  await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Model' }).click();
+  await openPicker(app);
   const picker = app.locator('.tau-model-picker');
   await expect(picker.getByText('Dev echo')).toBeVisible();
   await picker.getByRole('textbox').fill('parrot');
@@ -60,15 +66,25 @@ test('the menu picks the thinking level and the model; the next answer comes fro
   await expect(menu.locator('.MenuItem').filter({ hasText: 'Thinking' })).toContainText('High');
 });
 
-test('the model picker lists the recent models first', async ({ app, api }) => {
+test('the model picker lists the recent models first; the Model submenu has them a click away', async ({ app, api }) => {
   await api.chat('Picker recent', ['hello']);
   await app.locator('.chat-list .fullName').getByText('Picker recent', { exact: true }).click();
-  await app.getByRole('button', { name: 'More options' }).click();
-  await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Model' }).click();
   const picker = app.locator('.tau-model-picker');
-  await picker.locator('.ItemPickerItem').filter({ hasText: 'Dev parrot' }).click();
+  for (const name of ['Dev echo', 'Dev parrot']) {
+    await openPicker(app);
+    await picker.locator('.ItemPickerItem').filter({ hasText: name }).click();
+    await expect(picker).toHaveCount(0);
+  }
+  await openPicker(app);
+  await expect(picker.locator('.ItemPickerItem').nth(0)).toContainText('Dev parrot');
+  await expect(picker.locator('.ItemPickerItem').nth(1)).toContainText('Dev echo');
+  await picker.locator('.ItemPickerItem').first().click();
   await expect(picker).toHaveCount(0);
+
+  // The submenu: the chat's model checked, then the recent ones, then all of them in the picker
   await app.getByRole('button', { name: 'More options' }).click();
-  await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Model' }).click();
-  await expect(app.locator('.tau-model-picker .ItemPickerItem').first()).toContainText('Dev parrot');
+  await app.locator('.HeaderMenuContainer .MenuItem').filter({ hasText: 'Model' }).hover();
+  await expect(app.locator('.MenuItem').filter({ hasText: /^Dev parrot$/ }).locator('.icon-check')).toHaveCount(1);
+  await app.locator('.MenuItem').filter({ hasText: /^Dev echo$/ }).click();
+  await expect(app.locator('.Notification').filter({ hasText: 'Model changed to Dev echo' })).toBeVisible();
 });

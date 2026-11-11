@@ -6,9 +6,8 @@ import { getActions, getGlobal } from '../../global';
 import type { Agent } from '../api/agent';
 
 import {
-  agentOf, compact, configureAgent, describeContext, formatCost, formatTokens, loadModels, modelName, onAgentChange,
-  summarizeUsage, thinkingLevels, thinkingTitle,
-  usageOf,
+  agentOf, cachedModels, compact, configureAgent, describeContext, formatCost, formatTokens, loadModels, modelName,
+  onAgentChange, recentModels, rememberModel, summarizeUsage, thinkingLevels, thinkingTitle, usageOf,
 } from '../api/agent';
 import {
   compactionSince, openConversation, slotOfChat, subagentsOf,
@@ -44,7 +43,9 @@ function subagentStatus({
   const status = isBusy
     ? (since !== undefined ? `${STRINGS.Working} ${STRINGS.ElapsedFor} ${formatElapsed(Date.now() - since)}`
       : STRINGS.Working)
-    : workedMs !== undefined ? `${STRINGS.Worked} ${formatDuration(workedMs)}` : STRINGS.Idle;
+    // A run shorter than a tenth of a second (an answer without tools) says so, not 0.0s
+    : workedMs !== undefined ? `${STRINGS.Worked} ${workedMs < 100 ? STRINGS.UnderATenth : formatDuration(workedMs)}`
+      : STRINGS.Idle;
   return task ? `${status}, ${task}` : status;
 }
 
@@ -55,6 +56,14 @@ function subagentsSummary(subagents: ReturnType<typeof subagentsOf>) {
 }
 
 const TICK_MS = 1000;
+
+/** The chat's model, then the ones picked lately that its server has */
+function quickModels(agent: Agent, slot: number) {
+  const models = cachedModels(slot) ?? [];
+  const keys = [agent.model && `${agent.model.provider}/${agent.model.modelId}`, ...recentModels()];
+  return [...new Set(keys)].map((key) => models.find((model) => `${model.provider}/${model.id}` === key))
+    .filter((model): model is NonNullable<typeof model> => Boolean(model));
+}
 
 function UsageRow({ title, value }: { title: string; value: string }) {
   return (
@@ -95,16 +104,42 @@ const ChatMenu = ({
       shouldCloseFast={shouldCloseFast}
     >
       {canSearch && <MenuItem icon="search" onClick={onSearch}>{STRINGS.MenuSearch}</MenuItem>}
-      <MenuItem
+      <NestedMenuItem
         icon="settings"
-        onClick={() => {
-          onClose();
-          openModelPicker(chatId);
-        }}
+        submenu={(
+          // The chat's model and the ones picked lately, a click away; all of them in the picker
+          <>
+            {quickModels(agent, slotOfChat(chatId)).map((model) => (
+              <MenuItem
+                key={`${model.provider}/${model.id}`}
+                icon={model.provider === agent.model?.provider && model.id === agent.model?.modelId
+                  ? 'check' : 'placeholder'}
+                onClick={() => {
+                  rememberModel(`${model.provider}/${model.id}`);
+                  pick(
+                    { model: { provider: model.provider, modelId: model.id } }, `Model changed to **${model.name}**`,
+                  );
+                }}
+              >
+                {model.name}
+              </MenuItem>
+            ))}
+            <MenuSeparator />
+            <MenuItem
+              icon="search"
+              onClick={() => {
+                onClose();
+                openModelPicker(chatId);
+              }}
+            >
+              {STRINGS.AllModels}
+            </MenuItem>
+          </>
+        )}
       >
         <MenuItemTitle>{STRINGS.MenuModel}</MenuItemTitle>
         <MenuItemSubtitle>{modelName(agent.model, slotOfChat(chatId))}</MenuItemSubtitle>
-      </MenuItem>
+      </NestedMenuItem>
       <NestedMenuItem
         icon="timer"
         submenu={thinkingLevels(agent, slotOfChat(chatId)).map((level) => (

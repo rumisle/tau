@@ -76,7 +76,9 @@ test('the ⋯ menu lists the chat\'s subagents, what each does and for how long;
   const rows = app.locator('.tau-subagent-row');
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toContainText('done-one');
-  await expect(rows.nth(0)).toContainText(/worked [\d.]+s, echo finished/);
+  // Its run took milliseconds (the dev model answers at once): not 0.0s
+  await expect(rows.nth(0)).toContainText(/worked (under 0.1s|[\d.]+s), echo finished/);
+  await expect(rows.nth(0)).not.toContainText('0.0s');
   await expect(rows.nth(1)).toContainText(/busy-one.*working( for \d+s)?, \$ until/);
   // Its time keeps going while the list is open
   await expect(rows.nth(1)).toContainText(/working for [2-9]s/);
