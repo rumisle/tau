@@ -54,7 +54,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | `docs/appearance.md` | Themes and accent colors, as Telegram's Appearance: each built-in theme with its own accent, the Live Activity in it |
 | `docs/typography.md` | How answers are set: clreq's and Butterick's rules, what Core Text does and what tau adds, and iOS's text size |
 | `docs/edits-and-forks.md` | Design notes, not built: edit as versions in one chat, fork as another chat, and what subagents do in each |
-| `docs/web.md` | The web client (design, not built): Telegram Web A vendored in `web/` with marked edits, a shared `client/` package, served by the server on its port; tests, workflows, milestones, risks |
+| `docs/web.md` | The web client (design, not built): Telegram Web A vendored in `web/` with marked edits, a shared `client/` package, served by the server on its port; tests, workflows, M0 then a walk through tau's history (`web/PARITY.md`), risks |
 
 ## Run from the source
 

@@ -154,24 +154,26 @@ Alternatives:
 - **Keeping it.** In IndexedDB, one per server.
 - **Sending it.** On the WebSocket, in `Sec-WebSocket-Protocol` (`tau.v1`, `tau.token.<token>`), which `verifyClient`
   reads, answering with `tau.v1`: a small server change, which keeps the token out of URLs, proxies' logs and
-  history. `?token=` works today and stays as a fallback. Files are fetched with `fetch` and an `Authorization`
-  header (Web A loads media through `callApi('downloadMedia')` anyway, which returns blob URLs), and cached in Cache
-  Storage.
+  history. The web app never uses `?token=`; the server keeps it for the clients that use it today. Files are
+  fetched with `fetch` and an `Authorization` header (Web A loads media through `callApi('downloadMedia')` anyway,
+  which returns blob URLs), and cached in Cache Storage.
 - **Not cookies.** An HttpOnly cookie would keep the token from a script injected into the page, but would not stop
   that script from using the socket, which is as bad (section 7). It would also work for this origin only, not for a
   second server, and would need CSRF and Origin checks on the WebSocket.
 
-**wss or ws.** The server speaks plain HTTP; remote clients reach it over Tailscale, whose WireGuard encrypts. A page
-on plain HTTP away from localhost is not a secure context: no service worker (so no offline shell, no Web Push), no
-`crypto.randomUUID`, no `navigator.clipboard` writes. So:
+**Secure contexts only.** The app runs where the browser treats the page as a secure context: HTTPS, or `localhost`
+and `127.0.0.1`. Away from those, a plain HTTP page has no service worker (so no offline shell, no Web Push), no
+`crypto.randomUUID`, no `navigator.clipboard` writes. One app, not a full one and a reduced one, is one app to test.
 
-- **Recommended:** HTTPS through `tailscale serve --bg 7878`, which gives `https://<machine>.<tailnet>.ts.net` with a
-  real certificate and nothing to configure in tau. `tau setup` prints that address when Tailscale runs.
-- **Plain HTTP** works without the secure-context features: requests IDs from `crypto.getRandomValues`, no
-  notifications, a note in Settings saying why.
+- **HTTPS through `tailscale serve --bg 7878`**, which gives `https://<machine>.<tailnet>.ts.net` with a real
+  certificate and nothing to configure in tau. `tau setup` prints that address when Tailscale runs.
+- **Plain HTTP from another machine** gets a page, served before any of the app loads (`index.html` checks
+  `window.isSecureContext`), that says why the app does not run there and how to set up HTTPS: the `tailscale serve`
+  command, with this machine's tailnet name when the server knows it. The server itself is unchanged: it still
+  serves plain HTTP, for the iOS app and for `tailscale serve` to proxy.
 - **Not chosen:** TLS in the server (`--tls-cert`, `--tls-key`, e.g. from `tailscale cert`), only if there is a need
   `tailscale serve` does not meet.
-- The page's scheme decides the socket's (`wss:` under HTTPS, which mixed-content rules require anyway).
+- The page's scheme decides the socket's: `wss:` under HTTPS, `ws:` on localhost.
 
 **Several servers**, as the iOS app has them. Settings > Servers adds a server by address and token. The app connects
 to each, cross-origin for all but the one that served it. That needs:
@@ -182,7 +184,7 @@ to each, cross-origin for all but the one that served it. That needs:
 - the serving server's CSP listing the servers added (a `connect-src` the app asks the server to extend, or `https:`
   and `wss:` on a tailnet).
 
-One server is the first milestone; the IDs leave room for several from the start.
+One server comes first; the IDs leave room for several from the start.
 
 ## 4. Tests, fast
 
@@ -239,61 +241,50 @@ One command each, from the repository root:
 - **CI.** There is none in the repository today; `scripts/web/test.sh` is what a GitHub Actions job runs when there is.
   It needs `vendor/pi` (for the dev server) and Playwright's Chromium, about 2 minutes to set up, cached.
 
-## 6. Scope and milestones
+## 6. Scope: M0, then tau's history
 
-Parity with the iOS app, feature by feature. Sizes are rough, for one person with an agent.
+**M0, scaffold (1 week).**
 
-**M0, scaffold (1 week).** `web/` vendored at a pinned commit with the update and diff scripts; the proof of concept's
-code moved into `src/tau`; `client/` extracted from `server/src/client.ts`; the server serving the build (`--web`); the
-connect screen with the token link; `dev.sh`, `test.sh`, `build.sh`; the release carrying the app; the first e2e
-tests. Delivers the proof of concept's read-only client, served by tau, tested.
+- `web/` vendored at a pinned commit, with the update and diff scripts.
+- The proof of concept's code redone in `src/tau` by section 2's rules.
+- `client/` extracted from `server/src/client.ts`.
+- The server serving the build (`--web`); the connect screen with the token link; the page for plain HTTP.
+- `dev.sh`, `test.sh`, `build.sh`, and the release carrying the app.
+- The first e2e tests.
 
-**M1, first usable (3 weeks): the client someone can work in all day on a desktop.**
+M0 delivers the proof of concept's read-only client, served by tau and tested.
 
-- Sending (docs/sending.md): the outbox in IndexedDB with request IDs and idempotent retries, Telegram's clock and
-  checks, refused messages with Resend and Delete, steer and follow-up, Stop, queued messages above the composer
-  (where Web A shows a reply or an edit), withdraw.
-- The entry cache and resume (docs/network.md, docs/chat-open.md): ready from IndexedDB without the network, holes
-  filled on scroll, the chat list by version, reconnect and wake.
-- New chat (the draft until its first message), rename, archive, pin, mark read/unread, hide, read marks every 2 s.
-- Every row as iOS draws it:
-  - tool cards for bash, read, write, edit (a diff), code mode (docs/codemode.md) and history (docs/history.md), with
-    live output from `pi.live.tools`, Show All, and images;
-  - subagent cards that open the subagent;
-  - thinking, folded;
-  - the waiting τ, retries, run failures with Continue;
-  - compaction cards (docs/compaction.md);
-  - the run's footer.
-- The chat's menu and bar: the model picker and thinking level (`models.list`, `conversation.configure`), Usage,
-  Compact Context, the title status (working, compacting, subagents, Connecting…), the placeholder naming the model.
+**Then parity by walking tau's history**, not by a roadmap. tau's commits, oldest first, are the iOS app's, the
+protocol's and the server's features and fixes. Each commit message says what changed and why, often what went wrong
+first. Taking them in order brings each feature to the web client with the lessons it took, rather than relearning
+them: the sending state machine's races (docs/sending.md), the reading position's cases, streaming's overlaps. The
+web client is in the same repository, so a commit after the walk catches up does both sides at once.
 
-**M2, parity (3 weeks).**
+- **`web/PARITY.md`, the checklist:** one line per commit since the repository began that touches `ios/Tau`,
+  `server/src`, `client/` or `docs/`, in order: hash, subject, and a state.
+  - `todo` (the default);
+  - `done <commit>`: the web commit that brought it;
+  - `skip: <reason>`: relevant, but deliberately not done now;
+  - `n/a: <reason>`: nothing for the web to do, e.g. an iOS layout fix to Telegram's ListView, a server-only change,
+    or a docs fix.
+- **`scripts/web/parity.sh`** appends the commits not yet listed, as `todo`, and prints the count per state. A run
+  after each `git pull` keeps the list current, so the walk never ends while tau changes: new iOS work becomes web
+  work in the same list.
+- **Granularity.** One line per commit, but a web commit may close several lines (a feature that took five iOS
+  commits is usually one web commit, with the lessons of all five); each line then says `done` with the same commit.
+- **What a web commit does:** the behavior and its lessons, in Web A's terms. It is not a port of the Swift: where
+  Web A's machinery already does a thing (scrolling, date groups, context menus), the line is `done` once the web
+  client behaves as the commit says, or `n/a` if Web A did so already.
+- **Tests come with it.** A commit with an iOS UI test or a server test gets its e2e or unit counterpart when the
+  behavior is the web's too.
 
-- Reading position (docs/reading-position.md): where a chat opens, the return stack, turns.
-- Search (docs/search.md) through Web A's search UI.
-- Files and photos (docs/files.md, docs/media.md): uploads to `/files`, Telegram's documents, images by reference.
-- Links and their cards (docs/links.md), quotes (docs/quotes.md).
-- Edits and forks (docs/sending.md "Edits and drafts", docs/edits-and-forks.md).
-- Several servers, and folders by server (docs/folders.md).
-- Settings: Servers, Default Model, prompt cache warming (docs/cache.md), compaction, Usage (`usage.report`), Data and
-  Storage, Appearance (docs/appearance.md: themes, accents, Wrap Lines).
-- Typography as docs/typography.md sets answers, as far as CSS can.
-
-**M3, the browser's own (2 weeks).**
-
-- An installable PWA with an offline shell.
-- Notifications through Web Push and a service worker (docs/notifications.md: the server sends them itself, with VAPID
-  keys, as it sends APNs; a foreground tab suppresses them as `client.presence` does).
-- The tab's title and favicon badge for unread and working chats (what the Live Activity does on iOS).
-- A Web Share Target (docs/share.md).
-- Dictation through the provider docs/dictation.md uses.
-- Keyboard shortcuts.
-- The narrow layout on phones, and Safari.
-
-**Not planned:** Live Activities and Siri intents (no web equivalent beyond M3's tab badge), laters (not built on iOS
-either).
-
-The first usable milestone is M1's end, 4 weeks in. M0 alone is a demo. 9 to 10 weeks to parity with M3.
+The walk covers what a roadmap would have listed (sending and the outbox, the entry cache and resume, every tool card,
+subagents, the model picker, reading position, search, files, links and quotes, edits and forks, several servers,
+settings, appearance), in the order tau built them. Things with no web counterpart are `n/a` when their commits come
+up: Live Activities, Siri intents, the share extension's own target (the web's is a Web Share Target, taken with the
+share extension's commits), Telegram-iOS vendoring. Web-only work (an installable PWA, Web Push from the server, the
+tab's badge, keyboard shortcuts) is done where the matching iOS commit comes up: notifications with the APNs commits,
+the badge with the Live Activity's.
 
 ## 7. Risks
 
@@ -318,8 +309,9 @@ The first usable milestone is M1's end, 4 weeks in. M0 alone is a demo. 9 to 10 
   without a conflict. The e2e tests are the guard.
 - **Teact.** Web A's own React-like library, with its own rules (measure/mutate phases, `withGlobal`, signals). Its
   AGENTS.md documents them; tau's components follow it.
-- **Secure contexts.** Over plain HTTP the service worker, Web Push and some APIs are missing. The recommended setup is
-  `tailscale serve` (section 3); without it the app must degrade plainly, not fail.
+- **Secure contexts.** The app needs HTTPS away from localhost, so a user without Tailscale (or another way to put TLS
+  in front of the server) cannot use it remotely. The page for plain HTTP has to make the fix obvious; TLS in the
+  server is the fallback if this proves a barrier (section 3).
 - **Branding.** Web A is full of Telegram's name, logos and strings, fetched from Telegram's language packs at
   runtime (`fetchLangStrings`, unanswered now, which leaves the bundled fallback). tau needs its own assets and
   strings, without forking the language system.
@@ -328,4 +320,7 @@ The first usable milestone is M1's end, 4 weeks in. M0 alone is a demo. 9 to 10 
   of the initial chunks matters on phones.
 - **Two clients to keep alike.** iOS and web implement the same client (outbox, replica, reading position) in two
   languages. `client/` and docs/network.md and docs/sending.md are the shared truth; e2e tests mirror the iOS
-  UI tests' scenarios.
+  UI tests' scenarios. `web/PARITY.md` keeps the walk honest: a commit is never silently left out.
+- **The walk's length.** 221 commits today, many large. Most iOS layout fixes are `n/a` (Web A's machinery differs),
+  but feature commits take time and the order is tau's, not the most useful first. If a first usable client is
+  needed sooner, the walk can take sending and the entry cache first and mark what it skipped.
