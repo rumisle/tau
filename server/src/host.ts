@@ -31,6 +31,7 @@ import { CompactionLog } from "./compactions.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
 import { Serial } from "./serial.ts";
 import { skillsSection } from "./skills.ts";
+import { contextFilesExtension } from "./context-files.ts";
 import { Subagent, SubagentFailures, SubagentReports } from "./subagent.ts";
 import { History, historyExtension } from "./history.ts";
 import { CommandFacts, codingTools } from "./commands.ts";
@@ -120,6 +121,8 @@ export type HostOptions = {
 	/** A prompt cache lifetime for the dev model, in seconds, with prices to make warming it pay: to try warming. */
 	devCacheTtl?: number;
 	onReport?: (report: Report) => void;
+	/** Global context-file directory (src/context-files.ts); default ~/.agents. */
+	contextFilesAgentDir?: string;
 	/** Whose `.agents/skills` the prompt lists besides the conversation directory's (src/skills.ts); default home. */
 	skillsHome?: string;
 	/** Where files are kept (src/files.ts); default beside the database (`tau.db`'s `tau.files`), or a temporary one. */
@@ -168,7 +171,7 @@ export type Host = {
 	close(): Promise<void>;
 };
 
-const PREAMBLE = `You are tau, a coding agent reached from a phone. Be concise: answers are read on a small screen.
+const PREAMBLE = `You are tau, a coding agent.
 Use the tools to inspect and change files and run commands. You start in the working directory below; the user does not
 pick one, so go where the work is (absolute paths, or \`cd\` in a command). In a repository, read its AGENTS.md first,
 and look for its own skills in .agents/skills.
@@ -216,6 +219,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		return { harness: opened.harness, storage, serverId: opened.serverId };
 	});
 	registry.install(historyExtension(history));
+	registry.install(contextFilesExtension(options.contextFilesAgentDir));
 	// Code mode (docs/codemode.md): the model's scripts call the tools, each script in a QuickJS worker of its own, and
 	// `models.*`: the catalog (which models a subagent may run on), and classifier and image models for the providers
 	// the server has logins or keys for.
