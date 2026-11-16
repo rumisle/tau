@@ -317,13 +317,20 @@ export class Notifier {
 	/** A run started or ended in `id`: the rows of the chat it belongs to, in each device's activity, may change. */
 	async #runChanged(id: ConversationId, quiet = false): Promise<void> {
 		const parent = await this.#parent(id);
-		const chat = parent ?? id;
+		// A subagent's run is its parent's row; a subagent with a row of its own (the app kept one for it before it
+		// watched the parent instead) has that row brought up to date too, or it says working for good and holds the
+		// activity open, with every finish said by it instead of a notification.
+		const chats = parent === undefined ? [id] : [parent, id];
 		if (this.#activeClients > 0 || this.#apns === undefined) return;
 		const devices = (await this.#host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices ?? {};
 		await Promise.all(
 			Object.entries(devices)
-				.filter(([, device]) => device.activity?.token !== undefined && device.activity.rows.some((row) => row.conversationId === chat))
-				.map(([deviceId]) => this.#serially(deviceId, () => this.#updateRow(deviceId, chat, quiet))),
+				.filter(([, device]) => device.activity?.token !== undefined && device.activity.rows.some((row) => chats.includes(row.conversationId as ConversationId)))
+				.map(([deviceId]) =>
+					this.#serially(deviceId, async () => {
+						for (const chat of chats) await this.#updateRow(deviceId, chat, quiet);
+					}),
+				),
 		);
 	}
 

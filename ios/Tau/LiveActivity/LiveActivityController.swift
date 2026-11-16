@@ -159,9 +159,17 @@ final class LiveActivityController {
             }
             id = real
         }
-        guard let dialog = store.dialog(id) else {
+        guard var dialog = store.dialog(id) else {
             return
         }
+        // A message to a subagent is watched in the chat it belongs to, whose row says its subagents work: the list,
+        // which updates rows, has no row of its own for a subagent.
+        var depth = 0
+        while let parentId = dialog.parentConversationId, depth < 16, let parent = store.dialog(parentId) {
+            dialog = parent
+            depth += 1
+        }
+        id = dialog.id
         let serverId = store.server(of: id)?.serverInfo?.serverId ?? ""
         let local = MultiStore.split(id).local
         let chat = TauActivityAttributes.Chat(id: id, serverId: serverId, localId: local, title: dialog.title, state: .working, since: Date(), finishedAt: nil, detail: nil)
@@ -209,6 +217,12 @@ final class LiveActivityController {
         let now = Date()
         for (id, var row) in self.rows {
             guard let dialog = byId[id] else {
+                // Not in the list (a subagent's chat, from an activity before it was watched in its parent, a hidden
+                // chat, or one gone): nothing would update its row, which would say working for good and hold the
+                // activity open. A new chat's row waits a minute for the list to have it.
+                if now.timeIntervalSince(row.watchedAt) > 60.0 {
+                    self.rows.removeValue(forKey: id)
+                }
                 continue
             }
             row.chat.title = dialog.title

@@ -345,6 +345,47 @@ describe("pushes", () => {
 		await client.close();
 	});
 
+	test("a subagent with a row of its own: its finish is said and the activity ends, live and at start", async () => {
+		const client = await TauClient.connect(server.url);
+		await client.request("devices.register", { deviceId: "own", environment: "development", topic: "com.example.tau" });
+		const { dialog } = await client.request("conversation.create", { title: "Owner" });
+		const parent = new ConversationReplica(dialog.conversation.id);
+		await parent.sync(client);
+		await client.request("conversation.submit", { conversationId: parent.id, requestId: "own-1", content: "& helper: $ echo first" });
+		let childId: number | undefined;
+		await until(async () => {
+			childId = (await host.storage.scanConversations({ ownerConversationId: parent.id as never }, 10, undefined, BACKGROUND_CONTEXT)).items[0]?.id;
+			return childId !== undefined;
+		});
+		const child = new ConversationReplica(childId!);
+		await child.sync(client);
+		await until(() => idle(child) && idle(parent));
+		// What the app kept: a row for the subagent itself, as a message to it made one.
+		const since = Date.now();
+		const rows = [{ appId: child.id, conversationId: child.id, title: "helper", state: "working", since, detail: "Working", watchedAt: since }];
+		await client.request("liveActivity.update", { deviceId: "own", activity: { id: "activity-own", token: "t-own", rows } });
+		const before = pushes.length;
+		const sent = () => pushes.slice(before).filter((each) => each.device.token === "t-own");
+		await chat(client, child, "hello", "own-2");
+		await until(() => sent().some((each) => aps(each.push).event === "end"));
+		const done = sent().find((each) => aps(each.push).alert !== undefined);
+		assert.ok(done, "its finish is said");
+		assert.equal((aps(done.push)["content-state"] as { chats: { state: string }[] }).chats[0]?.state, "done");
+		assert.equal((await host.harness.snapshot(DevicesDoc, BACKGROUND_CONTEXT))?.devices.own?.activity, undefined, "ended");
+		// A row left working while the server was down: found done at start.
+		await client.request("liveActivity.update", { deviceId: "own", activity: { id: "activity-own-2", token: "t-own-2", rows } });
+		const found: ApnsPush[] = [];
+		const notifier = new Notifier(host, { apns: { send: async (_device, push) => (found.push(push), { status: 200 }) }, doneLifetimeMs: 60_000 });
+		try {
+			await until(() => found.length >= 1, 3_000);
+			assert.equal((aps(found[0]!)["content-state"] as { chats: { state: string }[] }).chats[0]?.state, "done");
+		} finally {
+			notifier.close();
+		}
+		await client.request("devices.unregister", { deviceId: "own" });
+		await client.close();
+	});
+
 	test("at start, a chat that finished while the server was down is marked done, quietly; one that works is not", async () => {
 		const client = await TauClient.connect(server.url);
 		await client.request("devices.register", { deviceId: "restart", environment: "development", topic: "com.example.tau" });
