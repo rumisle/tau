@@ -1,7 +1,7 @@
 # Edits and forks (design, not built)
 
-Status: the direction is agreed (an edit changes the chat, a fork makes another one); the questions at the end are
-open. Nothing here is implemented: the current behavior is in docs/sending.md "Edits and drafts".
+Status: agreed (an edit changes the chat, a fork makes another one with copies of its subagents); a few details are
+left for the building. Nothing here is implemented: the current behavior is in docs/sending.md "Edits and drafts".
 
 ## What there is now
 
@@ -66,8 +66,8 @@ go to a chat nobody sees.
 - **Edit changes this chat.** No new conversation: the chat goes back to before the edited message and goes on from
   the new text. What came after stays, hidden from the model; the chat's subagents stay; the counter keeps counting,
   since that money was spent in this chat.
-- **Fork makes another chat.** A new conversation beside the original, which is untouched. The fork has no subagents,
-  and is told so (below).
+- **Fork makes another chat.** A new conversation beside the original, which is untouched. Its subagents come along
+  as copies, each as it was at the fork point (below).
 
 ### Edit as versions in one conversation
 
@@ -82,9 +82,12 @@ Per target, the newest edit wins (durable docs/spec.md 2.1, src/harness/context.
   as it was). Any number of switches, in either direction.
 - A write with `edits` waits for the next boundary like a steer (durable README "Writes"), so an edit while the agent
   works stops the run first (Stop and Send), then goes back.
-- Durable's context starts at the newest head marker and heads only move forward (src/harness/context.ts
-  `advanceRange`). An edit before the last compaction would need a head back at the old start, and the context would
-  grow back to its size before the compaction (question 4).
+- **An edit before the last compaction becomes a fork.** Durable's context starts at the newest head marker, and a
+  head write whose target is older than that start is refused as stale (durable docs/spec.md, "A head write ... is
+  stale: placing it would bring back history that head cut"). A fork at that point, though, has the whole history up
+  to it: the original's later head markers are past the fork's cap. So the edit opens a new chat, with its subagents
+  copied (below), and no dialog asks first: the edit panel says so in one line ("Before the summary: edits in a new
+  chat"). This should be rare, since most edits change a recent message; to be checked against the data.
 
 ### Showing versions
 
@@ -111,38 +114,60 @@ By which version they belong to:
 
 1. **Spawned before the edit point**: they stay. Their spawn is still in what the model sees; one at work goes on and
    reports into the chat, which is right.
-2. **Spawned in the part edited away**: they belong to an abandoned version (question 3).
-3. **Spawned before, but given work in the part edited away** (`send`): the agent stays; the work it does for the
-   abandoned version is stopped, or finishes without reporting (question 3). Reports are per run of the subagent
-   (`afterRun`), not per message, so one that finishes reports to the chat unless its leader changes.
+2. **Spawned in the part edited away**: they go on and report into the chat. Nothing is lost, and the result may be
+   what the user wanted. The model of the new version no longer sees the call that started one, so the report says so
+   as a fact: the subagent was started in the part of the chat the user edited away. The user can stop one from the
+   Subagents menu (perhaps the very reason for the edit). Switching back to that version finds it in `tau.subagents`.
+3. **Spawned before, but given work in the part edited away** (`send`): the same: the work finishes and reports, saying
+   it was asked for in the part edited away. Reports are per run of the subagent (`afterRun`), not per message.
+
+It happens: on server A, 17 subagents spawned in a part an edit left were still working at the edit, and 13 spawned
+before the edit point were (each still wrote after the edit). All of them reported into the original, which nobody
+read.
 
 ### Fork
 
 - From any message, including the steps inside an answer (a tool card, thinking): to steer an agent differently from
   a point in its work.
 - What the fork has: everything up to and including that message; the model, thinking level and working directory;
-  not the original's running answer, nor its subagents.
+  copies of its subagents; not the original's running answer.
 - On the user's own message: the fork answers it again.
-- The model in the fork is told, as part of the fork, that it is a fork of "<title>" and that the original's subagents
-  (by name) are not here and can be spawned again.
-- The app shows subagent cards before the fork point as the original's, without their live "working" state.
+- The model in the fork is told, as part of the fork, that it is a fork of "<title>".
+- The subagent cards before the fork point are the copies', live in the fork.
 - Never between a tool call and its result: the model's API takes no unanswered calls. Forking from a tool card forks
   after its result; while the tool runs there is no such point yet.
-- The fork's counter is its own spend (question 5).
+- The fork's counter is its own spend, from zero; the cost card also says what was spent before the fork.
+
+### Subagents in a fork: copies as of the fork point
+
+Entry IDs are global and ordered across the whole database (durable docs/spec.md 2.1), so "the subagent as it was at
+the fork point" is exact: its newest entry with an ID below the fork point.
+
+- Each subagent of the original spawned before the fork point is forked at that entry, owned by a new anchor task in
+  the fork (tau already gives each subagent a `tau.subagent-anchor` task; durable's `forkConversation` takes the
+  ownership explicitly), and entered in the fork's `tau.subagents` under the same name.
+- A subagent spawned after the fork point has an ID above it, and isn't copied.
+- The copies and the originals are independent from then on: each reports to its own chat. A copy costs nothing
+  until it is used, since a durable fork shares its history.
+- A subagent midway through a turn at the fork point is copied with what it had committed; a tool call without its
+  result gets durable's synthesized error result. A message to it carries on.
+- A subagent's own subagents are copied the same way, depth first.
+- Not copied: what lives outside the database (files, processes), as with any fork.
+- Before building: a small durable test that a fork of a task-owned conversation can take a new owner.
 
 ## Open questions
 
-1. ~~Edit in place, fork as a separate action~~: agreed.
-2. ~~How versions show on a phone~~: agreed, as above.
-3. **Subagents spawned in the version edited away**: stopped but kept in `tau.subagents` (stopping keeps a
-   subagent's conversation and context, so switching back finds them), or left to finish without reporting?
-4. **An edit before the last compaction**: allow it, with the context back at its size before the compaction, or make
-   it a fork, or warn first?
-5. **A fork's counter**: its own spend from zero, with the cost card also saying what was spent before the fork?
-6. **Existing forks**: a one-time script that archives the conversations forked from and abandoned (server A's 98)?
-   New edits make no forks, so this happens once.
+## Decided
 
-Also to settle while building:
+1. An edit changes the chat; a fork is a separate action.
+2. Versions show as **edited** and **Versions** in the menu (web: hover actions).
+3. Subagents of a version edited away go on and report, saying where they were started.
+4. An edit before the last compaction becomes a fork.
+5. A fork's counter starts at zero; its cost card says what was spent before the fork.
+6. A fork copies its subagents as of the fork point.
+7. Existing edit forks stay as they are for now (no clean-up script).
+
+## Left for the building
 
 - Which version the chat list's preview and the search index show; whether hidden versions are searchable.
 - What a fork of a fork, or an edit inside a fork, says to the model about subagents.
