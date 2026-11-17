@@ -47,3 +47,22 @@ is alive (at 0.5 Mbps, two photos delayed a pong 5.5 seconds; past 10 the app ta
 
 The dev model reads a file for `!read <path>`; `SendingUITests.testModelImages` reads `/tmp/tau-read-test.png`, and
 `testPhotoAlbums` sends albums of two, three and five, captioned, and edited.
+
+## Storage (open, to investigate)
+
+Images make most of a busy database. On a server used daily for a month, 459 MB of its 490 MB were images in the read
+tool's results: 391 of them, about 2 MB each (screenshots), base64 in the entries. Each also stays in the model's
+context until a compaction.
+
+- **Compressing** them does little: PNG, JPEG and WebP are compressed already; zstd would win back about the quarter
+  base64 adds.
+- **Smaller images** do most: the read tool takes up to 2000 × 2000 pixels and 4.5 MB (durable's
+  `DEFAULT_IMAGE_LIMITS`), but Anthropic scales down any image whose long edge is past 1568 pixels before the model
+  sees it (its vision docs), so the pixels beyond are stored for nothing. Read's `resize` at a long edge of 1568 would
+  store about half, with the model seeing the same. Other providers' limits to check before choosing the number.
+- **Cost to the model** changes with neither: an image is priced by its pixels after that scaling (at most about 1,600
+  tokens on Anthropic's), and sent again from the prompt cache at the cache's price.
+- **The structural fix**: images kept as files beside the database (docs/files.md), the entry holding a reference,
+  the same image stored once. Entries carry the model's messages, so this is durable's storage to change, not tau's.
+
+First step when this is picked up: read's limit at 1568, one setting, with the providers' limits checked.
