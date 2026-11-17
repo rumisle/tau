@@ -89,10 +89,18 @@ Rules that keep it predictable:
 
 ## Edits and drafts
 
-An edit is a fork before the edited message with the new text as its first message (pi's `/tree` and edit work the
-same way). The fork is a create in the outbox: on disk, sent with a request ID that makes `conversation.fork`
-idempotent, and the edited message waits for it like any first message. Until the fork exists and its transcript has
-arrived, the chat shows the original up to the edit, then the new message with the clock.
+An edit changes the chat (docs/edits-and-forks.md): the message gets a new version, and the chat goes on from the new
+text in the same conversation. It is a message in the outbox like any other, with the entry it edits (`editOf`, sent
+as `conversation.submit`'s `edit`): on disk, idempotent by its request ID, stopping a running answer when it reaches
+the server. While it is on its way, the edited message and what follows it are already gone from the chat, and the new
+one shows with the clock; the server then hides them for good (`tau.versions`), in the frame that brings the new
+message. The edited message says "edited" by its time, and its menu has Versions: each version's message with the first
+line of its answer, the shown one checked; a tap shows that one (`conversation.version`).
+
+A message older than the context's summary (before `head`) can't be edited in place: the model's context can't go
+back there. That edit is a fork before the message with the new text as its first message, as every edit was before:
+a create in the outbox, sent with a request ID that makes `conversation.fork` idempotent, the edited message waiting
+for it like any first message. A version older than the summary opens the same way, as a copy at its last entry.
 
 The model and thinking level the chat shows are the ones that answer. A fork alone would start with the agent the
 original had at the fork entry, so a model picked since would be lost: the create carries the chat's agent, a change

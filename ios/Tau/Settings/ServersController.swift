@@ -245,6 +245,14 @@ final class ServerController: SettingsListController {
             self.push(CompactionController(context: self.context, slot: self.slot))
         }))
         items.append(SettingsTextItem(theme: theme, text: "When a chat's context fills up, the model summarizes the older part, and the chat goes on from the summary and the latest messages.", kind: .footer))
+        items.append(SettingsTextItem(theme: theme, text: "Agents", kind: .header))
+        items.append(SettingsRowItem(theme: theme, icon: SettingsIcon.subagents, title: "Subagent Depth", accessory: .disclosure(label: subagentDepthTitle(server.subagentDepth)), position: SettingsRowPosition(isFirst: true, isLast: true), action: { [weak self] in
+            guard let self else {
+                return
+            }
+            self.push(SubagentDepthController(context: self.context, slot: self.slot))
+        }))
+        items.append(SettingsTextItem(theme: theme, text: "How many levels of subagents a chat may have below it. At the last level, a subagent can't start its own.", kind: .footer))
         if store.servers.count > 1 {
             items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
             items.append(SettingsRowItem(theme: theme, icon: nil, title: "Delete Server", titleColor: theme.list.itemDestructiveColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: true), action: { [weak self] in
@@ -400,6 +408,41 @@ final class CompactionController: SettingsListController {
             }
             items.append(SettingsTextItem(theme: theme, text: "In the largest windows a very long context answers worse and costs more at every step. The summary is asked for after the chat's cached context, so it costs little.", kind: .footer))
         }
+        return items
+    }
+}
+
+func subagentDepthTitle(_ depth: Int) -> String {
+    return depth == 1 ? "1 Level" : "\(depth) Levels"
+}
+
+/// Settings > a server > Subagent Depth: how many levels of subagents a chat may have below it (server/src/subagent.ts),
+/// for subagents started from then on.
+final class SubagentDepthController: SettingsListController {
+    private let slot: Int
+
+    init(context: AppContext, slot: Int) {
+        self.slot = slot
+        super.init(context: context, title: "Subagent Depth")
+    }
+
+    required init(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func items(theme: TauTheme) -> [ListViewItem] {
+        guard let server = self.context.store.server(self.slot) else {
+            return []
+        }
+        let depths = Array(1 ... 5)
+        var items: [ListViewItem] = [SettingsTextItem(theme: theme, text: "Levels", kind: .header)]
+        for (index, depth) in depths.enumerated() {
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: subagentDepthTitle(depth), accessory: .checkmark(server.subagentDepth == depth), position: SettingsRowPosition(isFirst: index == 0, isLast: index == depths.count - 1), action: { [weak self] in
+                server.setSubagentDepth(depth)
+                self?.reload()
+            }))
+        }
+        items.append(SettingsTextItem(theme: theme, text: "At 1, a chat's subagents can't start their own; at 2, theirs can't. A change applies to subagents started after it.", kind: .footer))
         return items
     }
 }

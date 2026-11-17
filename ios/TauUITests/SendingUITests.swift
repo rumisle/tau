@@ -615,11 +615,53 @@ final class SendingUITests: XCTestCase {
         self.type(" b")
         self.send()
         sleep(2)
-        self.shot("editoff-2-fork-offline")
+        // In this chat, with the clock: the edited message and its answer are gone at once.
+        self.shot("editoff-2-offline")
+        XCTAssertFalse(self.userMessage("two").exists, "the edited message goes while the edit waits")
+        XCTAssertTrue(self.userMessage("two b").exists, "the edit shows with the clock")
         self.server("start")
+        XCTAssertTrue(self.answer(to: "two b").waitForExistence(timeout: 30), "the edit is answered once the server is back")
         self.app.waitForIdle(timeout: 30)
         settle()
         self.shot("editoff-3-online")
+        XCTAssertFalse(self.userMessage("two").exists, "the server hid the earlier version")
+    }
+
+    /// An edit changes this chat (docs/edits-and-forks.md): the message says edited, and Versions in its menu shows the
+    /// earlier version back, its answer with it, and the later one again.
+    func testEditVersions() {
+        self.twoMessages("ver one", "ver two")
+        self.pressMessage("ver two")
+        settle()
+        self.app.descendants(matching: .any)["Edit"].firstMatch.tap()
+        settle()
+        self.type(" b")
+        self.send()
+        XCTAssertTrue(self.answer(to: "ver two b").waitForExistence(timeout: 20), "the edit is answered")
+        self.app.waitForIdle()
+        settle()
+        self.shot("versions-0-edited")
+        XCTAssertFalse(self.userMessage("ver two").exists, "the earlier version is hidden")
+        XCTAssertTrue(self.answer(to: "ver two b").label.contains("(turn 2)"), "the model read the chat without the earlier version")
+        self.pressMessage("ver two b")
+        settle()
+        let versions = self.app.descendants(matching: .any)["Versions"].firstMatch
+        XCTAssertTrue(versions.waitForExistence(timeout: 3), "an edited message offers its versions")
+        versions.tap()
+        settle()
+        self.shot("versions-1-menu")
+        self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'ver two'")).firstMatch.tap()
+        XCTAssertTrue(self.userMessage("ver two").waitForExistence(timeout: 10), "the earlier version shows again")
+        settle()
+        self.shot("versions-2-switched")
+        XCTAssertFalse(self.userMessage("ver two b").exists)
+        XCTAssertTrue(self.answer(to: "ver two").exists, "with its answer")
+        // Going on from it: the model reads the earlier version.
+        self.focusInput()
+        self.type("ver three")
+        self.send()
+        XCTAssertTrue(self.answer(to: "ver three").waitForExistence(timeout: 20))
+        XCTAssertTrue(self.answer(to: "ver three").label.contains("(turn 3)"), self.answer(to: "ver three").label)
     }
 
     /// The answer to `text`, which the dev model's echo ends with the model and thinking level that answered.
@@ -661,8 +703,8 @@ final class SendingUITests: XCTestCase {
         XCTAssertTrue(self.answer(to: second).label.contains("as dev/echo, thinking off"), "the original answers with dev/echo")
     }
 
-    /// The model and thinking level the chat shows are the ones that answer: an edit after switching both forks with
-    /// them, not with the ones the original had before the edited message (docs/protocol.md, conversation.fork).
+    /// The model and thinking level the chat shows are the ones that answer: an edit after switching both is answered
+    /// with them, not with the ones the chat had before the edited message.
     func testEditAnswersWithPickedModel() {
         self.twoMessages("model one", "model two")
         self.pickModel("parrot")
@@ -682,11 +724,11 @@ final class SendingUITests: XCTestCase {
         settle()
         self.shot("editmodel-1-answered")
         XCTAssertTrue(answer.label.contains("as dev/parrot, thinking high"), "answered by the model picked before the edit: \(answer.label)")
-        self.assertMenuShows(model: "Dev parrot", thinking: "High", "the fork")
+        self.assertMenuShows(model: "Dev parrot", thinking: "High", "the chat")
         self.shot("editmodel-2-menu")
     }
 
-    /// Editing the first message makes a fresh chat, with the model the chat shows.
+    /// Editing the first message goes on in the same chat, with the model the chat shows.
     func testEditFirstMessageModel() {
         self.twoMessages("first one", "first two")
         self.pickModel("parrot")
@@ -705,12 +747,21 @@ final class SendingUITests: XCTestCase {
         XCTAssertTrue(answer.label.contains("as dev/parrot, thinking off"), "answered by the model the chat showed: \(answer.label)")
     }
 
-    /// A model and thinking level picked in the edit's fork while it waits offline are the ones it is created with,
-    /// and the picker shows them before and after the server's docs arrive.
+    /// A model and thinking level picked offline, then an edit: they reach the server first, in the order made, so
+    /// the edit is answered with them, and the picker shows them before and after the server's docs arrive.
     func testEditThenPickModelOffline() {
         self.twoMessages("held one", "held two")
         self.server("stop")
         sleep(2)
+        self.pickModel("parrot")
+        settle()
+        self.pickThinking("Low")
+        settle()
+        self.assertMenuShows(model: "Dev parrot", thinking: "Low", "the chat while offline")
+        self.shot("editheld-0-offline")
+        // The menu closed, by a tap beside it.
+        self.point(0.1, 0.6).tap()
+        settle()
         self.pressMessage("held two")
         settle()
         self.app.descendants(matching: .any)["Edit"].firstMatch.tap()
@@ -718,16 +769,6 @@ final class SendingUITests: XCTestCase {
         self.type(" b")
         self.send()
         sleep(1)
-        // In the fork, not created yet.
-        self.pickModel("parrot")
-        settle()
-        self.pickThinking("Low")
-        settle()
-        self.assertMenuShows(model: "Dev parrot", thinking: "Low", "the fork while offline")
-        self.shot("editheld-0-offline")
-        // The menu closed, by a tap beside it.
-        self.point(0.1, 0.6).tap()
-        settle()
         self.server("start")
         let answer = self.answer(to: "held two b")
         XCTAssertTrue(answer.waitForExistence(timeout: 30), "the edit is answered once the server is back")
@@ -735,7 +776,7 @@ final class SendingUITests: XCTestCase {
         settle()
         self.shot("editheld-1-online")
         XCTAssertTrue(answer.label.contains("as dev/parrot, thinking low"), "answered by the model picked in the fork: \(answer.label)")
-        self.assertMenuShows(model: "Dev parrot", thinking: "Low", "the fork with the server's docs")
+        self.assertMenuShows(model: "Dev parrot", thinking: "Low", "the chat with the server's docs")
         self.shot("editheld-2-menu")
     }
 

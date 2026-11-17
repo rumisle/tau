@@ -112,9 +112,87 @@ final class ConversationReplica {
         return (self.docs.object("tau.compactions")?.objects("items") ?? []).compactMap(CompactionRecord.init)
     }
 
+    /// The versions of edited messages, and the entries of versions not shown (`tau.versions`, server/src/versions.ts):
+    /// kept by the server, so read even from docs a chat left.
+    var versions: MessageVersions {
+        return MessageVersions(self.docs.object("tau.versions") ?? [:])
+    }
+
     /// What waits for a boundary (`pi.inbox`): steers, follow-ups, and writes such as a queued reset.
     var inboxItems: [JSONObject] {
         return self.docsAreStale ? [] : self.docs.object("pi.inbox")?.objects("items") ?? []
+    }
+}
+
+/// The versions of a chat's edited messages (`tau.versions`, server/src/versions.ts, docs/edits-and-forks.md): which
+/// entries belong to versions not shown, and each edited message's versions.
+struct MessageVersions: Equatable {
+    struct Version: Equatable {
+        /// The version's user message.
+        var message: Int
+        var date: Date
+        var text: String
+        /// The first line of its last answer and what it cost, from when it was left; nil for the one shown.
+        var answer: String?
+        var cost: Double?
+        /// Its last entry, when it is not shown: where a fork shows it as it was.
+        var end: Int?
+    }
+    struct Group: Equatable {
+        var versions: [Version]
+        var current: Int
+    }
+    /// Inclusive ranges of entry IDs, sorted.
+    var hidden: [ClosedRange<Int>]
+    var groups: [Group]
+
+    init(_ doc: JSONObject) {
+        self.hidden = ((doc["hidden"] as? [Any]) ?? []).compactMap { span in
+            guard let pair = span as? [Any], pair.count == 2, let from = (pair[0] as? NSNumber)?.intValue, let to = (pair[1] as? NSNumber)?.intValue, from <= to else {
+                return nil
+            }
+            return from ... to
+        }
+        self.groups = (doc.object("groups") ?? [:]).values.compactMap { value in
+            guard let group = value as? JSONObject else {
+                return nil
+            }
+            let versions: [Version] = group.objects("versions").compactMap { version in
+                guard let message = version.int("message") else {
+                    return nil
+                }
+                let spans = (version["spans"] as? [Any]) ?? []
+                let end = ((spans.last as? [Any])?.last as? NSNumber)?.intValue
+                return Version(message: message, date: Date(timeIntervalSince1970: (version.double("at") ?? 0.0) / 1000.0), text: version.string("text") ?? "", answer: version.string("answer"), cost: version.double("cost"), end: end)
+            }
+            guard !versions.isEmpty else {
+                return nil
+            }
+            return Group(versions: versions, current: min(max(group.int("current") ?? 0, 0), versions.count - 1))
+        }.sorted { $0.versions[0].message < $1.versions[0].message }
+    }
+
+    /// Whether an entry belongs to a version not shown.
+    func isHidden(_ id: Int) -> Bool {
+        var low = 0
+        var high = self.hidden.count - 1
+        while low <= high {
+            let middle = (low + high) / 2
+            let span = self.hidden[middle]
+            if id < span.lowerBound {
+                high = middle - 1
+            } else if id > span.upperBound {
+                low = middle + 1
+            } else {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The group whose shown version's message is `entryId`, when it has more than one version.
+    func group(shownAt entryId: Int) -> Group? {
+        return self.groups.first { $0.versions.count > 1 && $0.versions[$0.current].message == entryId }
     }
 }
 
@@ -168,6 +246,9 @@ enum TranscriptBuilder {
             var streamingTask: Int?
             var hasMedia: Bool
             var compactions: [CompactionRecord]
+            var versions: MessageVersions
+            /// An edit on its way: the edited message and what follows are hidden until the server hides them.
+            var editingFrom: Int?
         }
         let key: Key
         /// Names these rows: two states with the same token have the same rows up to their `StablePrefix`.
@@ -356,7 +437,20 @@ enum TranscriptBuilder {
         // asked again under the same task.
         let streamingTask = replica.live.object("generation") != nil ? replica.live.object("run")?.int("taskId") : nil
         let compactions = replica.compactions
-        let key = Committed.Key(entriesVersion: replica.entriesVersion, rowIdForUserEntry: rowIdForUserEntry, streamingTask: streamingTask, hasMedia: media != nil, compactions: compactions)
+        let versions = replica.versions
+        // An edit on its way (docs/edits-and-forks.md): the edited message and what follows it go at once, as the
+        // server will hide them.
+        let editingFrom = items.filter { item in
+            switch item.state {
+            case .pending:
+                return true
+            case let .placed(entryId):
+                return replica.entries[entryId] == nil
+            default:
+                return false
+            }
+        }.compactMap(\.editOf).min()
+        let key = Committed.Key(entriesVersion: replica.entriesVersion, rowIdForUserEntry: rowIdForUserEntry, streamingTask: streamingTask, hasMedia: media != nil, compactions: compactions, versions: versions, editingFrom: editingFrom)
         let token: Int
         if let cached = replica.committed, cached.key == key {
             token = cached.token
@@ -391,6 +485,10 @@ enum TranscriptBuilder {
 
             for entry in ordered {
                 guard let id = entry.int("id"), let kind = entry.string("kind") else {
+                    continue
+                }
+                // Versions not shown, and the edit and switch entries that carry the context edits.
+                if versions.isHidden(id) || editingFrom.map({ id >= $0 }) == true || kind == "tau.edit" || kind == "tau.version" {
                     continue
                 }
                 addNotes(before: id)
@@ -434,7 +532,9 @@ enum TranscriptBuilder {
                         rows.append(ChatMessage(id: self.rowId(base: id, block: 0), role: .tool(name: "subagent"), text: "", date: date, tool: tool, entryId: id))
                         continue
                     }
-                    rows.append(ChatMessage(id: rowIdForUserEntry[id] ?? self.rowId(base: id, block: 0), role: .user, text: text, date: date, attachments: attachments, entryId: id))
+                    var row = ChatMessage(id: rowIdForUserEntry[id] ?? self.rowId(base: id, block: 0), role: .user, text: text, date: date, attachments: attachments, entryId: id)
+                    row.isEdited = versions.group(shownAt: id) != nil
+                    rows.append(row)
                 case "pi.assistant":
                     let base = entry.int("byTaskId") ?? id
                     // Cut off and asked again: the later attempt replaces it, as for the model, which does not read aborted
@@ -689,6 +789,7 @@ enum TranscriptBuilder {
         // waiting for the next message.
         var state = ConversationState(messages: rows, streaming: nil, busy: replica.isBusy || queue.contains { !$0.isHeld }, queued: queue, hasOlder: replica.hasOlder, isLoaded: replica.isSynced || !replica.entries.isEmpty)
         state.isSynced = replica.isSynced
+        state.versions = versions
         state.stablePrefix = StablePrefix(token: token, count: stableCount)
         state.compactionBlocksRun = blocksRun
         state.runStartedAt = replica.isBusy ? turnStart : nil

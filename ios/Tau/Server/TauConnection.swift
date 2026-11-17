@@ -38,6 +38,8 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
         let cacheWarming: String
         /// When the server compacts (server/src/compaction.ts).
         let compaction: CompactionThreshold
+        /// How many levels of subagents a chat may have below it (server/src/subagent.ts).
+        var subagentDepth: Int = 2
         let defaultCwd: String
         let home: String
         let hostname: String
@@ -208,6 +210,7 @@ final class TauConnection: NSObject, URLSessionWebSocketDelegate {
                     compaction: value.object("compaction").map { compaction in
                         CompactionThreshold(enabled: compaction.bool("enabled") ?? true, ratio: compaction.double("ratio") ?? 0.9, maxTokens: compaction.int("maxTokens") ?? 700_000)
                     } ?? .standard,
+                    subagentDepth: value.int("subagentDepth") ?? 2,
                     defaultCwd: value.string("defaultCwd") ?? "~",
                     home: value.string("home") ?? "~",
                     hostname: value.string("hostname") ?? "",

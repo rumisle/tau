@@ -29,6 +29,7 @@ enum SettingsIcon {
     static let cache = renderSettingsIcon(name: "Item List/Icons/Speed", backgroundColors: [colorRed])
     static let dictation = renderSettingsIcon(name: "Chat/Input/Text/IconMicrophone", scaleFactor: 0.75, backgroundColors: [colorPurple])
     static let compaction = renderSettingsIcon(name: "Item List/Icons/Data", backgroundColors: [colorOrange])
+    static let subagents = renderSettingsIcon(name: "Item List/Icons/Bot", backgroundColors: [colorBlue])
     static let storage = renderSettingsIcon(name: "Item List/Icons/Pie", backgroundColors: [colorGreen])
     static let network = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorBlue])
     static let usage = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [colorPurple])

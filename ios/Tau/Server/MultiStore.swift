@@ -365,6 +365,14 @@ final class MultiStore: TauStore {
         return store.forkBefore(entryId: entryId, in: local).map { MultiStore.global(store.slot, $0) }
     }
 
+    func switchVersion(in id: Int, to message: Int, completion: @escaping (Int?) -> Void) {
+        guard let (store, local) = self.route(id) else {
+            return
+        }
+        let slot = store.slot
+        store.switchVersion(in: local, to: message, completion: { completion($0.map { MultiStore.global(slot, $0) }) })
+    }
+
     func subagents(of id: Int) -> [DialogModel] {
         guard let (store, local) = self.route(id) else {
             return []

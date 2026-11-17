@@ -24,6 +24,8 @@ struct DialogModel: Equatable {
     var hidden: Bool = false
     /// Pinned to the top of its list: the sort key, higher first (when it was pinned).
     var pinned: Double?
+    /// A fork's: what the history it started with cost, in the chat it came from.
+    var spentBefore: Double?
     /// A message to it was refused; Telegram marks the chat with a red badge.
     var hasFailedMessage: Bool = false
     /// This device's latest message to it that is not in the transcript yet: shown as the last message, with the clock
@@ -286,6 +288,8 @@ struct ChatMessage: Equatable {
     /// On the waiting row: the server retrying after a model error.
     var retry: RetryState?
     var service: ServiceContent?
+    /// A user message with other versions (docs/edits-and-forks.md): "edited" by its time, Versions in its menu.
+    var isEdited: Bool = false
 
     enum Delivery: Equatable {
         /// Not acknowledged by the server: the clock.
@@ -350,6 +354,8 @@ struct ConversationState: Equatable {
     var retry: RetryState?
     /// The run waits for a compaction (past the blocking threshold): the title says compacting, not working.
     var compactionBlocksRun = false
+    /// The versions of its edited messages (`tau.versions`).
+    var versions = MessageVersions([:])
 
     init(messages: [ChatMessage], streaming: ChatMessage?, busy: Bool, queued: [QueuedMessage] = [], hasOlder: Bool = false, isLoaded: Bool = true) {
         self.transcript = Transcript(messages: messages)

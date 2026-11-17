@@ -141,13 +141,14 @@ function costOf(entries: readonly EntryRecord[]): number {
 	return total;
 }
 
+/** The first line of the last answer with text, as the Versions menu shows it under the version's message. */
 function lastAnswer(entries: readonly EntryRecord[]): string | undefined {
 	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index]!;
-		const message = entry.model?.[0];
+		const message = entries[index]!.model?.[0] as AssistantMessage | undefined;
 		if (message?.role !== "assistant") continue;
-		const text = summarize(entry).text;
-		if (text !== "") return text;
+		const text = message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+		const line = text.split("\n").map((each) => each.trim()).find((each) => each !== "");
+		if (line !== undefined) return line.length <= 200 ? line : `${line.slice(0, 199)}…`;
 	}
 	return undefined;
 }

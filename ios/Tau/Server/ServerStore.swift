@@ -487,6 +487,18 @@ final class ServerStore: ConversationStore, TauServer {
         self.infoChanged?()
     }
 
+    private var subagentDepthOverride: Int?
+
+    var subagentDepth: Int {
+        return self.subagentDepthOverride ?? self.connection.hello?.subagentDepth ?? 2
+    }
+
+    func setSubagentDepth(_ depth: Int) {
+        self.subagentDepthOverride = depth
+        self.connection.request("settings.configure", ["subagentDepth": depth]) { _ in }
+        self.infoChanged?()
+    }
+
     /// Set from Settings until the next `hello` reports it.
     private var defaultModelOverride: String?
 
@@ -511,6 +523,7 @@ final class ServerStore: ConversationStore, TauServer {
         self.defaultThinkingOverride = nil
         self.cacheWarmingOverride = nil
         self.compactionOverride = nil
+        self.subagentDepthOverride = nil
         self.sendPresence()
         self.registerDevice()
         self.sendLiveActivity()
@@ -746,6 +759,7 @@ final class ServerStore: ConversationStore, TauServer {
         )
         dialog.hidden = self.pendingHides[id] ?? raw.bool("hidden") ?? false
         dialog.pinned = raw.double("pinned")
+        dialog.spentBefore = raw.double("spentBefore")
         dialog.hasFailedMessage = self.hasFailedMessage(id)
         dialog.outgoing = self.outgoingSummary(id)
         // A read this device sent and the server has not reflected yet.
@@ -1510,9 +1524,17 @@ final class ServerStore: ConversationStore, TauServer {
         guard let message = state.messages.first(where: { $0.id == messageId }), let entryId = message.entryId else {
             return
         }
+        // In this chat: the message gets a new version, and the chat goes on from it (docs/edits-and-forks.md).
+        // Through the outbox as any message, so it survives a lost connection or a killed app.
+        if replica.head.map({ entryId >= $0 }) ?? true {
+            self.outbox.enqueue(text: text, attachments: attachments, conversationId: realId, createRequestId: nil, mode: .followUp, showsInQueue: false, editOf: entryId)
+            completion(id)
+            return
+        }
         let parent = self.dialogs[realId]
-        // Fork at the entry before the edited message, so the fork's transcript ends just before it. Through the
-        // outbox, as a create: on disk, idempotent, and the edited message waits for it.
+        // Older than the context's summary, where the chat can't go back in place: a fork before the edited message,
+        // whose transcript ends just before it. Through the outbox, as a create: on disk, idempotent, and the edited
+        // message waits for it.
         guard let at = replica.entries.keys.filter({ $0 < entryId }).max() else {
             // Editing the first message: a fresh conversation with the same model.
             let draftId = self.createConversation()
@@ -1551,6 +1573,27 @@ final class ServerStore: ConversationStore, TauServer {
         draft.title = self.dialogs[realId]?.title
         self.drafts[draftId] = draft
         return draftId
+    }
+
+    func switchVersion(in id: Int, to message: Int, completion: @escaping (Int?) -> Void) {
+        guard let realId = self.resolve(id) else {
+            return
+        }
+        self.connection.request("conversation.version", ["conversationId": realId, "message": message]) { [weak self] result in
+            guard let self else {
+                return
+            }
+            switch result {
+            case .success:
+                completion(nil)
+            case let .failure(error) where error.code == "before_summary":
+                // Older than the context's summary: a fork at the version's last entry shows it as it was.
+                let end = self.replicas[realId]?.versions.groups.flatMap(\.versions).first(where: { $0.message == message })?.end
+                completion(end.flatMap { self.forkBefore(entryId: $0 + 1, in: realId) })
+            case .failure:
+                completion(nil)
+            }
+        }
     }
 
     func subagents(of id: Int) -> [DialogModel] {
@@ -1858,7 +1901,9 @@ final class ServerStore: ConversationStore, TauServer {
                 break
             }
         }
-        return ConversationUsage(models: models, contextTokens: contextTokens, contextWindow: contextWindow, cache: self.promptCaches[realId])
+        var usage = ConversationUsage(models: models, contextTokens: contextTokens, contextWindow: contextWindow, cache: self.promptCaches[realId])
+        usage.spentBefore = self.dialogs[realId]?.spentBefore
+        return usage
     }
 
     /// `agent` shown for `realId` until the agent doc has it, or for five seconds.

@@ -26,6 +26,9 @@ protocol TauServer: AnyObject {
     /// When the server compacts a chat's context (server/src/compaction.ts).
     var compaction: CompactionThreshold { get }
     func setCompaction(_ threshold: CompactionThreshold)
+    /// How many levels of subagents a chat may have below it (server/src/subagent.ts).
+    var subagentDepth: Int { get }
+    func setSubagentDepth(_ depth: Int)
     /// It has the account's APNs key and sends Apple's pushes (server/src/apns.ts).
     var canPush: Bool { get }
     /// Its answers as notifications on this phone (Settings > Notifications).
@@ -97,6 +100,9 @@ protocol ConversationStore: AnyObject {
     /// A copy of the conversation up to just before `entryId`, as a draft until its first message (as an edit's fork,
     /// without the message). Nil when there is nothing before it.
     func forkBefore(entryId: Int, in id: Int) -> Int?
+    /// Shows another version of an edited message (`message`: that version's). One reaching before the context's
+    /// summary can't be shown in place: `completion` gets a fork showing it, a draft until its first message.
+    func switchVersion(in id: Int, to message: Int, completion: @escaping (Int?) -> Void)
     /// Its background subagents' conversations, oldest first.
     func subagents(of id: Int) -> [DialogModel]
     /// Everything in the chat so far is read (a reply from a notification).
@@ -117,8 +123,9 @@ protocol ConversationStore: AnyObject {
     /// Sends a message (docs/sending.md). While the agent works, a steer reaches it after its current step and a
     /// follow-up once its run ends; idle, both start a run.
     func send(_ text: String, attachments: [MessageAttachment], to id: Int, mode: SendMode)
-    /// Rewrites a user message: the conversation continues from a fork just before it. Returns the conversation the
-    /// chat should show from now on.
+    /// Rewrites a user message: the message gets a new version and the chat goes on from it (docs/edits-and-forks.md);
+    /// one older than the context's summary, a fork just before it. Returns the conversation the chat should show from
+    /// now on.
     func edit(messageId: Int, text: String, attachments: [MessageAttachment], in id: Int, completion: @escaping (Int) -> Void)
     /// Stops the agent. Queued messages come back to the input field, as pi's Escape returns them to the editor.
     func stop(_ id: Int)
@@ -222,6 +229,8 @@ struct ConversationUsage: Equatable {
     var contextWindow: Int?
     /// Its prompt cache and the refreshes that kept it, once there is either.
     var cache: PromptCache? = nil
+    /// A fork's: what the history it started with cost, in the chat it came from (not in `cost`).
+    var spentBefore: Double? = nil
 
     var total: TokenUsage {
         return self.models.reduce(TokenUsage()) { $0 + $1.usage }

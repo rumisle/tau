@@ -212,6 +212,12 @@ final class MockStore: TauStore, TauServer {
         self.compaction = threshold
     }
 
+    private(set) var subagentDepth = 2
+
+    func setSubagentDepth(_ depth: Int) {
+        self.subagentDepth = depth
+    }
+
     var servers: [TauServer] {
         return [self]
     }
@@ -527,6 +533,10 @@ final class MockStore: TauStore, TauServer {
 
     func forkBefore(entryId: Int, in id: Int) -> Int? {
         return nil
+    }
+
+    func switchVersion(in id: Int, to message: Int, completion: @escaping (Int?) -> Void) {
+        completion(nil)
     }
 
     func subagents(of id: Int) -> [DialogModel] {

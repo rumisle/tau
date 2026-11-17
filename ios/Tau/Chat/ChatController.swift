@@ -1262,6 +1262,9 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
         row("Context", contextDescription(usage))
         row("Cost", formatCost(usage.cost))
+        if let before = usage.spentBefore, before > 0.0 {
+            row("Before the Fork", formatCost(before))
+        }
         if let cache = usage.cache, cache.expiresAt != nil || cache.warms > 0 {
             items.append(.separator)
             // Only while it is the cache of the chat's model: another model, or none declaring a lifetime, has nothing
@@ -1388,6 +1391,16 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 f(.default)
                 self?.perform(.edit, on: message)
             })))
+            if let entryId = message.entryId, let group = self.lastState?.versions.group(shownAt: entryId) {
+                items.append(.action(ContextMenuActionItem(text: "Versions", textLayout: .secondLineWithValue("\(group.current + 1) of \(group.versions.count)"), icon: { theme in
+                    return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/ReorderItems"), color: theme.actionSheet.primaryTextColor)
+                }, action: { [weak self] controller, _ in
+                    guard let self else {
+                        return
+                    }
+                    controller?.pushItems(items: .single(ContextController.Items(content: .list(self.versionItems(group, shown: message)))))
+                })))
+            }
         }
         if !message.text.isEmpty {
             items.append(.action(ContextMenuActionItem(text: strings.Conversation_ContextMenuShare, icon: { theme in
@@ -1520,6 +1533,54 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             self.controllerNode.focus = ChatFocus(entryId: entryId, terms: self.chatSearchResult.terms)
             self.context.store.loadHistory(self.conversationId, through: entryId)
         }
+    }
+
+    /// The Versions submenu of an edited message (docs/edits-and-forks.md): each version's message, with the first line
+    /// of its answer, or its time and cost; the shown one checked. A tap shows that version in this chat.
+    private func versionItems(_ group: MessageVersions.Group, shown message: ChatMessage) -> [ContextMenuItem] {
+        let strings = self.theme.presentationStrings
+        let tinted: (String) -> (PresentationTheme) -> UIImage? = { name in
+            return { theme in generateTintedImage(image: UIImage(bundleImageName: name), color: theme.contextMenu.primaryColor) }
+        }
+        var items: [ContextMenuItem] = [.action(ContextMenuActionItem(text: strings.Common_Back, icon: tinted("Chat/Context Menu/Back"), iconPosition: .left, action: { controller, _ in
+            controller?.popItems()
+        })), .separator]
+        // The shown version's answer is the transcript's: the last answer after its message.
+        let messages = self.lastState?.messages ?? []
+        let shownAnswer = messages.firstIndex(where: { $0.id == message.id }).flatMap { index in
+            messages[(index + 1)...].last(where: { $0.role == .assistant && !$0.text.isEmpty })?.text
+        }
+        for (index, version) in group.versions.enumerated() {
+            let current = index == group.current
+            let text = current ? message.text : version.text
+            let answer = current ? shownAnswer : version.answer
+            let detail = answer.map { $0.split(separator: "\n").first.map(String.init) ?? $0 } ?? messageTimeString(version.date)
+            var action: ((ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void)?
+            if !current {
+                action = { [weak self] _, f in
+                    f(.default)
+                    self?.showVersion(version.message)
+                }
+            }
+            items.append(.action(ContextMenuActionItem(text: text.isEmpty ? "Photo" : text, textLayout: .secondLineWithValue(detail), icon: { theme in
+                current ? generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: theme.contextMenu.primaryColor) : nil
+            }, action: action)))
+        }
+        return items
+    }
+
+    private func showVersion(_ message: Int) {
+        self.context.store.switchVersion(in: self.conversationId, to: message, completion: { [weak self] forkId in
+            guard let self, let forkId, let navigationController = self.navigationController as? NavigationController else {
+                return
+            }
+            // Older than the context's summary: a copy that shows it as it was.
+            let chat = ChatController(context: self.context, conversationId: forkId)
+            navigationController.pushViewController(chat)
+            Queue.mainQueue().after(0.5) {
+                chat.presentToast(.info(title: nil, text: "A copy with that version, from before the summary", timeout: nil, customUndoText: nil))
+            }
+        })
     }
 
     /// Continue with Full Context: a copy of this chat from before a compaction, opened over it; it exists once something

@@ -74,6 +74,9 @@ struct OutgoingMessage: Codable, Equatable {
     /// Acknowledged before a reconnect: the submit is repeated (same request ID, no side effect) to learn what
     /// became of it while pushes could not arrive.
     var needsRefresh: Bool = false
+    /// An edit: the entry of the user message this is the next version of (`conversation.submit`'s `edit`). The chat
+    /// goes on from it in the same conversation (docs/edits-and-forks.md).
+    var editOf: Int? = nil
 
     var isSettledInChat: Bool {
         if case .placed = self.state {
@@ -312,7 +315,7 @@ final class Outbox {
 
     /// A new message. `conversationId` nil sends it to the draft `createRequestId` once that exists.
     @discardableResult
-    func enqueue(text: String, attachments: [MessageAttachment], conversationId: Int?, createRequestId: String?, mode: OutgoingMessage.Mode, showsInQueue: Bool, replaces: String? = nil) -> OutgoingMessage {
+    func enqueue(text: String, attachments: [MessageAttachment], conversationId: Int?, createRequestId: String?, mode: OutgoingMessage.Mode, showsInQueue: Bool, replaces: String? = nil, editOf: Int? = nil) -> OutgoingMessage {
         let requestId = UUID().uuidString
         var uploads: [OutgoingMessage.Upload] = []
         var failure: String?
@@ -376,7 +379,8 @@ final class Outbox {
             state: failure.map { .failed(code: "too_large", message: $0) } ?? .pending,
             showsInQueue: failure == nil && showsInQueue,
             seq: self.takeSeq(),
-            replaces: replaces
+            replaces: replaces,
+            editOf: editOf
         )
         self.attachmentsByRequest[requestId] = attachments
         self.items.append(item)
@@ -851,6 +855,9 @@ final class Outbox {
                 }
             }
             var params: JSONObject = ["conversationId": conversationId, "requestId": requestId, "content": item.text, "whenBusy": item.mode.rawValue]
+            if let editOf = item.editOf {
+                params["edit"] = editOf
+            }
             if !item.uploads.isEmpty {
                 params["attachments"] = item.uploads.map { ["id": $0.serverId ?? "", "as": $0.kind == .photo ? "image" : "file"] as JSONObject }
             }

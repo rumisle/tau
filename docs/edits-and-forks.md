@@ -1,9 +1,10 @@
-# Edits and forks (design, not built)
+# Edits and forks
 
-Status: agreed (an edit changes the chat, a fork makes another one with copies of its subagents); a few details are
-left for the building. Nothing here is implemented: the current behavior is in docs/sending.md "Edits and drafts".
+Status: built on the server and in the app (server/src/versions.ts, server/src/subagent.ts; the app's side is in
+docs/sending.md "Edits and drafts"); the web client still forks on an edit. "What there is now" below is how it was
+before, kept for the data.
 
-## What there is now
+## What there was
 
 - **Edit** forks the conversation before the edited message (`conversation.fork` at the entry before it) and sends the
   new text as the fork's first message; the fork replaces the chat on screen, the original stays in the list
@@ -98,9 +99,9 @@ Most of the time nobody goes back, so the versions stay out of the way until ask
      taken.
   2. Its context menu (long press) has **Versions**, one word, only when there is more than one. Not "Earlier
      Versions": on version 2 of 3 there is a later one too.
-  3. Versions opens a list in a Telegram sheet: each version's message, the first line of its answer, its time and
-     cost; the current one has a check mark. A tap switches to it (stopping a running answer first). A switch only
-     appends an edit, so nothing is lost and it can be undone.
+  3. Versions opens a submenu in the same menu, as Thinking does in the chat's: each version's message, the first line
+     of its answer (or its time); the current one has a check mark. A tap switches to it (stopping a running answer
+     first). A switch only appends an edit, so nothing is lost and it can be undone.
   - Not a swipe on the bubble: it would fight Telegram's swipe to reply. Not a standing row under the message ("2
     earlier versions"): one per edit clutters the chat again.
 - **Web**, by desktop conventions (docs/web.md): `‹ 2/3 ›` in the message's hover actions, and the same Versions list

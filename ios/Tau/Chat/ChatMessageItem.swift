@@ -1119,7 +1119,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let textNode = existingTextNodes.first
                 let hasText = !message.text.isEmpty
                 let (textLayout, textApply) = InteractiveTextNode.asyncLayout(textNode)(InteractiveTextNodeLayoutArguments(attributedString: MarkdownText.render(message.text, style: style, references: item.references), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
-                let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: messageTimeString(message.date), font: dateFont(item.theme), textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 200.0, height: 40.0)))
+                let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: (message.isEdited ? "edited " : "") + messageTimeString(message.date), font: dateFont(item.theme), textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 200.0, height: 40.0)))
                 let fileLayouts = files.map { FileAttachmentNode.measure($0, fontSize: item.theme.fontSize, maxWidth: maxTextWidth) }
 
                 // The time and status share the last line when they fit, as ChatMessageDateAndStatusNode's trailing
