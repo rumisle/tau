@@ -142,7 +142,9 @@ test("context files: a dev server injects rules, sends only deltas, follows cwd 
 		rmSync(rule);
 		writeFileSync(rule, "PROJECT_RULE_V2");
 
-		// Only the free scripted dev model is used for this approved inheritance test.
+		// Only the free scripted dev model is used for this approved inheritance test. One level of subagents, so the
+		// child has no subagent tool of its own.
+		await client.request("settings.configure", { subagentDepth: 1 });
 		await chat(client, replica, "& context-child: say hi", "context-child");
 		const started = replica.ordered().find((entry) => entry.kind === "pi.tool-result" &&
 			(entry as unknown as { model?: { toolName?: string }[] }).model?.[0]?.toolName === "subagent") as unknown as { model: { details: { conversationId: number } }[] };

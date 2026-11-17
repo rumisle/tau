@@ -103,7 +103,10 @@ From an app that cannot start an activity (in the background, for a notification
 device's activity, or starts one with its push-to-start token.
 
 ### `settings.configure`
-`{ defaultModel?: ModelRef, defaultThinkingLevel?: string, cacheWarming?: "off" | "streaming" | "idle", compaction?: { enabled?: boolean, ratio?: number, maxTokens?: number } }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming, compaction }`
+`{ defaultModel?: ModelRef, defaultThinkingLevel?: string, cacheWarming?: "off" | "streaming" | "idle", compaction?: { enabled?: boolean, ratio?: number, maxTokens?: number }, subagentDepth?: number }` -> `{ defaultModel: ModelRef, defaultThinkingLevel: string, cacheWarming, compaction, subagentDepth }`
+
+`subagentDepth` is how many levels of subagents a chat may have below it (1 to 5, default 2; `hello` gives it too): a
+subagent at the last level has no subagent tool. It applies to subagents started after the change.
 
 `compaction` is when the server compacts a conversation's context (docs/compaction.md): at `ratio` of the model's window (0.3 to 0.95, default 0.9), but never past `maxTokens` (at least 32000, default 700000); `enabled: false` leaves only overflow and manual compaction. A change applies from the next request of every conversation.
 
@@ -236,6 +239,12 @@ the edited message) answers with the model picked last, not the one the original
 The fork starts read up to `at`, and in the main list. With `requestId`, a repeated fork returns the conversation the
 first one made, as for `conversation.create` (the two share their request IDs).
 
+The fork's instructions say whose fork it is ("This chat is a fork of the chat "<title>" (<link>) ..."). Its subagents
+come along as copies, each as it was at `at`: a fork of the subagent at its newest entry up to `at`, owned by the new
+chat and reporting to it, its own subagents copied the same way; subagents started after `at` don't. A fork of a
+subagent's chat is a chat: no longer told it is a subagent, with the subagent tool. Its Dialog has `spentBefore`: what
+the history it starts with cost.
+
 ### `conversation.configure`
 `{ conversationId, agent: AgentPatch }` -> `{}`
 
@@ -276,7 +285,7 @@ deletes none), and `hidden: false` shows it again.
 ```ts
 {
   conversation: ConversationRecord;
-  docs: Record<string, JsonObject>;   // pi.live, pi.inbox, pi.agent, pi.usage, pi.provider, tau.compactions
+  docs: Record<string, JsonObject>;   // pi.live, pi.inbox, pi.agent, pi.usage, pi.provider, tau.compactions, tau.versions
   entries: EntryRecord[];             // ascending
   head?: EntryId;                     // first entry of the model's active context (after the newest reset/compaction)
   hasOlder: boolean;                  // only without `after`: entries exist before entries[0]
@@ -310,6 +319,23 @@ answer entry.
 failed | empty, `entryId` once placed, `after` (the newest entry when one ended unused), `error`, `tokensBefore`,
 `tokensAfter`, `cost`). It changes as a whole: a `conv.commit` frame with the op `["s", ["tau.compactions"], value]`.
 
+`tau.versions` is tau's too (`server/src/versions.ts`): the versions of edited messages, and what clients hide.
+
+```ts
+{
+  groups: Record<string, {           // by the first version's message
+    versions: { message: EntryId; at: number; text: string; spans?: [EntryId, EntryId][]; answer?: string; cost?: number }[];
+    current: number;                 // the version shown
+  }>;
+  hidden: [EntryId, EntryId][];      // inclusive ranges: entries of versions not shown, sorted
+}
+```
+
+A client shows no entry whose ID is in a `hidden` range, nor `tau.edit` and `tau.version` entries (an edit's and a
+switch's, which carry the context edits). A version not shown has its `spans` (its entries), the first line of its
+last answer and what it cost, from when it was left; the one shown has neither, the transcript says it. The doc
+changes in the frame of the entry that changes it, with the op `["s", ["tau.versions"], value]`.
+
 Separately, `{ event: "submission", record: SubmissionRecord }` reports a status change of a submission: of every
 conversation once `dialogs.subscribe` was called, else of the subscribed ones. It is sent when the change commits and
 may arrive before or after the `conv.commit` with the entry it references.
@@ -328,8 +354,14 @@ transcript up to date without subscribing, as the app preloads the chats at the 
 `hasOlder` then means a gap between the cache and `entries`.
 
 ### `conversation.submit`
-`{ conversationId, requestId: string, content: string | { type: "text", text }[], attachments?: { id: string, as?: "image" | "file" }[], whenBusy?: "steer" | "followUp" | "reject" }`
+`{ conversationId, requestId: string, content: string | { type: "text", text }[], attachments?: { id: string, as?: "image" | "file" }[], whenBusy?: "steer" | "followUp" | "reject", edit?: EntryId }`
 -> `{ submission: SubmissionRecord }`
+
+With `edit`, a user message the chat shows, the content is that message's next version (docs/edits-and-forks.md): a
+running answer is stopped and what is queued withdrawn, then the chat goes on from the new text in the same
+conversation; the message and everything after it are hidden from the model and kept, as a version `tau.versions`
+lists. `before_summary` when the message is older than the context's start (a compaction or reset): it can't go back
+there in place, so the client forks before the message instead. A repeat with the same `requestId` does nothing more.
 
 `attachments` names files uploaded with `POST /files` (at most 20): the message starts with a block naming each by path,
 and those `as: "image"` the model also sees (docs/files.md). With attachments, `content` may be empty.
@@ -343,6 +375,14 @@ or `unanswered` (`reason`: `aborted`, `model_error`, `stale`, ...).
 Photos and files are attachments, not content: an image block is `bad_request`. Content is refused before admission,
 with nothing written: `too_large` over 1,000,000 characters of text or 20 attachments; `withdrawn` when `submission.withdraw` named the request ID first; `file_missing`
 when an attachment's ID names no file (never uploaded, or swept a day after): upload it again.
+
+### `conversation.version`
+`{ conversationId, message: EntryId }` -> `{}`
+
+Shows another version of an edited message: `message` is that version's message (`tau.versions`). A running answer is
+stopped first; the version shown is hidden and kept, and the model reads the other again, as it was. `before_summary`
+when either version reaches before the context's start: the client forks at the version's last entry (its last
+`spans` end) instead, where the fork shows it as it was.
 
 ### `conversation.continue`
 `{ conversationId, requestId: string }` -> `{ submission: SubmissionRecord }` (`type: "continue"`)

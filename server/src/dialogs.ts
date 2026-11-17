@@ -22,6 +22,7 @@ import { withoutQuotes } from "./quotes.ts";
 import { type Host, MetaDoc, type MetaState } from "./host.ts";
 import type { Dialog, EntrySummary } from "./protocol.ts";
 import { onCommit } from "./commits.ts";
+import { hiddenIn, VersionsDoc } from "./versions.ts";
 
 const PREVIEW_CHARS = 200;
 /** Unread counts stop here; a badge shows 99 at most. */
@@ -36,7 +37,8 @@ const PAGE = 32;
  */
 const FIRST_PAGE = 4;
 /** Kinds a chat list never shows as the last message. */
-const HIDDEN_KINDS: ReadonlySet<string> = new Set(["pi.system"]);
+// tau.edit and tau.version (src/versions.ts), by name: that module imports this one.
+const HIDDEN_KINDS: ReadonlySet<string> = new Set(["pi.system", "tau.edit", "tau.version"]);
 
 export type DialogListener = (dialog: Dialog, version: string) => void;
 export type SubmissionListener = (record: SubmissionRecord) => void;
@@ -98,7 +100,8 @@ export class Dialogs {
 					for (const listener of this.#submissionListeners) listener(change.value);
 				} else if (change.type === "document" && change.conversationId !== undefined) {
 					const kind = change.record.kind;
-					if (kind === MetaDoc.definition.kind || kind === AgentDoc.definition.kind || kind === CacheDoc.definition.kind) this.#change(change.conversationId).reread = true;
+					// tau.versions: an edit or a switch hides entries the last message may be among.
+					if (kind === MetaDoc.definition.kind || kind === AgentDoc.definition.kind || kind === CacheDoc.definition.kind || kind === VersionsDoc.definition.kind) this.#change(change.conversationId).reread = true;
 					else if (kind === LiveDoc.definition.kind) {
 						// pi.live changes on every streamed chunk; only a run starting or ending matters here.
 						const busy = change.kind === "change" && (change.value as { run?: unknown }).run !== undefined;
@@ -263,6 +266,9 @@ export class Dialogs {
 		const live = await harness.snapshot(LiveDoc, conversation.id, context);
 		const agent = await harness.snapshot(AgentDoc, conversation.id, context);
 		const cache = await harness.snapshot(CacheDoc, conversation.id, context);
+		// Entries of versions not shown (src/versions.ts) are neither the last message nor unread.
+		const hidden = (await harness.snapshot(VersionsDoc, conversation.id, context))?.hidden ?? [];
+		const counts = (entry: EntryRecord) => !hiddenIn(hidden, entry.id);
 		const state: DialogState = {
 			conversation,
 			meta,
@@ -277,16 +283,17 @@ export class Dialogs {
 		if (handle !== undefined) {
 			// Newest first: the last message, and the assistant messages after the read mark.
 			const read = meta?.read ?? 0;
+			const visible = (items: readonly EntryRecord[]) => items.filter(counts);
 			let page = await handle.entries({}, FIRST_PAGE, undefined, context);
 			// Only when they show no message, or the read mark is further back, the rest of the page as before.
-			const shownFirst = page.items.some((entry) => !HIDDEN_KINDS.has(entry.kind));
+			const shownFirst = visible(page.items).some((entry) => !HIDDEN_KINDS.has(entry.kind));
 			if (page.next !== undefined && (!shownFirst || page.items.every((entry) => entry.id > read))) {
 				const rest = await handle.entries({}, PAGE - FIRST_PAGE, page.next, context);
 				page = { items: [...page.items, ...rest.items], ...(rest.next === undefined ? {} : { next: rest.next }) };
 			}
 			state.through = page.items[0]?.id ?? 0;
-			const shown = page.items.find((entry) => !HIDDEN_KINDS.has(entry.kind));
-			const last = shown ?? page.items[0];
+			const shown = visible(page.items).find((entry) => !HIDDEN_KINDS.has(entry.kind));
+			const last = shown ?? visible(page.items)[0];
 			if (last !== undefined) {
 				state.last = summarize(last);
 				state.lastHidden = shown === undefined;
@@ -295,7 +302,7 @@ export class Dialogs {
 			scan: for (;;) {
 				for (const entry of page.items) {
 					if (entry.id <= read || state.unreadCount >= MAX_UNREAD) break scan;
-					if (isAnswer(entry)) state.unreadCount += 1;
+					if (isAnswer(entry) && counts(entry)) state.unreadCount += 1;
 				}
 				scanned += page.items.length;
 				if (page.next === undefined || scanned >= MAX_UNREAD_SCAN) break;
@@ -322,6 +329,7 @@ export class Dialogs {
 			...(meta?.archived === true ? { archived: true as const } : {}),
 			...(meta?.hidden === true ? { hidden: true as const } : {}),
 			...(typeof meta?.pinned === "number" ? { pinned: meta.pinned } : {}),
+			...(typeof meta?.spentBefore === "number" ? { spentBefore: meta.spentBefore } : {}),
 			...promptCache(cache, cacheModel(agent?.model ?? this.#host.defaultModel), this.#host.cache.warming(conversation.id)),
 		};
 	}

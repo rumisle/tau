@@ -32,7 +32,7 @@ import { DEV_MODEL, devProvider } from "./dev-model.ts";
 import { Serial } from "./serial.ts";
 import { skillsSection } from "./skills.ts";
 import { contextFilesExtension } from "./context-files.ts";
-import { Subagent, SubagentFailures, SubagentReports } from "./subagent.ts";
+import { DEFAULT_SUBAGENT_DEPTH, Subagent, SubagentFailures, SubagentReports } from "./subagent.ts";
 import { History, historyExtension } from "./history.ts";
 import { CommandFacts, codingTools } from "./commands.ts";
 import { CommandScopes } from "./scopes.ts";
@@ -58,6 +58,8 @@ export type MetaState = {
 	hidden?: boolean;
 	/** Pinned to the top of its list, as Telegram pins chats: when, so later pins sit higher. */
 	pinned?: number;
+	/** A fork's: what the history it started with cost, in the conversations it came from. */
+	spentBefore?: number;
 	/**
 	 * Request IDs withdrawn before any submission had them, newest last: a submit that arrives later with one is
 	 * refused, so a message cancelled while its submit was in flight can never be admitted.
@@ -100,6 +102,8 @@ export const SettingsDoc = defineDoc<{
 	cacheWarming?: CacheWarmingMode;
 	/** When compaction starts (src/compaction.ts); 90% of the window, at most 700k tokens, until a client changes it. */
 	compaction?: CompactionThreshold;
+	/** How many levels of subagents a chat may have below it (src/subagent.ts); 2 until a client changes it. */
+	subagentDepth?: number;
 }>({
 	kind: "tau.settings",
 	version: 1,
@@ -158,6 +162,9 @@ export type Host = {
 	/** What became of each compaction, for the app's card (src/compactions.ts). */
 	readonly compactions: CompactionLog;
 	setCompactionThreshold(threshold: CompactionThreshold): Promise<void>;
+	/** How many levels of subagents a chat may have below it; a change applies to subagents started after it. */
+	readonly subagentDepth: number;
+	setSubagentDepth(depth: number): Promise<void>;
 	readonly cwd: string;
 	/** The files messages refer to (src/files.ts). */
 	readonly files: FileStore;
@@ -195,6 +202,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const retry = { maxRetries: 32, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
 	const compaction = new FollowUpCompaction({ retry: () => retry });
 	let compactionThreshold: CompactionThreshold = DEFAULT_COMPACTION_THRESHOLD;
+	let subagentDepth = DEFAULT_SUBAGENT_DEPTH;
 
 	const files = new FileStore(options.files ?? (options.database === undefined ? undefined : `${options.database.replace(/\.db$/, "")}.files`), {
 		...(options.maxFileBytes === undefined ? {} : { maxBytes: options.maxFileBytes }),
@@ -282,6 +290,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	if (savedSettings?.defaultModel !== undefined) defaultModel = savedSettings.defaultModel;
 	let defaultThinkingLevel: ModelThinkingLevel = savedSettings?.defaultThinkingLevel ?? "off";
 	if (savedSettings?.cacheWarming !== undefined) cacheWarming = savedSettings.cacheWarming;
+	if (savedSettings?.subagentDepth !== undefined) subagentDepth = savedSettings.subagentDepth;
 	if (savedSettings?.compaction !== undefined) {
 		compactionThreshold = savedSettings.compaction;
 		updateSettings();
@@ -333,6 +342,15 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		compactions,
 		get compactionThreshold() {
 			return compactionThreshold;
+		},
+		get subagentDepth() {
+			return subagentDepth;
+		},
+		async setSubagentDepth(depth) {
+			await harness.commit(async (tx) => {
+				(await tx.doc(SettingsDoc)).subagentDepth = depth;
+			}, context);
+			subagentDepth = depth;
 		},
 		async setCompactionThreshold(threshold) {
 			await harness.commit(async (tx) => {

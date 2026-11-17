@@ -16,6 +16,7 @@ import {
 	type EntryRecord,
 	type ModelRef,
 	type SubmissionId,
+	type JsonObject,
 } from "@earendil-works/pi-durable";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -28,6 +29,8 @@ import { type CompactionThreshold, MAX_COMPACTION_RATIO, MIN_COMPACTION_RATIO, M
 import type { Dialogs } from "./dialogs.ts";
 import { entryImages } from "./media.ts";
 import { clientDocs, clientEntry, clientOp } from "./outgoing.ts";
+import { forkInstructions, makeSubagentCopies, MAX_SUBAGENT_DEPTH, Subagent, subagentCopies } from "./subagent.ts";
+import { EDIT_KIND, editInPlace, switchVersion, VERSION_KIND, VersionError, VersionsDoc } from "./versions.ts";
 import { CompactionsDoc } from "./compactions.ts";
 import type { KindName } from "./search/index.ts";
 import type { Search } from "./search/service.ts";
@@ -64,6 +67,7 @@ const MAX_WITHDRAWN = 100;
 const MAX_CREATES = 200;
 
 const COMPACTIONS_DOC = CompactionsDoc.definition.kind;
+const VERSIONS_DOC = VersionsDoc.definition.kind;
 
 /** Requests that change a conversation run one at a time per conversation, in arrival order (src/serial.ts). */
 const SERIAL_METHODS = new Set([
@@ -76,6 +80,7 @@ const SERIAL_METHODS = new Set([
 	"conversation.compact",
 	"conversation.configure",
 	"conversation.rename",
+	"conversation.version",
 ]);
 
 const THINKING_LEVELS: readonly ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -298,7 +303,12 @@ export class Connection {
 				}
 				const compaction = obj(params, "compaction");
 				if (compaction !== undefined) await this.#host.setCompactionThreshold(compactionThreshold(compaction, this.#host.compactionThreshold));
-				return { defaultModel: this.#host.defaultModel, defaultThinkingLevel: this.#host.defaultThinkingLevel, cacheWarming: this.#host.cacheWarming, compaction: this.#host.compactionThreshold };
+				const depth = int(params, "subagentDepth", true);
+				if (depth !== undefined) {
+					if (depth < 1 || depth > MAX_SUBAGENT_DEPTH) throw new ProtocolError("bad_request", `subagentDepth must be 1 to ${MAX_SUBAGENT_DEPTH}`);
+					await this.#host.setSubagentDepth(depth);
+				}
+				return { defaultModel: this.#host.defaultModel, defaultThinkingLevel: this.#host.defaultThinkingLevel, cacheWarming: this.#host.cacheWarming, compaction: this.#host.compactionThreshold, subagentDepth: this.#host.subagentDepth };
 			}
 			case "search": {
 				if (this.#search === undefined) throw new ProtocolError("bad_request", "Search is not available");
@@ -375,14 +385,29 @@ export class Connection {
 					const thinkingLevel = this.#fitThinking(model, asked);
 					agent = await agentChange({ ...patch, model, thinkingLevel: thinkingLevel === "off" ? null : thinkingLevel });
 				}
+				const at = int(params, "at") as EntryId;
+				// Read before the fork's commit, whose init may not read tables: its subagents as they were at `at`, what
+				// the history it starts with cost, and whether it is a subagent's (a chat of its own then).
+				const copies = await subagentCopies(harness, conversation.id, (at + 1) as EntryId, context);
+				const spentBefore = await this.#spentThrough(conversation, at);
+				const sourceRecord = await this.#host.storage.conversation(conversation.id, context);
+				const sourceTitle = (await harness.snapshot(MetaDoc, conversation.id, context))?.title;
+				const told: AgentChange = {
+					...agent,
+					instructions: forkInstructions(this.#host.serverId, sourceTitle, conversation.id),
+					// A subagent's fork is a chat: no longer told it is a subagent, and it may start its own.
+					...(sourceRecord?.owner === undefined ? {} : { extensions: { add: [Subagent] } }),
+				};
 				const fork = await conversation.fork(
-					int(params, "at") as EntryId,
+					at,
 					{
 						ownership: { kind: "ownerless" },
-						...(agent === undefined ? {} : { agent }),
+						agent: told,
 						init: async (tx, id) => {
 							const meta = await tx.doc(MetaDoc, id);
 							if (title !== undefined) meta.title = title;
+							if (spentBefore > 0) meta.spentBefore = spentBefore;
+							await makeSubagentCopies(tx, id, copies, 1);
 							// The fork's history was read in the original.
 							meta.read = int(params, "at");
 							if (requestId !== undefined) {
@@ -496,6 +521,12 @@ export class Connection {
 				await conversation.reset(str(params, "handoff", true), context);
 				return {};
 			}
+			case "conversation.version": {
+				// Show another version of a message (src/versions.ts): `message` is that version's message.
+				const conversation = await this.#conversation(params);
+				await this.#versioned(() => switchVersion(conversation, int(params, "message"), context));
+				return {};
+			}
 			default:
 				throw new ProtocolError("bad_request", `Unknown method ${method}`);
 		}
@@ -514,6 +545,7 @@ export class Connection {
 			defaultThinkingLevel: this.#host.defaultThinkingLevel,
 			cacheWarming: this.#host.cacheWarming,
 			compaction: this.#host.compactionThreshold,
+			subagentDepth: this.#host.subagentDepth,
 			// Whether it can send Apple's pushes: it has the account's APNs key.
 			apns: this.#notifier?.canPush === true,
 			// The largest file it keeps (docs/files.md).
@@ -621,7 +653,7 @@ export class Connection {
 			);
 			const result = {
 				conversation: record,
-				docs: { ...clientDocs(view.docs), [COMPACTIONS_DOC]: { items: await this.#host.compactions.records(conversation.id) } },
+				docs: { ...clientDocs(view.docs), [COMPACTIONS_DOC]: { items: await this.#host.compactions.records(conversation.id) }, [VERSIONS_DOC]: await this.#versions(conversation.id) },
 				entries: this.#outgoing(entries),
 				...(head === undefined ? {} : { head }),
 				hasOlder,
@@ -651,7 +683,7 @@ export class Connection {
 				this.#push({
 					event: "conv.commit",
 					conversationId: id,
-					docs: { ...clientDocs(value.docs), [COMPACTIONS_DOC]: { items: await this.#host.compactions.records(id) } },
+					docs: { ...clientDocs(value.docs), [COMPACTIONS_DOC]: { items: await this.#host.compactions.records(id) }, [VERSIONS_DOC]: await this.#versions(id) },
 					...(entries.length === 0 ? {} : { entries: this.#outgoing(entries) }),
 					...(head === undefined ? {} : { head }),
 				});
@@ -674,6 +706,9 @@ export class Connection {
 					}
 				}
 			}
+			// An edit or a switch changes `tau.versions` in the commit of its entry: in the same frame, so the entries it
+			// hides never show with the new ones.
+			if (entries.some((entry) => entry.kind === EDIT_KIND || entry.kind === VERSION_KIND)) docOps.push(["s", [VERSIONS_DOC], await this.#versions(id)]);
 			if (docOps.length === 0 && entries.length === 0 && head === undefined) return;
 			if (entries.length > 0) subscription.maxSent = Math.max(subscription.maxSent, entries.at(-1)!.id);
 			// One frame per commit, so a client never sees a run end before the answer that ended it.
@@ -685,6 +720,11 @@ export class Connection {
 				...(head === undefined ? {} : { head }),
 			});
 		});
+	}
+
+	/** A conversation's versions of its messages (src/versions.ts), for clients: what they hide, and the versions. */
+	async #versions(id: ConversationId): Promise<JsonObject> {
+		return ((await this.#host.harness.snapshot(VersionsDoc, id, this.#context)) ?? { groups: {}, hidden: [] }) as unknown as JsonObject;
 	}
 
 	/** The first entry of the model's active context: the newest head marker's `head` (a compaction or reset). */
@@ -763,8 +803,36 @@ export class Connection {
 		}
 		// Before the message is in: its uploads wait for its entry a week, not a day (src/files.ts).
 		await this.#host.files.submitted(attached.map((each) => each.file.id));
+		// An edit: the message `edit` gets a new version with this content, in this chat (src/versions.ts).
+		const edit = int(params, "edit", true);
+		if (edit !== undefined) await this.#versioned(() => editInPlace(conversation, { message: edit, content, requestId }, () => Date.now(), this.#context));
 		const submission = await conversation.submit({ type: "input", content, whenBusy, requestId }, this.#context);
 		return { submission: await submission.status(this.#context) };
+	}
+
+	/** What the assistant messages a conversation shows up to entry `at` cost, its forks' history included. */
+	async #spentThrough(conversation: Conversation, at: EntryId): Promise<number> {
+		let total = 0;
+		let cursor: Cursor | undefined;
+		do {
+			const page = await conversation.entries({ maxEntryId: at, order: "ascending" }, 500, cursor, this.#context);
+			for (const entry of page.items) {
+				const message = entry.model?.[0] as { role?: string; usage?: { cost?: { total?: number } } } | undefined;
+				if (message?.role === "assistant") total += message.usage?.cost?.total ?? 0;
+			}
+			cursor = page.next;
+		} while (cursor !== undefined);
+		return total;
+	}
+
+	/** Runs an edit or a switch, its refusals as protocol errors. */
+	async #versioned(run: () => Promise<void>): Promise<void> {
+		try {
+			await run();
+		} catch (error) {
+			if (error instanceof VersionError) throw new ProtocolError(error.code, error.message);
+			throw error;
+		}
 	}
 
 	/**

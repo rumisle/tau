@@ -20,6 +20,8 @@ export type ErrorCode =
 	| "withdrawn"
 	/** A message names a file the server does not have (never uploaded, or swept a day after): upload it again. */
 	| "file_missing"
+	/** An edit or a version switch reaches before the context's summary, where it can't go in place: fork instead. */
+	| "before_summary"
 	| "internal";
 
 export class ProtocolError extends Error {
@@ -51,6 +53,8 @@ export type Dialog = {
 	hidden?: true;
 	/** Pinned to the top of its list; higher first. */
 	pinned?: number;
+	/** A fork's: what the history it started with cost. */
+	spentBefore?: number;
 	/**
 	 * Its prompt cache (src/cache.ts): while the entry is in the cache of the conversation's model, it expires `ttl` ms
 	 * after `at`; `warming` while refreshes keep it, as long as its run works or, between runs, until `until`; the

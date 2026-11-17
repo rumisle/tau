@@ -33,8 +33,9 @@ import {
 	type Tx,
 } from "@earendil-works/pi-durable";
 import { onCommit } from "./commits.ts";
-import { MetaDoc } from "./host.ts";
+import { MetaDoc, ServerDoc, SettingsDoc } from "./host.ts";
 import { isNested, modelCallId, SubagentEntry } from "./shown.ts";
+import { hiddenIn, VersionsDoc } from "./versions.ts";
 
 function taskTitle(task: string): string {
 	const line = task.replace(/\s+/g, " ").trim();
@@ -60,11 +61,64 @@ export function subagentReport(name: string, conversationId: ConversationId, sta
 	return `<subagent name="${escapeAttribute(name)}" conversation="${conversationId}" status="${status}">\n${text}\n</subagent>`;
 }
 
+/** Said in a report whose work was given in a part of the chat an edit hid (src/versions.ts). */
+export const EDITED_AWAY = "The message that gave this subagent its work is in a part of this chat the user has since edited away.";
+
+/** Whether `name`'s work was given in a part of `leader` that a version not shown holds. Doc reads only. */
+async function editedAway(tx: Tx, leader: ConversationId, name: string): Promise<boolean> {
+	const agent = (await tx.doc(Subagents, leader)).agents[name];
+	if (agent?.calledAt === undefined) return false;
+	return hiddenIn((await tx.doc(VersionsDoc, leader)).hidden, agent.calledAt);
+}
+
+/** A report with a line of fact before its text. */
+function withFact(report: string, fact: string): string {
+	const open = report.indexOf("\n");
+	return `${report.slice(0, open + 1)}${fact}\n\n${report.slice(open + 1)}`;
+}
+
 type Agent = {
 	conversationId: ConversationId;
 	/** Answers reported by `Reporter`s, the per-message reports of before run-end reports. */
 	reported: EntryId[];
+	/** The newest entry of this chat when the subagent was last given work (spawn or send). */
+	calledAt?: EntryId;
 };
+
+/** How many levels of subagents a chat may have below it, unless Settings change it (`SettingsDoc.subagentDepth`). */
+export const DEFAULT_SUBAGENT_DEPTH = 2;
+export const MAX_SUBAGENT_DEPTH = 5;
+
+/** How deep a conversation is: 0 for a chat, 1 for its subagent, and so on, by its owners. Table reads. */
+async function depthOf(tx: Tx, id: ConversationId): Promise<number> {
+	let depth = 0;
+	for (let current: ConversationId | undefined = id; depth < 64; depth++) {
+		const owner: ConversationId | undefined = (await tx.conversation(current!))?.owner?.conversationId;
+		if (owner === undefined) break;
+		current = owner;
+	}
+	return depth;
+}
+
+/** A chat's link, as the app copies one (docs/links.md): the server by the start of its ID. */
+function chatLink(serverId: string, id: ConversationId): string {
+	return `tau://${serverId.slice(0, 8).toLowerCase()}/${id}`;
+}
+
+/**
+ * What a subagent at `depth` is told, and whether it has the subagent tool: below the depth Settings allow, it may
+ * start subagents of its own. Facts only: who started it, and where its answers go.
+ */
+async function subagentAgent(tx: Tx, name: string, leader: ConversationId, depth: number, forked: boolean): Promise<{ extensions: { add: Extension[] } | { remove: Extension[] }; instructions: string }> {
+	const limit = (await tx.doc(SettingsDoc)).subagentDepth ?? DEFAULT_SUBAGENT_DEPTH;
+	const title = (await tx.doc(MetaDoc, leader)).title;
+	const link = chatLink((await tx.doc(ServerDoc)).id, leader);
+	const chat = title === undefined ? `the chat ${link}` : `the chat "${title}" (${link})`;
+	const instructions = forked
+		? `You are the subagent "${name}", forked from ${chat}: the messages before the task are that chat's, up to where it started you. At the end of each run, your last message goes back to it as your report.`
+		: `You are the subagent "${name}" of ${chat}, which started you with the message below. At the end of each run, your last message goes back to that chat as your report.`;
+	return { extensions: depth < limit ? { add: [Subagent] } : { remove: [Subagent] }, instructions };
+}
 
 /** The conversation's subagents by name, and the `Reporter` of each message sent before run-end reports. */
 export const Subagents = defineDoc<{ agents: Record<string, Agent>; reporters: Record<string, TaskId> }>({
@@ -173,9 +227,10 @@ const RunReport = defineTask<RunReportInput, { phase: "report" }, null>({
 		report: async (task, runtime, taskContext) => {
 			const leader = await runtime.conversation(task.input.leader, taskContext);
 			await runtime.commit(async (tx) => {
+				const content = (await editedAway(tx, task.input.leader, task.input.name)) ? withFact(task.input.report, EDITED_AWAY) : task.input.report;
 				// As a steer: it starts a turn when the leader is idle, or reaches it at its next step, so a leader still
 				// working reads it then, not after its whole answer.
-				if (leader !== undefined) await leader.submit(tx, { type: "input", content: task.input.report, whenBusy: "steer", requestId: task.input.requestId });
+				if (leader !== undefined) await leader.submit(tx, { type: "input", content, whenBusy: "steer", requestId: task.input.requestId });
 				return { status: "terminal", outcome: { status: "completed", result: null } };
 			}, taskContext);
 		},
@@ -300,7 +355,9 @@ export class SubagentFailures {
 			const note = failureNote(of.name, failure.reason, failure.detail);
 			if (note === undefined) return;
 			const leader = await this.#harness.conversation(of.leader, BACKGROUND_CONTEXT);
-			const content = subagentReport(of.name, id, "failed", note);
+			const report = subagentReport(of.name, id, "failed", note);
+			const away = await leader?.commit((tx) => editedAway(tx, of.leader!, of.name!), BACKGROUND_CONTEXT);
+			const content = away === true ? withFact(report, EDITED_AWAY) : report;
 			await leader?.submit({ type: "input", content, whenBusy: "steer", requestId }, BACKGROUND_CONTEXT);
 		} catch (error) {
 			this.#sent.delete(requestId);
@@ -438,26 +495,27 @@ const subagentTool = defineTool({
 			// Tables are read before the first write.
 			// From a script, the call the model made: the script's.
 			const at = action === "spawn" && fork === true && !Object.hasOwn(state.agents, name) ? await forkPoint(tx, api.conversationId, modelCallId(api.callId)) : undefined;
+			// Where in this chat the work was given: a report says so when an edit has since hidden it (src/versions.ts).
+			const calledAt = await tx.latestEntryId(api.conversationId);
 			if (action === "spawn") {
 				if (Object.hasOwn(state.agents, name)) return { error: `${name} already exists; use send.` };
+				const depth = await depthOf(tx, api.conversationId);
 				// Owned by a background task of this conversation: its Stop and idle waits skip it.
 				const anchor = await tx.createTask(Anchor, null, { ownership: { kind: "conversation" }, background: true });
 				// Owned by a task of this conversation: it starts as a copy of this agent, and with fork, of its transcript.
 				const ownership = { kind: "task", taskId: anchor } as const;
 				const child = at === undefined ? await tx.createConversation({ ownership }) : await tx.forkConversation(api.conversationId, at, { ownership });
 				await configure(tx, child.id, {
-					extensions: { remove: [Subagent] },
-					instructions:
-						`You are the subagent "${name}". Do the task you are given and answer with what you found.` +
-						(at === undefined ? "" : " The conversation before the task is the one you were started from."),
+					...(await subagentAgent(tx, name, api.conversationId, depth + 1, at !== undefined)),
 					...(model === undefined ? {} : { model }),
 					...(thinkingLevel === undefined ? {} : { thinkingLevel: thinkingLevel === "off" ? null : thinkingLevel }),
 				});
 				(await tx.doc(MetaDoc, child.id)).title = `${name}: ${taskTitle(message)}`;
-				state.agents[name] = { conversationId: child.id, reported: [] };
+				state.agents[name] = { conversationId: child.id, reported: [], ...(calledAt === undefined ? {} : { calledAt }) };
 				await lead(tx, api.conversationId, child.id, name);
 				return { conversationId: child.id, reporter: false };
 			}
+			if (calledAt !== undefined) state.agents[name]!.calledAt = calledAt;
 			const conversationId = state.agents[name]!.conversationId;
 			// A subagent started before run-end reports, with a reporter still waiting on it: its messages go on through
 			// reporters, else it would report one answer twice. Without one, it reports its runs from now on.
@@ -500,3 +558,58 @@ export const Subagent: Extension = defineExtension({ name: "subagent", tasks: [A
 
 // The report of a subagent's runs: in an extension of its own, which subagents keep (they leave out `subagent`).
 export const SubagentReports: Extension = defineExtension({ name: "subagent-reports", tasks: [RunReport], hooks: [reportAfterRun] });
+
+/** A subagent to copy into a fork, as it was at the fork point, with its own subagents. */
+export type SubagentCopy = { name: string; from: ConversationId; at: EntryId; title?: string; forked: boolean; children: SubagentCopy[] };
+
+/**
+ * The subagents of `leader` started before entry `before`, each at its newest entry below it: what a fork at that point
+ * copies (docs/edits-and-forks.md). Entry IDs are global and ordered, so "as it was at the fork point" is exact. Read
+ * before the fork's commit, whose `init` may not read tables.
+ */
+export async function subagentCopies(harness: Harness, leader: ConversationId, before: EntryId, context: Context): Promise<SubagentCopy[]> {
+	const agents = (await harness.snapshot(Subagents, leader, context))?.agents ?? {};
+	const copies: SubagentCopy[] = [];
+	for (const [name, agent] of Object.entries(agents)) {
+		if (agent.conversationId >= before) continue;
+		const conversation = await harness.conversation(agent.conversationId, context);
+		if (conversation === undefined) continue;
+		const last = (await conversation.entries({ maxEntryId: (before - 1) as EntryId, order: "descending" }, 1, undefined, context)).items[0];
+		if (last === undefined) continue;
+		const title = (await harness.snapshot(MetaDoc, agent.conversationId, context))?.title;
+		const record = await conversation.commit((tx) => tx.conversation(agent.conversationId), context);
+		copies.push({
+			name,
+			from: agent.conversationId,
+			at: last.id,
+			...(title === undefined ? {} : { title }),
+			forked: record?.parent !== undefined,
+			children: await subagentCopies(harness, agent.conversationId, before, context),
+		});
+	}
+	return copies;
+}
+
+/**
+ * Makes the copies in a fork's commit (writes only): each a fork of its subagent, owned by an anchor of `leader`, told
+ * who its leader is now, and reporting there. `depth` is the copies' depth.
+ */
+export async function makeSubagentCopies(tx: Tx, leader: ConversationId, copies: readonly SubagentCopy[], depth: number): Promise<void> {
+	const state = await tx.doc(Subagents, leader);
+	for (const copy of copies) {
+		const anchor = await tx.createTask(Anchor, null, { ownership: { kind: "conversation" }, background: true, conversationId: leader });
+		const child = await tx.forkConversation(copy.from, copy.at, { ownership: { kind: "task", taskId: anchor } });
+		await configure(tx, child.id, await subagentAgent(tx, copy.name, leader, depth, copy.forked));
+		if (copy.title !== undefined) (await tx.doc(MetaDoc, child.id)).title = copy.title;
+		state.agents[copy.name] = { conversationId: child.id, reported: [] };
+		await lead(tx, leader, child.id, copy.name);
+		await makeSubagentCopies(tx, child.id, copy.children, depth + 1);
+	}
+}
+
+/** What a fork is told: whose fork it is. Facts only. */
+export function forkInstructions(serverId: string, title: string | undefined, source: ConversationId): string {
+	const link = chatLink(serverId, source);
+	const chat = title === undefined ? `the chat ${link}` : `the chat "${title}" (${link})`;
+	return `This chat is a fork of ${chat}: the messages up to where it was forked are that chat's.`;
+}
