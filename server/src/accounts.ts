@@ -170,6 +170,17 @@ export class Accounts implements CredentialStore {
 		});
 	}
 
+	/** Who the account is, once the provider said: for one added without it. */
+	identify(id: string, info: { email?: string; plan?: string }): Promise<void> {
+		return this.#queue(async () => {
+			const account = this.#find(id);
+			if (info.email === undefined || account.email !== undefined) return;
+			account.email = info.email;
+			if (info.plan !== undefined) account.plan = info.plan;
+			this.#save();
+		});
+	}
+
 	rename(id: string, label: string): Promise<void> {
 		return this.#queue(async () => {
 			const account = this.#find(id);
@@ -346,9 +357,24 @@ export class AccountsService {
 		this.#unsubscribe = stop;
 	}
 
-	/** Starts asking for usage, now and every few minutes. */
+	/** Starts asking for usage, now and every few minutes; asks who the accounts added without it are. */
 	start(): void {
 		this.usage.start();
+		void this.#identifyMissing();
+	}
+
+	async #identifyMissing(): Promise<void> {
+		for (const account of this.accounts.all()) {
+			if (account.email !== undefined || account.credential.type !== "oauth") continue;
+			const own = this.#identities[account.provider];
+			try {
+				const credential = await this.usage.fresh(account);
+				const info = await (own === undefined ? identify(account.provider, credential, this.usage.fetch) : own(credential));
+				await this.accounts.identify(account.id, info);
+			} catch {
+				// Asked again at the next start
+			}
+		}
 	}
 
 	close(): void {

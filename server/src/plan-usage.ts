@@ -257,6 +257,11 @@ export class PlanUsage {
 		return account.credential.type === "oauth" && this.#fetchers[account.provider] !== undefined;
 	}
 
+	/** The account's OAuth credential, refreshed when it is about to expire. */
+	fresh(account: StoredAccount): Promise<OAuthCredential> {
+		return this.#fresh(account, false);
+	}
+
 	/** The account's OAuth credential, refreshed when it is about to expire, or `force`d (the provider refused it). */
 	async #fresh(account: StoredAccount, force: boolean): Promise<OAuthCredential> {
 		const stale = (credential: OAuthCredential) => force || credential.expires < Date.now() + REFRESH_MARGIN_MS;
