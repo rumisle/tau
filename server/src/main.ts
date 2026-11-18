@@ -23,7 +23,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:f
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { FileCredentialStore } from "./credentials.ts";
+import { Accounts } from "./accounts.ts";
 import { DEV_MODEL } from "./dev-model.ts";
 import { directory } from "./fs.ts";
 import { openHost } from "./host.ts";
@@ -94,14 +94,15 @@ if (token === undefined && !isLoopback(values.host) && !values["no-auth"]) {
 
 const database = values.memory ? undefined : databasePath();
 const model = parseModel(values.model ?? `${DEV_MODEL.provider}/${DEV_MODEL.modelId}`);
-const credentials = new FileCredentialStore();
+// The logins to model providers, beside the database (docs/accounts.md); in memory with --memory.
+const accounts = new Accounts(database === undefined ? undefined : `${database.replace(/\.db$/, "")}.accounts.json`);
 const host = await openHost({
 	...(database === undefined ? {} : { database }),
 	model,
 	...(values.cwd === undefined ? {} : { cwd: await directory(values.cwd.startsWith("~") ? values.cwd : resolve(values.cwd)) }),
 	...(values["dev-tps"] === undefined ? {} : { devTokensPerSecond: Number(values["dev-tps"]) }),
 	...(values["dev-cache-ttl"] === undefined ? {} : { devCacheTtl: Number(values["dev-cache-ttl"]) }),
-	credentials,
+	accounts,
 	...(values["command-scopes"] ? { commandScopes: values["command-slice"] === undefined ? {} : { slice: values["command-slice"] } } : {}),
 });
 if (host.models.getModel(model.provider, model.modelId) === undefined) {
@@ -124,7 +125,7 @@ console.log(`  cwd      ${host.cwd}`);
 console.log(`  server   ${host.serverId}`);
 console.log(`  apns     ${apns === undefined ? "none" : apns instanceof PushRelay ? `relay ${apns.url}` : `key ${apns.keyId}, team ${apns.teamId}`}`);
 console.log(`  web      ${web === undefined ? "none" : web.dir}`);
-console.log(`  auth     ${token === undefined ? "none" : process.env.TAU_TOKEN ? "token (TAU_TOKEN)" : `token (${values["token-file"]})`} (credentials: ${credentials.path})`);
+console.log(`  auth     ${token === undefined ? "none" : process.env.TAU_TOKEN ? "token (TAU_TOKEN)" : `token (${values["token-file"]})`} (accounts: ${accounts.path ?? "memory"})`);
 
 let stopping = false;
 const stop = async (): Promise<void> => {

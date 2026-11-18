@@ -46,8 +46,8 @@ Each run rewrites the service unit, reloads systemd and restarts the server. `ta
 run setup, so they change none of this. For a throwaway setup beside a real one: `TAU_LIB`, `TAU_CONFIG`, `TAU_BIN`,
 `TAU_UNIT`, `TAU_UNITS` (a units directory such as `$XDG_RUNTIME_DIR/systemd/user`, enabled until reboot only) and
 `TAU_COMMAND_SLICE` (written into the flags with `--command-scopes`), and flags with a `--data` and `--port` of its own.
-Model logins are the pi CLI's (`~/.pi/agent/auth.json`) or the
-providers' API keys. The repository is private for now: give `TAU_GITHUB_TOKEN` (or `GITHUB_TOKEN`) to download.
+Model logins are added in the app's Accounts tab (docs/accounts.md), kept in `tau.accounts.json` beside the
+database; providers' API keys in the server's environment work too. The repository is private for now: give `TAU_GITHUB_TOKEN` (or `GITHUB_TOKEN`) to download.
 
 ## Upgrade, roll back
 

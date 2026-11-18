@@ -32,6 +32,7 @@ import { clientDocs, clientEntry, clientOp } from "./outgoing.ts";
 import { forkInstructions, makeSubagentCopies, MAX_SUBAGENT_DEPTH, Subagent, subagentCopies } from "./subagent.ts";
 import { EDIT_KIND, editInPlace, switchVersion, VERSION_KIND, VersionError, VersionsDoc } from "./versions.ts";
 import { CompactionsDoc } from "./compactions.ts";
+import { AccountError } from "./accounts.ts";
 import type { KindName } from "./search/index.ts";
 import type { Search } from "./search/service.ts";
 import { CreatesDoc, type Host, MetaDoc } from "./host.ts";
@@ -123,6 +124,7 @@ export class Connection {
 	readonly #subscriptions = new Map<ConversationId, Subscription>();
 	readonly #cleanups: (() => void)[] = [];
 	#stopDialogs: (() => void) | undefined;
+	#stopAccounts: (() => void) | undefined;
 	#hello = false;
 	#closed = false;
 	readonly #notifier: Notifier | undefined;
@@ -186,6 +188,24 @@ export class Connection {
 				this.#send(`{${request.id === undefined ? "" : `"id":${JSON.stringify(request.id)},`}"result":${this.#dialogs.serializedList(since)}}`);
 				return;
 			}
+			if (request.method === "accounts.subscribe") {
+				if (!this.#hello) throw new ProtocolError("bad_request", "Send hello first");
+				// The listener first: a change while the state is made comes as an event after the response.
+				let ready = false;
+				const queued: unknown[] = [];
+				this.#stopAccounts ??= this.#host.accounts.onChange((state) => {
+					if (ready) this.#push({ event: "accounts", state });
+					else queued.push(state);
+				});
+				const state = await this.#host.accounts.state();
+				this.#push({ id: request.id, result: state });
+				ready = true;
+				const last = queued.at(-1);
+				if (last !== undefined) this.#push({ event: "accounts", state: last });
+				// Numbers a minute old or more are asked again: the tab was opened to see them.
+				if (state.accounts.some((account) => account.usage === undefined || Date.now() - account.usage.at > 60_000)) void this.#host.accounts.refresh();
+				return;
+			}
 			if (request.method === "conversation.subscribe") {
 				if (!this.#hello) throw new ProtocolError("bad_request", "Send hello first");
 				const { id, subscription, result } = await this.#subscribe(params);
@@ -217,6 +237,7 @@ export class Connection {
 		this.#cancel();
 		for (const cleanup of this.#cleanups) cleanup();
 		this.#stopDialogs?.();
+		this.#stopAccounts?.();
 		const watches = [...this.#subscriptions.values()].map((subscription) => subscription.watch.stop());
 		this.#subscriptions.clear();
 		await Promise.allSettled(watches);
@@ -329,6 +350,29 @@ export class Connection {
 				if (image === undefined) throw new ProtocolError("not_found", `Entry ${entryId} has no image ${index}`);
 				return { mimeType: image.mimeType, data: image.data };
 			}
+			case "accounts.refresh":
+				await this.#host.accounts.refresh();
+				return {};
+			case "accounts.login": {
+				const type = str(params, "type");
+				if (type !== "oauth" && type !== "api_key") throw new ProtocolError("bad_request", "type must be oauth or api_key");
+				return { login: this.#host.accounts.login(str(params, "provider"), type) };
+			}
+			case "accounts.answer":
+				this.#host.accounts.answer(str(params, "login"), str(params, "prompt"), str(params, "value"));
+				return {};
+			case "accounts.cancel":
+				this.#host.accounts.cancel(str(params, "login"));
+				return {};
+			case "accounts.use":
+				await this.#host.accounts.accounts.use(str(params, "id"));
+				return {};
+			case "accounts.rename":
+				await this.#host.accounts.accounts.rename(str(params, "id"), str(params, "label"));
+				return {};
+			case "accounts.remove":
+				await this.#host.accounts.accounts.remove(str(params, "id"));
+				return {};
 			case "usage.report": {
 				if (this.#search === undefined) throw new ProtocolError("bad_request", "Usage is not available");
 				return this.#search.report(Math.max(0, int(params, "days", true) ?? 30), int(params, "tzOffset", true) ?? 0);
@@ -1035,6 +1079,7 @@ function titleFrom(content: string | (TextContent | ImageContent)[]): string {
 function describe(error: unknown): { code: ErrorCode; message: string } {
 	if (error instanceof ProtocolError) return { code: error.code, message: error.message };
 	if (error instanceof ConversationBusy) return { code: "busy", message: error.message };
+	if (error instanceof AccountError) return { code: error.code, message: error.message };
 	const message = error instanceof Error ? error.message : String(error);
 	if (error instanceof Error && error.name === "StorageRequestError") return { code: "not_found", message };
 	return { code: "internal", message };

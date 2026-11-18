@@ -4,7 +4,9 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { CredentialStore, ModelThinkingLevel, MutableModels } from "@earendil-works/pi-ai";
+import type { ModelThinkingLevel, MutableModels } from "@earendil-works/pi-ai";
+import { Accounts, AccountsService } from "./accounts.ts";
+import { DEV_ACCOUNT_PROVIDER, devAccountIdentity, devAccountProvider, devAccountUsage } from "./dev-accounts.ts";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
@@ -119,7 +121,10 @@ export type HostOptions = {
 	model?: ModelRef;
 	/** Working directory of conversations that set none; default the home directory. */
 	cwd?: string;
-	credentials?: CredentialStore;
+	/** The logins to model providers (src/accounts.ts); default none, in memory. */
+	accounts?: Accounts;
+	/** Instead of the global fetch, for the accounts' usage and profile requests: tests. */
+	accountsFetch?: typeof fetch;
 	/** Speed of the dev model, for tests. */
 	devTokensPerSecond?: number;
 	/** A prompt cache lifetime for the dev model, in seconds, with prices to make warming it pay: to try warming. */
@@ -141,6 +146,8 @@ export type Host = {
 	readonly harness: Harness;
 	readonly storage: Storage;
 	readonly models: MutableModels;
+	/** The logins to model providers, their logins in progress and usage (docs/accounts.md). */
+	readonly accounts: AccountsService;
 	readonly serverId: string;
 	/** The SQLite file, when not in memory. */
 	readonly database?: string;
@@ -192,7 +199,8 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const cwd = options.cwd ?? homedir();
 	let defaultModel = options.model ?? DEV_MODEL;
 
-	const models = createModels({ credentials: options.credentials });
+	const accountsFile = options.accounts ?? new Accounts();
+	const models = createModels({ credentials: accountsFile });
 	for (const provider of builtinProviders()) models.setProvider(provider);
 	models.setProvider(devProvider({ tokensPerSecond: options.devTokensPerSecond, cacheTtl: options.devCacheTtl }).provider);
 	let cacheWarming: CacheWarmingMode = "idle";
@@ -245,6 +253,17 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		}),
 	);
 
+	// A dev server's (the app's tests): a provider to sign in to without a browser, with usage.
+	const devAccounts = options.devTokensPerSecond !== undefined;
+	if (devAccounts) models.setProvider(devAccountProvider() as never);
+	const accounts = new AccountsService({
+		accounts: accountsFile,
+		models,
+		...(devAccounts ? { usage: { [DEV_ACCOUNT_PROVIDER]: devAccountUsage }, identities: { [DEV_ACCOUNT_PROVIDER]: devAccountIdentity } } : {}),
+		deviceId: () => opened?.serverId ?? "tau",
+		...(options.accountsFetch === undefined ? {} : { fetch: options.accountsFetch }),
+	});
+
 	let storage: Storage;
 	if (options.database === undefined) storage = new MemoryStorage();
 	else {
@@ -263,7 +282,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const harness = await Harness.open(
 		storage,
 		{
-			models: cache.wrap(models),
+			models: cache.wrap(accounts.usage.wrap(models)),
 			registry,
 			settings: () => settings,
 			env: ({ cwd: conversationCwd }) => new NodeExecutionEnv({ cwd: conversationCwd ?? cwd, ...(scopes === undefined ? {} : { shellPath: scopes.shellPath }) }),
@@ -296,6 +315,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		updateSettings();
 	}
 	opened = { harness, serverId };
+	accounts.start();
 	// Continue runs the last process left unfinished.
 	harness.resume();
 	// Subagents' failed runs, told to their leaders; those a stop of the server came between at once.
@@ -306,6 +326,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		harness,
 		storage,
 		models,
+		accounts,
 		serverId,
 		...(options.database === undefined ? {} : { database: options.database }),
 		get defaultModel() {
@@ -364,6 +385,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		images,
 		history,
 		close: async () => {
+			accounts.close();
 			cache.close();
 			compactions.close();
 			subagentFailures.close();

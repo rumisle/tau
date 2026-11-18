@@ -505,7 +505,7 @@ UNIT
 	if [ -n "$name" ]; then
 		say "From elsewhere, once \`tailscale serve --bg ${port:-7878}\` gives it HTTPS: https://$name/#token=$(cat "$config/token")"
 	fi
-	say "Model logins: the pi CLI's (~/.pi/agent/auth.json) or the providers' API keys in your shell's environment."
+	say "Model logins: add them in the app's Accounts tab, or give the providers' API keys in your shell's environment."
 }
 
 command="${1:-}"

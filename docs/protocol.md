@@ -165,6 +165,19 @@ type Totals = { cost: number; input: number; output: number; cacheRead: number; 
 (docs/media.md). `not_found` when the entry has no such image. A photo the user sent is a file too, named in its
 message's attachments block: fetch that with `GET /files/<id>` instead, beside the socket.
 
+### `accounts.subscribe`, `accounts.*`
+
+The server's logins to model providers, their logins in progress and their plan usage (docs/accounts.md, which has
+the types). `accounts.subscribe {}` -> `AccountsState`, then `{ event: "accounts", state: AccountsState }` after every
+change, the whole state each time; usage a minute old or more is asked for again on subscribe.
+
+- `accounts.refresh {}` -> `{}` once every subscription account's usage was asked for.
+- `accounts.login { provider, type: "oauth" | "api_key" }` -> `{ login }`; the login's events and its prompt are in
+  the state's `logins`. `accounts.answer { login, prompt, value }` -> `{}` (`bad_request` when that prompt is no longer
+  asked); `accounts.cancel { login }` -> `{}`.
+- `accounts.use { id }`, `accounts.rename { id, label }` (empty: no label), `accounts.remove { id }` -> `{}`;
+  `not_found` for an unknown ID.
+
 ### `dialogs.subscribe`
 `{ since?: string }` -> `{ dialogs: Dialog[], version: string, full: boolean }`, then `{ event: "dialog", dialog, version }`
 events.
