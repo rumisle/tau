@@ -83,7 +83,7 @@ final class AccountsController: SettingsListController {
         for server in self.context.store.servers {
             let stale = server.accountsState?.accounts.contains { $0.type == "oauth" && Date().timeIntervalSince($0.usage?.at ?? .distantPast) > 60 } ?? false
             if stale {
-                server.refreshAccounts()
+                server.refreshAccounts(nil)
             }
         }
         // Reset times count down while the tab shows.
@@ -101,84 +101,72 @@ final class AccountsController: SettingsListController {
         self.ticker = nil
     }
 
-    override func items(theme: TauTheme) -> [ListViewItem] {
-        let store = self.context.store
-        let servers = store.servers
-        var items: [ListViewItem] = []
-        let several = servers.count > 1
-        for server in servers {
-            let slot = server.slot
-            guard let state = self.states[slot] else {
-                if several {
-                    items.append(SettingsTextItem(theme: theme, text: server.name, kind: .header))
-                }
-                if !several {
-                    items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
-                }
-                let online = server.status == .online
-                items.append(SettingsRowItem(theme: theme, icon: nil, title: online ? "Not Available" : "Connecting…", titleColor: theme.list.itemSecondaryTextColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: true), action: nil))
-                if online {
-                    items.append(SettingsTextItem(theme: theme, text: "\(server.name) is too old to manage its accounts here: update it.", kind: .footer))
-                }
-                continue
-            }
-            // By service, in the order the server has the providers: a subscription's sign-in first, then keys.
-            let groups = Dictionary(grouping: state.accounts) { "\($0.serviceName)" }
-            let order = state.accounts.map(\.serviceName).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-            let sorted = order.sorted { lhs, rhs in
-                let lhsKey = groups[lhs]?.contains { $0.type == "oauth" } == true ? 0 : 1
-                let rhsKey = groups[rhs]?.contains { $0.type == "oauth" } == true ? 0 : 1
-                return lhsKey < rhsKey
-            }
-            if several {
-                items.append(SettingsTextItem(theme: theme, text: server.name, kind: .header))
-            }
-            if state.accounts.isEmpty {
-                if !several {
-                    items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
-                }
-                items.append(SettingsRowItem(theme: theme, icon: nil, title: "No accounts yet", titleColor: theme.list.itemSecondaryTextColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: false), action: nil))
-                items.append(self.addRow(theme: theme, slot: slot, position: SettingsRowPosition(isFirst: false, isLast: true)))
-            } else {
-                for (groupIndex, name) in sorted.enumerated() {
-                    let accounts = groups[name] ?? []
-                    items.append(SettingsTextItem(theme: theme, text: several && groupIndex == 0 ? "\(name)" : name, kind: .header))
-                    for (index, account) in accounts.enumerated() {
-                        items.append(AccountRowItem(theme: theme, account: account, position: SettingsRowPosition(isFirst: index == 0, isLast: index == accounts.count - 1), action: { [weak self] in
-                            guard let self else {
-                                return
-                            }
-                            self.push(AccountController(context: self.context, slot: slot, accountId: account.id))
-                        }))
-                    }
-                }
-                items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
-                items.append(self.addRow(theme: theme, slot: slot, position: SettingsRowPosition(isFirst: true, isLast: true)))
-            }
-            if !state.ambient.isEmpty {
-                items.append(SettingsTextItem(theme: theme, text: "From the Server's Environment", kind: .header))
-                for (index, ambient) in state.ambient.enumerated() {
-                    items.append(SettingsRowItem(theme: theme, icon: nil, title: ambient.providerName, subtitle: ambient.source, accessory: .none, position: SettingsRowPosition(isFirst: index == 0, isLast: index == state.ambient.count - 1), action: nil))
-                }
-            }
-            if let footer = self.footer(state) {
-                items.append(SettingsTextItem(theme: theme, text: footer, kind: .footer))
-            }
+    /// The server shown, when there are several: the one picked last.
+    private var selectedSlot: Int? {
+        get {
+            return UserDefaults.standard.object(forKey: "accounts.server") as? Int
         }
-        return items
+        set {
+            UserDefaults.standard.set(newValue, forKey: "accounts.server")
+        }
     }
 
-    /// When the numbers are from, once there are any.
-    private func footer(_ state: AccountsState) -> String? {
-        let times = state.accounts.compactMap { $0.usage?.at }.filter { $0.timeIntervalSince1970 > 0 }
-        guard let oldest = times.min() else {
-            return nil
+    override func items(theme: TauTheme) -> [ListViewItem] {
+        let servers = self.context.store.servers
+        guard !servers.isEmpty else {
+            return []
         }
-        let age = Date().timeIntervalSince(oldest)
-        if age < 90 {
-            return "Usage as of now. The tick on a bar is where an even pace would be."
+        var items: [ListViewItem] = []
+        // Several servers: Telegram's segmented control picks one, as Network Usage picks a network.
+        let index = servers.firstIndex { $0.slot == self.selectedSlot } ?? 0
+        let server = servers[index]
+        if servers.count > 1 {
+            items.append(UsageSpanItem(theme: theme, titles: servers.map(\.name), selectedIndex: index, changed: { [weak self] index in
+                guard let self, index < self.context.store.servers.count else {
+                    return
+                }
+                self.selectedSlot = self.context.store.servers[index].slot
+                self.reload()
+            }))
+        } else {
+            items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
         }
-        return "Usage as of \(durationText(until: Date(), now: oldest)) ago. The tick on a bar is where an even pace would be."
+        let slot = server.slot
+        guard let state = self.states[slot] else {
+            let online = server.status == .online
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: online ? "Not Available" : "Connecting…", titleColor: theme.list.itemSecondaryTextColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: true), action: nil))
+            if online {
+                items.append(SettingsTextItem(theme: theme, text: "\(server.name) is too old to manage its accounts here: update it.", kind: .footer))
+            }
+            return items
+        }
+        // One list: subscriptions first, then keys, as the server has them otherwise; the environment's keys; Add Account.
+        let accounts = state.accounts.filter { $0.type == "oauth" } + state.accounts.filter { $0.type != "oauth" }
+        var rows: [(SettingsRowPosition) -> ListViewItem] = []
+        for account in accounts {
+            let hasSiblings = state.accounts.contains { $0.provider == account.provider && $0.id != account.id }
+            let subtitle = accountSubtitle(account, hasSiblings: hasSiblings)
+            rows.append { position in
+                AccountRowItem(theme: theme, icon: ProviderIcon.image(provider: account.provider, name: account.providerName, size: 36.0), title: account.title, subtitle: subtitle.text, isProblem: subtitle.isProblem, windows: account.usage?.windows ?? [], position: position, action: { [weak self] in
+                    guard let self else {
+                        return
+                    }
+                    self.push(AccountController(context: self.context, slot: slot, accountId: account.id))
+                })
+            }
+        }
+        for ambient in state.ambient {
+            rows.append { position in
+                AccountRowItem(theme: theme, icon: ProviderIcon.image(provider: ambient.provider, name: ambient.providerName, size: 36.0), title: ambient.providerName, subtitle: "From \(ambient.source)", position: position, action: nil)
+            }
+        }
+        rows.append { [unowned self] position in
+            self.addRow(theme: theme, slot: slot, position: position)
+        }
+        for (index, row) in rows.enumerated() {
+            items.append(row(SettingsRowPosition(isFirst: index == 0, isLast: index == rows.count - 1)))
+        }
+        return items
     }
 
     private func addRow(theme: TauTheme, slot: Int, position: SettingsRowPosition) -> ListViewItem {

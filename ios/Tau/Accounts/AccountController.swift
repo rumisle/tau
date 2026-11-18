@@ -36,6 +36,8 @@ final class AccountController: SettingsListController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // Its numbers now: the server asks at most every 20 seconds.
+        self.server?.refreshAccounts(self.accountId)
         let ticker = SwiftSignalKit.Timer(timeout: 30.0, repeat: true, completion: { [weak self] in
             self?.reload()
         }, queue: Queue.mainQueue())
@@ -60,14 +62,10 @@ final class AccountController: SettingsListController {
         }
         let single = SettingsRowPosition(isFirst: true, isLast: true)
         var items: [ListViewItem] = []
-        var subtitle = account.serviceName
-        if let plan = account.plan {
-            subtitle += " \(plan)"
-        }
-        if account.type == "api_key" {
-            subtitle = account.keyHint.map { "\(account.providerName) key ending \($0)" } ?? "\(account.providerName) API key"
-        }
-        items.append(AccountHeaderItem(theme: theme, account: account, subtitle: account.active ? "\(subtitle), in use" : subtitle))
+        let hasSiblings = self.state?.accounts.contains { $0.provider == account.provider && $0.id != account.id } ?? false
+        // Its problem has a section of its own below.
+        let subtitle = accountSubtitle(account, hasSiblings: hasSiblings, showsProblem: false).text
+        items.append(AccountHeaderItem(theme: theme, account: account, subtitle: subtitle))
 
         if let problem = account.problem {
             items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
@@ -85,7 +83,7 @@ final class AccountController: SettingsListController {
                 self.server?.useAccount(account.id)
                 self.present(UndoOverlayController(presentationData: self.theme.presentationData, content: .succeed(text: "**\(account.title)** in use for \(account.serviceName)", timeout: nil, customUndoText: nil), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .current)
             }))
-            items.append(SettingsTextItem(theme: theme, text: "Every chat on \(self.server?.name ?? "the server") that uses \(account.serviceName) uses it from its next request.", kind: .footer))
+            items.append(SettingsTextItem(theme: theme, text: "Chats on \(self.server?.name ?? "the server") use it from their next request.", kind: .footer))
         }
 
         if let usage = account.usage, !usage.windows.isEmpty {
@@ -96,22 +94,19 @@ final class AccountController: SettingsListController {
             if let credits = usage.credits {
                 items.append(SettingsRowItem(theme: theme, icon: nil, title: "Beyond the Plan", accessory: .value(credits), position: SettingsRowPosition(isFirst: false, isLast: true), action: nil))
             }
-            var footer = usage.at.timeIntervalSince1970 > 0 ? (Date().timeIntervalSince(usage.at) < 90 ? "As of now." : "As of \(durationText(until: Date(), now: usage.at)) ago.") : ""
-            if let error = usage.error {
-                footer += " The last update failed: \(error)"
+            // When the numbers are from; a failed update since leaves them, and says nothing.
+            if usage.at.timeIntervalSince1970 > 0 {
+                items.append(SettingsTextItem(theme: theme, text: usageUpdatedText(usage.at), kind: .footer))
             }
-            items.append(SettingsTextItem(theme: theme, text: footer.trimmingCharacters(in: .whitespaces), kind: .footer))
-        } else if let error = account.usage?.error {
+        } else if account.usage?.error != nil {
             items.append(SettingsTextItem(theme: theme, text: "Usage", kind: .header))
             items.append(SettingsRowItem(theme: theme, icon: nil, title: "Unavailable", titleColor: theme.list.itemSecondaryTextColor, accessory: .none, position: single, action: nil))
-            items.append(SettingsTextItem(theme: theme, text: error, kind: .footer))
         }
 
         items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
         items.append(SettingsRowItem(theme: theme, icon: nil, title: "Name", accessory: .disclosure(label: account.label ?? ""), position: single, action: { [weak self] in
             self?.rename(account)
         }))
-        items.append(SettingsTextItem(theme: theme, text: "What this app calls the account. Empty for \(account.email ?? "the provider's name for it").", kind: .footer))
 
         items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
         items.append(SettingsRowItem(theme: theme, icon: nil, title: "Sign Out", titleColor: theme.list.itemDestructiveColor, accessory: .none, position: single, action: { [weak self] in
@@ -123,7 +118,7 @@ final class AccountController: SettingsListController {
     private func rename(_ account: ProviderAccount) {
         let slot = self.slot
         let store = self.context.store
-        let alert = fieldsAlertController(context: self.context.telegram, presentationData: self.theme.presentationData, title: "Account Name", text: "What this app calls the account.", fields: [
+        let alert = fieldsAlertController(context: self.context.telegram, presentationData: self.theme.presentationData, title: "Account Name", text: nil, fields: [
             AlertField(placeholder: account.email ?? account.serviceName, value: account.label),
         ], apply: { values in
             store.server(slot)?.renameAccount(account.id, label: values[0])
@@ -142,11 +137,7 @@ final class AccountController: SettingsListController {
         let presentationData = self.theme.presentationData
         let server = self.server
         let actionSheet = ActionSheetController(presentationData: presentationData)
-        let others = self.state?.accounts.filter { $0.provider == account.provider && $0.id != account.id } ?? []
-        var text = "\(account.title) is removed from \(server?.name ?? "the server")."
-        if account.active {
-            text += others.isEmpty ? " Chats that use \(account.serviceName) stop working until another account is added." : " \(others.last?.title ?? "Another account") is used instead."
-        }
+        let text = "\(account.title) will be signed out from \(server?.name ?? "the server")."
         actionSheet.setItemGroups([
             ActionSheetItemGroup(items: [
                 ActionSheetTextItem(title: text),
@@ -201,7 +192,7 @@ final class AccountHeaderItemNode: SyncListItemNode {
             return ListViewItemNodeLayout(contentSize: CGSize(), insets: UIEdgeInsets())
         }
         let avatarSize: CGFloat = 90.0
-        self.avatarNode.image = accountAvatar(item.account, diameter: avatarSize)
+        self.avatarNode.image = ProviderIcon.image(provider: item.account.provider, name: item.account.providerName, size: avatarSize)
         self.titleNode.attributedText = NSAttributedString(string: item.account.title, font: Font.semibold(24.0), textColor: item.theme.list.itemPrimaryTextColor)
         self.titleNode.maximumNumberOfLines = 1
         self.titleNode.truncationType = .middle
@@ -217,4 +208,9 @@ final class AccountHeaderItemNode: SyncListItemNode {
         self.accessibilityValue = item.subtitle
         return ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: self.subtitleNode.frame.maxY), insets: UIEdgeInsets(top: 12.0, left: 0.0, bottom: 4.0, right: 0.0))
     }
+}
+
+/// "Usage updated now", "Usage updated 2m ago".
+func usageUpdatedText(_ date: Date, now: Date = Date()) -> String {
+    return now.timeIntervalSince(date) < 60 ? "Usage updated now" : "Usage updated \(durationText(until: now, now: date)) ago"
 }

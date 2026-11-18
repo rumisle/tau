@@ -516,7 +516,7 @@ final class MockStore: TauStore, TauServer {
         return state
     }
 
-    func refreshAccounts() {
+    func refreshAccounts(_ id: String?) {
     }
 
     /// A device code shown, then the account added a few seconds later, as if signed in on the page.

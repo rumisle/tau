@@ -47,11 +47,10 @@ final class AddAccountController: SettingsListController {
         items.append(SettingsTextItem(theme: theme, text: "Sign In", kind: .header))
         for (index, provider) in signIns.enumerated() {
             let title = ProviderAccount.serviceName(provider: provider.id, providerName: provider.name, subscription: true)
-            items.append(SettingsRowItem(theme: theme, icon: nil, title: title, subtitle: provider.oauthName, accessory: .disclosure(label: ""), position: SettingsRowPosition(isFirst: index == 0, isLast: index == signIns.count - 1), action: { [weak self] in
+            items.append(SettingsRowItem(theme: theme, icon: ProviderIcon.image(provider: provider.id, name: provider.name, size: 30.0), title: title, subtitle: provider.oauthName, accessory: .disclosure(label: ""), position: SettingsRowPosition(isFirst: index == 0, isLast: index == signIns.count - 1), action: { [weak self] in
                 self?.login(provider, type: "oauth")
             }))
         }
-        items.append(SettingsTextItem(theme: theme, text: "With a subscription: its usage shows here. The server signs in; a code to enter or to paste back connects it to this account.", kind: .footer))
 
         let keys = providers.filter { $0.apiKeyName != nil }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         items.append(SettingsTextItem(theme: theme, text: "API Key", kind: .header))
@@ -59,11 +58,10 @@ final class AddAccountController: SettingsListController {
             let keyName = provider.apiKeyName ?? ""
             // "Anthropic API key" says nothing more than "Anthropic"; "AWS credentials or bearer token" does.
             let subtitle = keyName.hasPrefix(provider.name) ? nil : keyName
-            items.append(SettingsRowItem(theme: theme, icon: nil, title: provider.name, subtitle: subtitle, accessory: .disclosure(label: ""), position: SettingsRowPosition(isFirst: index == 0, isLast: index == keys.count - 1), action: { [weak self] in
+            items.append(SettingsRowItem(theme: theme, icon: ProviderIcon.image(provider: provider.id, name: provider.name, size: 30.0), title: provider.name, subtitle: subtitle, accessory: .disclosure(label: ""), position: SettingsRowPosition(isFirst: index == 0, isLast: index == keys.count - 1), action: { [weak self] in
                 self?.login(provider, type: "api_key")
             }))
         }
-        items.append(SettingsTextItem(theme: theme, text: "Kept on the server, never on this phone.", kind: .footer))
         return items
     }
 

@@ -526,8 +526,8 @@ final class ServerStore: ConversationStore, TauServer {
         }
     }
 
-    func refreshAccounts() {
-        self.connection.request("accounts.refresh") { _ in }
+    func refreshAccounts(_ id: String?) {
+        self.connection.request("accounts.refresh", id.map { ["id": $0] } ?? [:]) { _ in }
     }
 
     func startLogin(provider: String, type: String, completion: @escaping (Result<String, RequestError>) -> Void) {

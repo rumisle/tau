@@ -50,8 +50,8 @@ protocol TauServer: AnyObject {
     /// said, and from a server too old to have them.
     var accountsState: AccountsState? { get }
     var accountsSignal: Signal<AccountsState?, NoError> { get }
-    /// Asks every subscription account's usage now.
-    func refreshAccounts()
+    /// Asks an account's usage now (its screen opened), or every subscription account's.
+    func refreshAccounts(_ id: String?)
     /// Starts a login on the server: `completion` gets its ID, or the reason it did not start.
     func startLogin(provider: String, type: String, completion: @escaping (Result<String, RequestError>) -> Void)
     func answerLogin(_ login: String, prompt: String, value: String, completion: @escaping (RequestError?) -> Void)

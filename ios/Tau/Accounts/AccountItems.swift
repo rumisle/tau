@@ -214,35 +214,57 @@ private func textSize(_ text: NSAttributedString, width: CGFloat) -> CGSize {
 
 // MARK: - An account
 
-/// A letter avatar: the initial of the account's name or email, or of its provider for a key; its color stays with
-/// the account.
-func accountAvatar(_ account: ProviderAccount, diameter: CGFloat) -> UIImage? {
-    let name = account.label ?? account.email ?? account.providerName
-    let color = account.id.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff }
-    return Avatar.image(letters: Avatar.letters(name), colorIndex: color, diameter: diameter)
+/// What an account's row says under its name: the service and plan, or what it is; with "in use" when the provider has
+/// others; or why it needs signing in again.
+func accountSubtitle(_ account: ProviderAccount, hasSiblings: Bool, showsProblem: Bool = true) -> (text: String, isProblem: Bool) {
+    if showsProblem && account.problem != nil {
+        return ("Sign in again", true)
+    }
+    var text: String
+    if account.type == "api_key" {
+        text = "\(account.providerName) API key"
+        if account.label != nil, let hint = account.keyHint {
+            text += " ending \(hint)"
+        }
+    } else {
+        text = account.serviceName + (account.plan.map { " \($0)" } ?? "")
+    }
+    if hasSiblings && account.active {
+        text += ", in use"
+    }
+    return (text, false)
 }
 
-/// An account: who it is, its plan, its usage in small bars or why it has none; a check on the one in use.
+/// A row of the accounts: the provider's logo, a name, what it is under it, and its usage at the right in two small
+/// bars when its plan has any. Keys from the server's environment are rows of the same kind, without an action.
 final class AccountRowItem: SyncListItem {
     let theme: TauTheme
-    let account: ProviderAccount
+    let icon: UIImage?
+    let title: String
+    let subtitle: String
+    let isProblem: Bool
+    let windows: [UsageWindow]
     let position: SettingsRowPosition
-    let action: () -> Void
+    let action: (() -> Void)?
 
-    init(theme: TauTheme, account: ProviderAccount, position: SettingsRowPosition, action: @escaping () -> Void) {
+    init(theme: TauTheme, icon: UIImage?, title: String, subtitle: String, isProblem: Bool = false, windows: [UsageWindow] = [], position: SettingsRowPosition, action: (() -> Void)?) {
         self.theme = theme
-        self.account = account
+        self.icon = icon
+        self.title = title
+        self.subtitle = subtitle
+        self.isProblem = isProblem
+        self.windows = windows
         self.position = position
         self.action = action
     }
 
     override var selectable: Bool {
-        return true
+        return self.action != nil
     }
 
     override func selected(listView: ListView) {
         listView.clearHighlightAnimated(true)
-        self.action()
+        self.action?()
     }
 
     override func makeNode() -> SyncListItemNode {
@@ -252,19 +274,16 @@ final class AccountRowItem: SyncListItem {
 
 final class AccountRowItemNode: SyncListItemNode {
     private var background: SectionBackground!
-    private let avatarNode = ASImageNode()
+    private let iconNode = ASImageNode()
     private let titleNode = ImmediateTextNode()
-    private let planNode = ImmediateTextNode()
-    private let detailNode = ImmediateTextNode()
-    private let checkNode = ASImageNode()
+    private let subtitleNode = ImmediateTextNode()
     private var windowNodes: [(label: ImmediateTextNode, bar: UsageBarNode, value: ImmediateTextNode)] = []
 
     override init() {
         super.init()
         self.background = SectionBackground(in: self)
-        self.avatarNode.displaysAsynchronously = false
-        self.checkNode.displaysAsynchronously = false
-        for node in [self.avatarNode, self.titleNode, self.planNode, self.detailNode, self.checkNode] as [ASDisplayNode] {
+        self.iconNode.displaysAsynchronously = false
+        for node in [self.iconNode, self.titleNode, self.subtitleNode] as [ASDisplayNode] {
             self.addSubnode(node)
         }
     }
@@ -279,60 +298,20 @@ final class AccountRowItemNode: SyncListItemNode {
             return ListViewItemNodeLayout(contentSize: CGSize(), insets: UIEdgeInsets())
         }
         let theme = item.theme
-        let account = item.account
         let sectionLeft = params.leftInset + sectionSideInset
         let sectionWidth = params.width - params.leftInset - params.rightInset - sectionSideInset * 2.0
-        let avatarSize: CGFloat = 40.0
-        let contentLeft = sectionLeft + 16.0 + avatarSize + 12.0
+        let iconSize: CGFloat = 36.0
+        let contentLeft = sectionLeft + 16.0 + iconSize + 12.0
         let right = sectionLeft + sectionWidth - 16.0
-        // The same for every row, so that the bars of the rows line up.
-        let checkWidth: CGFloat = 30.0
+        let windows = Array(item.windows.prefix(2))
 
-        self.avatarNode.image = accountAvatar(account, diameter: avatarSize)
-
-        self.planNode.attributedText = account.plan.map { NSAttributedString(string: $0, font: Font.medium(theme.scaled(13.0)), textColor: theme.list.itemSecondaryTextColor) }
-        let planSize = self.planNode.updateLayout(CGSize(width: 100.0, height: 30.0))
-        self.titleNode.attributedText = NSAttributedString(string: account.title, font: Font.regular(theme.scaled(17.0)), textColor: theme.list.itemPrimaryTextColor)
-        self.titleNode.maximumNumberOfLines = 1
-        self.titleNode.truncationType = .end
-        let titleSize = self.titleNode.updateLayout(CGSize(width: right - checkWidth - contentLeft - (planSize.width > 0 ? planSize.width + 8.0 : 0.0), height: 40.0))
-
-        let windows = Array((account.usage?.windows ?? []).prefix(2))
-        var detail: String?
-        var detailColor = theme.list.itemSecondaryTextColor
-        if let problem = account.problem {
-            detail = "Sign in again: \(problem)"
-            detailColor = colorRed
-        } else if windows.isEmpty {
-            if let hint = account.keyHint {
-                detail = account.label != nil ? "Key ending \(hint)" : "API key"
-            } else if account.type == "api_key" {
-                detail = "API key"
-            } else if let error = account.usage?.error {
-                detail = "Usage unavailable: \(error)"
-            } else if account.label != nil, let email = account.email {
-                detail = email
-            } else {
-                detail = account.usage == nil && account.provider != "anthropic" && account.provider != "openai-codex" ? "No usage from this provider" : "Usage loading"
-            }
-        }
-        let verticalInset: CGFloat = 11.0
-        var y = verticalInset
-        let titleY = y
-        y += titleSize.height + 4.0
-        var height: CGFloat
-        if let detail {
-            self.detailNode.isHidden = false
-            self.detailNode.attributedText = NSAttributedString(string: detail, font: Font.regular(theme.scaled(14.0)), textColor: detailColor)
-            self.detailNode.maximumNumberOfLines = 1
-            self.detailNode.truncationType = .end
-            let size = self.detailNode.updateLayout(CGSize(width: right - checkWidth - contentLeft, height: 40.0))
-            self.detailNode.frame = CGRect(origin: CGPoint(x: contentLeft, y: y), size: size)
-            y += size.height
-        } else {
-            self.detailNode.isHidden = true
-        }
-        // Each window: its label, a bar, its percentage, side by side in two columns.
+        // The usage: each window a line of its label, a bar and its percentage, in columns shared by the lines.
+        let small = Font.regular(theme.scaled(12.0))
+        let numbers = Font.with(size: theme.scaled(12.0), design: .regular, weight: .medium, traits: [.monospacedNumbers])
+        let labelWidth = windows.map { ceil(NSAttributedString(string: $0.label, font: small, textColor: .black).size().width) }.max() ?? 0.0
+        let valueWidth = ceil(NSAttributedString(string: "100%", font: numbers, textColor: .black).size().width)
+        let barWidth: CGFloat = 44.0
+        let usageWidth = windows.isEmpty ? 0.0 : labelWidth + 6.0 + barWidth + 6.0 + valueWidth
         while self.windowNodes.count < windows.count {
             let entry = (label: ImmediateTextNode(), bar: UsageBarNode(), value: ImmediateTextNode())
             self.addSubnode(entry.label)
@@ -340,13 +319,26 @@ final class AccountRowItemNode: SyncListItemNode {
             self.addSubnode(entry.value)
             self.windowNodes.append(entry)
         }
-        let showsWindows = detail == nil
-        let columnWidth = floor((right - checkWidth - contentLeft - 14.0) / 2.0)
-        // The labels' column as wide as the widest, so that the bars start and end alike.
-        let labelFont = Font.regular(theme.scaled(13.0))
-        let labelWidth = windows.map { ceil(NSAttributedString(string: $0.label, font: labelFont, textColor: .black).size().width) }.max() ?? 0.0
+
+        let textWidth = right - contentLeft - (usageWidth > 0 ? usageWidth + 12.0 : 0.0)
+        self.titleNode.attributedText = NSAttributedString(string: item.title, font: Font.regular(theme.scaled(17.0)), textColor: theme.list.itemPrimaryTextColor)
+        self.titleNode.maximumNumberOfLines = 1
+        self.titleNode.truncationType = .end
+        let titleSize = self.titleNode.updateLayout(CGSize(width: textWidth, height: 40.0))
+        self.subtitleNode.attributedText = NSAttributedString(string: item.subtitle, font: Font.regular(theme.scaled(14.0)), textColor: item.isProblem ? colorRed : theme.list.itemSecondaryTextColor)
+        self.subtitleNode.maximumNumberOfLines = 1
+        self.subtitleNode.truncationType = .end
+        let subtitleSize = self.subtitleNode.updateLayout(CGSize(width: textWidth, height: 40.0))
+        let height = max(11.0 + titleSize.height + 1.0 + subtitleSize.height + 11.0, iconSize + 20.0)
+        let textTop = floor((height - titleSize.height - 1.0 - subtitleSize.height) / 2.0)
+        self.titleNode.frame = CGRect(origin: CGPoint(x: contentLeft, y: textTop), size: titleSize)
+        self.subtitleNode.frame = CGRect(origin: CGPoint(x: contentLeft, y: textTop + titleSize.height + 1.0), size: subtitleSize)
+
+        let lineHeight = ceil(small.lineHeight)
+        let linesTop = floor((height - lineHeight * CGFloat(windows.count) - 3.0 * CGFloat(max(0, windows.count - 1))) / 2.0)
+        let usageLeft = right - usageWidth
         for (index, entry) in self.windowNodes.enumerated() {
-            let hidden = !showsWindows || index >= windows.count
+            let hidden = index >= windows.count
             entry.label.isHidden = hidden
             entry.bar.isHidden = hidden
             entry.value.isHidden = hidden
@@ -355,44 +347,26 @@ final class AccountRowItemNode: SyncListItemNode {
             }
             let window = windows[index]
             let level = window.level()
-            let font = Font.regular(theme.scaled(13.0))
-            entry.label.attributedText = NSAttributedString(string: window.label, font: font, textColor: theme.list.itemSecondaryTextColor)
-            entry.value.attributedText = NSAttributedString(string: usagePercentText(window.usedPercent), font: Font.with(size: theme.scaled(13.0), design: .regular, weight: .medium, traits: [.monospacedNumbers]), textColor: level == .normal ? theme.list.itemSecondaryTextColor : usageColor(level, theme: theme))
+            let y = linesTop + CGFloat(index) * (lineHeight + 3.0)
+            entry.label.attributedText = NSAttributedString(string: window.label, font: small, textColor: theme.list.itemSecondaryTextColor)
+            entry.value.attributedText = NSAttributedString(string: usagePercentText(window.usedPercent), font: numbers, textColor: level == .normal ? theme.list.itemSecondaryTextColor : usageColor(level, theme: theme))
             let labelSize = entry.label.updateLayout(CGSize(width: 80.0, height: 20.0))
             let valueSize = entry.value.updateLayout(CGSize(width: 60.0, height: 20.0))
-            let x = contentLeft + CGFloat(index) * (columnWidth + 14.0)
-            let lineHeight = max(labelSize.height, valueSize.height)
-            entry.label.frame = CGRect(origin: CGPoint(x: x, y: y), size: labelSize)
-            let valueWidth = max(valueSize.width, 34.0)
-            entry.value.frame = CGRect(origin: CGPoint(x: x + columnWidth - valueSize.width, y: y), size: valueSize)
-            let barX = x + labelWidth + 6.0
-            let barWidth = max(16.0, columnWidth - labelWidth - 6.0 - valueWidth - 6.0)
+            entry.label.frame = CGRect(origin: CGPoint(x: usageLeft, y: y), size: labelSize)
+            entry.value.frame = CGRect(origin: CGPoint(x: right - valueSize.width, y: y), size: valueSize)
+            let barX = usageLeft + labelWidth + 6.0
             entry.bar.frame = CGRect(x: barX, y: y + floor((lineHeight - 4.0) / 2.0), width: barWidth, height: 4.0)
             entry.bar.update(size: CGSize(width: barWidth, height: 4.0), fraction: window.usedPercent / 100.0, pace: window.elapsed(), color: usageColor(level, theme: theme), trackColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.18), paceColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.6), animated: animated)
         }
-        if showsWindows && !windows.isEmpty {
-            y += 18.0
-        }
-        height = max(y + verticalInset, avatarSize + 20.0)
-        let sectionFrame = CGRect(x: sectionLeft, y: 0.0, width: sectionWidth, height: height)
-        self.background.update(theme: theme, frame: sectionFrame, position: item.position, separatorLeft: contentLeft)
-        self.avatarNode.frame = CGRect(x: sectionLeft + 16.0, y: floor((height - avatarSize) / 2.0), width: avatarSize, height: avatarSize)
-        self.titleNode.frame = CGRect(origin: CGPoint(x: contentLeft, y: titleY), size: titleSize)
-        self.planNode.frame = CGRect(origin: CGPoint(x: contentLeft + titleSize.width + 8.0, y: titleY + floor((titleSize.height - planSize.height) / 2.0) + 1.0), size: planSize)
-        if account.active {
-            self.checkNode.image = generateTintedImage(image: UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16.0, weight: .semibold)), color: theme.list.itemAccentColor)
-            if let image = self.checkNode.image {
-                self.checkNode.frame = CGRect(x: right - image.size.width, y: floor((height - image.size.height) / 2.0), width: image.size.width, height: image.size.height)
-            }
-            self.checkNode.isHidden = false
-        } else {
-            self.checkNode.isHidden = true
-        }
+
+        self.iconNode.image = item.icon
+        self.iconNode.frame = CGRect(x: sectionLeft + 16.0, y: floor((height - iconSize) / 2.0), width: iconSize, height: iconSize)
+        self.background.update(theme: theme, frame: CGRect(x: sectionLeft, y: 0.0, width: sectionWidth, height: height), position: item.position, separatorLeft: contentLeft)
         self.isAccessibilityElement = true
         self.accessibilityIdentifier = "account"
-        self.accessibilityLabel = account.title
-        self.accessibilityValue = ([account.active ? "In use" : nil, account.plan, detail] + windows.map { "\($0.label) \(usagePercentText($0.usedPercent))" }).compactMap { $0 }.joined(separator: ", ")
-        self.accessibilityTraits = .button
+        self.accessibilityLabel = item.title
+        self.accessibilityValue = ([item.subtitle] + windows.map { "\($0.label) \(usagePercentText($0.usedPercent))" }).joined(separator: ", ")
+        self.accessibilityTraits = item.action == nil ? [] : .button
         return ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets())
     }
 }
@@ -478,9 +452,9 @@ final class UsageWindowItemNode: SyncListItemNode {
             let left = max(0.0, 100.0 - window.usedPercent)
             let remaining = resetsAt.timeIntervalSince(now)
             if (window.seconds ?? 0) > 86_400 && remaining > 86_400 {
-                pace = "About \(Int((left / (remaining / 86_400)).rounded()))% a day lasts until then"
+                pace = "Keep under \(Int((left / (remaining / 86_400)).rounded()))% a day to last until it resets"
             } else {
-                pace = "About \(Int((left / max(remaining / 3_600, 0.1)).rounded()))% an hour lasts until then"
+                pace = "Keep under \(Int((left / max(remaining / 3_600, 0.1)).rounded()))% an hour to last until it resets"
             }
         } else if level == .out {
             pace = "Used up"

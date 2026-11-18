@@ -150,13 +150,20 @@ final class LoginController: SettingsListController {
                 UIPasteboard.general.string = device.code
                 self?.open(device.url)
             }))
+            // To open it on another device.
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: "Copy Link", titleColor: theme.list.itemAccentColor, accessory: .none, position: SettingsRowPosition(isFirst: false, isLast: false), action: { [weak self] in
+                self?.copyLink(device.url)
+            }))
             items.append(ActivityRowItem(theme: theme, text: session.progress ?? "Waiting for you to sign in", position: SettingsRowPosition(isFirst: false, isLast: true)))
             items.append(SettingsTextItem(theme: theme, text: "This closes on its own once you have signed in.", kind: .footer))
         } else if let page = session.authURL {
             let host = page.url.host ?? "the page"
             items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
-            items.append(SettingsRowItem(theme: theme, icon: nil, title: "Open \(host)", titleColor: theme.list.itemAccentColor, accessory: .none, position: single, action: { [weak self] in
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: "Open \(host)", titleColor: theme.list.itemAccentColor, accessory: .none, position: SettingsRowPosition(isFirst: true, isLast: false), action: { [weak self] in
                 self?.open(page.url)
+            }))
+            items.append(SettingsRowItem(theme: theme, icon: nil, title: "Copy Link", titleColor: theme.list.itemAccentColor, accessory: .none, position: SettingsRowPosition(isFirst: false, isLast: true), action: { [weak self] in
+                self?.copyLink(page.url)
             }))
             items.append(SettingsTextItem(theme: theme, text: self.pageInstructions(session, host: host), kind: .footer))
         }
@@ -227,7 +234,6 @@ final class LoginController: SettingsListController {
             })
             field.secure = prompt.kind == .secret
             field.verbatim = true
-            field.pasteButton = prompt.kind != .text
             field.focused = prompt.kind != .manualCode
             field.submit = { [weak self] in
                 guard let self, !self.answer.isEmpty else {
@@ -249,8 +255,6 @@ final class LoginController: SettingsListController {
             }
             if prompt.kind == .text, prompt.placeholder != nil {
                 items.append(SettingsTextItem(theme: theme, text: "For example \(prompt.placeholder ?? "")", kind: .footer))
-            } else if prompt.kind == .secret {
-                items.append(SettingsTextItem(theme: theme, text: "Kept on the server, never on this phone.", kind: .footer))
             }
         }
         return items
@@ -280,6 +284,11 @@ final class LoginController: SettingsListController {
             self?.finished = false
             self?.start()
         })
+    }
+
+    private func copyLink(_ url: URL) {
+        UIPasteboard.general.url = url
+        self.present(UndoOverlayController(presentationData: self.theme.presentationData, content: .linkCopied(title: nil, text: self.theme.presentationStrings.Conversation_LinkCopied), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .current)
     }
 
     private func copy(_ code: String) {

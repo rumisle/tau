@@ -250,7 +250,7 @@ final class SendingUITests: XCTestCase {
         self.shot("accounts-2-code")
         let first = any.matching(NSPredicate(format: "identifier == 'account' AND label == 'dev1@example.com'")).firstMatch
         XCTAssertTrue(first.waitForExistence(timeout: 15), "signed in, back on the accounts")
-        XCTAssertTrue((first.value as? String ?? "").contains("In use"), first.debugDescription)
+        XCTAssertFalse((first.value as? String ?? "").contains("in use"), "the provider's only account says nothing of being in use")
         sleep(2)
         self.shot("accounts-3-added")
         first.tap()
@@ -266,7 +266,8 @@ final class SendingUITests: XCTestCase {
         any.matching(NSPredicate(format: "identifier == 'Dev Account'")).firstMatch.tap()
         let second = any.matching(NSPredicate(format: "identifier == 'account' AND label == 'dev2@example.com'")).firstMatch
         XCTAssertTrue(second.waitForExistence(timeout: 15))
-        XCTAssertFalse((first.value as? String ?? "").contains("In use"), "one in use at a time")
+        XCTAssertTrue((second.value as? String ?? "").contains("in use"), second.debugDescription)
+        XCTAssertFalse((first.value as? String ?? "").contains("in use"), "one in use at a time")
         self.shot("accounts-5-two")
         first.tap()
         settle()
@@ -276,14 +277,14 @@ final class SendingUITests: XCTestCase {
         XCTAssertFalse(any["Use This Account"].firstMatch.exists, "the one shown is in use")
         self.point(0.09, 0.098).tap()
         settle()
-        XCTAssertTrue((first.value as? String ?? "").contains("In use"))
+        XCTAssertTrue((first.value as? String ?? "").contains("in use"))
 
         // An API key: asked as a secret, shown by its last four characters.
         any["Add Account"].firstMatch.tap()
         settle()
         // Down the list, in the API keys.
         let keyRow = any.matching(NSPredicate(format: "identifier == 'Dev Account' AND value == 'Dev API key'")).firstMatch
-        for _ in 0 ..< 8 where !keyRow.exists {
+        for _ in 0 ..< 8 where !(keyRow.exists && keyRow.isHittable) {
             self.app.swipeUp()
         }
         keyRow.tap()
@@ -294,7 +295,7 @@ final class SendingUITests: XCTestCase {
         any["Continue"].firstMatch.tap()
         let key = any.matching(NSPredicate(format: "identifier == 'account' AND label == 'Key ending 4321'")).firstMatch
         XCTAssertTrue(key.waitForExistence(timeout: 15), "the key's account")
-        XCTAssertTrue((key.value as? String ?? "").contains("In use"), "a new account is put in use")
+        XCTAssertTrue((key.value as? String ?? "").contains("in use"), "a new account is put in use")
 
         // Signing out of the one in use goes back to the one in use before.
         key.tap()
@@ -306,7 +307,7 @@ final class SendingUITests: XCTestCase {
         self.point(0.5, 0.873).tap()
         settle()
         XCTAssertFalse(key.waitForExistence(timeout: 2))
-        XCTAssertTrue((first.value as? String ?? "").contains("In use"), "the one in use before")
+        XCTAssertTrue((first.value as? String ?? "").contains("in use"), "the one in use before")
         self.shot("accounts-9-after")
     }
 
