@@ -311,6 +311,43 @@ final class SendingUITests: XCTestCase {
         self.shot("accounts-9-after")
     }
 
+    /// Two servers: the chat list's folder tabs over the accounts, one list a server, a swipe between them as between
+    /// folders, a tab tapped going to its server.
+    func testAccountsServers() {
+        let url = ProcessInfo.processInfo.environment["TAU_CACHE_SERVER"] ?? "ws://127.0.0.1:7982"
+        self.launch(["-tab", "accounts", "-server2.url", url])
+        self.server("wipe")
+        let any = self.app.descendants(matching: .any)
+        let add = any.matching(identifier: "Add Account")
+        XCTAssertTrue(add.firstMatch.waitForExistence(timeout: 10))
+        // The one picked last may be the second: back to the first.
+        self.app.swipeRight()
+        settle()
+        add.firstMatch.tap()
+        settle()
+        any.matching(NSPredicate(format: "identifier == 'Dev Account'")).firstMatch.tap()
+        let first = any.matching(NSPredicate(format: "identifier == 'account' AND label == 'dev1@example.com'")).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 15), "signed in on the first server")
+        sleep(1)
+        XCTAssertTrue(first.isHittable)
+        self.shot("accounts-servers-0-first")
+        self.app.swipeLeft()
+        settle()
+        XCTAssertFalse(first.isHittable, "the second server's list, the first's gone left")
+        self.shot("accounts-servers-1-second")
+        self.app.swipeRight()
+        settle()
+        XCTAssertTrue(first.isHittable, "the first again")
+        // The second tab, right of the first under the title (the tabs are not in the accessibility tree); two share the width.
+        self.point(0.75, 0.158).tap()
+        settle()
+        XCTAssertFalse(first.isHittable, "the second's tab tapped")
+        self.shot("accounts-servers-2-tapped")
+        self.point(0.25, 0.158).tap()
+        settle()
+        XCTAssertTrue(first.isHittable)
+    }
+
     /// An answer the provider refused for the account (`!fatal`: 401, invalid x-api-key): its card has Accounts beside
     /// Retry, which opens the accounts over the chat.
     func testAccountsFromError() {

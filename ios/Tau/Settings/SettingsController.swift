@@ -69,6 +69,10 @@ class SettingsListController: ViewController {
 
 final class SettingsListNode: ASDisplayNode {
     private let listNode = ListViewImpl()
+    /// Its list, for a swipe between lists that must wait while it scrolls.
+    var listView: ListViewImpl {
+        return self.listNode
+    }
     private var itemCount = 0
     private var pendingItems: [ListViewItem]?
     private var hasLayout = false

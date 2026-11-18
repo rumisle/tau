@@ -9,9 +9,9 @@ struct AccountsState: Equatable {
     var logins: [LoginSession] = []
     var providers: [ProviderEntry] = []
 
-    /// Something to do: an account to sign in to again, or the one in use out of a limit. The tab's badge.
-    var needsAttention: Bool {
-        return self.accounts.contains { $0.problem != nil || ($0.active && ($0.usage?.windows.contains { $0.usedPercent >= 100 } ?? false)) }
+    /// Accounts to see to: one to sign in to again, or the one in use out of a limit. The tab's badge.
+    var attentionCount: Int {
+        return self.accounts.filter { $0.problem != nil || ($0.active && ($0.usage?.windows.contains { $0.usedPercent >= 100 } ?? false)) }.count
     }
 
     init() {}

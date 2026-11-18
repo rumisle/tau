@@ -34,8 +34,10 @@ login refresh it in turn, and each refresh rotates the refresh token, so the one
   the Accounts tab opens or is pulled. Each answer of an account in use also carries its 5-hour and weekly numbers in
   its response headers; they update the shown usage in between, without a request. API-key accounts show no usage:
   tau does not split its cost counters by account.
-- **The app has an Accounts tab**, left of Chats: every server's accounts on one screen, grouped by server when there
-  are several. Usage is what it is opened for; adding, switching and removing are there too.
+- **The app has an Accounts tab**, left of Chats: a server's accounts in one list. With several servers, the chat
+  list's folder tabs (ChatListFolderTabsNode) name them under the title and a swipe goes between their lists, as
+  between folders; with one, there are no tabs. Usage is what it is opened for; adding, switching and removing are
+  there too.
 - **Warnings that do not nag**: the tab's badge only when something needs doing (an account to sign in to again, the
   account in use out of a limit); a failed answer whose error is the provider's limit or login has a button to the
   Accounts tab, not a guess at which account to switch to; the widget for looking.
