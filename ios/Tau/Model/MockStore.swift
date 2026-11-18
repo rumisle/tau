@@ -472,6 +472,131 @@ final class MockStore: TauStore, TauServer {
         return .single(nil)
     }
 
+    // MARK: - Accounts
+
+    private let accountsPromise = ValuePromise<AccountsState?>(MockStore.demoAccounts(), ignoreRepeated: true)
+    private(set) var accountsState: AccountsState? = MockStore.demoAccounts() {
+        didSet {
+            self.accountsPromise.set(self.accountsState)
+        }
+    }
+
+    var accountsSignal: Signal<AccountsState?, NoError> {
+        return self.accountsPromise.get()
+    }
+
+    private static func demoAccounts() -> AccountsState {
+        let now = Date()
+        var state = AccountsState()
+        state.accounts = [
+            ProviderAccount(id: "a1", provider: "anthropic", providerName: "Anthropic", type: "oauth", email: "me@example.com", plan: "Max", active: true, usage: PlanUsage(at: now, windows: [
+                UsageWindow(id: "5h", label: "5h", usedPercent: 42, resetsAt: now.addingTimeInterval(2 * 3600 + 14 * 60), seconds: 5 * 3600),
+                UsageWindow(id: "week", label: "Week", usedPercent: 71, resetsAt: now.addingTimeInterval(3 * 86_400 + 5 * 3600), seconds: 7 * 86_400),
+            ])),
+            ProviderAccount(id: "a2", provider: "anthropic", providerName: "Anthropic", type: "oauth", label: "Work", email: "work@example.com", plan: "Pro", active: false, usage: PlanUsage(at: now, windows: [
+                UsageWindow(id: "5h", label: "5h", usedPercent: 3, resetsAt: now.addingTimeInterval(4 * 3600), seconds: 5 * 3600),
+                UsageWindow(id: "week", label: "Week", usedPercent: 18, resetsAt: now.addingTimeInterval(5 * 86_400), seconds: 7 * 86_400),
+            ])),
+            ProviderAccount(id: "a3", provider: "openai-codex", providerName: "OpenAI Codex", type: "oauth", email: "me@example.com", plan: "Plus", active: true, usage: PlanUsage(at: now, windows: [
+                UsageWindow(id: "primary", label: "5h", usedPercent: 93, resetsAt: now.addingTimeInterval(41 * 60), seconds: 5 * 3600),
+                UsageWindow(id: "secondary", label: "Week", usedPercent: 31, resetsAt: now.addingTimeInterval(6 * 86_400), seconds: 7 * 86_400),
+            ])),
+            ProviderAccount(id: "a4", provider: "openrouter", providerName: "OpenRouter", type: "api_key", keyHint: "9f3c", active: true),
+        ]
+        state.ambient = [AmbientLogin(provider: "fireworks", providerName: "Fireworks", source: "FIREWORKS_API_KEY")]
+        state.providers = [
+            ProviderEntry(id: "anthropic", name: "Anthropic", oauthName: "Anthropic (Claude Pro/Max)", subscription: true, apiKeyName: "Anthropic API key"),
+            ProviderEntry(id: "openai-codex", name: "OpenAI Codex", oauthName: "OpenAI (ChatGPT Plus/Pro)", subscription: true),
+            ProviderEntry(id: "github-copilot", name: "GitHub Copilot", oauthName: "GitHub Copilot", subscription: true, apiKeyName: "GitHub Copilot token"),
+            ProviderEntry(id: "openai", name: "OpenAI", oauthName: "OpenAI (ChatGPT subscription)", subscription: true, apiKeyName: "OpenAI API key"),
+            ProviderEntry(id: "openrouter", name: "OpenRouter", oauthName: "OpenRouter OAuth", apiKeyName: "OpenRouter API key"),
+            ProviderEntry(id: "google", name: "Google", apiKeyName: "Gemini API key"),
+            ProviderEntry(id: "deepseek", name: "DeepSeek", apiKeyName: "DeepSeek API key"),
+        ]
+        return state
+    }
+
+    func refreshAccounts() {
+    }
+
+    /// A device code shown, then the account added a few seconds later, as if signed in on the page.
+    func startLogin(provider: String, type: String, completion: @escaping (Result<String, RequestError>) -> Void) {
+        let id = "login-\(Int.random(in: 1 ... 1_000_000))"
+        var state = self.accountsState ?? AccountsState()
+        let name = state.providers.first { $0.id == provider }?.name ?? provider
+        var login = LoginSession(id: id, provider: provider, providerName: name, type: type)
+        if type == "oauth" {
+            login.events = [.deviceCode(code: "WDJB-MJHT", url: URL(string: "https://example.com/device")!, expiresIn: 900)]
+        } else {
+            login.prompt = LoginSession.Prompt(id: "p1", kind: .secret, message: "Enter \(name) API key", placeholder: nil)
+        }
+        state.logins.append(login)
+        self.accountsState = state
+        completion(.success(id))
+        if type == "oauth" {
+            Queue.mainQueue().after(4.0) { [weak self] in
+                self?.finishLogin(id, keyHint: nil)
+            }
+        }
+    }
+
+    private func finishLogin(_ id: String, keyHint: String?) {
+        guard var state = self.accountsState, let index = state.logins.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let login = state.logins[index]
+        let accountId = "a\(state.accounts.count + 10)"
+        for other in state.accounts.indices where state.accounts[other].provider == login.provider {
+            state.accounts[other].active = false
+        }
+        state.accounts.append(ProviderAccount(id: accountId, provider: login.provider, providerName: login.providerName, type: login.type, email: keyHint == nil ? "new@example.com" : nil, keyHint: keyHint, active: true))
+        state.logins[index].prompt = nil
+        state.logins[index].done = .account(accountId)
+        self.accountsState = state
+    }
+
+    func answerLogin(_ login: String, prompt: String, value: String, completion: @escaping (RequestError?) -> Void) {
+        completion(nil)
+        self.finishLogin(login, keyHint: String(value.suffix(4)))
+    }
+
+    func cancelLogin(_ login: String) {
+        guard var state = self.accountsState, let index = state.logins.firstIndex(where: { $0.id == login }) else {
+            return
+        }
+        state.logins[index].done = .cancelled
+        self.accountsState = state
+    }
+
+    func useAccount(_ id: String) {
+        guard var state = self.accountsState, let account = state.account(id) else {
+            return
+        }
+        for index in state.accounts.indices where state.accounts[index].provider == account.provider {
+            state.accounts[index].active = state.accounts[index].id == id
+        }
+        self.accountsState = state
+    }
+
+    func renameAccount(_ id: String, label: String) {
+        guard var state = self.accountsState, let index = state.accounts.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        state.accounts[index].label = label.isEmpty ? nil : label
+        self.accountsState = state
+    }
+
+    func removeAccount(_ id: String) {
+        guard var state = self.accountsState, let account = state.account(id) else {
+            return
+        }
+        state.accounts.removeAll { $0.id == id }
+        if account.active, let next = state.accounts.lastIndex(where: { $0.provider == account.provider }) {
+            state.accounts[next].active = true
+        }
+        self.accountsState = state
+    }
+
     func resetContext(_ id: Int) {
     }
 

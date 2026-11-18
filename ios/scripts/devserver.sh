@@ -22,7 +22,7 @@ case "$1" in
     tmux send-keys -t "$S" "env -u OPENAI_API_KEY node --no-warnings src/main.ts --db $DB --port $PORT --host 127.0.0.1 --dev-tps ${TPS:-80} --cwd /tmp" Enter
     for i in $(seq 1 40); do nc -z 127.0.0.1 "$PORT" 2>/dev/null && break; sleep 0.25; done ;;
   wipe)
-    rm -f "$DB"* "${DB%.db}.search.db"*
+    rm -f "$DB"* "${DB%.db}.search.db"* "${DB%.db}.accounts.json"
     # Its files are read-only, in read-only directories (server/src/files.ts).
     [ -d "${DB%.db}.files" ] && chmod -R u+w "${DB%.db}.files" && rm -rf "${DB%.db}.files"
     ;;

@@ -45,6 +45,22 @@ protocol TauServer: AnyObject {
     /// What the models cost over the last `days` days (0: all), by day in this phone's time zone; nil when the
     /// server cannot say.
     func usageReport(days: Int) -> Signal<UsageReport?, NoError>
+
+    /// Its logins to model providers, their logins in progress and usage (docs/accounts.md): nil until the server
+    /// said, and from a server too old to have them.
+    var accountsState: AccountsState? { get }
+    var accountsSignal: Signal<AccountsState?, NoError> { get }
+    /// Asks every subscription account's usage now.
+    func refreshAccounts()
+    /// Starts a login on the server: `completion` gets its ID, or the reason it did not start.
+    func startLogin(provider: String, type: String, completion: @escaping (Result<String, RequestError>) -> Void)
+    func answerLogin(_ login: String, prompt: String, value: String, completion: @escaping (RequestError?) -> Void)
+    func cancelLogin(_ login: String)
+    /// Puts an account in use for its provider, for the whole server, from its runs' next request.
+    func useAccount(_ id: String)
+    /// Empty: no name of the user's.
+    func renameAccount(_ id: String, label: String)
+    func removeAccount(_ id: String)
 }
 
 /// What the screens need: conversations from every configured server (MultiStore), or canned data (MockStore).

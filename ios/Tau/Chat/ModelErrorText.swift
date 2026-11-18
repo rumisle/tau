@@ -30,6 +30,18 @@ enum ModelErrorText {
         return prefix.isEmpty ? found : "\(prefix): \(found)"
     }
 
+    /// The provider turned the request away for the account: a limit of its plan or its rate, or its sign-in or key.
+    /// The error card offers the Accounts tab for it (docs/accounts.md).
+    static func isAccountError(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let statuses = ["401", "403", "429"]
+        if statuses.contains(where: { lower.hasPrefix($0) || lower.contains("status \($0)") || lower.contains("\($0):") || lower.contains("(\($0))") }) {
+            return true
+        }
+        let phrases = ["rate limit", "rate_limit", "usage limit", "usage_limit", "quota", "credit balance", "insufficient_quota", "too many requests", "unauthorized", "authentication", "invalid api key", "invalid x-api-key", "api key", "oauth", "token refresh", "not logged in", "sign in", "log in again", "limit reached", "exceeded"]
+        return phrases.contains { lower.contains($0) }
+    }
+
     /// A compaction's error (`pi.live.compactionFailure`, `tau.compactions`): durable's "Summarization failed: "
     /// left out (what failed is said around it), the provider's error cleaned as a model error's.
     static func compaction(_ raw: String) -> String {

@@ -128,12 +128,18 @@ targets:
       - path: TauWidgets
       - path: Tau/LiveActivity/TauActivityAttributes.swift
       - path: Tau/Intents/NewChatIntent.swift
+      # The usage widget asks the servers itself (docs/accounts.md).
+      - path: Tau/Share/ShareModels.swift
+      - path: Tau/Share/ShareConnection.swift
+      - path: Tau/Model/Accounts.swift
+      - path: Tau/Server/JSONValue.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID).widgets
         PRODUCT_NAME: TauWidgets
         INFOPLIST_FILE: TauWidgets/Info.plist
         GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: TauWidgets/TauWidgets.entitlements
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
@@ -146,6 +152,7 @@ targets:
     sources:
       - path: TauShare
       - path: Tau/Share/ShareModels.swift
+      - path: Tau/Share/ShareConnection.swift
       - path: Tau/Share/ImageEncoding.swift
     settings:
       base:

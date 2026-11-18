@@ -58,10 +58,15 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         let makeRoot: () -> (RootTabController, ChatListController) = {
             let chatList = ChatListController(context: context)
+            let accounts = AccountsController(context: context)
             let root = RootTabController(context: context, tabs: [
+                RootTabController.Tab(id: AnyHashable("accounts"), title: "Accounts", animation: "TabContacts", animationOffset: CGPoint(), controller: accounts),
                 RootTabController.Tab(id: AnyHashable("chats"), title: "Chats", animation: "TabChats", animationOffset: CGPoint(x: 0.0, y: UIScreenPixel), controller: chatList),
                 RootTabController.Tab(id: AnyHashable("settings"), title: "Settings", animation: "TabSettings", animationOffset: CGPoint(), controller: SettingsController(context: context)),
-            ])
+            ], selected: AnyHashable("chats"))
+            accounts.badgeChanged = { [weak root] count in
+                root?.setBadge(count > 0 ? "\(count)" : nil, for: AnyHashable("accounts"))
+            }
             return (root, chatList)
         }
         let (root, chatList) = makeRoot()
@@ -70,7 +75,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         context.replaceStore = { [weak self] _ in
             let (root, _) = makeRoot()
             navigationController.setViewControllers([root], animated: false)
-            root.select(index: 1)
+            root.select(id: AnyHashable("settings"))
             self?.observeAnswers(context: context)
         }
         self.mainWindow.viewController = navigationController
@@ -153,6 +158,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 let terms = quote.map { [SearchTerm(tokens: $0.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init), prefix: false, variants: [])] } ?? []
                 self?.openChat(id, context: context, focus: entry.map { ChatFocus(entryId: $0, terms: terms) })
             }
+        case .accounts:
+            guard let navigationController = self.navigationController, let root = navigationController.viewControllers.first as? RootTabController else {
+                return false
+            }
+            navigationController.popToRoot(animated: false)
+            root.select(id: AnyHashable("accounts"))
         case let .newChat(text, server, model):
             guard let context = self.context, let navigationController = self.navigationController else {
                 return false
@@ -289,9 +300,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let value = defaults.bool(forKey: "wrapCode")
             context.themeContext.update { $0.wrapCode = value }
         }
-        if defaults.object(forKey: "tab") != nil {
+        // -tab accounts|chats|settings
+        if let tab = defaults.string(forKey: "tab") {
             Queue.mainQueue().after(0.3) {
-                root.select(index: defaults.integer(forKey: "tab"))
+                root.select(id: AnyHashable(tab))
             }
         }
         if defaults.object(forKey: "sendTo") != nil, let text = defaults.string(forKey: "send") {

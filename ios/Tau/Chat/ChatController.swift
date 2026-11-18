@@ -434,6 +434,13 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 }
             }
         }
+        node.setAccountsHandler { [weak self] in
+            guard let self else {
+                return
+            }
+            // Over the chat, to come back to it once an account is switched or added.
+            (self.navigationController as? NavigationController)?.pushViewController(AccountsController(context: self.context))
+        }
         node.setToolTextHandler { [weak self] message in
             guard let self else {
                 return

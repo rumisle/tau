@@ -230,6 +230,106 @@ final class SendingUITests: XCTestCase {
         XCTAssertEqual(field, "fix the typo")
     }
 
+    /// The Accounts tab (docs/accounts.md), on the dev server's Dev Account provider, whose sign-in shows a device code
+    /// and completes on its own: the code screen, the account in use with its usage, a second account put in use, the
+    /// first switched back to, an API key, signing out.
+    func testAccounts() {
+        self.launch(["-tab", "accounts"])
+        self.server("wipe")
+        sleep(3)
+        self.shot("accounts-0-empty")
+        let any = self.app.descendants(matching: .any)
+        XCTAssertTrue(any["Add Account"].firstMatch.waitForExistence(timeout: 10), "an empty server offers Add Account")
+        any["Add Account"].firstMatch.tap()
+        settle()
+        self.shot("accounts-1-add")
+        // Sign In lists it first; the API key section has it again.
+        any.matching(NSPredicate(format: "identifier == 'Dev Account'")).firstMatch.tap()
+        XCTAssertTrue(any["loginCode"].firstMatch.waitForExistence(timeout: 10), "the device code shows")
+        XCTAssertEqual(any["loginCode"].firstMatch.label, "DEVC-0DE1")
+        self.shot("accounts-2-code")
+        let first = any.matching(NSPredicate(format: "identifier == 'account' AND label == 'dev1@example.com'")).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 15), "signed in, back on the accounts")
+        XCTAssertTrue((first.value as? String ?? "").contains("In use"), first.debugDescription)
+        sleep(2)
+        self.shot("accounts-3-added")
+        first.tap()
+        settle()
+        XCTAssertTrue(any["usageWindow"].firstMatch.waitForExistence(timeout: 10), "its usage, a bar for each limit")
+        self.shot("accounts-4-detail")
+        self.point(0.09, 0.098).tap()
+        settle()
+
+        // A second: in use now, the first not.
+        any["Add Account"].firstMatch.tap()
+        settle()
+        any.matching(NSPredicate(format: "identifier == 'Dev Account'")).firstMatch.tap()
+        let second = any.matching(NSPredicate(format: "identifier == 'account' AND label == 'dev2@example.com'")).firstMatch
+        XCTAssertTrue(second.waitForExistence(timeout: 15))
+        XCTAssertFalse((first.value as? String ?? "").contains("In use"), "one in use at a time")
+        self.shot("accounts-5-two")
+        first.tap()
+        settle()
+        any["Use This Account"].firstMatch.tap()
+        sleep(1)
+        self.shot("accounts-6-switched")
+        XCTAssertFalse(any["Use This Account"].firstMatch.exists, "the one shown is in use")
+        self.point(0.09, 0.098).tap()
+        settle()
+        XCTAssertTrue((first.value as? String ?? "").contains("In use"))
+
+        // An API key: asked as a secret, shown by its last four characters.
+        any["Add Account"].firstMatch.tap()
+        settle()
+        // Down the list, in the API keys.
+        let keyRow = any.matching(NSPredicate(format: "identifier == 'Dev Account' AND value == 'Dev API key'")).firstMatch
+        for _ in 0 ..< 8 where !keyRow.exists {
+            self.app.swipeUp()
+        }
+        keyRow.tap()
+        XCTAssertTrue(any["Key"].firstMatch.waitForExistence(timeout: 10), "the key's field")
+        self.app.waitForKeyboard()
+        self.type("sk-dev-4321")
+        self.shot("accounts-7-key")
+        any["Continue"].firstMatch.tap()
+        let key = any.matching(NSPredicate(format: "identifier == 'account' AND label == 'Key ending 4321'")).firstMatch
+        XCTAssertTrue(key.waitForExistence(timeout: 15), "the key's account")
+        XCTAssertTrue((key.value as? String ?? "").contains("In use"), "a new account is put in use")
+
+        // Signing out of the one in use goes back to the one in use before.
+        key.tap()
+        settle()
+        any["Sign Out"].firstMatch.tap()
+        settle()
+        self.shot("accounts-8-signout")
+        // The action sheet's Sign Out, out of XCUITest's reach.
+        self.point(0.5, 0.873).tap()
+        settle()
+        XCTAssertFalse(key.waitForExistence(timeout: 2))
+        XCTAssertTrue((first.value as? String ?? "").contains("In use"), "the one in use before")
+        self.shot("accounts-9-after")
+    }
+
+    /// An answer the provider refused for the account (`!fatal`: 401, invalid x-api-key): its card has Accounts beside
+    /// Retry, which opens the accounts over the chat.
+    func testAccountsFromError() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!fatal broken")
+        self.send()
+        self.app.waitForIdle()
+        settle()
+        let card = self.app.descendants(matching: .any).matching(identifier: "modelError").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5.0))
+        XCTAssertEqual(card.value as? String, "retry, accounts")
+        self.shot("accounts-error-0-card")
+        let frame = card.frame
+        self.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.minX + frame.width / 4.0, dy: frame.maxY - 20.0)).tap()
+        settle()
+        XCTAssertTrue(self.app.descendants(matching: .any)["Add Account"].firstMatch.waitForExistence(timeout: 5.0), "the accounts, over the chat")
+        self.shot("accounts-error-1-accounts")
+    }
+
     /// Idle: a message shows at once with the clock, then two checks.
     func testIdleSend() {
         self.launch(["-newChat", "YES"])
@@ -511,7 +611,7 @@ final class SendingUITests: XCTestCase {
         self.send()
         self.app.waitForIdle()
         settle()
-        self.launch(["-tab", "1"])
+        self.launch(["-tab", "settings"])
         settle()
         self.app.descendants(matching: .any)["Servers"].firstMatch.tap()
         settle()
@@ -534,7 +634,7 @@ final class SendingUITests: XCTestCase {
         settle()
         self.shot("default-2-new")
         // Back to the echo model, which the other tests expect.
-        self.launch(["-tab", "1"])
+        self.launch(["-tab", "settings"])
         settle()
         self.app.descendants(matching: .any)["Servers"].firstMatch.tap()
         settle()
@@ -1157,7 +1257,7 @@ final class SendingUITests: XCTestCase {
     func testRefusedToken() {
         self.launch(["-server2.url", mainServer, "-server2.token", "wrong-token-wrong-token"])
         sleep(6)
-        self.point(0.75, 0.96).tap()
+        self.point(0.82, 0.96).tap()
         settle()
         self.app.descendants(matching: .any)["Servers"].firstMatch.tap()
         XCTAssertTrue(self.app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Token refused", "Token refused")).firstMatch.waitForExistence(timeout: 10))
@@ -1170,7 +1270,7 @@ final class SendingUITests: XCTestCase {
         self.launch(secondServer)
         sleep(4)
         self.shot("multi-0-list")
-        self.point(0.75, 0.96).tap()
+        self.point(0.82, 0.96).tap()
         settle()
         self.app.descendants(matching: .any)["Servers"].firstMatch.tap()
         sleep(3)
@@ -1187,10 +1287,9 @@ final class SendingUITests: XCTestCase {
         self.shot("multi-3-add")
         self.point(0.32, 0.49).tap()
         settle()
-        self.point(0.1, 0.08).tap()
-        settle()
-        self.point(0.25, 0.96).tap()
-        settle()
+        // Back to the chat list, as it opens.
+        self.launch(secondServer)
+        sleep(3)
         // New Chat: straight into the chat, its card in the middle.
         self.point(0.9, 0.098).tap()
         settle()
@@ -1349,7 +1448,7 @@ final class SendingUITests: XCTestCase {
         sleep(6)
         self.shot("notify-0-banner")
         sleep(5)
-        self.point(0.75, 0.96).tap()
+        self.point(0.82, 0.96).tap()
         settle()
         self.app.descendants(matching: .any)["Notifications"].firstMatch.tap()
         settle()
@@ -1363,7 +1462,7 @@ final class SendingUITests: XCTestCase {
 
     /// Settings > Data and Storage, its storage and network screens, and clearing the cache.
     func testDataAndStorage() {
-        self.launch(["-tab", "1"])
+        self.launch(["-tab", "settings"])
         settle()
         self.app.descendants(matching: .any)["Data and Storage"].firstMatch.tap()
         settle()
@@ -1380,7 +1479,7 @@ final class SendingUITests: XCTestCase {
 
     /// Settings > Data and Storage > Storage Usage > Clear Cache: the transcripts leave the phone.
     private func clearCache() {
-        self.launch(["-tab", "1"])
+        self.launch(["-tab", "settings"])
         self.app.descendants(matching: .any)["Data and Storage"].firstMatch.tap()
         settle()
         self.app.descendants(matching: .any)["Storage Usage"].firstMatch.tap()
@@ -1555,7 +1654,7 @@ final class SendingUITests: XCTestCase {
         let card = self.app.descendants(matching: .any).matching(identifier: "modelError").firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 5.0))
         let frame = card.frame
-        self.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.maxY - 20.0)).tap()
+        self.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.minX + frame.width * 0.75, dy: frame.maxY - 20.0)).tap()
         sleep(3)
         self.shot("err-4-retried")
     }
@@ -1589,14 +1688,15 @@ final class SendingUITests: XCTestCase {
         self.app.waitForIdle()
         settle()
         XCTAssertTrue(card.waitForExistence(timeout: 5.0))
-        XCTAssertEqual(card.value as? String, "retry")
+        // An invalid key: the way to the accounts too.
+        XCTAssertEqual(card.value as? String, "retry, accounts")
         self.type("after")
         self.send()
         XCTAssertTrue(self.app.waitForEcho("after"))
         self.app.waitForIdle()
         settle()
         XCTAssertTrue(card.exists)
-        XCTAssertTrue((card.value as? String ?? "").isEmpty, "no Retry on an earlier run's card")
+        XCTAssertFalse((card.value as? String ?? "").contains("retry"), "no Retry on an earlier run's card")
         self.shot("retry-2-earlier")
     }
 
@@ -1659,9 +1759,10 @@ final class SendingUITests: XCTestCase {
         XCTAssertTrue(self.app.waitForIdle(timeout: 10), "idle, not working")
         let card = self.app.descendants(matching: .any).matching(identifier: "modelError").firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 5.0), "the run's error card")
-        XCTAssertEqual(card.value as? String, "retry")
+        XCTAssertEqual(card.value as? String, "retry, accounts")
+        // Retry is the right half of the card's buttons, beside Accounts.
         let frame = card.frame
-        self.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.maxY - 20.0)).tap()
+        self.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.minX + frame.width * 0.75, dy: frame.maxY - 20.0)).tap()
         XCTAssertTrue(self.app.waitForEcho("held follow-up"), "the held follow-up goes in and is answered")
         self.app.waitForIdle()
         settle()
@@ -1834,7 +1935,7 @@ final class SendingUITests: XCTestCase {
     /// Settings > Usage: the span, the overview with its changes, the days by model, the models and the top chats.
     /// Against a copy of a server that spent something: `TAU_USAGE_SERVER`, default port 7981.
     func testUsage() {
-        self.launch(["-tab", "1"], server: ProcessInfo.processInfo.environment["TAU_USAGE_SERVER"] ?? "ws://127.0.0.1:7981")
+        self.launch(["-tab", "settings"], server: ProcessInfo.processInfo.environment["TAU_USAGE_SERVER"] ?? "ws://127.0.0.1:7981")
         settle()
         self.app.descendants(matching: .any)["Usage"].firstMatch.tap()
         settle()
@@ -1882,7 +1983,7 @@ final class SendingUITests: XCTestCase {
         self.openChatMenu()
         settle()
         self.shot("pc-5-menu-cold")
-        self.launch(["-tab", "1"], server: ProcessInfo.processInfo.environment["TAU_CACHE_SERVER"] ?? "ws://127.0.0.1:7982")
+        self.launch(["-tab", "settings"], server: ProcessInfo.processInfo.environment["TAU_CACHE_SERVER"] ?? "ws://127.0.0.1:7982")
         settle()
         self.app.descendants(matching: .any)["Usage"].firstMatch.tap()
         settle()
@@ -2131,7 +2232,7 @@ final class SendingUITests: XCTestCase {
         self.send()
         self.app.waitForIdle()
         settle()
-        self.launch(["-tab", "1", "-folders", "YES"])
+        self.launch(["-tab", "settings", "-folders", "YES"])
         settle()
         XCTAssertFalse(self.app.descendants(matching: .any)["All"].firstMatch.exists, "no folders seeded for one server")
         self.app.descendants(matching: .any)["Chat Folders"].firstMatch.tap()
@@ -2646,7 +2747,7 @@ final class SendingUITests: XCTestCase {
 
     /// tau's τ in Settings' header is in the accent, and follows it at once: yellow, then blue picked in Appearance.
     func testAvatarFollowsAccent() {
-        self.launch(["-theme", "classic", "-accent", "yellow", "-tab", "1"])
+        self.launch(["-theme", "classic", "-accent", "yellow", "-tab", "settings"])
         self.addTeardownBlock { [weak self] in
             self?.resetAccent()
         }
@@ -2666,7 +2767,7 @@ final class SendingUITests: XCTestCase {
     /// For screenshots of the τ: TAU_SHOT_THEME and TAU_SHOT_ACCENT, Settings' header.
     func testShotAvatar() {
         let env = ProcessInfo.processInfo.environment
-        self.launch(["-theme", env["TAU_SHOT_THEME"] ?? "classic", "-accent", env["TAU_SHOT_ACCENT"] ?? "pink", "-tab", "1"])
+        self.launch(["-theme", env["TAU_SHOT_THEME"] ?? "classic", "-accent", env["TAU_SHOT_ACCENT"] ?? "pink", "-tab", "settings"])
         self.addTeardownBlock { [weak self] in
             self?.resetAccent()
         }

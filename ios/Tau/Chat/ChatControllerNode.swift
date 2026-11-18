@@ -688,6 +688,11 @@ final class ChatControllerNode: ASDisplayNode {
         self.interaction.openToolText = open
     }
 
+    /// Set by the controller: an error card's Accounts.
+    func setAccountsHandler(_ open: @escaping () -> Void) {
+        self.interaction.openAccounts = open
+    }
+
     /// The row whose text a double tap selected, in place (ChatMessageItemNode.beginInlineSelection): one at a time.
     private weak var inlineSelectionNode: ChatMessageItemNode?
 

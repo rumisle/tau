@@ -2,12 +2,33 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- The keychain group with the app's servers (ShareModels.swift), which the usage widget asks. -->
+	<key>TauKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)$(TAU_BUNDLE_ID).shared</string>
+	<!-- The app's bundle ID, which names its keychain items (in an extension too). -->
+	<key>TauBundleID</key>
+	<string>$(TAU_BUNDLE_ID)</string>
 	<key>CFBundleDisplayName</key>
 	<string>tau</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.widgetkit-extension</string>
+	</dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>ts.net</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 </dict>
 </plist>

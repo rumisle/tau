@@ -25,6 +25,8 @@ final class RootTabController: ViewController {
     private var themeDisposable: Disposable?
 
     private(set) var selectedIndex: Int = 0
+    /// Each tab's badge, by its ID: the Accounts tab's count of accounts to see to.
+    private var badges: [AnyHashable: String] = [:]
     private var currentController: ViewController?
     private var tabBarView = ComponentView<Empty>()
     /// The system's liquid lens draws nothing in the selected tab when the bar was set up outside a window, as when the
@@ -39,9 +41,10 @@ final class RootTabController: ViewController {
         return self.currentController?.navigationBar
     }
 
-    init(context: AppContext, tabs: [Tab]) {
+    init(context: AppContext, tabs: [Tab], selected: AnyHashable? = nil) {
         self.context = context
         self.tabs = tabs
+        self.selectedIndex = selected.flatMap { id in tabs.firstIndex { $0.id == id } } ?? 0
         self.theme = context.theme
         super.init(navigationBarPresentationData: nil)
         self.statusBar.statusBarStyle = self.theme.statusBarStyleValue
@@ -90,6 +93,22 @@ final class RootTabController: ViewController {
         self.isTabBarHidden = hidden
         if let layout = self.validLayout {
             self.containerLayoutUpdated(layout, transition: .animated(duration: 0.4, curve: .slide))
+        }
+    }
+
+    func select(id: AnyHashable) {
+        if let index = self.tabs.firstIndex(where: { $0.id == id }) {
+            self.select(index: index)
+        }
+    }
+
+    func setBadge(_ badge: String?, for id: AnyHashable) {
+        guard self.badges[id] != badge else {
+            return
+        }
+        self.badges[id] = badge
+        if let layout = self.validLayout {
+            let _ = self.updateTabBar(layout: layout, transition: .animated(duration: 0.2, curve: .easeInOut))
         }
     }
 
@@ -189,7 +208,7 @@ final class RootTabController: ViewController {
                 strings: self.theme.presentationStrings,
                 items: self.tabs.enumerated().map { index, tab in
                     TabBarComponent.Item(
-                        content: .customItem(.init(id: tab.id, title: tab.title, icon: .animation(name: tab.animation, offset: tab.animationOffset))),
+                        content: .customItem(.init(id: tab.id, title: tab.title, icon: .animation(name: tab.animation, offset: tab.animationOffset), badge: self.badges[tab.id])),
                         action: { [weak self] _ in
                             self?.select(index: index)
                         },

@@ -499,6 +499,94 @@ final class ServerStore: ConversationStore, TauServer {
         self.infoChanged?()
     }
 
+    // MARK: - Accounts (docs/accounts.md)
+
+    private let accountsPromise = ValuePromise<AccountsState?>(nil, ignoreRepeated: true)
+    private(set) var accountsState: AccountsState? {
+        didSet {
+            // Another provider in use, or none: the models it has change.
+            let providers = { (state: AccountsState?) in Set((state?.accounts.filter(\.active).map(\.provider) ?? []) + (state?.ambient.map(\.provider) ?? [])) }
+            if providers(oldValue) != providers(self.accountsState) {
+                self.modelsCache = nil
+            }
+            self.accountsPromise.set(self.accountsState)
+        }
+    }
+
+    var accountsSignal: Signal<AccountsState?, NoError> {
+        return self.accountsPromise.get()
+    }
+
+    private func subscribeAccounts(serverId: String) {
+        self.connection.request("accounts.subscribe") { [weak self] result in
+            guard let self, self.connection.hello?.serverId == serverId, case let .success(value) = result else {
+                return
+            }
+            self.accountsState = AccountsState(json: value)
+        }
+    }
+
+    func refreshAccounts() {
+        self.connection.request("accounts.refresh") { _ in }
+    }
+
+    func startLogin(provider: String, type: String, completion: @escaping (Result<String, RequestError>) -> Void) {
+        self.connection.request("accounts.login", ["provider": provider, "type": type]) { result in
+            switch result {
+            case let .success(value):
+                if let login = value.string("login") {
+                    completion(.success(login))
+                } else {
+                    completion(.failure(RequestError(code: "internal", message: "No login")))
+                }
+            case let .failure(error):
+                completion(.failure(error))
+            }
+        }
+    }
+
+    func answerLogin(_ login: String, prompt: String, value: String, completion: @escaping (RequestError?) -> Void) {
+        self.connection.request("accounts.answer", ["login": login, "prompt": prompt, "value": value]) { result in
+            if case let .failure(error) = result {
+                completion(error)
+            } else {
+                completion(nil)
+            }
+        }
+    }
+
+    func cancelLogin(_ login: String) {
+        self.connection.request("accounts.cancel", ["login": login]) { _ in }
+    }
+
+    func useAccount(_ id: String) {
+        // At once on screen; the server's state follows.
+        if var state = self.accountsState, let account = state.account(id) {
+            for index in state.accounts.indices where state.accounts[index].provider == account.provider {
+                state.accounts[index].active = state.accounts[index].id == id
+            }
+            self.accountsState = state
+        }
+        self.connection.request("accounts.use", ["id": id]) { _ in }
+    }
+
+    func renameAccount(_ id: String, label: String) {
+        if var state = self.accountsState, let index = state.accounts.firstIndex(where: { $0.id == id }) {
+            let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            state.accounts[index].label = trimmed.isEmpty ? nil : trimmed
+            self.accountsState = state
+        }
+        self.connection.request("accounts.rename", ["id": id, "label": label]) { _ in }
+    }
+
+    func removeAccount(_ id: String) {
+        if var state = self.accountsState {
+            state.accounts.removeAll { $0.id == id }
+            self.accountsState = state
+        }
+        self.connection.request("accounts.remove", ["id": id]) { _ in }
+    }
+
     /// Set from Settings until the next `hello` reports it.
     private var defaultModelOverride: String?
 
@@ -550,6 +638,7 @@ final class ServerStore: ConversationStore, TauServer {
             self.forkParents = [:]
         }
         self.connection.setStatus(.updating)
+        self.subscribeAccounts(serverId: hello.serverId)
         // The usage row reads each model's context window from the list.
         if self.modelsCache == nil {
             let _ = self.models().start()
@@ -693,6 +782,10 @@ final class ServerStore: ConversationStore, TauServer {
             self.outbox.settle(conversationId: id, entries: Set(replica.entries.keys))
             self.publish(id)
             self.cache.scheduleSave(replica)
+        case "accounts":
+            if let state = push.object("state") {
+                self.accountsState = AccountsState(json: state)
+            }
         case "submission":
             guard let record = push.object("record"), let id = record.int("conversationId") else {
                 return

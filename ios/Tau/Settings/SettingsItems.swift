@@ -575,6 +575,16 @@ final class SettingsInputItem: ListViewItem {
     let position: SettingsRowPosition
     let maxLength: Int
     let changed: (String) -> Void
+    /// Dots for what is typed: a key.
+    var secure = false
+    /// As typed: no corrections or capitals, for codes, keys and addresses.
+    var verbatim = false
+    /// The system's Paste button inside the field, which pastes without asking (UIPasteControl).
+    var pasteButton = false
+    /// Focused as soon as it shows.
+    var focused = false
+    /// The keyboard's return key, when set: Continue.
+    var submit: (() -> Void)?
 
     init(theme: TauTheme, text: String, placeholder: String, position: SettingsRowPosition = SettingsRowPosition(isFirst: true, isLast: true), maxLength: Int = 64, changed: @escaping (String) -> Void) {
         self.theme = theme
@@ -614,9 +624,34 @@ final class SettingsInputItem: ListViewItem {
     }
 }
 
+/// A field the Paste button pastes into as typing would.
+private final class PastingTextField: UITextField {
+    var pasted: (() -> Void)?
+
+    override func paste(itemProviders: [NSItemProvider]) {
+        guard let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
+            return
+        }
+        _ = provider.loadObject(ofClass: NSString.self) { [weak self] value, _ in
+            guard let text = value as? String else {
+                return
+            }
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+                self.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.pasted?()
+            }
+        }
+    }
+}
+
 final class SettingsInputItemNode: ListViewItemNode, UITextFieldDelegate {
     private let backgroundNode = ASDisplayNode()
     private var textField: UITextField?
+    private var pasteControl: UIView?
+    private var focusedOnce = false
     private var item: SettingsInputItem?
 
     init() {
@@ -652,7 +687,11 @@ final class SettingsInputItemNode: ListViewItemNode, UITextFieldDelegate {
         if let current = self.textField {
             textField = current
         } else {
-            textField = UITextField()
+            let field = PastingTextField()
+            field.pasted = { [weak self] in
+                self?.textChanged()
+            }
+            textField = field
             textField.delegate = self
             textField.clearButtonMode = .whileEditing
             textField.returnKeyType = .done
@@ -669,7 +708,41 @@ final class SettingsInputItemNode: ListViewItemNode, UITextFieldDelegate {
             textField.text = item.text
         }
         textField.accessibilityIdentifier = item.placeholder
-        textField.frame = CGRect(x: sectionLeft + 20.0, y: 0.0, width: sectionWidth - 28.0, height: height)
+        textField.isSecureTextEntry = item.secure
+        textField.autocorrectionType = item.verbatim ? .no : .default
+        textField.autocapitalizationType = item.verbatim ? .none : .sentences
+        textField.spellCheckingType = item.verbatim ? .no : .default
+        textField.returnKeyType = item.submit == nil ? .done : .continue
+        var fieldWidth = sectionWidth - 28.0
+        if item.pasteButton {
+            let control: UIView
+            if let current = self.pasteControl {
+                control = current
+            } else {
+                let configuration = UIPasteControl.Configuration()
+                configuration.displayMode = .labelOnly
+                configuration.cornerStyle = .capsule
+                configuration.baseBackgroundColor = theme.itemAccentColor
+                configuration.baseForegroundColor = item.theme.presentationTheme.list.itemCheckColors.foregroundColor
+                let paste = UIPasteControl(configuration: configuration)
+                paste.target = textField
+                textField.pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: ["public.plain-text"])
+                self.view.addSubview(paste)
+                self.pasteControl = paste
+                control = paste
+            }
+            let size = CGSize(width: 76.0, height: 32.0)
+            control.frame = CGRect(x: sectionLeft + sectionWidth - 12.0 - size.width, y: floor((height - size.height) / 2.0), width: size.width, height: size.height)
+            fieldWidth -= size.width + 4.0
+            textField.clearButtonMode = .never
+        }
+        textField.frame = CGRect(x: sectionLeft + 20.0, y: 0.0, width: fieldWidth, height: height)
+        if item.focused && !self.focusedOnce {
+            self.focusedOnce = true
+            DispatchQueue.main.async {
+                textField.becomeFirstResponder()
+            }
+        }
         return ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets())
     }
 
@@ -686,6 +759,10 @@ final class SettingsInputItemNode: ListViewItemNode, UITextFieldDelegate {
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        if let submit = self.item?.submit {
+            submit()
+            return false
+        }
         textField.resignFirstResponder()
         return false
     }

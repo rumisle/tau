@@ -472,5 +472,6 @@ struct TauWidgetsBundle: WidgetBundle {
     var body: some Widget {
         TauLiveActivity()
         NewChatControl()
+        AccountsWidget()
     }
 }

@@ -386,7 +386,7 @@ final class TauUITests: XCTestCase {
 
     /// Against a running tau server: Settings > Default Model lists the server's models and changes the default.
     func testDefaultModel() {
-        self.launch(["-theme", "light", "-tab", "1"])
+        self.launch(["-theme", "light", "-tab", "settings"])
         settle()
         // Settings > Servers > the server > Default Model.
         self.app.descendants(matching: .any)["Servers"].firstMatch.tap()
@@ -449,7 +449,7 @@ final class TauUITests: XCTestCase {
 
     /// Settings > Appearance: the night theme and the code wrapping switch.
     func testAppearanceSettings() {
-        self.launch(["-theme", "dark", "-tab", "1"])
+        self.launch(["-theme", "dark", "-tab", "settings"])
         settle()
         self.app.descendants(matching: .any)["Appearance"].firstMatch.tap()
         settle()

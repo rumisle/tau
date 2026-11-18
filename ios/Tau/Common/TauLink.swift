@@ -8,9 +8,11 @@ import Foundation
 ///     tau://d0003019/1523/880?q=...  and words of it, marked
 ///     tau://new?text=...&server=d0003019&model=anthropic/claude-opus-5-5
 ///                                    a new chat, its field filled in; the server and model when given and there
+///     tau://accounts                 the Accounts tab (the usage widget's)
 enum TauLink: Equatable {
     case chat(server: String, conversation: Int, entry: Int?, quote: String?)
     case newChat(text: String?, server: String?, model: String?)
+    case accounts
 
     /// How much of a server's ID names it in a link.
     static let serverPrefixLength = 8
@@ -22,6 +24,10 @@ enum TauLink: Equatable {
         let query = Dictionary((URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
         if host == "new" {
             self = .newChat(text: query["text"], server: query["server"], model: query["model"])
+            return
+        }
+        if host == "accounts" {
+            self = .accounts
             return
         }
         let parts = url.path.split(separator: "/").compactMap { Int($0) }
@@ -45,6 +51,8 @@ enum TauLink: Equatable {
             components.host = "new"
             let items = [("text", text), ("server", server), ("model", model)].compactMap { name, value in value.map { URLQueryItem(name: name, value: $0) } }
             components.queryItems = items.isEmpty ? nil : items
+        case .accounts:
+            components.host = "accounts"
         }
         return components.url
     }

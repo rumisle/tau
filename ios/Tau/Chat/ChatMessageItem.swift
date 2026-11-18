@@ -37,6 +37,8 @@ final class ChatMessageItemInteraction {
     var openLinkMenu: (String, Int, TapLongTapOrDoubleTapGestureRecognizer) -> Void = { _, _, _ in }
     /// A tool card's Show All: its whole text, in a viewer.
     var openToolText: (ChatMessage) -> Void = { _ in }
+    /// An error card's Accounts: the provider's limit or sign-in failed the run (docs/accounts.md).
+    var openAccounts: () -> Void = {}
     /// A file's row: where the file is, as its circle shows; a tap fetches, stops fetching, or opens it.
     var fileStatus: (FileAttachment) -> Signal<FileTransferStatus, NoError> = { file in .single(file.localURL.map { .local($0) } ?? .remote) }
     var openFile: (FileAttachment, FileTransferStatus) -> Void = { _, _ in }
@@ -360,6 +362,10 @@ final class ChatMessageItemNode: ListViewItemNode {
     private var waitingLabelNode: ImmediateTextNode?
     /// The error card's Retry button, for taps.
     private var retryButtonFrame: CGRect?
+    /// Its Accounts button, beside Retry when the error is the provider's limit or sign-in, and the line between them.
+    private var accountsButtonFrame: CGRect?
+    private let accountsButtonNode = TextNode()
+    private let accountsDividerNode = ASDisplayNode()
     /// As in ChatMessageBubbleItemNode: the long-press source wraps the extractable container, whose content node the
     /// context menu lifts out of the list and puts back.
     let containerNode = ContextControllerSourceNode()
@@ -417,7 +423,8 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.subagentQuoteNode.addSubnode(self.subagentBarNode)
         self.subagentArrowNode.isLayerBacked = true
         self.subagentArrowNode.displaysAsynchronously = false
-        for node in [self.subagentQuoteNode, self.subagentTaskNode, self.subagentMetaNode, self.subagentArrowNode, self.timerNode] {
+        self.accountsDividerNode.isLayerBacked = true
+        for node in [self.subagentQuoteNode, self.subagentTaskNode, self.subagentMetaNode, self.subagentArrowNode, self.timerNode, self.accountsButtonNode, self.accountsDividerNode] {
             node.isHidden = true
             self.contentNode.addSubnode(node)
         }
@@ -600,6 +607,10 @@ final class ChatMessageItemNode: ListViewItemNode {
         let point = self.view.convert(location, to: self.contentNode.view)
         if let frame = self.toolShowAllFrame, frame.contains(point) {
             item.interaction.openToolText(item.message)
+            return
+        }
+        if let frame = self.accountsButtonFrame, frame.contains(point) {
+            item.interaction.openAccounts()
             return
         }
         if let frame = self.retryButtonFrame, frame.contains(point) {
@@ -1058,6 +1069,7 @@ final class ChatMessageItemNode: ListViewItemNode {
         let makeToolShowAllLayout = TextNode.asyncLayout(self.toolShowAllNode)
         let makeSubagentTaskLayout = TextNode.asyncLayout(self.subagentTaskNode)
         let makeSubagentMetaLayout = TextNode.asyncLayout(self.subagentMetaNode)
+        let makeAccountsButtonLayout = TextNode.asyncLayout(self.accountsButtonNode)
         let makeSubagentAnswerLayout = InteractiveTextNode.asyncLayout(self.subagentAnswerNode)
         let existingTextNodes = self.textNodes
         let existingTableNodes = self.tableNodes
@@ -1661,8 +1673,12 @@ final class ChatMessageItemNode: ListViewItemNode {
                     let (bodyLayout, bodyApply) = makeSubagentTaskLayout(TextNodeLayoutArguments(attributedString: body, maximumNumberOfLines: item.isExpanded ? 40 : 4, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: .greatestFiniteMagnitude)))
                     let button = NSAttributedString(string: "Retry", font: Font.semibold(16.0), textColor: item.theme.accentColor)
                     let (buttonLayout, buttonApply) = makeSubagentMetaLayout(TextNodeLayoutArguments(attributedString: button, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: 30.0)))
-                    let buttonHeight: CGFloat = retry ? 44.0 : 0.0
-                    let separatorY = cardInsets.top + headerLayout.size.height + 3.0 + bodyLayout.size.height + (retry ? 10.0 : 12.0)
+                    // The provider's limit or sign-in: the way to the accounts, beside Retry.
+                    let accounts = ModelErrorText.isAccountError(error)
+                    let (accountsLayout, accountsApply) = makeAccountsButtonLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: "Accounts", font: Font.semibold(16.0), textColor: item.theme.accentColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: innerWidth, height: 30.0)))
+                    let hasButtons = retry || accounts
+                    let buttonHeight: CGFloat = hasButtons ? 44.0 : 0.0
+                    let separatorY = cardInsets.top + headerLayout.size.height + 3.0 + bodyLayout.size.height + (hasButtons ? 10.0 : 12.0)
                     let cardHeight = separatorY + buttonHeight
                     let mergedTop = above == .assistant || above == .tool
                     let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: cardHeight), insets: UIEdgeInsets(top: mergedTop ? 6.0 : 10.0, left: 0.0, bottom: 6.0, right: 0.0))
@@ -1692,7 +1708,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.isAccessibilityElement = true
                         self.accessibilityIdentifier = "modelError"
                         self.accessibilityLabel = "\(title): \(error)"
-                        self.accessibilityValue = retry ? "retry" : nil
+                        self.accessibilityValue = [retry ? "retry" : nil, accounts ? "accounts" : nil].compactMap { $0 }.joined(separator: ", ")
                         let card = CGRect(x: params.leftInset + freeTextInset - 4.0 + leftShift, y: 0.0, width: cardWidth, height: cardHeight)
                         self.contentFrame = card
                         self.toolBackgroundNode.backgroundColor = theme.toolCardBackgroundColor
@@ -1702,14 +1718,25 @@ final class ChatMessageItemNode: ListViewItemNode {
                         let _ = bodyApply()
                         self.subagentTaskNode.isHidden = false
                         self.subagentTaskNode.frame = CGRect(origin: CGPoint(x: card.minX + cardInsets.left, y: card.minY + cardInsets.top + headerLayout.size.height + 3.0), size: bodyLayout.size)
-                        self.subagentQuoteNode.isHidden = !retry
+                        self.subagentQuoteNode.isHidden = !hasButtons
                         self.subagentQuoteNode.backgroundColor = theme.toolCardTextColor.withMultipliedAlpha(0.25)
                         self.subagentQuoteNode.frame = CGRect(x: card.minX, y: card.minY + separatorY, width: cardWidth, height: UIScreenPixel)
                         self.subagentBarNode.frame = .zero
                         let _ = buttonApply()
+                        let _ = accountsApply()
+                        // Two buttons share the row, as an alert's two side by side; one has it all.
+                        let half = retry && accounts ? floor(cardWidth / 2.0) : cardWidth
+                        let accountsFrame = CGRect(x: card.minX, y: card.minY + separatorY, width: half, height: buttonHeight)
+                        let retryFrame = CGRect(x: card.minX + (accounts ? cardWidth - half : 0.0), y: card.minY + separatorY, width: half, height: buttonHeight)
                         self.subagentMetaNode.isHidden = !retry
-                        self.subagentMetaNode.frame = CGRect(origin: CGPoint(x: card.minX + floor((cardWidth - buttonLayout.size.width) / 2.0), y: card.minY + separatorY + floor((buttonHeight - buttonLayout.size.height) / 2.0)), size: buttonLayout.size)
-                        self.retryButtonFrame = retry ? CGRect(x: card.minX, y: card.minY + separatorY, width: cardWidth, height: buttonHeight) : nil
+                        self.subagentMetaNode.frame = CGRect(origin: CGPoint(x: retryFrame.minX + floor((retryFrame.width - buttonLayout.size.width) / 2.0), y: retryFrame.minY + floor((buttonHeight - buttonLayout.size.height) / 2.0)), size: buttonLayout.size)
+                        self.accountsButtonNode.isHidden = !accounts
+                        self.accountsButtonNode.frame = CGRect(origin: CGPoint(x: accountsFrame.minX + floor((accountsFrame.width - accountsLayout.size.width) / 2.0), y: accountsFrame.minY + floor((buttonHeight - accountsLayout.size.height) / 2.0)), size: accountsLayout.size)
+                        self.accountsDividerNode.isHidden = !(retry && accounts)
+                        self.accountsDividerNode.backgroundColor = theme.toolCardTextColor.withMultipliedAlpha(0.25)
+                        self.accountsDividerNode.frame = CGRect(x: card.minX + half, y: card.minY + separatorY, width: UIScreenPixel, height: buttonHeight)
+                        self.retryButtonFrame = retry ? retryFrame : nil
+                        self.accountsButtonFrame = accounts ? accountsFrame : nil
                         self.layoutContainers(size: layout.contentSize)
                         self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                     })
@@ -2558,6 +2585,9 @@ final class ChatMessageItemNode: ListViewItemNode {
             node.removeFromSupernode()
         }
         self.retryButtonFrame = nil
+        self.accountsButtonFrame = nil
+        self.accountsButtonNode.isHidden = true
+        self.accountsDividerNode.isHidden = true
         if let node = self.serviceTauNode {
             self.serviceTauNode = nil
             node.removeFromSupernode()
