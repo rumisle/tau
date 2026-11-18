@@ -78,7 +78,9 @@ type ProviderInfo = { id: string; name: string; oauth?: { name: string; subscrip
 ```
 
 - `accounts.subscribe {}` -> `AccountsState`, then `{ event: "accounts", state: AccountsState }` on every change.
-- `accounts.refresh {}` -> `{}`: ask every account's usage now.
+- `accounts.refresh { id? }` -> `{}`: ask one account's usage now (the app does when its screen opens), or every
+  account's. An account is asked at most every 20 seconds, and not while its endpoint said 429 (its Retry-After, else
+  10 minutes): the numbers had stand. `accounts.use` asks the account's usage too.
 - `accounts.login { provider, type }` -> `{ login: id }`.
 - `accounts.answer { login, prompt, value }` -> `{}`; `accounts.cancel { login }` -> `{}`.
 - `accounts.use { id }`, `accounts.rename { id, label }` (empty: none), `accounts.remove { id }` -> `{}`.

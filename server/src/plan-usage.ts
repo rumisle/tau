@@ -29,6 +29,10 @@ export type Usage = {
 const HOUR = 3600;
 const WEEK = 7 * 24 * HOUR;
 const REFRESH_MARGIN_MS = 60_000;
+/** An account's usage is asked at most this often, however many clients ask. */
+const MIN_ASK_MS = 20_000;
+/** How long to leave an endpoint that answered 429 alone when it does not say. */
+const RATE_LIMIT_BACKOFF_MS = 10 * 60_000;
 
 export type Fetcher = (credential: OAuthCredential, fetchImpl: typeof fetch) => Promise<Omit<Usage, "at">>;
 
@@ -134,10 +138,15 @@ export class PlanUsage {
 	readonly #onChange: () => void;
 	readonly #usage = new Map<string, Usage>();
 	readonly #asking = new Map<string, Promise<void>>();
+	/** When each account's usage was last asked, and until when its endpoint asked to be left alone (429). */
+	readonly #askedAt = new Map<string, number>();
+	readonly #quietUntil = new Map<string, number>();
 	readonly #fetchers: Record<string, Fetcher>;
+	readonly #minAskMs: number;
 	#timer: ReturnType<typeof setInterval> | undefined;
 
-	constructor(options: { accounts: Accounts; models: Models; fetch?: typeof fetch; pollMs?: number; fetchers?: Record<string, Fetcher>; onChange: () => void }) {
+	constructor(options: { accounts: Accounts; models: Models; fetch?: typeof fetch; pollMs?: number; minAskMs?: number; fetchers?: Record<string, Fetcher>; onChange: () => void }) {
+		this.#minAskMs = options.minAskMs ?? MIN_ASK_MS;
 		this.#fetchers = { ...FETCHERS, ...options.fetchers };
 		this.#accounts = options.accounts;
 		this.#models = options.models;
@@ -166,10 +175,16 @@ export class PlanUsage {
 		await Promise.all(this.#accounts.all().filter((account) => this.#asksUsage(account)).map((account) => this.refresh(account.id)));
 	}
 
-	/** Asks the provider for the account's usage, once at a time. */
+	/**
+	 * Asks the provider for the account's usage, once at a time, not again within 20 seconds, and not while its
+	 * endpoint asked to be left alone.
+	 */
 	refresh(accountId: string): Promise<void> {
 		const going = this.#asking.get(accountId);
 		if (going !== undefined) return going;
+		const now = Date.now();
+		if (now - (this.#askedAt.get(accountId) ?? -Infinity) < this.#minAskMs || now < (this.#quietUntil.get(accountId) ?? 0)) return Promise.resolve();
+		this.#askedAt.set(accountId, now);
 		const asking = this.#ask(accountId).finally(() => this.#asking.delete(accountId));
 		this.#asking.set(accountId, asking);
 		return asking;
@@ -245,6 +260,12 @@ export class PlanUsage {
 				result = await fetcher(credential, this.fetch);
 			}
 		} catch (caught) {
+			if (caught instanceof HttpError && caught.status === 429) {
+				// Asked too often (the endpoint's own limit, not the plan's): the numbers had stand, and the answers'
+				// headers keep the account in use current meanwhile.
+				this.#quietUntil.set(accountId, Date.now() + (caught.retryAfterMs ?? RATE_LIMIT_BACKOFF_MS));
+				return;
+			}
 			error = (caught as Error).message ?? String(caught);
 		}
 		const before = this.#usage.get(accountId);
@@ -281,9 +302,11 @@ export class PlanUsage {
 
 class HttpError extends Error {
 	readonly status: number;
-	constructor(status: number, message: string) {
+	readonly retryAfterMs: number | undefined;
+	constructor(status: number, message: string, retryAfterMs?: number) {
 		super(message);
 		this.status = status;
+		this.retryAfterMs = retryAfterMs;
 	}
 }
 
@@ -291,7 +314,8 @@ async function getJson(fetchImpl: typeof fetch, url: string, headers: Record<str
 	const response = await fetchImpl(url, { headers: { accept: "application/json", ...headers }, signal: AbortSignal.timeout(20_000) });
 	if (!response.ok) {
 		const text = await response.text().catch(() => "");
-		throw new HttpError(response.status, `${new URL(url).host} answered ${response.status}${text === "" ? "" : `: ${text.slice(0, 200)}`}`);
+		const retryAfter = Number(response.headers.get("retry-after"));
+		throw new HttpError(response.status, `${new URL(url).host} answered ${response.status}${text === "" ? "" : `: ${text.slice(0, 200)}`}`, Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : undefined);
 	}
 	return response.json();
 }

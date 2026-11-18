@@ -6,6 +6,7 @@ import { after, before, describe, test } from "node:test";
 import type { AuthEvent, AuthPrompt, Credential, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import { Accounts, type AccountsState, shortProblem } from "../src/accounts.ts";
 import { TauClient } from "../src/client.ts";
+import { PlanUsage } from "../src/plan-usage.ts";
 import { type Host, openHost } from "../src/host.ts";
 import { type Server, serve } from "../src/server.ts";
 
@@ -261,5 +262,32 @@ describe("accounts: logins, switching and usage over the protocol", () => {
 		assert.equal(events, "events");
 		await until((each) => each.accounts.find((one) => one.id === id)?.usage?.windows.find((window) => window.id === "5h")?.usedPercent === 50);
 		assert.equal(seen, "given", "the caller's onResponse still runs");
+	});
+});
+
+describe("accounts: usage asked too often", () => {
+	test("a 429 keeps the numbers had, says nothing, and leaves the endpoint alone for its Retry-After", async () => {
+		const accounts = new Accounts();
+		const account = await accounts.add("anthropic", { type: "oauth", access: "a", refresh: "r", expires: Date.now() + 3_600_000 }, {});
+		let answer: () => Response = () => Response.json({ five_hour: { utilization: 30, resets_at: "2026-11-18T10:40:00Z" } });
+		let asked = 0;
+		const usage = new PlanUsage({
+			accounts,
+			models: {} as never,
+			minAskMs: 0,
+			fetch: (async () => {
+				asked += 1;
+				return answer();
+			}) as typeof fetch,
+			onChange: () => {},
+		});
+		await usage.refresh(account.id);
+		assert.equal(usage.of(account.id)?.windows[0]?.usedPercent, 30);
+		answer = () => new Response("rate_limit_error", { status: 429, headers: { "retry-after": "60" } });
+		await usage.refresh(account.id);
+		assert.equal(usage.of(account.id)?.windows[0]?.usedPercent, 30, "the numbers had stand");
+		assert.equal(usage.of(account.id)?.error, undefined, "not an error to show");
+		await usage.refresh(account.id);
+		assert.equal(asked, 2, "left alone after the 429");
 	});
 });

@@ -432,8 +432,15 @@ export class AccountsService {
 		return () => this.#listeners.delete(listener);
 	}
 
-	refresh(): Promise<void> {
-		return this.usage.refreshAll();
+	/** One account's usage now, or every one's. */
+	refresh(accountId?: string): Promise<void> {
+		return accountId === undefined ? this.usage.refreshAll() : this.usage.refresh(accountId);
+	}
+
+	/** Puts the account in use, and asks its usage: the numbers shown with it should be its own, now. */
+	async use(accountId: string): Promise<void> {
+		await this.accounts.use(accountId);
+		void this.usage.refresh(accountId);
 	}
 
 	login(providerId: string, type: Credential["type"]): string {

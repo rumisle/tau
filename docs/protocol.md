@@ -171,7 +171,8 @@ The server's logins to model providers, their logins in progress and their plan 
 the types). `accounts.subscribe {}` -> `AccountsState`, then `{ event: "accounts", state: AccountsState }` after every
 change, the whole state each time; usage a minute old or more is asked for again on subscribe.
 
-- `accounts.refresh {}` -> `{}` once every subscription account's usage was asked for.
+- `accounts.refresh { id? }` -> `{}` once the account's usage, or every subscription account's, was asked for (at most
+  every 20 seconds an account, not while its endpoint said 429).
 - `accounts.login { provider, type: "oauth" | "api_key" }` -> `{ login }`; the login's events and its prompt are in
   the state's `logins`. `accounts.answer { login, prompt, value }` -> `{}` (`bad_request` when that prompt is no longer
   asked); `accounts.cancel { login }` -> `{}`.

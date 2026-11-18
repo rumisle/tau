@@ -351,7 +351,7 @@ export class Connection {
 				return { mimeType: image.mimeType, data: image.data };
 			}
 			case "accounts.refresh":
-				await this.#host.accounts.refresh();
+				await this.#host.accounts.refresh(str(params, "id", true));
 				return {};
 			case "accounts.login": {
 				const type = str(params, "type");
@@ -365,7 +365,7 @@ export class Connection {
 				this.#host.accounts.cancel(str(params, "login"));
 				return {};
 			case "accounts.use":
-				await this.#host.accounts.accounts.use(str(params, "id"));
+				await this.#host.accounts.use(str(params, "id"));
 				return {};
 			case "accounts.rename":
 				await this.#host.accounts.accounts.rename(str(params, "id"), str(params, "label"));
