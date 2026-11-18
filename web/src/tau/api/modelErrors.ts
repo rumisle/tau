@@ -50,3 +50,17 @@ export function modelErrorReason(raw: string) {
 export function compactionError(raw: string) {
   return cleanModelError(raw).replace(/^summarization failed:\s*/i, '');
 }
+
+const ACCOUNT_STATUSES = /(^|status |\()(401|403|429)\b|\b(401|403|429):/;
+const ACCOUNT_PHRASES = ['rate limit', 'rate_limit', 'usage limit', 'usage_limit', 'quota', 'credit balance',
+  'insufficient_quota', 'too many requests', 'unauthorized', 'authentication', 'invalid api key', 'invalid x-api-key',
+  'api key', 'oauth', 'token refresh', 'not logged in', 'sign in', 'log in again', 'limit reached', 'exceeded'];
+
+/**
+ * The provider turned the request away for the account: a limit of its plan or its rate, or its sign-in or key. The
+ * error card offers Settings > Accounts for it (docs/accounts.md)
+ */
+export function isAccountError(text: string) {
+  const lower = text.toLowerCase();
+  return ACCOUNT_STATUSES.test(lower) || ACCOUNT_PHRASES.some((phrase) => lower.includes(phrase));
+}

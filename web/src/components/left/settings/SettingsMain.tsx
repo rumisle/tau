@@ -20,6 +20,7 @@ import useHistoryBack from '../../../hooks/useHistoryBack';
 import useLang from '../../../hooks/useLang';
 import useLastCallback from '../../../hooks/useLastCallback';
 
+import { useAccountsAttention } from '../../../tau/components/AccountsSettings'; // tau: Accounts, in Devices' place
 import ChatExtra from '../../common/profile/ChatExtra';
 import ProfileInfo from '../../common/profile/ProfileInfo';
 import Island from '../../gili/layout/Island';
@@ -65,6 +66,7 @@ const SettingsMain = ({
   const [isSupportDialogOpen, openSupportDialog, closeSupportDialog] = useFlag(false);
 
   const lang = useLang();
+  const accountsAttention = useAccountsAttention(); // tau: Accounts, its count of accounts to see to
 
   useEffect(() => {
     if (currentUserId) {
@@ -206,17 +208,19 @@ const SettingsMain = ({
           </ListItem>
 
           <ListItem
-            icon="devices-filled"
+            icon={IS_TAU ? 'user-filled' : 'devices-filled'} // tau: Accounts, in Devices' place
             iconBg="blue"
             multiline
             narrow
-            rightElement={sessionCount > 0
-              ? <span className="settings-item__current-value">{sessionCount}</span>
-              : undefined}
+            rightElement={(IS_TAU ? accountsAttention : sessionCount) > 0 // tau: accounts to see to
+              ? <span className="settings-item__current-value">{IS_TAU ? accountsAttention : sessionCount}</span>
+              : undefined} // tau: see above
             onClick={() => openSettingsScreen({ screen: SettingsScreens.ActiveSessions })}
           >
-            <span className="title">{lang('SessionsTitle')}</span>
-            <span className="subtitle">{lang('SettingsSessionsDesc')}</span>
+            <span className="title">{IS_TAU ? STRINGS.Accounts : lang('SessionsTitle')}</span>
+            {/* tau: see above */}
+            <span className="subtitle">{IS_TAU ? STRINGS.AccountsDescription : lang('SettingsSessionsDesc')}</span>
+            {/* tau */}
           </ListItem>
         </Island>
 

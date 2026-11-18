@@ -246,7 +246,7 @@ const SettingsHeader = ({
         return <h3>{lang('MenuAnimations')}</h3>;
 
       case SettingsScreens.ActiveSessions:
-        return <h3>{lang('SessionsTitle')}</h3>;
+        return <h3>{IS_TAU ? STRINGS.Accounts : lang('SessionsTitle')}</h3>; // tau: Accounts, in Devices' place
       case SettingsScreens.ActiveWebsites:
         return <h3>{lang('OtherWebSessions')}</h3>;
       case SettingsScreens.PrivacyBlockedUsers:

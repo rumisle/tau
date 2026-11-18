@@ -1,7 +1,9 @@
 # Accounts
 
 Status: built on the server (server/src/accounts.ts, server/src/plan-usage.ts) and in the app (ios/Tau/Accounts, the
-usage widget in ios/TauWidgets/AccountsWidget.swift); the web client has no Accounts screen yet. A dev server
+usage widget in ios/TauWidgets/AccountsWidget.swift) and in the web client (Settings > Accounts, in Devices' place:
+web/src/tau/components/AccountsSettings.tsx and LoginModal.tsx, where an account opens in a dialog and a right
+click has its actions). A dev server
 (`--dev-tps`) has a Dev Account provider whose sign-in completes on its own, with usage (server/src/dev-accounts.ts),
 for the app's UI test `testAccounts`.
 
@@ -88,6 +90,5 @@ Credentials never leave the server.
 - A bar over the composer when the account in use passes 90% of a limit, with the way to the Accounts tab.
 - A push when a limit the account in use ran out of resets.
 - Copilot's and OpenRouter's usage.
-- The web client's Accounts screen: the same protocol, Settings-like, with the device code and the paste field.
 - Picking the widget's account (an App Intent configuration); it shows the accounts in use for now.
 - Switching on its own when an account runs out.

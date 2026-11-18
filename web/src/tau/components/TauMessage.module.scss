@@ -435,6 +435,11 @@
   overflow-wrap: anywhere;
 }
 
+.errorButtons {
+  display: flex;
+  gap: 1.5rem;
+}
+
 .errorRetry {
   cursor: pointer;
 

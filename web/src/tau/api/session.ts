@@ -12,6 +12,7 @@ import { getActions, getGlobal } from '../../global';
 
 import type { ApiAttachment, ApiMessage, ApiUpdate } from '../../api/types';
 import type { GlobalState } from '../../global/types';
+import type { AccountsState } from './accounts';
 import type { MessageContext } from './builders';
 import type { QueuedMessage } from './queue';
 import type { ServerConfig } from './servers';
@@ -131,6 +132,9 @@ type ServerLink = {
   isRemoved?: boolean;
   // Its chat list's first sync after a connect: the baseline of answers (api/answers.ts)
   isSyncing?: boolean;
+  // Its logins to model providers (docs/accounts.md), as the server last said; whether it is too old to have them
+  accounts?: AccountsState;
+  hasNoAccounts?: boolean;
 };
 
 let onUpdate: (update: ApiUpdate) => void = () => undefined;
@@ -142,6 +146,7 @@ let typingTimer: number | undefined;
 let authStatus: AuthStatus = 'connecting';
 const authListeners = new Set<(status: AuthStatus) => void>();
 const serverListeners = new Set<() => void>();
+const accountsListeners = new Set<() => void>();
 
 /** Every server's chat list as one, by global conversation IDs (src/tau/api/servers.ts) */
 export const dialogs = {
@@ -418,7 +423,9 @@ async function connect(link: ServerLink) {
   link.attempt = 0;
   client.on((push) => {
     if (push.event === 'submission') link.outbox.apply(push.record as JsonObject);
+    if (push.event === 'accounts') setAccounts(link, push.state as AccountsState);
   });
+  void subscribeAccounts(link, client);
   void client.closed.then(() => disconnected(link, client));
   link.isSyncing = true;
   try {
@@ -2262,6 +2269,61 @@ export function searchMessage(
     senderId: hit.kind === 'user' ? ME_ID : chatId,
     content: { text: { text: hit.text ?? '' } },
   } as ApiMessage;
+}
+
+// MARK: Accounts
+
+async function subscribeAccounts(link: ServerLink, client: TauClient) {
+  try {
+    setAccounts(link, await client.request<AccountsState>('accounts.subscribe', {}));
+  } catch (err) {
+    // A server from before accounts: it does not know the method
+    if (link.client === client && (err as { code?: string }).code === 'bad_request') {
+      link.hasNoAccounts = true;
+      emitAccounts();
+    }
+  }
+}
+
+function setAccounts(link: ServerLink, state: AccountsState) {
+  link.accounts = state;
+  link.hasNoAccounts = undefined;
+  emitAccounts();
+}
+
+function emitAccounts() {
+  for (const listener of accountsListeners) listener();
+}
+
+export type ServerAccounts = {
+  slot: number;
+  name: string;
+  status: ServerStatus;
+  state?: AccountsState;
+  hasNoAccounts?: boolean;
+};
+
+/** Every server's accounts, as Settings > Accounts shows them */
+export function accountsOfServers(): ServerAccounts[] {
+  return [...links.values()].filter((link) => !link.isRemoved).map((link) => ({
+    slot: link.slot,
+    name: hostOf(link.origin),
+    status: link.status,
+    state: link.accounts,
+    hasNoAccounts: link.hasNoAccounts,
+  }));
+}
+
+export function onAccountsChange(listener: () => void) {
+  accountsListeners.add(listener);
+  return () => accountsListeners.delete(listener);
+}
+
+/** One of the `accounts.*` requests to a server (docs/protocol.md) */
+export function requestAccounts<T = JsonObject>(slot: number, method: string, params: JsonObject = {}) {
+  const client = links.get(slot)?.client;
+  if (!client) return Promise.reject(new Error('Not connected'));
+  return client.request<T>(method, params);
 }
 
 export function servers(): ServerInfo[] {

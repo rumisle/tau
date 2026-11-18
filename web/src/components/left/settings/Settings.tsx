@@ -18,6 +18,7 @@ import useScrollNotch from '../../../hooks/useScrollNotch';
 import useSyncEffect from '../../../hooks/useSyncEffect';
 import useSettingsHighlight from './hooks/useSettingsHighlight';
 
+import AccountsSettings from '../../../tau/components/AccountsSettings'; // tau: Accounts, in Devices' place
 import DataSettings from '../../../tau/components/DataSettings'; // tau: its own
 import NotificationSettings from '../../../tau/components/NotificationSettings'; // tau: its own
 import UsageSettings from '../../../tau/components/UsageSettings'; // tau: Usage, in Privacy's place
@@ -393,6 +394,7 @@ const Settings = ({
           />
         );
       case SettingsScreens.ActiveSessions:
+        if (IS_TAU) return <AccountsSettings isActive={isScreenActive} onReset={handleReset} />; // tau: Accounts
         return (
           <SettingsActiveSessions
             isActive={isScreenActive}

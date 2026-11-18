@@ -1,0 +1,234 @@
+// Settings > Accounts (AccountsSettings.tsx) and the login (LoginModal.tsx): an account's row with its usage in small
+// bars, its window with large ones, the device code, the answer's field. A bar's color is its level's: the primary
+// color while usage keeps pace with the time going, orange ahead of it, red near and at the end.
+
+.muted {
+  color: var(--color-text-secondary);
+}
+
+// Room for the check on every row, so that the bars of the rows line up
+.account :global(.multiline-item) {
+  margin-inline-end: 1.5rem;
+}
+
+.plan {
+  margin-inline-start: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.problem {
+  color: var(--color-error) !important;
+}
+
+.check {
+  transform: rotate(-45deg) translateY(-0.125rem);
+
+  width: 0.75rem;
+  height: 0.375rem;
+  margin-inline-end: 0.25rem;
+  border-bottom: 2px solid var(--color-primary);
+  border-left: 2px solid var(--color-primary);
+}
+
+// One line a window: its label, its bar, its percentage, the columns shared so that the bars line up
+.windows {
+  display: grid !important;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.125rem 0.5rem;
+  align-items: center;
+
+  margin-top: 0.25rem;
+}
+
+.small {
+  display: contents;
+  font-size: 0.8125rem;
+}
+
+.label {
+  color: var(--color-text-secondary);
+}
+
+.percent {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  text-align: end;
+}
+
+.small[data-level='ahead'] .percent {
+  color: #FF9F0A;
+}
+
+.small[data-level='high'] .percent,
+.small[data-level='out'] .percent {
+  color: #FF453A;
+}
+
+.bar {
+  --bar-color: var(--color-primary);
+
+  position: relative;
+
+  display: block;
+
+  height: 0.25rem;
+  border-radius: 0.125rem;
+
+  background-color: var(--color-borders);
+
+  &.large {
+    height: 0.5rem;
+    margin: 0.5rem 0 0.375rem;
+    border-radius: 0.25rem;
+  }
+
+  &[data-level='ahead'] {
+    --bar-color: #FF9F0A;
+  }
+
+  &[data-level='high'],
+  &[data-level='out'] {
+    --bar-color: #FF453A;
+  }
+}
+
+.fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+
+  min-width: 0.25rem;
+  border-radius: inherit;
+
+  background-color: var(--bar-color);
+}
+
+.pace {
+  position: absolute;
+  top: -0.1875rem;
+  bottom: -0.1875rem;
+
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+
+  background-color: var(--color-text-secondary);
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-inline-end: 1rem;
+  border-radius: 50%;
+
+  font-size: 1.125rem;
+  font-weight: var(--font-weight-semibold);
+  color: white;
+
+  &.large {
+    width: 5rem;
+    height: 5rem;
+    margin: 0 auto;
+    font-size: 2.25rem;
+  }
+}
+
+.modal {
+  :global(.modal-dialog) {
+    max-width: 26rem;
+  }
+}
+
+.header {
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+.subtitle {
+  margin-top: 0.5rem;
+  color: var(--color-text-secondary);
+}
+
+.window {
+  padding: 0.75rem 1rem;
+
+  & + & {
+    border-top: 1px solid var(--color-borders);
+  }
+}
+
+.windowTop {
+  display: flex;
+  justify-content: space-between;
+}
+
+.windowPercent {
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.window[data-level='ahead'] .windowPercent,
+.window[data-level='ahead'] .windowPace {
+  color: #FF9F0A;
+}
+
+.window[data-level='high'] .windowPercent,
+.window[data-level='high'] .windowPace,
+.window[data-level='out'] .windowPercent,
+.window[data-level='out'] .windowPace {
+  color: #FF453A;
+}
+
+.windowNote,
+.windowPace {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.code {
+  cursor: var(--custom-cursor, pointer);
+
+  display: block;
+
+  width: 100%;
+  padding: 1.25rem 0;
+  border: none;
+
+  font-family: var(--font-family-monospace);
+  font-size: 2rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  letter-spacing: 0.2em;
+
+  background: none;
+}
+
+.answer {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+
+  :global(.input-group) {
+    flex: 1;
+    margin-bottom: 0;
+  }
+}
+
+.continue {
+  width: auto;
+  height: 3.375rem;
+  padding: 0 1rem;
+}
+
+.spinner {
+  --spinner-size: 1.5rem;
+
+  margin-inline-end: 1.5rem;
+}

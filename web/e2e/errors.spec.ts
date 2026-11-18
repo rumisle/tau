@@ -45,4 +45,7 @@ test('an error the run ends on is a card; Retry sends the message again', async 
   await card.getByRole('button', { name: 'Retry' }).click();
   await expect(app.locator('.Message.own').filter({ hasText: '!fatal no key' })).toHaveCount(2);
   await expect(card).toHaveCount(2);
+  // The provider refused the key: Accounts beside Retry, to Settings > Accounts (docs/accounts.md)
+  await card.last().getByRole('button', { name: 'Accounts' }).click();
+  await expect(app.locator('[data-tau-accounts]')).toBeVisible();
 });
