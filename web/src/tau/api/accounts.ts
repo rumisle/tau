@@ -126,26 +126,15 @@ export function paceText(window: UsageWindow, now: number) {
   const left = Math.max(0, 100 - window.usedPercent);
   const remaining = (window.resetsAt - now) / 1000;
   if ((window.seconds ?? 0) > DAY && remaining > DAY) {
-    return `About ${Math.round(left / (remaining / DAY))}% a day lasts until then`;
+    return `Keep under ${Math.round(left / (remaining / DAY))}% a day to last until it resets`;
   }
-  return `About ${Math.round(left / Math.max(remaining / HOUR, 0.1))}% an hour lasts until then`;
+  return `Keep under ${Math.round(left / Math.max(remaining / HOUR, 0.1))}% an hour to last until it resets`;
 }
 
 /** Accounts to see to: one to sign in to again, or the one in use out of a limit */
 export function attentionCount(state: AccountsState) {
   return state.accounts.filter((account) => account.problem
     || (account.active && account.usage?.windows.some((window) => window.usedPercent >= 100))).length;
-}
-
-/** By service, a subscription's sign-in first, in the order the server has them otherwise */
-export function groupAccounts(accounts: ProviderAccount[]) {
-  const groups = new Map<string, ProviderAccount[]>();
-  for (const account of accounts) {
-    const name = serviceName(account.provider, account.providerName, account.type === 'oauth');
-    groups.set(name, [...(groups.get(name) ?? []), account]);
-  }
-  const hasSignIn = (list: ProviderAccount[]) => list.some((account) => account.type === 'oauth');
-  return [...groups.entries()].sort(([, a], [, b]) => Number(hasSignIn(b)) - Number(hasSignIn(a)));
 }
 
 /** The latest page and code to show */

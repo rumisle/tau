@@ -21,6 +21,7 @@ import Button from '../../components/ui/Button';
 import ListItem from '../../components/ui/ListItem';
 import Modal from '../../components/ui/Modal';
 import Spinner from '../../components/ui/Spinner';
+import ProviderAvatar from './ProviderAvatar';
 
 import styles from './AccountsSettings.module.scss';
 
@@ -165,13 +166,18 @@ function Providers({
       <IslandTitle>{STRINGS.AccountsSignIn}</IslandTitle>
       <Island>
         {signIns.map((provider) => (
-          <ListItem key={provider.id} multiline onClick={() => onChoose(provider, 'oauth')}>
+          <ListItem
+            key={provider.id}
+            className={styles.account}
+            multiline
+            leftElement={<ProviderAvatar provider={provider.id} name={provider.name} />}
+            onClick={() => onChoose(provider, 'oauth')}
+          >
             <span className="title">{serviceName(provider.id, provider.name, true)}</span>
             <span className="subtitle">{provider.oauth!.name}</span>
           </ListItem>
         ))}
       </Island>
-      <IslandDescription>{STRINGS.AccountsSignInFooter}</IslandDescription>
       <IslandTitle>{STRINGS.AccountsApiKey}</IslandTitle>
       <Island>
         {keys.map((provider) => {
@@ -180,7 +186,9 @@ function Providers({
           return (
             <ListItem
               key={provider.id}
+              className={styles.account}
               multiline={!keyName.startsWith(provider.name)}
+              leftElement={<ProviderAvatar provider={provider.id} name={provider.name} />}
               onClick={() => onChoose(provider, 'api_key')}
             >
               <span className="title">{provider.name}</span>
@@ -189,7 +197,6 @@ function Providers({
           );
         })}
       </Island>
-      <IslandDescription>{STRINGS.AccountsKeysFooter}</IslandDescription>
     </>
   );
 }
@@ -238,6 +245,9 @@ function LoginSteps({
             >
               {`${STRINGS.AccountsCopyAndOpen} ${host(device.verificationUri)}`}
             </ListItem>
+            <ListItem withPrimaryColor onClick={() => copyLink(device.verificationUri)}>
+              {STRINGS.AccountsCopyLink}
+            </ListItem>
             <Waiting text={progress ?? STRINGS.AccountsWaiting} />
           </Island>
           <IslandDescription>{STRINGS.AccountsClosesItself}</IslandDescription>
@@ -248,6 +258,7 @@ function LoginSteps({
             <ListItem withPrimaryColor onClick={() => open(page.url)}>
               {`${STRINGS.AccountsOpen} ${host(page.url)}`}
             </ListItem>
+            <ListItem withPrimaryColor onClick={() => copyLink(page.url)}>{STRINGS.AccountsCopyLink}</ListItem>
           </Island>
           <IslandDescription>
             {login.prompt?.type !== 'manual_code' ? STRINGS.AccountsSignInThere
@@ -296,7 +307,6 @@ function LoginSteps({
               {STRINGS.AccountsContinue}
             </Button>
           </div>
-          {prompt.type === 'secret' && <IslandDescription>{STRINGS.AccountsKeysFooter}</IslandDescription>}
         </>
       )}
       {(isSending || (!prompt && !device)) && (
@@ -304,6 +314,11 @@ function LoginSteps({
       )}
     </>
   );
+}
+
+function copyLink(url: string) {
+  copyTextToClipboard(url);
+  getActions().showNotification({ message: STRINGS.AccountsLinkCopied });
 }
 
 function Waiting({ text }: { text: string }) {

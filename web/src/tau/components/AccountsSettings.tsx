@@ -1,7 +1,8 @@
-// Settings > Accounts (docs/accounts.md; iOS's Accounts tab): each server's accounts by service, their usage in small
-// bars with a tick where an even pace would be, the one in use checked; a click opens the account with a large bar per
-// limit, a right click has its actions; Add Account opens the login (LoginModal.tsx); keys the server has from its
-// environment. In Web A's settings in place of Devices, which tau has none of.
+// Settings > Accounts (docs/accounts.md; iOS's Accounts tab): a server's accounts in one list, each with its provider's
+// logo, what it is under its name ("in use" when the provider has others), and its usage at the right in two small bars;
+// the keys from the server's environment; Add Account last, which opens the login (LoginModal.tsx). Several servers:
+// one at a time, picked above. A click opens the account with a large bar per limit; a right click has its actions.
+// In Web A's settings in place of Devices, which tau has none of.
 import { memo, useEffect, useState } from '../../lib/teact/teact';
 import { getActions } from '../../global';
 
@@ -10,7 +11,7 @@ import type { ServerAccounts } from '../api/session';
 
 import buildClassName from '../../util/buildClassName';
 import {
-  accountTitle, attentionCount, durationText, groupAccounts, levelOf, paceText, percentText, serviceName, windowTitle,
+  accountTitle, attentionCount, durationText, levelOf, paceText, percentText, serviceName, windowTitle,
 } from '../api/accounts';
 import { accountsOfServers, onAccountsChange, onServersChange, requestAccounts } from '../api/session';
 import { STRINGS } from '../strings';
@@ -24,6 +25,7 @@ import InputText from '../../components/ui/InputText';
 import ListItem from '../../components/ui/ListItem';
 import Modal from '../../components/ui/Modal';
 import { openLogin } from './LoginModal';
+import ProviderAvatar from './ProviderAvatar';
 
 import styles from './AccountsSettings.module.scss';
 
@@ -36,9 +38,7 @@ type OwnProps = {
 const TICK_MS = 30_000;
 // Usage older than this is asked for again when the screen opens
 const STALE_MS = 60_000;
-const NOW_MS = 90_000;
-// Telegram's avatar colors, by the account
-const AVATAR_COLORS = ['#FF516A', '#FFA85C', '#B694F9', '#54CB68', '#2A9EF1', '#29D6E0', '#FF7EAB'];
+const NOW_MS = 60_000;
 
 const AccountsSettings = ({ isActive, onReset }: OwnProps) => {
   useHistoryBack({ isActive, onBack: onReset });
@@ -47,6 +47,7 @@ const AccountsSettings = ({ isActive, onReset }: OwnProps) => {
   const [opened, setOpened] = useState<{ slot: number; id: string }>();
   const [renaming, setRenaming] = useState<{ slot: number; account: ProviderAccount }>();
   const [signingOut, setSigningOut] = useState<{ slot: number; account: ProviderAccount }>();
+  const [pickedSlot, setPickedSlot] = useState<number>();
 
   useEffect(() => {
     const update = () => setServers(accountsOfServers());
@@ -69,23 +70,39 @@ const AccountsSettings = ({ isActive, onReset }: OwnProps) => {
     return () => window.clearInterval(timer);
   }, [isActive]);
 
-  const isSeveral = servers.length > 1;
-  const openedServer = opened && servers.find((server) => server.slot === opened.slot);
+  const server = servers.find((each) => each.slot === pickedSlot) ?? servers[0];
+  const openedServer = opened && servers.find((each) => each.slot === opened.slot);
   const openedAccount = opened && openedServer?.state?.accounts.find((account) => account.id === opened.id);
 
   return (
     <div className="settings-content custom-scroll" data-tau-accounts>
-      {servers.map((server) => (
+      {servers.length > 1 && (
+        <Island>
+          <div className={styles.servers} role="tablist">
+            {servers.map((each) => (
+              <button
+                key={each.slot}
+                type="button"
+                role="tab"
+                aria-selected={each.slot === server.slot}
+                className={buildClassName(styles.server, each.slot === server.slot && styles.selected)}
+                onClick={() => setPickedSlot(each.slot)}
+              >
+                {each.name}
+              </button>
+            ))}
+          </div>
+        </Island>
+      )}
+      {server && (
         <ServerSection
-          key={server.slot}
           server={server}
-          isSeveral={isSeveral}
           now={now}
           onOpen={(id) => setOpened({ slot: server.slot, id })}
           onRename={(account) => setRenaming({ slot: server.slot, account })}
           onSignOut={(account) => setSigningOut({ slot: server.slot, account })}
         />
-      ))}
+      )}
       <AccountModal
         account={openedAccount}
         server={openedServer}
@@ -116,25 +133,22 @@ const AccountsSettings = ({ isActive, onReset }: OwnProps) => {
 };
 
 function ServerSection({
-  server, isSeveral, now, onOpen, onRename, onSignOut,
+  server, now, onOpen, onRename, onSignOut,
 }: {
   server: ServerAccounts;
-  isSeveral: boolean;
   now: number;
   onOpen: (id: string) => void;
   onRename: (account: ProviderAccount) => void;
   onSignOut: (account: ProviderAccount) => void;
 }) {
   const { state } = server;
-  const header = isSeveral && <IslandTitle>{server.name}</IslandTitle>;
   if (!state) {
     return (
       <>
-        {header}
         <Island>
           <ListItem inactive>
             <span className={styles.muted}>
-              {server.hasNoAccounts ? STRINGS.AccountsNone : STRINGS.AccountsStarting}
+              {server.hasNoAccounts ? STRINGS.AccountsNotAvailable : STRINGS.AccountsStarting}
             </span>
           </ListItem>
         </Island>
@@ -142,84 +156,64 @@ function ServerSection({
       </>
     );
   }
-  const groups = groupAccounts(state.accounts);
-  const times = state.accounts.map((account) => account.usage?.at ?? 0).filter((at) => at > 0);
-  const oldest = times.length ? Math.min(...times) : undefined;
-  const addItem = (
-    <ListItem icon="add" withPrimaryColor onClick={() => openLogin(server.slot)}>
-      {STRINGS.AccountsAdd}
-    </ListItem>
-  );
+  // Subscriptions first, then keys, as the server has them otherwise
+  const accounts = [...state.accounts.filter((account) => account.type === 'oauth'),
+    ...state.accounts.filter((account) => account.type !== 'oauth')];
   return (
-    <>
-      {header}
-      {!state.accounts.length && (
-        <Island>
-          <ListItem inactive><span className={styles.muted}>{STRINGS.AccountsNone}</span></ListItem>
-          {addItem}
-        </Island>
-      )}
-      {groups.map(([name, accounts]) => (
-        <>
-          <IslandTitle key={`${name}-title`}>{name}</IslandTitle>
-          <Island key={name}>
-            {accounts.map((account) => (
-              <AccountRow
-                key={account.id}
-                slot={server.slot}
-                account={account}
-                now={now}
-                onOpen={() => onOpen(account.id)}
-                onRename={() => onRename(account)}
-                onSignOut={() => onSignOut(account)}
-              />
-            ))}
-          </Island>
-        </>
+    <Island>
+      {accounts.map((account) => (
+        <AccountRow
+          key={account.id}
+          slot={server.slot}
+          account={account}
+          hasSiblings={state.accounts.some((each) => each.provider === account.provider && each.id !== account.id)}
+          now={now}
+          onOpen={() => onOpen(account.id)}
+          onRename={() => onRename(account)}
+          onSignOut={() => onSignOut(account)}
+        />
       ))}
-      {state.accounts.length > 0 && <Island>{addItem}</Island>}
-      {state.ambient.length > 0 && (
-        <>
-          <IslandTitle>{STRINGS.AccountsAmbient}</IslandTitle>
-          <Island>
-            {state.ambient.map((ambient) => (
-              <ListItem key={ambient.provider} multiline inactive>
-                <span className="title">{ambient.providerName}</span>
-                <span className="subtitle">{ambient.source}</span>
-              </ListItem>
-            ))}
-          </Island>
-        </>
-      )}
-      {oldest !== undefined && (
-        <IslandDescription>
-          {`${now - oldest < NOW_MS ? STRINGS.AccountsAsOfNow
-            : `${STRINGS.AccountsAsOf} ${durationText(now - oldest)} ${STRINGS.AccountsAgo}`} ${STRINGS.AccountsPace}`}
-        </IslandDescription>
-      )}
-    </>
+      {state.ambient.map((ambient) => (
+        <ListItem
+          key={ambient.provider}
+          className={styles.account}
+          multiline
+          inactive
+          leftElement={<ProviderAvatar provider={ambient.provider} name={ambient.providerName} />}
+        >
+          <span className="title">{ambient.providerName}</span>
+          <span className="subtitle">{`${STRINGS.AccountsFrom} ${ambient.source}`}</span>
+        </ListItem>
+      ))}
+      <ListItem icon="add" withPrimaryColor onClick={() => openLogin(server.slot)}>
+        {STRINGS.AccountsAdd}
+      </ListItem>
+    </Island>
   );
 }
 
 function AccountRow({
-  slot, account, now, onOpen, onRename, onSignOut,
+  slot, account, hasSiblings, now, onOpen, onRename, onSignOut,
 }: {
   slot: number;
   account: ProviderAccount;
+  hasSiblings: boolean;
   now: number;
   onOpen: NoneToVoidFunction;
   onRename: NoneToVoidFunction;
   onSignOut: NoneToVoidFunction;
 }) {
   const windows = (account.usage?.windows ?? []).slice(0, 2);
-  const detail = account.problem ? `${STRINGS.AccountsSignInAgain}: ${account.problem}`
-    : !windows.length ? detailOf(account) : undefined;
   return (
     <ListItem
       className={styles.account}
       multiline
-      leftElement={<AccountAvatar account={account} />}
-      rightElement={account.active ? <span className={styles.check} aria-label={STRINGS.AccountsInUse} /> : undefined}
+      leftElement={<ProviderAvatar provider={account.provider} name={account.providerName} />}
+      rightElement={windows.length ? (
+        <span className={styles.windows}>
+          {windows.map((window) => <SmallWindow key={window.id} window={window} now={now} />)}
+        </span>
+      ) : undefined}
       contextActions={[
         ...(account.active ? [] : [{
           title: STRINGS.AccountsUse, icon: 'check' as const, handler: () => putInUse(slot, account),
@@ -232,29 +226,22 @@ function AccountRow({
       withPortalForMenu
       onClick={onOpen}
     >
-      <span className="title">
-        {accountTitle(account)}
-        {account.plan && <span className={styles.plan}>{account.plan}</span>}
+      <span className="title">{accountTitle(account)}</span>
+      <span className={buildClassName('subtitle', account.problem && styles.problem)}>
+        {account.problem ? STRINGS.AccountsSignInAgain : subtitleOf(account, hasSiblings)}
       </span>
-      {detail ? (
-        <span className={buildClassName('subtitle', account.problem && styles.problem)}>{detail}</span>
-      ) : (
-        <span className={buildClassName('subtitle', styles.windows)}>
-          {windows.map((window) => <SmallWindow key={window.id} window={window} now={now} />)}
-        </span>
-      )}
     </ListItem>
   );
 }
 
-function detailOf(account: ProviderAccount) {
-  if (account.keyHint) {
-    return account.label ? `${STRINGS.AccountsApiKey}, ${STRINGS.AccountsKeyEnding} ${account.keyHint}`
-      : STRINGS.AccountsApiKey;
-  }
-  if (account.type === 'api_key') return STRINGS.AccountsApiKey;
-  if (account.usage?.error) return account.usage.error;
-  return account.label && account.email ? account.email : serviceName(account.provider, account.providerName, true);
+/** The service and plan, or what it is; with "in use" when the provider has others */
+function subtitleOf(account: ProviderAccount, hasSiblings: boolean) {
+  let text = account.type === 'api_key'
+    ? `${account.providerName} ${STRINGS.AccountsApiKey}${account.label && account.keyHint
+      ? ` ${STRINGS.AccountsKeyEnding} ${account.keyHint}` : ''}`
+    : `${serviceName(account.provider, account.providerName, true)}${account.plan ? ` ${account.plan}` : ''}`;
+  if (hasSiblings && account.active) text += `, ${STRINGS.AccountsInUse}`;
+  return text;
 }
 
 function SmallWindow({ window, now }: { window: UsageWindow; now: number }) {
@@ -282,21 +269,6 @@ function Bar({ window, now, isLarge }: { window: UsageWindow; now: number; isLar
   );
 }
 
-function AccountAvatar({ account, isLarge }: { account: ProviderAccount; isLarge?: boolean }) {
-  const name = account.label ?? account.email ?? account.providerName;
-  // Stable for the account, as its color on the phone is
-  let hash = 0;
-  for (const char of account.id) hash = (hash * 31 + char.charCodeAt(0)) % 65_536;
-  return (
-    <span
-      className={buildClassName(styles.avatar, isLarge && styles.large)}
-      style={`background-color: ${AVATAR_COLORS[hash % AVATAR_COLORS.length]}`}
-    >
-      {name.trim().charAt(0).toUpperCase()}
-    </span>
-  );
-}
-
 function putInUse(slot: number, account: ProviderAccount) {
   void requestAccounts(slot, 'accounts.use', { id: account.id }).then(() => {
     const service = serviceName(account.provider, account.providerName, account.type === 'oauth');
@@ -304,16 +276,8 @@ function putInUse(slot: number, account: ProviderAccount) {
   });
 }
 
-/** What signing out does: the account leaves the server; the one in use, another takes its place, if any */
 function signOutText(account: ProviderAccount, server?: ServerAccounts) {
-  const others = server?.state?.accounts.filter((each) => each.provider === account.provider && each.id !== account.id)
-    ?? [];
-  const service = serviceName(account.provider, account.providerName, account.type === 'oauth');
-  let text = `${accountTitle(account)} ${STRINGS.AccountsSignOutConfirm} ${server?.name ?? ''}.`;
-  if (account.active) {
-    text += others.length ? ` ${STRINGS.AccountsAnotherInUse}` : ` ${STRINGS.AccountsNoneLeft} ${service}.`;
-  }
-  return text;
+  return `${accountTitle(account)} ${STRINGS.AccountsSignedOutFrom} ${server?.name ?? ''}.`;
 }
 
 function AccountModal({
@@ -326,17 +290,22 @@ function AccountModal({
   onRename: (account: ProviderAccount) => void;
   onSignOut: (account: ProviderAccount) => void;
 }) {
+  useEffect(() => {
+    // Its numbers now: the server asks at most every 20 seconds
+    if (!server || !account) return;
+    void requestAccounts(server.slot, 'accounts.refresh', { id: account.id }).catch(() => undefined);
+    // On opening only
+    // eslint-disable-next-line react-hooks-static-deps/exhaustive-deps
+  }, [account?.id]);
   if (!account || !server) return <Modal isOpen={false} onClose={onClose}>{undefined}</Modal>;
   const usage = account.usage;
-  const service = serviceName(account.provider, account.providerName, account.type === 'oauth');
-  const key = account.keyHint ? `${STRINGS.AccountsKeyEnding} ${account.keyHint}` : STRINGS.AccountsApiKey;
-  let subtitle = account.type === 'api_key' ? `${account.providerName} ${key}`
-    : `${service}${account.plan ? ` ${account.plan}` : ''}`;
-  if (account.active) subtitle += `, ${STRINGS.AccountsInUse}`;
+  const hasSiblings = Boolean(server.state?.accounts.some((each) => each.provider === account.provider
+    && each.id !== account.id));
+  const subtitle = subtitleOf(account, hasSiblings);
   return (
     <Modal isOpen onClose={onClose} hasCloseButton className={styles.modal} title={accountTitle(account)}>
       <div className={styles.header}>
-        <AccountAvatar account={account} isLarge />
+        <ProviderAvatar provider={account.provider} name={account.providerName} isLarge />
         <div className={styles.subtitle}>{subtitle}</div>
       </div>
       {account.problem && (
@@ -388,7 +357,12 @@ function AccountModal({
               </ListItem>
             )}
           </Island>
-          {usage.error && <IslandDescription>{`${STRINGS.AccountsUsageFailed} ${usage.error}`}</IslandDescription>}
+          {usage.at > 0 && (
+            <IslandDescription>
+              {now - usage.at < NOW_MS ? STRINGS.AccountsUpdatedNow
+                : `${STRINGS.AccountsUpdated} ${durationText(now - usage.at)} ${STRINGS.AccountsAgo}`}
+            </IslandDescription>
+          )}
         </>
       )}
       <Island>
@@ -423,7 +397,6 @@ function RenameAccountModal({
         placeholder={renaming?.account.email ?? renaming?.account.providerName}
         onChange={(e) => setValue(e.currentTarget.value)}
       />
-      <p className={styles.muted}>{STRINGS.AccountsNameHint}</p>
       <div className="dialog-buttons">
         <Button className="confirm-dialog-button" isText onClick={save}>{STRINGS.Save}</Button>
         <Button className="confirm-dialog-button" isText onClick={onClose}>{STRINGS.Cancel}</Button>

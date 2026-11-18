@@ -26,7 +26,7 @@ test('Accounts: a device code sign-in, its usage, a key, switching and signing o
   await expect(account).toContainText('Max');
   await expect(account).toContainText('42%');
   await expect(account).toContainText('71%');
-  const email = (await account.locator('.title').innerText()).replace('Max', '').trim();
+  const email = (await account.locator('.title').innerText()).trim();
 
   // Its window: a large bar per limit
   await account.click();
@@ -48,8 +48,9 @@ test('Accounts: a device code sign-in, its usage, a key, switching and signing o
   // The first, back in use from its menu
   await content.locator('.ListItem').filter({ hasText: email }).click({ button: 'right' });
   await app.locator('.MenuItem').filter({ hasText: 'Use This Account' }).click();
-  await expect(content.locator('.ListItem').filter({ hasText: email }).locator('[aria-label="in use"]')).toBeVisible();
-  await expect(key.locator('[aria-label="in use"]')).toHaveCount(0);
+  // The provider has two now: the one in use says so
+  await expect(content.locator('.ListItem').filter({ hasText: email })).toContainText('Dev Account Max, in use');
+  await expect(key).not.toContainText('in use');
 
   // The key, signed out
   await key.click({ button: 'right' });
