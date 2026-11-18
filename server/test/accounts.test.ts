@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import type { AuthEvent, AuthPrompt, Credential, ProviderAuthInteraction } from "@earendil-works/pi-ai";
-import { Accounts, type AccountsState } from "../src/accounts.ts";
+import { Accounts, type AccountsState, shortProblem } from "../src/accounts.ts";
 import { TauClient } from "../src/client.ts";
 import { type Host, openHost } from "../src/host.ts";
 import { type Server, serve } from "../src/server.ts";
@@ -55,6 +55,13 @@ function fakeProvider(refreshes: { fail?: string; count: number }) {
 		},
 	};
 }
+
+describe("accounts: a refresh's failure in a few words", () => {
+	test("the provider's description, else the first line", () => {
+		assert.equal(shortProblem('Anthropic token refresh request failed. details=Error: HTTP request failed. status=400; body={"error": "invalid_grant", "error_description": "Refresh token expired"}; stack=Error: x\n    at y'), "Refresh token expired");
+		assert.equal(shortProblem("invalid_grant: refresh token revoked\n    at z"), "invalid_grant: refresh token revoked");
+	});
+});
 
 describe("accounts: the file", () => {
 	test("several per provider, one in use; removing it puts another in use; owner-only", async () => {

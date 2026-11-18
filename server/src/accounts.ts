@@ -165,7 +165,7 @@ export class Accounts implements CredentialStore {
 			const account = this.#find(id);
 			if (this.#data.active[account.provider] === id) return;
 			this.#data.active[account.provider] = id;
-			account.usedAt = Date.now();
+			account.usedAt = this.#stamp();
 			this.#save();
 		});
 	}
@@ -204,6 +204,12 @@ export class Accounts implements CredentialStore {
 		return () => this.#listeners.delete(listener);
 	}
 
+	/** Now, but after every account's last use: two uses in one millisecond keep their order. */
+	#stamp(): number {
+		const last = Math.max(0, ...this.#data.accounts.map((account) => account.usedAt ?? 0));
+		return Math.max(Date.now(), last + 1);
+	}
+
 	#active(providerId: string): StoredAccount | undefined {
 		const id = this.#data.active[providerId];
 		return id === undefined ? undefined : this.#data.accounts.find((account) => account.id === id);
@@ -223,7 +229,7 @@ export class Accounts implements CredentialStore {
 			delete same.problem;
 			if (info.plan !== undefined) same.plan = info.plan;
 			this.#data.active[provider] = same.id;
-			same.usedAt = Date.now();
+			same.usedAt = this.#stamp();
 			this.#save();
 			return same;
 		}
@@ -232,7 +238,7 @@ export class Accounts implements CredentialStore {
 			provider,
 			credential,
 			addedAt: Date.now(),
-			usedAt: Date.now(),
+			usedAt: this.#stamp(),
 			...(info.email === undefined ? {} : { email: info.email }),
 			...(info.plan === undefined ? {} : { plan: info.plan }),
 		};
@@ -261,7 +267,7 @@ export class Accounts implements CredentialStore {
 			next = await fn(account.credential);
 		} catch (error) {
 			if (account.credential.type === "oauth" && !isAbort(error)) {
-				const problem = (error as Error).message ?? String(error);
+				const problem = shortProblem((error as Error).message ?? String(error));
 				if (account.problem !== problem) {
 					account.problem = problem;
 					this.#save();
@@ -302,6 +308,14 @@ function load(path: string): AccountsFile {
 	if (!existsSync(path)) return empty();
 	const data = JSON.parse(readFileSync(path, "utf-8")) as Partial<AccountsFile>;
 	return { version: 1, accounts: data.accounts ?? [], active: data.active ?? {} };
+}
+
+/** A refresh's failure in a few words: the provider's own description, else its first line without the stack. */
+export function shortProblem(message: string): string {
+	const described = /"error_description"\s*:\s*"([^"]+)"/.exec(message)?.[1];
+	if (described !== undefined) return described;
+	const line = message.split("\n")[0]!.replace(/;\s*stack=.*$/, "").trim();
+	return line.length <= 200 ? line : `${line.slice(0, 199)}…`;
 }
 
 function isAbort(error: unknown): boolean {
