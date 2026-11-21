@@ -457,4 +457,5 @@ Doc changes use Chord's operation format, applied in order. `path` is an array o
 - A `pi.assistant` message has `timestamp` (its request began), `durationMs` (until it ended) and, from servers that
   time it, `firstTokenMs` (until its first text, thinking or tool call streamed; `server/src/timing.ts`). The clients
   show a run's first `firstTokenMs` and its answers' `usage.output` over their writing (`durationMs` less
-  `firstTokenMs`) under its last answer: "1.2s to first token, 68 tokens/s", the speed only after a second of writing.
+  `firstTokenMs`) under its last answer while its menu is open, with the date beside the time: "1.2s to first token,
+  68 tokens/s", the speed only after a second of writing.

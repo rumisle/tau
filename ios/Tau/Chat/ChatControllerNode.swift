@@ -17,6 +17,7 @@ struct ChatHistoryEntry: Comparable, Identifiable {
     let isStreaming: Bool
     let selection: Bool?
     let isExpanded: Bool
+    let showsDetails: Bool
 
     var stableId: Int {
         return self.message.id
@@ -27,7 +28,7 @@ struct ChatHistoryEntry: Comparable, Identifiable {
     }
 
     static func == (lhs: ChatHistoryEntry, rhs: ChatHistoryEntry) -> Bool {
-        return lhs.message == rhs.message && lhs.index == rhs.index && lhs.isStreaming == rhs.isStreaming && lhs.selection == rhs.selection && lhs.isExpanded == rhs.isExpanded
+        return lhs.message == rhs.message && lhs.index == rhs.index && lhs.isStreaming == rhs.isStreaming && lhs.selection == rhs.selection && lhs.isExpanded == rhs.isExpanded && lhs.showsDetails == rhs.showsDetails
     }
 }
 
@@ -176,6 +177,9 @@ final class ChatControllerNode: ASDisplayNode {
 
         super.init()
 
+        self.interaction.liftedChanged = { [weak self] id, value in
+            self?.setLifted(id, value)
+        }
         self.backgroundColor = theme.chat.backgroundColor
         self.wallpaperNode.update(wallpaper: theme.wallpaper, animated: false)
         self.addSubnode(self.wallpaperNode)
@@ -406,7 +410,7 @@ final class ChatControllerNode: ASDisplayNode {
         // Rows the last update laid out unchanged, at the start of the transcript: a streamed token compared and laid
         // out the whole chat again.
         var keep = 0
-        if let prefix = state.stablePrefix, let laidOut = self.laidOutPrefix, laidOut.prefix.token == prefix.token, laidOut.selectedIds == selectedIds, laidOut.expandedIds == expanded {
+        if let prefix = state.stablePrefix, let laidOut = self.laidOutPrefix, laidOut.prefix.token == prefix.token, laidOut.selectedIds == selectedIds, laidOut.expandedIds == expanded, laidOut.liftedId == self.liftedId {
             keep = min(prefix.count, laidOut.prefix.count, messages.count, self.entries.count)
         }
         // One row per ID: the list's diff pairs rows by it, and two with one ID gave two rows one item node, which
@@ -429,7 +433,7 @@ final class ChatControllerNode: ASDisplayNode {
         // Newest first, as the inverted list has them: the kept rows are the last ones.
         var tail = messages[keep...].enumerated().map { offset, message in
             let index = keep + offset
-            return ChatHistoryEntry(message: message, index: index, isStreaming: message.isStreaming && (index == lastStreaming || message.tool != nil), selection: message.isStreaming ? nil : selectedIds.map { $0.contains(message.id) }, isExpanded: expanded.contains(message.id))
+            return ChatHistoryEntry(message: message, index: index, isStreaming: message.isStreaming && (index == lastStreaming || message.tool != nil), selection: message.isStreaming ? nil : selectedIds.map { $0.contains(message.id) }, isExpanded: expanded.contains(message.id), showsDetails: message.id == self.liftedId)
         }
         tail.sort()
 
@@ -443,7 +447,7 @@ final class ChatControllerNode: ASDisplayNode {
             orderById[entry.stableId] = entries.count - 1 - index
         }
         self.orderById = orderById
-        self.laidOutPrefix = state.stablePrefix.map { (prefix: $0, selectedIds: selectedIds, expandedIds: expanded) }
+        self.laidOutPrefix = state.stablePrefix.map { (prefix: $0, selectedIds: selectedIds, expandedIds: expanded, liftedId: self.liftedId) }
         if firstDuplicate != nil {
             self.laidOutPrefix = nil
         }
@@ -640,7 +644,7 @@ final class ChatControllerNode: ASDisplayNode {
     /// one between the two updated rows the list did not have, and crashed it.
     private var isMakingRows = false
     /// What the last update laid out the rows with: the transcript's stable prefix and the selection and expansion.
-    private var laidOutPrefix: (prefix: StablePrefix, selectedIds: Set<Int>?, expandedIds: Set<Int>)?
+    private var laidOutPrefix: (prefix: StablePrefix, selectedIds: Set<Int>?, expandedIds: Set<Int>, liftedId: Int?)?
     private var reloadAfterRows = false
 
     private func reloadItems(completion: (() -> Void)? = nil) {
@@ -954,6 +958,20 @@ final class ChatControllerNode: ASDisplayNode {
     /// Tool cards showing their whole output.
     private(set) var expandedIds = Set<Int>()
 
+    /// The message lifted out for a context menu, which shows its date and its answer's speed meanwhile.
+    private var liftedId: Int?
+
+    private func setLifted(_ id: Int, _ value: Bool) {
+        let next = value ? id : (self.liftedId == id ? nil : self.liftedId)
+        guard next != self.liftedId else {
+            return
+        }
+        self.liftedId = next
+        if let state = self.state {
+            self.update(state: state)
+        }
+    }
+
     func toggleExpanded(_ id: Int) {
         if self.expandedIds.contains(id) {
             self.expandedIds.remove(id)
@@ -975,7 +993,7 @@ final class ChatControllerNode: ASDisplayNode {
         }
         let highlight = self.searchHighlight.flatMap { highlight in entry.message.entryId.flatMap { highlight.entryIds.contains($0) ? highlight.terms : nil } }
         let references = self.linkReferences?.references(in: entry.message.text) ?? []
-        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, wrapCode: self.wrapCode, riseFrom: riseFrom, highlightTerms: highlight, references: references, interaction: self.interaction)
+        return ChatMessageItem(theme: self.theme, message: entry.message, isStreaming: entry.isStreaming, selection: entry.selection, isExpanded: entry.isExpanded, showsDetails: entry.showsDetails, wrapCode: self.wrapCode, riseFrom: riseFrom, highlightTerms: highlight, references: references, interaction: self.interaction)
     }
 
     /// What the chat's tau links name (docs/links.md); set by the controller. A linked message that comes later lays the

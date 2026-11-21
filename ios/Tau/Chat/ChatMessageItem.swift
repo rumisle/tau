@@ -25,6 +25,8 @@ final class ChatMessageItemInteraction {
     let toggleSelection: (Int) -> Void
     /// A long press on a message: open Telegram's context menu with the message lifted out of the list.
     let openContextMenu: (Int, ChatMessageItemNode, ContextGesture?) -> Void
+    /// The message was lifted out for a context menu, or put back: its details show meanwhile.
+    var liftedChanged: (Int, Bool) -> Void = { _, _ in }
     /// A tap on a tool card: open a subagent's conversation, or show more of the output.
     let openTool: (ChatMessage) -> Void
     /// A tap on a photo: Telegram's media viewer, growing from it. Takes the attachment's id.
@@ -80,6 +82,8 @@ final class ChatMessageItem: ListViewItem {
     let selection: Bool?
     /// A tool card showing its whole output.
     let isExpanded: Bool
+    /// Lifted out for its context menu: the date beside its time and, under an answer, how fast the model wrote.
+    let showsDetails: Bool
     /// Long code lines wrap; otherwise each code block scrolls sideways.
     let wrapCode: Bool
     /// Where a message the agent just got from the queue was, in window coordinates: its bubble rises from there.
@@ -90,7 +94,7 @@ final class ChatMessageItem: ListViewItem {
     let references: [LinkReference]
     let interaction: ChatMessageItemInteraction
 
-    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, wrapCode: Bool = true, riseFrom: CGRect? = nil, highlightTerms: [SearchTerm]? = nil, references: [LinkReference] = [], interaction: ChatMessageItemInteraction) {
+    init(theme: TauTheme, message: ChatMessage, isStreaming: Bool, selection: Bool?, isExpanded: Bool = false, showsDetails: Bool = false, wrapCode: Bool = true, riseFrom: CGRect? = nil, highlightTerms: [SearchTerm]? = nil, references: [LinkReference] = [], interaction: ChatMessageItemInteraction) {
         self.riseFrom = riseFrom
         self.references = references
         self.highlightTerms = highlightTerms
@@ -99,6 +103,7 @@ final class ChatMessageItem: ListViewItem {
         self.isStreaming = isStreaming
         self.selection = selection
         self.isExpanded = isExpanded
+        self.showsDetails = showsDetails
         self.wrapCode = wrapCode
         self.interaction = interaction
     }
@@ -667,6 +672,9 @@ final class ChatMessageItemNode: ListViewItemNode {
     private var previewSelection: (node: TextSelectionNode, surface: MessageTextSurface)?
 
     private func updateIsExtractedToContextPreview(_ value: Bool) {
+        if let item = self.item {
+            item.interaction.liftedChanged(item.message.id, value)
+        }
         if value {
             self.endInlineSelection(animated: false)
             guard self.previewSelection == nil, let item = self.item, item.message.tool == nil else {
@@ -954,12 +962,16 @@ final class ChatMessageItemNode: ListViewItemNode {
     }
 
     /// Sizes the context containers to the row and marks the message's extent for the context menu.
-    private func layoutContainers(size: CGSize) {
+    private func layoutContainers(size: CGSize, animation: ListViewItemUpdateAnimation = .None) {
         let bounds = CGRect(origin: CGPoint(), size: size)
         self.containerNode.frame = bounds
         self.contextSourceNode.frame = bounds
         self.contentNode.frame = bounds
         self.contextSourceNode.contentRect = self.contentFrame
+        // Lifted out for a menu, it grew its details: the menu follows, as Telegram's does for a reaction row.
+        if self.contextSourceNode.isExtractedToContextPreview {
+            self.contextSourceNode.layoutUpdated?(size, animation)
+        }
         self.containerNode.targetNodeForActivationProgressContentRect = self.contentFrame
         // Every row's apply ends here, its text laid out: search's marks and a selection follow the text.
         self.updateSearchHighlight()
@@ -1137,7 +1149,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 let textNode = existingTextNodes.first
                 let hasText = !message.text.isEmpty
                 let (textLayout, textApply) = InteractiveTextNode.asyncLayout(textNode)(InteractiveTextNodeLayoutArguments(attributedString: MarkdownText.render(message.text, style: style, references: item.references), maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude)))
-                let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: (message.isEdited ? "edited " : "") + messageDateString(message.date), font: dateFont(item.theme), textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 200.0, height: 40.0)))
+                let (dateLayout, dateApply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: (message.isEdited ? "edited " : "") + (item.showsDetails ? messageDateString(message.date) : messageTimeString(message.date)), font: dateFont(item.theme), textColor: theme.outgoing.secondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 200.0, height: 40.0)))
                 let fileLayouts = files.map { FileAttachmentNode.measure($0, fontSize: item.theme.fontSize, maxWidth: maxTextWidth) }
 
                 // The time and status share the last line when they fit, as ChatMessageDateAndStatusNode's trailing
@@ -1259,7 +1271,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                     animation.animator.updateFrame(layer: self.dateNode.layer, frame: dateFrame, completion: nil)
                     self.updateStatus(item: item, dateFrame: dateFrame, backgroundFrame: backgroundFrame, failedInset: failedInset, animation: animation)
 
-                    self.layoutContainers(size: layout.contentSize)
+                    self.layoutContainers(size: layout.contentSize, animation: animation)
                     self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                 })
 
@@ -1426,7 +1438,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                 var speedLayout: TextNodeLayout?
                 var speedApply: (() -> TextNode)?
                 if let turn = message.turn, !item.isStreaming, revealed == nil {
-                    let (layout, apply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: messageDateString(turn.finishedAt), font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 40.0)))
+                    let (layout, apply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.showsDetails ? messageDateString(turn.finishedAt) : messageTimeString(turn.finishedAt), font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 40.0)))
                     footerLayout = layout
                     footerApply = apply
                     var parts: [String] = []
@@ -1442,7 +1454,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         runLayout = layout
                         runApply = apply
                     }
-                    if let speed = runSpeedString(turn) {
+                    if item.showsDetails, let speed = runSpeedString(turn) {
                         let (layout, apply) = makeSpeedLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: speed, font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 40.0)))
                         speedLayout = layout
                         speedApply = apply
@@ -1565,7 +1577,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         }
                     }
                     self.updateReveal(item: item, totalLength: totalLength)
-                    self.layoutContainers(size: layout.contentSize)
+                    self.layoutContainers(size: layout.contentSize, animation: animation)
                     self.updateSelection(item: item, size: layout.contentSize, animation: animation)
                 })
 
