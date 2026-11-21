@@ -960,13 +960,37 @@ final class ChatControllerNode: ASDisplayNode {
 
     /// The message lifted out for a context menu, which shows its date and its answer's speed meanwhile.
     private var liftedId: Int?
+    private var pendingLiftedId: Int?
 
+    /// Lifted: once the lift has landed, as Telegram's reactions grow a message only once its menu is open; a relayout
+    /// while it rises breaks the rise. Put back: at once, as the menu's dismissal follows a message that changes.
     private func setLifted(_ id: Int, _ value: Bool) {
-        let next = value ? id : (self.liftedId == id ? nil : self.liftedId)
-        guard next != self.liftedId else {
+        if value {
+            self.pendingLiftedId = id
+            Queue.mainQueue().after(ChatControllerNode.liftDuration) { [weak self] in
+                guard let self, self.pendingLiftedId == id else {
+                    return
+                }
+                self.pendingLiftedId = nil
+                self.applyLifted(id)
+            }
+        } else {
+            if self.pendingLiftedId == id {
+                self.pendingLiftedId = nil
+            }
+            if self.liftedId == id {
+                self.applyLifted(nil)
+            }
+        }
+    }
+
+    private static let liftDuration: Double = 0.45
+
+    private func applyLifted(_ id: Int?) {
+        guard id != self.liftedId else {
             return
         }
-        self.liftedId = next
+        self.liftedId = id
         if let state = self.state {
             self.update(state: state)
         }

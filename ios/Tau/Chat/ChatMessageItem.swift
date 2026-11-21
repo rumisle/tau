@@ -473,6 +473,12 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.contextSourceNode.isExtractedToContextPreviewUpdated = { [weak self] value in
             self?.updateIsExtractedToContextPreview(value)
         }
+        // Put back: its details go as it starts back, the menu's dismissal following the smaller message.
+        self.contextSourceNode.willUpdateIsExtractedToContextPreview = { [weak self] value, _ in
+            if !value, let item = self?.item {
+                item.interaction.liftedChanged(item.message.id, false)
+            }
+        }
     }
 
     /// When the touch being recognized began: a press held as long as a long press is not a tap.
