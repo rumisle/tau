@@ -615,8 +615,11 @@ async function identify(provider: string, credential: Credential, fetchImpl: typ
 			signal: AbortSignal.timeout(15_000),
 		});
 		if (!response.ok) return {};
-		const body = (await response.json()) as { account?: { email?: string }; organization?: { organization_type?: string } };
-		return { ...(body.account?.email === undefined ? {} : { email: body.account.email }), ...planName(body.organization?.organization_type?.replace(/^claude_/, "")) };
+		const body = (await response.json()) as { account?: { email?: string }; organization?: { organization_type?: string; rate_limit_tier?: string } };
+		// Max comes in sizes, which only the rate limit tier says: default_claude_max_5x
+		const size = /_max_(\d+x)$/.exec(body.organization?.rate_limit_tier ?? "")?.[1];
+		const plan = planName(body.organization?.organization_type?.replace(/^claude_/, ""));
+		return { ...(body.account?.email === undefined ? {} : { email: body.account.email }), ...(plan.plan !== undefined && size !== undefined ? { plan: `${plan.plan} ${size}` } : plan) };
 	}
 	if (provider === "openai-codex") {
 		const claims = jwtClaims((credential as OAuthCredential).access);

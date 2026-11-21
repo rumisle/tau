@@ -131,7 +131,7 @@ describe("accounts: logins, switching and usage over the protocol", () => {
 					extra_usage: { is_enabled: true, used_credits: 420, monthly_limit: 5000 },
 				});
 			}
-			if (url.endsWith("/api/oauth/profile")) return Response.json({ account: { email: "me@example.com" }, organization: { organization_type: "claude_max" } });
+			if (url.endsWith("/api/oauth/profile")) return Response.json({ account: { email: "me@example.com" }, organization: { organization_type: "claude_max", rate_limit_tier: "default_claude_max_5x" } });
 			return new Response("no", { status: 404 });
 		}) as typeof fetch;
 		host = await openHost({ accounts: new Accounts(), accountsFetch: fetchImpl });
@@ -251,7 +251,7 @@ describe("accounts: logins, switching and usage over the protocol", () => {
 	test("an upgraded plan shows once the provider says so: the account's screen asks who it is", async () => {
 		const account = await host.accounts.accounts.add("anthropic", { type: "oauth", access: "claude-upgraded", refresh: "claude-upgraded-refresh", expires: Date.now() + 3_600_000 }, { email: "upgraded@example.com", plan: "Pro" });
 		await client.request("accounts.refresh", { id: account.id });
-		await until((each) => each.accounts.find((one) => one.id === account.id)?.plan === "Max");
+		await until((each) => each.accounts.find((one) => one.id === account.id)?.plan === "Max 5x");
 		assert.ok(requests.includes("https://api.anthropic.com/api/oauth/profile Bearer claude-upgraded"));
 	});
 

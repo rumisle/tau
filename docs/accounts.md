@@ -51,7 +51,7 @@ login refresh it in turn, and each refresh rotates the refresh token, so the one
 | ChatGPT (`openai-codex`) | `GET chatgpt.com/backend-api/wham/usage` with `chatgpt-account-id`: `rate_limit.primary_window` / `secondary_window` (`used_percent`, `limit_window_seconds`, `reset_at`), `additional_rate_limits`, `credits` | `x-codex-primary-used-percent`, `-primary-window-minutes`, `-primary-reset-at`, the same for `secondary` |
 
 Who the account is, asked at start, when the Accounts tab asks every usage (at most hourly an account) and when an
-account's screen opens (at most every minute), so an upgrade shows: Claude's `GET api.anthropic.com/api/oauth/profile` (`account.email`, `organization.organization_type`
+account's screen opens (at most every minute), so an upgrade shows: Claude's `GET api.anthropic.com/api/oauth/profile` (`account.email`, `organization.organization_type` and, for Max's size, `rate_limit_tier`
 such as `claude_pro`); Codex's access token is a JWT with `https://api.openai.com/profile.email` and
 `https://api.openai.com/auth.chatgpt_plan_type`. Other providers' accounts are named by the user.
 
