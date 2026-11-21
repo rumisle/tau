@@ -272,6 +272,38 @@ describe("accounts: logins, switching and usage over the protocol", () => {
 	});
 });
 
+describe("accounts: Claude's list of limits", () => {
+	test("the session, the week and a model's own week, by its name; the older fields left aside", async () => {
+		const accounts = new Accounts();
+		const account = await accounts.add("anthropic", { type: "oauth", access: "a", refresh: "r", expires: Date.now() + 3_600_000 }, {});
+		const usage = new PlanUsage({
+			accounts,
+			models: {} as never,
+			minAskMs: 0,
+			fetch: (async () =>
+				Response.json({
+					five_hour: { utilization: 63, resets_at: "2026-11-21T06:10:00Z" },
+					seven_day: { utilization: 17, resets_at: "2026-11-24T15:00:00Z" },
+					limits: [
+						{ kind: "session", group: "session", percent: 63, resets_at: "2026-11-21T06:10:00Z", scope: null },
+						{ kind: "weekly_all", group: "weekly", percent: 17, resets_at: "2026-11-24T15:00:00Z", scope: null },
+						{ kind: "weekly_scoped", group: "weekly", percent: 4, resets_at: "2026-11-24T15:00:00Z", scope: { model: { id: null, display_name: "Fable" }, surface: null } },
+					],
+				})) as typeof fetch,
+			onChange: () => {},
+		});
+		await usage.refresh(account.id);
+		assert.deepEqual(
+			usage.of(account.id)?.windows.map(({ id, label, usedPercent, seconds }) => ({ id, label, usedPercent, seconds })),
+			[
+				{ id: "5h", label: "5h", usedPercent: 63, seconds: 18_000 },
+				{ id: "week", label: "Week", usedPercent: 17, seconds: 604_800 },
+				{ id: "week-fable", label: "Fable", usedPercent: 4, seconds: 604_800 },
+			],
+		);
+	});
+});
+
 describe("accounts: usage asked too often", () => {
 	test("a 429 keeps the numbers had, says nothing, and leaves the endpoint alone for its Retry-After", async () => {
 		const accounts = new Accounts();

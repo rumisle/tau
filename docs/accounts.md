@@ -47,7 +47,7 @@ login refresh it in turn, and each refresh rotates the refresh token, so the one
 
 | Provider | Endpoint (OAuth token) | Headers on each answer |
 |---|---|---|
-| Claude (`anthropic`, OAuth) | `GET api.anthropic.com/api/oauth/usage`, `anthropic-beta: oauth-2025-04-20`: `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet` (`utilization` 0 to 100, `resets_at`), `extra_usage` | `anthropic-ratelimit-unified-5h-utilization` (0 to 1), `-5h-reset` (Unix s), `-7d-utilization`, `-7d-reset`, `-status` |
+| Claude (`anthropic`, OAuth) | `GET api.anthropic.com/api/oauth/usage`, `anthropic-beta: oauth-2025-04-20`: `limits` (since November 2026: `kind` `session`, `weekly_all` or `weekly_scoped` with a `scope` naming a model such as Fable, `group`, `percent`, `resets_at`), read first; else `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet` (`utilization` 0 to 100, `resets_at`); `extra_usage` | `anthropic-ratelimit-unified-5h-utilization` (0 to 1), `-5h-reset` (Unix s), `-7d-utilization`, `-7d-reset`, `-status` |
 | ChatGPT (`openai-codex`) | `GET chatgpt.com/backend-api/wham/usage` with `chatgpt-account-id`: `rate_limit.primary_window` / `secondary_window` (`used_percent`, `limit_window_seconds`, `reset_at`), `additional_rate_limits`, `credits` | `x-codex-primary-used-percent`, `-primary-window-minutes`, `-primary-reset-at`, the same for `secondary` |
 
 Who the account is, asked at start, when the Accounts tab asks every usage (at most hourly an account) and when an

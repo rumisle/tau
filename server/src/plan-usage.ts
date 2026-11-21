@@ -34,6 +34,38 @@ const MIN_ASK_MS = 20_000;
 /** How long to leave an endpoint that answered 429 alone when it does not say. */
 const RATE_LIMIT_BACKOFF_MS = 10 * 60_000;
 
+/** One of Claude's limits as its usage endpoint lists them (`limits`, November 2026). */
+type ClaudeLimit = {
+	kind?: string;
+	group?: string;
+	percent?: number | null;
+	resets_at?: string | null;
+	scope?: { model?: { display_name?: string | null } | null; surface?: { display_name?: string | null } | string | null } | null;
+};
+
+/**
+ * A limit as a window: the session as "5h" and the whole week as "Week", as the older fields named them, and one
+ * scoped to a model or a surface by its name ("Fable"), with the ids the older fields gave Opus and Sonnet.
+ */
+function claudeLimitWindow(limit: ClaudeLimit): UsageWindow[] {
+	const seconds = limit.group === "session" ? 5 * HOUR : limit.group === "weekly" ? WEEK : undefined;
+	if (seconds === undefined || typeof limit.percent !== "number") return [];
+	const resetsAt = limit.resets_at ? Date.parse(limit.resets_at) : Number.NaN;
+	const surface = limit.scope?.surface;
+	const scope = limit.scope?.model?.display_name ?? (typeof surface === "string" ? surface : surface?.display_name) ?? undefined;
+	let id: string;
+	let label: string;
+	if (scope === undefined || scope === null || scope === "") {
+		id = seconds === WEEK ? "week" : "5h";
+		label = seconds === WEEK ? "Week" : "5h";
+	} else {
+		const slug = scope.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+		id = seconds === WEEK ? `week-${slug}` : `5h-${slug}`;
+		label = seconds === WEEK ? scope : `${scope} 5h`;
+	}
+	return [{ id, label, usedPercent: limit.percent, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds }];
+}
+
 export type Fetcher = (credential: OAuthCredential, fetchImpl: typeof fetch) => Promise<Omit<Usage, "at">>;
 
 const FETCHERS: Record<string, Fetcher> = {
@@ -43,7 +75,14 @@ const FETCHERS: Record<string, Fetcher> = {
 			"anthropic-beta": "oauth-2025-04-20",
 		})) as Record<string, { utilization?: number | null; resets_at?: string | null } | null> & {
 			extra_usage?: { is_enabled?: boolean; used_credits?: number; monthly_limit?: number } | null;
+			limits?: ClaudeLimit[] | null;
 		};
+		const credits = body.extra_usage?.is_enabled ? `${dollars(body.extra_usage.used_credits)} of ${dollars(body.extra_usage.monthly_limit)} extra` : undefined;
+		// The list of limits, where the endpoint has it: the ones a model or a surface has of its own, such as Fable's
+		// week, are there only
+		if (Array.isArray(body.limits) && body.limits.length > 0) {
+			return { windows: body.limits.flatMap(claudeLimitWindow), ...(credits === undefined ? {} : { credits }) };
+		}
 		const windows: UsageWindow[] = [];
 		for (const [key, id, label, seconds] of [
 			["five_hour", "5h", "5h", 5 * HOUR],
@@ -56,8 +95,6 @@ const FETCHERS: Record<string, Fetcher> = {
 			const resetsAt = window.resets_at ? Date.parse(window.resets_at) : Number.NaN;
 			windows.push({ id, label, usedPercent: window.utilization, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds });
 		}
-		const extra = body.extra_usage;
-		const credits = extra?.is_enabled ? `${dollars(extra.used_credits)} of ${dollars(extra.monthly_limit)} extra` : undefined;
 		return { windows, ...(credits === undefined ? {} : { credits }) };
 	},
 	"openai-codex": async (credential, fetchImpl) => {
