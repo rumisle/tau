@@ -366,6 +366,36 @@ describe("accounts: a Mistral key's budgets", () => {
 	});
 });
 
+describe("accounts: an OpenRouter key's limits", () => {
+	test("the key's limit and the account's credits, with what is left of them", async () => {
+		const accounts = new Accounts();
+		const account = await accounts.add("openrouter", { type: "api_key", key: "or" }, {});
+		const usage = new PlanUsage({
+			accounts,
+			models: {} as never,
+			minAskMs: 0,
+			fetch: (async (input: string | URL | Request) => {
+				const url = String(input);
+				if (url.endsWith("/key")) {
+					return Response.json({ data: { budgets: [{ scope: "key_limit", limit_usd: 12, spend_usd: 9, reset_interval: "weekly", resets_at: "2026-11-23T00:00:00Z" }] } });
+				}
+				return Response.json({ data: { total_credits: 100, total_usage: 95 } });
+			}) as typeof fetch,
+			onChange: () => {},
+		});
+		await usage.refresh(account.id);
+		const shown = usage.of(account.id)!;
+		assert.deepEqual(
+			shown.windows.map(({ id, label, usedPercent, seconds }) => ({ id, label, usedPercent, seconds })),
+			[
+				{ id: "key_limit", label: "Key", usedPercent: 75, seconds: 604_800 },
+				{ id: "credits", label: "Credits", usedPercent: 95, seconds: undefined },
+			],
+		);
+		assert.equal(shown.credits, "$5.00 of $100.00 credits left");
+	});
+});
+
 describe("accounts: usage asked too often", () => {
 	test("a 429 keeps the numbers had, says nothing, and leaves the endpoint alone for its Retry-After", async () => {
 		const accounts = new Accounts();

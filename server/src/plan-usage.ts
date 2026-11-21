@@ -29,6 +29,7 @@ export type Usage = {
 const HOUR = 3600;
 const WEEK = 7 * 24 * HOUR;
 const MONTH = 30 * 24 * HOUR;
+const DAY = 24 * HOUR;
 const REFRESH_MARGIN_MS = 60_000;
 /** An account's usage is asked at most this often, however many clients ask. */
 const MIN_ASK_MS = 20_000;
@@ -116,7 +117,7 @@ const FETCHERS: Record<string, Fetcher> = {
 	},
 };
 
-/** Usage a provider tells an API key's holder: OpenCode Go's plan, Mistral's monthly budgets. */
+/** Usage a provider tells an API key's holder: OpenCode Go's plan, Mistral's monthly budgets, OpenRouter's limits. */
 export type KeyFetcher = (key: string, fetchImpl: typeof fetch) => Promise<Omit<Usage, "at">>;
 
 const KEY_FETCHERS: Record<string, KeyFetcher> = {
@@ -156,6 +157,33 @@ const KEY_FETCHERS: Record<string, KeyFetcher> = {
 			windows.push({ id, label, usedPercent: Math.max(0, budget.usage_percentage), ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds: MONTH });
 		}
 		return { windows };
+	},
+	// The key's spending limits (its own, and guardrails over it), and the account's credits: what is left of them
+	openrouter: async (key, fetchImpl) => {
+		type Budget = { scope?: string; limit_usd?: number | null; spend_usd?: number; reset_interval?: string | null; resets_at?: string | null };
+		const [info, credits] = await Promise.allSettled([
+			getJson(fetchImpl, "https://openrouter.ai/api/v1/key", { authorization: `Bearer ${key}` }) as Promise<{ data?: { budgets?: Budget[] } }>,
+			getJson(fetchImpl, "https://openrouter.ai/api/v1/credits", { authorization: `Bearer ${key}` }) as Promise<{ data?: { total_credits?: number; total_usage?: number } }>,
+		]);
+		if (info.status === "rejected") throw info.reason;
+		const windows: UsageWindow[] = [];
+		for (const budget of info.value.data?.budgets ?? []) {
+			if (typeof budget.limit_usd !== "number" || budget.limit_usd <= 0 || typeof budget.spend_usd !== "number") continue;
+			const resetsAt = budget.resets_at ? Date.parse(budget.resets_at) : Number.NaN;
+			const seconds = { daily: DAY, weekly: WEEK, monthly: MONTH }[budget.reset_interval ?? ""];
+			windows.push({
+				id: budget.scope ?? "limit",
+				label: budget.scope === "key_limit" ? "Key" : "Limit",
+				usedPercent: (budget.spend_usd / budget.limit_usd) * 100,
+				...(Number.isFinite(resetsAt) ? { resetsAt } : {}),
+				...(seconds === undefined ? {} : { seconds }),
+			});
+		}
+		const total = credits.status === "fulfilled" ? credits.value.data : undefined;
+		if (typeof total?.total_credits !== "number" || total.total_credits <= 0) return { windows };
+		const used = total.total_usage ?? 0;
+		windows.push({ id: "credits", label: "Credits", usedPercent: (used / total.total_credits) * 100 });
+		return { windows, credits: `$${Math.max(0, total.total_credits - used).toFixed(2)} of $${total.total_credits.toFixed(2)} credits left` };
 	},
 };
 
