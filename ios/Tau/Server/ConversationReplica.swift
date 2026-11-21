@@ -260,6 +260,7 @@ enum TranscriptBuilder {
         let subagentCallRows: [String: Int]
         let pendingError: (entry: JSONObject, id: Int, base: Int, date: Date, error: String)?
         let retriedErrors: Int
+        let runTiming: RunTiming
         let committedTasks: Set<Int>
 
         private static var nextToken = 0
@@ -375,6 +376,7 @@ enum TranscriptBuilder {
         /// error; errors in the run it asked past.
         var pendingError: (entry: JSONObject, id: Int, base: Int, date: Date, error: String)?
         var retriedErrors = 0
+        var runTiming = RunTiming()
         /// The generation tasks whose message is in the transcript and ended them. Not an aborted one: durable resumes a
         /// generation cut off by a restart under the same task.
         var committedTasks = Set<Int>()
@@ -431,6 +433,7 @@ enum TranscriptBuilder {
             rows.append(ChatMessage(id: self.rowId(base: pending.id, block: 63), role: .service, text: pending.error, date: pending.date, entryId: pending.id, service: .failed(title: "The model failed", error: ModelErrorText.clean(pending.error), retry: retry)))
             turnStart = nil
             retriedErrors = 0
+            runTiming = RunTiming()
         }
 
         // The task streaming now: a generation cut off by a server restart is committed as an aborted message and
@@ -461,6 +464,7 @@ enum TranscriptBuilder {
             subagentCallRows = cached.subagentCallRows
             pendingError = cached.pendingError
             retriedErrors = cached.retriedErrors
+            runTiming = cached.runTiming
             committedTasks = cached.committedTasks
         } else {
             let ordered = replica.ordered()
@@ -558,6 +562,7 @@ enum TranscriptBuilder {
                     if let taskId = entry.int("byTaskId"), message.string("stopReason") != "aborted" {
                         committedTasks.insert(taskId)
                     }
+                    runTiming.add(message)
                     // Its calls start once it is written.
                     let written = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
                     let firstRow = rows.count
@@ -572,10 +577,11 @@ enum TranscriptBuilder {
                     if message.string("stopReason") != "toolUse" {
                         let finished = date.addingTimeInterval((message.double("durationMs") ?? 0.0) / 1000.0)
                         if let last = rows.indices.last, rows[last].role == .assistant, rows[last].entryId == id {
-                            rows[last].turn = TurnInfo(finishedAt: finished, duration: turnStart.map { finished.timeIntervalSince($0) }, retries: retriedErrors)
+                            rows[last].turn = TurnInfo(finishedAt: finished, duration: turnStart.map { finished.timeIntervalSince($0) }, retries: retriedErrors, firstToken: runTiming.firstToken, tokensPerSecond: runTiming.tokensPerSecond)
                         }
                         turnStart = nil
                         retriedErrors = 0
+                        runTiming = RunTiming()
                     }
                 case "pi.tool-result":
                     guard let callId = message.string("toolCallId"), let index = toolRowIndex[callId], var tool = rows[index].tool else {
@@ -676,7 +682,7 @@ enum TranscriptBuilder {
             }
             addNotes(before: nil)
             token = Committed.newToken()
-            replica.committed = Committed(key: key, token: token, rows: rows, toolRowIndex: toolRowIndex, subagentTasks: subagentTasks, turnStart: turnStart, subagentCallRows: subagentCallRows, pendingError: pendingError, retriedErrors: retriedErrors, committedTasks: committedTasks)
+            replica.committed = Committed(key: key, token: token, rows: rows, toolRowIndex: toolRowIndex, subagentTasks: subagentTasks, turnStart: turnStart, subagentCallRows: subagentCallRows, pendingError: pendingError, retriedErrors: retriedErrors, runTiming: runTiming, committedTasks: committedTasks)
         }
         /// The rows from here on may differ from the committed ones.
         var stableCount = rows.count

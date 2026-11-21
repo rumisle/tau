@@ -112,6 +112,37 @@ struct TurnInfo: Equatable {
     var duration: TimeInterval?
     /// Model errors the server retried past in this run.
     var retries: Int = 0
+    /// How long its first request waited for a token (unknown for answers from before the server timed it), and how
+    /// fast its requests wrote, thinking and tool calls included (unknown when too short to say).
+    var firstToken: TimeInterval?
+    var tokensPerSecond: Double?
+}
+
+/// A run's requests as they are read: the first's wait for a token, and what they all wrote in how long.
+struct RunTiming: Equatable {
+    var firstToken: TimeInterval?
+    var isFirst = true
+    var outputTokens = 0
+    var writing: TimeInterval = 0.0
+
+    /// A request that answered: its message's usage, `durationMs` and `firstTokenMs`.
+    mutating func add(_ message: JSONObject) {
+        let firstTokenMs = message.double("firstTokenMs")
+        if self.isFirst {
+            self.firstToken = firstTokenMs.map { $0 / 1000.0 }
+            self.isFirst = false
+        }
+        guard let durationMs = message.double("durationMs") else {
+            return
+        }
+        self.outputTokens += message.object("usage")?.int("output") ?? 0
+        self.writing += max(0.0, durationMs - (firstTokenMs ?? 0.0)) / 1000.0
+    }
+
+    /// Under a second of writing says too little.
+    var tokensPerSecond: Double? {
+        return self.writing >= 1.0 && self.outputTokens > 0 ? Double(self.outputTokens) / self.writing : nil
+    }
 }
 
 /// A tool call and, once it finished, its result: one card in the transcript.

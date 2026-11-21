@@ -163,7 +163,7 @@ enum HistoryCard {
             let shown = isExpanded ? hits : Array(hits.prefix(3))
             for hit in shown {
                 let label = chats.count <= 1 && hits.count > 1 ? kindLabel(hit.string("kind")) : (hit.object("chat")?.string("title").flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled")
-                let time = hit.string("time").flatMap { ISO8601DateFormatter().date(from: $0) }.map(chatListDateString) ?? ""
+                let time = hit.string("time").flatMap { ISO8601DateFormatter().date(from: $0) }.map { chatListDateString($0) } ?? ""
                 item(line(name: label, marked: hit.string("text") ?? "", time: time, lines: isExpanded ? 2 : 1, textColor: textColor, titleColor: titleColor, maxWidth: maxWidth))
             }
             // Folded, the hits the call returned that are not shown; only those: what the search has past the page it

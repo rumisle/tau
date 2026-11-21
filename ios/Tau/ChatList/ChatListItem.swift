@@ -701,16 +701,19 @@ func plainPreview(_ text: String) -> String {
     return String(parsed.characters)
 }
 
-/// Telegram's chat list date: time today, weekday this week, date otherwise.
-func chatListDateString(_ date: Date) -> String {
+/// The chat list's date, as Telegram's: the time today, the weekday this week; then "Oct 30" this year and
+/// "Oct 30, 2025" before, as the device's language writes them.
+func chatListDateString(_ date: Date, now: Date = Date()) -> String {
     let calendar = Calendar.current
     let formatter = DateFormatter()
-    if calendar.isDateInToday(date) {
+    formatter.locale = Locale.current
+    if calendar.isDate(date, inSameDayAs: now) {
         formatter.dateFormat = "HH:mm"
-    } else if let days = calendar.dateComponents([.day], from: date, to: Date()).day, days < 7 {
+    } else if let days = calendar.dateComponents([.day], from: date, to: now).day, days < 7 {
         formatter.dateFormat = "EEE"
     } else {
-        formatter.dateFormat = "dd.MM.yy"
+        let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+        formatter.setLocalizedDateFormatFromTemplate(sameYear ? "MMMd" : "yMMMd")
     }
     return formatter.string(from: date)
 }
