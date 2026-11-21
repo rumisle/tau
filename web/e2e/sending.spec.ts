@@ -55,6 +55,7 @@ test('while the agent works, Send steers the run and Stop ends it', SMOKE, async
   await type(app, '$ sleep 30');
   const stop = app.getByRole('button', { name: 'Stop', exact: true });
   await expect(stop).toBeVisible();
+  await expect(app.locator('#MiddleColumn .placeholder-text').last()).toHaveText('Steer Dev echo');
   // With text in the field, the button sends; the message waits for the run's next step
   await app.locator(field).click();
   await app.keyboard.type('a steer');

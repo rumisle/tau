@@ -151,6 +151,7 @@ import { getUtf8Length } from '../../util/textFormat';
 import { EMPTY_RICH_MEDIA_CAPTION } from '../../util/tiptap/richMedia';
 import windowSize from '../../util/windowSize';
 import { sendNextAs } from '../../tau/api/session'; // tau: Send's menu
+import { useComposerPlaceholder } from '../../tau/components/composerPlaceholder'; // tau: the model in the placeholder
 import { IS_TAU } from '../../tau/config'; // tau: Telegram-only UI left out
 import { selectTauStoppableRun } from '../../tau/selectors'; // tau: Stop for the run
 import applyIosAutoCapitalizationFix from '../middle/composer/helpers/applyIosAutoCapitalizationFix';
@@ -2393,6 +2394,7 @@ const Composer = ({
     }, { withNodes: true });
   })();
 
+  const tauPlaceholder = useComposerPlaceholder(chatId, Boolean(stoppableTypingDraftId)); // tau: the model in the placeholder
   const placeholder = useMemo(() => {
     if (activeRecording && windowWidth <= SCREEN_WIDTH_TO_HIDE_PLACEHOLDER) {
       return '';
@@ -2436,6 +2438,7 @@ const Composer = ({
       if (isChannel) {
         return lang(isSilentPosting ? 'ComposerPlaceholderBroadcastSilent' : 'ComposerPlaceholderBroadcast');
       }
+      if (IS_TAU && isInMessageList) return tauPlaceholder; // tau: Message or Steer, the model and its thinking level
       return lang('ComposerPlaceholder');
     }
 
@@ -2446,6 +2449,7 @@ const Composer = ({
     activeRecording, botKeyboardPlaceholder, chat, inputPlaceholder, isChannel, isComposerBlocked,
     isInStoryViewer, isSilentPosting, lang, replyToTopic, isReplying, threadId, windowWidth, paidMessagesStars,
     hasSuggestedPost, slowModePlaceholder, stealthMode?.activeUntil, user?.canManageBotForumTopics,
+    isInMessageList, tauPlaceholder, // tau: the model in the placeholder
   ]);
 
   useEffect(() => {

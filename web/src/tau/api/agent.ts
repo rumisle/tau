@@ -104,6 +104,19 @@ export function thinkingTitle(level: string) {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
+/**
+ * The field's placeholder, as iOS's: Message, or Steer while the agent works, then the model and its thinking level
+ * unless that is off. A provider's prefix before ": " in a model's name is left out, as iOS's `modelDisplayName`
+ */
+export function composerPlaceholder(chatId: string, isBusy?: boolean) {
+  const verb = isBusy ? 'Steer' : 'Message';
+  const { model, thinkingLevel } = agentOf(chatId);
+  if (!model) return verb;
+  const name = modelInfo(model, slotOfChat(chatId))?.name ?? model.modelId;
+  const shortName = name.includes(': ') ? name.slice(name.indexOf(': ') + 2) || name : name;
+  return thinkingLevel === 'off' ? `${verb} ${shortName}` : `${verb} ${shortName} ${thinkingTitle(thinkingLevel)}`;
+}
+
 function defaults(slot = 0): Agent {
   const hello = clientOf(slot)?.hello as { defaultModel?: ModelRef; defaultThinkingLevel?: string } | undefined;
   return { model: hello?.defaultModel, thinkingLevel: hello?.defaultThinkingLevel ?? 'off' };

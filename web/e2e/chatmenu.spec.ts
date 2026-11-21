@@ -6,6 +6,8 @@ import { expect, test } from './fixtures.ts';
 
 const row = '[data-tau-row="assistant"]:not([data-tau-draft])';
 const field = '#editable-message-text';
+// The field's placeholder: Message or Steer, the model, its thinking level unless off
+const placeholder = (app: Page) => app.locator('#MiddleColumn .placeholder-text').last();
 
 async function openChat(app: Page, title: string) {
   await app.locator('.chat-list .fullName').getByText(title, { exact: true }).click();
@@ -34,6 +36,7 @@ async function pick(app: Page, item: string, choice: RegExp | string) {
 test('the menu picks the thinking level and the model; the next answer comes from them', async ({ app, api }) => {
   await api.chat('Menu agent', ['hello']);
   await openChat(app, 'Menu agent');
+  await expect(placeholder(app)).toHaveText('Message Dev echo');
   await app.getByRole('button', { name: 'More options' }).click();
   const menu = app.locator('.HeaderMenuContainer');
   await expect(menu.locator('.MenuItem').filter({ hasText: 'Model' })).toContainText('Dev echo');
@@ -47,6 +50,7 @@ test('the menu picks the thinking level and the model; the next answer comes fro
 
   await pick(app, 'Thinking', /^High$/);
   await expect(app.locator('.Notification').filter({ hasText: 'Thinking set to High' })).toBeVisible();
+  await expect(placeholder(app)).toHaveText('Message Dev echo High');
   // The model picker: a search, Enter takes the first match
   await openPicker(app);
   const picker = app.locator('.tau-model-picker');
@@ -57,6 +61,7 @@ test('the menu picks the thinking level and the model; the next answer comes fro
   await expect(picker).toHaveCount(0);
   await expect(app.locator('.Notification').filter({ hasText: 'Model changed to Dev parrot' })).toBeVisible();
   await expect(app.locator('.Notification strong, .Notification b').filter({ hasText: 'Dev parrot' })).toBeVisible();
+  await expect(placeholder(app)).toHaveText('Message Dev parrot High');
   await send(app, 'which model');
   await expect(app.locator(row).filter({ hasText: 'which model' }).last()).toContainText('dev/parrot, thinking high');
 
