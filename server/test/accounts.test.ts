@@ -304,6 +304,40 @@ describe("accounts: Claude's list of limits", () => {
 	});
 });
 
+describe("accounts: an API key's plan", () => {
+	test("OpenCode Go: its rolling five hours, week and month, asked with the key", async () => {
+		const accounts = new Accounts();
+		const account = await accounts.add("opencode-go", { type: "api_key", key: "sk-go" }, {});
+		const asked: string[] = [];
+		const usage = new PlanUsage({
+			accounts,
+			models: {} as never,
+			minAskMs: 0,
+			fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+				asked.push(`${String(input)} ${new Headers(init?.headers).get("authorization")}`);
+				return Response.json({
+					usage: {
+						rolling: { status: "ok", percent: 12, resetsAt: "2026-11-21T09:15:44.146Z" },
+						weekly: { status: "ok", percent: 30, resetsAt: "2026-11-23T00:00:00.000Z" },
+						monthly: { status: "rate-limited", percent: 100, resetsAt: "2026-12-18T09:08:26.000Z" },
+					},
+				});
+			}) as typeof fetch,
+			onChange: () => {},
+		});
+		await usage.refresh(account.id);
+		assert.deepEqual(asked, ["https://opencode.ai/zen/go/v1/usage Bearer sk-go"]);
+		assert.deepEqual(
+			usage.of(account.id)?.windows.map(({ id, label, usedPercent, resetsAt }) => ({ id, label, usedPercent, resetsAt })),
+			[
+				{ id: "5h", label: "5h", usedPercent: 12, resetsAt: Date.parse("2026-11-21T09:15:44.146Z") },
+				{ id: "week", label: "Week", usedPercent: 30, resetsAt: Date.parse("2026-11-23T00:00:00.000Z") },
+				{ id: "month", label: "Month", usedPercent: 100, resetsAt: Date.parse("2026-12-18T09:08:26.000Z") },
+			],
+		);
+	});
+});
+
 describe("accounts: usage asked too often", () => {
 	test("a 429 keeps the numbers had, says nothing, and leaves the endpoint alone for its Retry-After", async () => {
 		const accounts = new Accounts();

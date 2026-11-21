@@ -28,6 +28,7 @@ export type Usage = {
 
 const HOUR = 3600;
 const WEEK = 7 * 24 * HOUR;
+const MONTH = 30 * 24 * HOUR;
 const REFRESH_MARGIN_MS = 60_000;
 /** An account's usage is asked at most this often, however many clients ask. */
 const MIN_ASK_MS = 20_000;
@@ -115,6 +116,30 @@ const FETCHERS: Record<string, Fetcher> = {
 	},
 };
 
+/** Usage a provider tells an API key's holder: OpenCode Go's plan, which its keys draw on. */
+export type KeyFetcher = (key: string, fetchImpl: typeof fetch) => Promise<Omit<Usage, "at">>;
+
+const KEY_FETCHERS: Record<string, KeyFetcher> = {
+	// The plan's rolling five hours, week and month, each a share of the month's dollars (opencode.ai/docs/console/go)
+	"opencode-go": async (key, fetchImpl) => {
+		const body = (await getJson(fetchImpl, "https://opencode.ai/zen/go/v1/usage", { authorization: `Bearer ${key}`, "user-agent": "tau" })) as {
+			usage?: Record<string, { percent?: number; resetsAt?: string } | null>;
+		};
+		const windows: UsageWindow[] = [];
+		for (const [key, id, label, seconds] of [
+			["rolling", "5h", "5h", 5 * HOUR],
+			["weekly", "week", "Week", WEEK],
+			["monthly", "month", "Month", MONTH],
+		] as const) {
+			const window = body.usage?.[key];
+			if (typeof window?.percent !== "number") continue;
+			const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+			windows.push({ id, label, usedPercent: window.percent, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds });
+		}
+		return { windows };
+	},
+};
+
 type CodexWindow = { used_percent?: number; limit_window_seconds?: number; reset_at?: number };
 type CodexLimit = { primary_window?: CodexWindow | null; secondary_window?: CodexWindow | null };
 
@@ -179,12 +204,14 @@ export class PlanUsage {
 	readonly #askedAt = new Map<string, number>();
 	readonly #quietUntil = new Map<string, number>();
 	readonly #fetchers: Record<string, Fetcher>;
+	readonly #keyFetchers: Record<string, KeyFetcher>;
 	readonly #minAskMs: number;
 	#timer: ReturnType<typeof setInterval> | undefined;
 
-	constructor(options: { accounts: Accounts; models: Models; fetch?: typeof fetch; pollMs?: number; minAskMs?: number; fetchers?: Record<string, Fetcher>; onChange: () => void }) {
+	constructor(options: { accounts: Accounts; models: Models; fetch?: typeof fetch; pollMs?: number; minAskMs?: number; fetchers?: Record<string, Fetcher>; keyFetchers?: Record<string, KeyFetcher>; onChange: () => void }) {
 		this.#minAskMs = options.minAskMs ?? MIN_ASK_MS;
 		this.#fetchers = { ...FETCHERS, ...options.fetchers };
+		this.#keyFetchers = { ...KEY_FETCHERS, ...options.keyFetchers };
 		this.#accounts = options.accounts;
 		this.#models = options.models;
 		this.fetch = options.fetch ?? fetch;
@@ -284,18 +311,10 @@ export class PlanUsage {
 	async #ask(accountId: string): Promise<void> {
 		const account = this.#accounts.all().find((each) => each.id === accountId);
 		if (account === undefined || !this.#asksUsage(account)) return;
-		const fetcher = this.#fetchers[account.provider]!;
 		let result: Omit<Usage, "at"> | undefined;
 		let error: string | undefined;
 		try {
-			let credential = await this.#fresh(account, false);
-			try {
-				result = await fetcher(credential, this.fetch);
-			} catch (first) {
-				if (!(first instanceof HttpError) || first.status !== 401) throw first;
-				credential = await this.#fresh(account, true);
-				result = await fetcher(credential, this.fetch);
-			}
+			result = await this.#fetch(account);
 		} catch (caught) {
 			if (caught instanceof HttpError && caught.status === 429) {
 				// Asked too often (the endpoint's own limit, not the plan's): the numbers had stand, and the answers'
@@ -311,7 +330,20 @@ export class PlanUsage {
 		this.#onChange();
 	}
 
+	/** The account's usage from its provider: with its key, or its OAuth token, refreshed once if refused. */
+	async #fetch(account: StoredAccount): Promise<Omit<Usage, "at">> {
+		if (account.credential.type === "api_key") return this.#keyFetchers[account.provider]!(account.credential.key ?? "", this.fetch);
+		const fetcher = this.#fetchers[account.provider]!;
+		try {
+			return await fetcher(await this.#fresh(account, false), this.fetch);
+		} catch (first) {
+			if (!(first instanceof HttpError) || first.status !== 401) throw first;
+			return fetcher(await this.#fresh(account, true), this.fetch);
+		}
+	}
+
 	#asksUsage(account: StoredAccount): boolean {
+		if (account.credential.type === "api_key") return account.credential.key !== undefined && this.#keyFetchers[account.provider] !== undefined;
 		return account.credential.type === "oauth" && this.#fetchers[account.provider] !== undefined;
 	}
 
