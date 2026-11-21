@@ -278,12 +278,15 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
         }
         self.titleView.update(status: ChatController.forcedTitleStatus ?? status)
         self.updateNewChatCard(dialog: dialog)
-        // Who the field writes to, and while the agent works, that Send steers it.
+        // Who the field writes to and how hard it thinks (unless not at all), and while the agent works, that Send
+        // steers it.
         let name = self.modelName()
+        let thinking = self.context.store.agent(self.conversationId).thinkingLevel ?? "off"
         // A message sent during a compaction is answered at once, on the whole context: a steer only while a run goes.
         let verb = busy ? "Steer" : "Message"
         if self.isNodeLoaded {
-            self.controllerNode.inputPanelNode.placeholder = name.isEmpty ? verb : "\(verb) \(name)"
+            let target = name.isEmpty || thinking == "off" ? name : "\(name) \(thinkingTitle(thinking))"
+            self.controllerNode.inputPanelNode.placeholder = target.isEmpty ? verb : "\(verb) \(target)"
         }
     }
 
