@@ -616,10 +616,11 @@ async function identify(provider: string, credential: Credential, fetchImpl: typ
 		});
 		if (!response.ok) return {};
 		const body = (await response.json()) as { account?: { email?: string }; organization?: { organization_type?: string; rate_limit_tier?: string } };
-		// Max comes in sizes, which only the rate limit tier says: default_claude_max_5x
-		const size = /_max_(\d+x)$/.exec(body.organization?.rate_limit_tier ?? "")?.[1];
-		const plan = planName(body.organization?.organization_type?.replace(/^claude_/, ""));
-		return { ...(body.account?.email === undefined ? {} : { email: body.account.email }), ...(plan.plan !== undefined && size !== undefined ? { plan: `${plan.plan} ${size}` } : plan) };
+		// Anthropic renamed Max 20x Ultra (and Max 5x Max) in October 2026; the profile still says claude_max for both,
+		// and only its rate limit tier tells them apart: default_claude_max_20x
+		const type = body.organization?.organization_type?.replace(/^claude_/, "");
+		const isUltra = type === "max" && /_max_20x$/.test(body.organization?.rate_limit_tier ?? "");
+		return { ...(body.account?.email === undefined ? {} : { email: body.account.email }), ...planName(isUltra ? "ultra" : type) };
 	}
 	if (provider === "openai-codex") {
 		const claims = jwtClaims((credential as OAuthCredential).access);
