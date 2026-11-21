@@ -984,7 +984,7 @@ final class ChatControllerNode: ASDisplayNode {
         }
     }
 
-    private static let liftDuration: Double = 0.45
+    private static let liftDuration: Double = 0.3
 
     private func applyLifted(_ id: Int?) {
         guard id != self.liftedId else {

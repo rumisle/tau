@@ -967,6 +967,27 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
     }
 
+    /// A text that changes in place fades from its old drawing to its new one.
+    private func crossfade(_ node: ASDisplayNode, duration: Double = 0.25) {
+        guard !node.isHidden, node.supernode != nil else {
+            return
+        }
+        self.fadeOutSnapshot(of: node, duration: duration)
+        node.layer.animateAlpha(from: 0.0, to: 1.0, duration: duration)
+    }
+
+    /// What a node shows now, fading out where it is while the node itself goes on.
+    private func fadeOutSnapshot(of node: ASDisplayNode, duration: Double = 0.25) {
+        guard let snapshot = node.view.snapshotContentTree() else {
+            return
+        }
+        snapshot.frame = node.frame
+        node.view.superview?.insertSubview(snapshot, aboveSubview: node.view)
+        snapshot.layer.animateAlpha(from: 1.0, to: 0.0, duration: duration, removeOnCompletion: false, completion: { [weak snapshot] _ in
+            snapshot?.removeFromSuperview()
+        })
+    }
+
     /// Sizes the context containers to the row and marks the message's extent for the context menu.
     private func layoutContainers(size: CGSize, animation: ListViewItemUpdateAnimation = .None) {
         let bounds = CGRect(origin: CGPoint(), size: size)
@@ -1202,6 +1223,10 @@ final class ChatMessageItemNode: ListViewItemNode {
                 return (layout, { animation in
                     guard let self else {
                         return
+                    }
+                    // Lifted or put back: the time and the date with it cross-fade.
+                    if let previous = self.item, previous.message.id == item.message.id, previous.showsDetails != item.showsDetails {
+                        self.crossfade(self.dateNode)
                     }
                     self.item = item
                     self.stopReveal()
@@ -1476,6 +1501,15 @@ final class ChatMessageItemNode: ListViewItemNode {
                     guard let self else {
                         return
                     }
+                    // Lifted or put back: the time and the date with it cross-fade, and the speed's line fades in
+                    // under them, or out.
+                    let detailsChanged = self.item.map { $0.message.id == item.message.id && $0.showsDetails != item.showsDetails } ?? false
+                    if detailsChanged {
+                        self.crossfade(self.dateNode)
+                        if !self.speedNode.isHidden {
+                            self.fadeOutSnapshot(of: self.speedNode)
+                        }
+                    }
                     self.item = item
                     self.laidOutBlocks = laidOut
                     self.bubbleNode.isHidden = true
@@ -1499,7 +1533,7 @@ final class ChatMessageItemNode: ListViewItemNode {
                         }
                         if let speedLayout, let speedApply {
                             let _ = speedApply()
-                            if appearing {
+                            if appearing || detailsChanged {
                                 self.speedNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.25)
                             }
                             self.speedNode.isHidden = false
