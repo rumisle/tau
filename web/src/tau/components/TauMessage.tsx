@@ -13,7 +13,7 @@ import type { ApiTauPart } from '../api/types';
 import { getMessageHtmlId } from '../../global/helpers';
 import { selectTheme } from '../../global/selectors';
 import buildClassName from '../../util/buildClassName';
-import { secondsToDate } from '../../util/localization/dateFormat';
+import { formatDateTime, secondsToDate } from '../../util/localization/dateFormat';
 import { selectTauSearchHighlight } from '../selectors';
 import { STRINGS } from '../strings';
 import { formatDuration, formatMessageDate, formatRunSpeed } from './format';
@@ -117,7 +117,9 @@ const TauMessage = ({
     runEnd?.retries ? (runEnd.retries === 1 ? STRINGS.RetriedOnce
       : STRINGS.RetriedTimes.replace('{n}', String(runEnd.retries))) : undefined,
   ].filter(Boolean).join(', ') || undefined;
-  const speed = runEnd && formatRunSpeed(runEnd);
+  // While its menu is open, as iOS's lifted message: the date beside the time, and how fast the model wrote
+  const date = secondsToDate(message.date);
+  const speed = runEnd && isContextMenuOpen ? formatRunSpeed(runEnd) : undefined;
 
   return (
     <div
@@ -139,7 +141,9 @@ const TauMessage = ({
       {runEnd && !message.isTypingDraft && (
         <div className={styles.footer} data-tau-part="footer">
           <span>{workedFor}</span>
-          <span>{formatMessageDate(lang, secondsToDate(message.date))}</span>
+          <span title={formatDateTime(lang, date, { date: 'short', time: 'long' })}>
+            {isContextMenuOpen ? formatMessageDate(lang, date) : formatDateTime(lang, date, { time: 'short' })}
+          </span>
           {speed && <span className={styles.speed}>{speed}</span>}
         </div>
       )}
