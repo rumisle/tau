@@ -42,7 +42,7 @@ import { keptUploadsOf, readUserContent } from './attachments';
 import {
   buildAssistantParts, buildAssistantRichMessage, buildChat, buildChatId, buildCompactionNote, buildDraftChat,
   buildDraftUser, buildMe, buildMessage, buildReadState, buildRows, buildSummaryMessage, buildThreadInfo, buildTitle,
-  buildUser, compactionNotes, DRAFT_CHAT_ID, entryIdOf, lastRowIdOf, ME_ID, messageIdOf,
+  buildUser, compactionNotes, DRAFT_CHAT_ID, entryIdOf, lastRowIdOf, ME_ID, messageIdOf, runSpeedOf,
 } from './builders';
 import { buildParagraph } from './markdown';
 import { compactionError, modelErrorReason } from './modelErrors';
@@ -1138,6 +1138,7 @@ function contextOf(each: Opened): MessageContext {
     compactionNote: (entryId) => compactionNotes(
       (each.replica.docs['tau.compactions'] as { items?: any[] } | undefined)?.items,
     ).get(entryId),
+    runSpeed: (entryId) => runSpeedOf(each.replica.ordered(), entryId),
     retriesBefore: (entryId) => {
       let retries = 0;
       for (const entry of each.replica.ordered().reverse()) {

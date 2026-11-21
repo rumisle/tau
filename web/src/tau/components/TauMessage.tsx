@@ -13,10 +13,10 @@ import type { ApiTauPart } from '../api/types';
 import { getMessageHtmlId } from '../../global/helpers';
 import { selectTheme } from '../../global/selectors';
 import buildClassName from '../../util/buildClassName';
-import { formatDateTime, secondsToDate } from '../../util/localization/dateFormat';
+import { secondsToDate } from '../../util/localization/dateFormat';
 import { selectTauSearchHighlight } from '../selectors';
 import { STRINGS } from '../strings';
-import { formatDuration } from './format';
+import { formatDuration, formatMessageDate, formatRunSpeed } from './format';
 import { useSearchHighlight } from './searchHighlight';
 
 import useSelector from '../../hooks/data/useSelector';
@@ -117,6 +117,7 @@ const TauMessage = ({
     runEnd?.retries ? (runEnd.retries === 1 ? STRINGS.RetriedOnce
       : STRINGS.RetriedTimes.replace('{n}', String(runEnd.retries))) : undefined,
   ].filter(Boolean).join(', ') || undefined;
+  const speed = runEnd && formatRunSpeed(runEnd);
 
   return (
     <div
@@ -138,7 +139,8 @@ const TauMessage = ({
       {runEnd && !message.isTypingDraft && (
         <div className={styles.footer} data-tau-part="footer">
           <span>{workedFor}</span>
-          <span>{formatDateTime(lang, secondsToDate(message.date), { time: 'short' })}</span>
+          <span>{formatMessageDate(lang, secondsToDate(message.date))}</span>
+          {speed && <span className={styles.speed}>{speed}</span>}
         </div>
       )}
       {contextMenuAnchor && (

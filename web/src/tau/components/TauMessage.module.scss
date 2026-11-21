@@ -70,12 +70,19 @@
 
 .footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
 
   margin-top: 0.3125rem !important;
 
   font-size: 0.75rem;
   color: var(--tau-text-secondary);
+}
+
+// How fast the model answered, on a line of its own under the run
+.speed {
+  flex-basis: 100%;
+  margin-top: 0.0625rem;
 }
 
 .card {

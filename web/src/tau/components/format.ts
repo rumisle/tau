@@ -1,4 +1,8 @@
 // Times and lines as the iOS app writes them (ios/Tau/Chat/ChatMessageItem.swift)
+import type { LangFn } from '../../util/localization/types';
+
+import { formatDateTime, isSameLocalDay, secondsToDate } from '../../util/localization/dateFormat';
+import { getServerTime } from '../../util/serverTime';
 
 /** As iOS's `formatElapsed`: 5s, 2m 05s */
 export function formatElapsed(ms: number) {
@@ -24,4 +28,21 @@ export function formatDuration(ms: number) {
   const pad = (n: number) => String(n).padStart(2, '0');
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${pad(seconds % 60)}s`;
   return `${Math.floor(seconds / 3600)}h ${pad(Math.floor((seconds % 3600) / 60))}m`;
+}
+
+/** As iOS's `runSpeedString`: "1.2s to first token, 68 tokens/s", either alone when the other is not known */
+export function formatRunSpeed(speed: { firstTokenMs?: number; tokensPerSecond?: number }) {
+  return [
+    speed.firstTokenMs !== undefined ? `${formatDuration(speed.firstTokenMs)} to first token` : undefined,
+    speed.tokensPerSecond !== undefined ? `${Math.round(speed.tokensPerSecond)} tokens/s` : undefined,
+  ].filter(Boolean).join(', ') || undefined;
+}
+
+/** As iOS's `messageDateString`: the time today, "Oct 30 11:24" earlier this year, "Oct 30, 2025 11:24" before */
+export function formatMessageDate(lang: LangFn, date: Date) {
+  const time = formatDateTime(lang, date, { time: 'short' });
+  const now = secondsToDate(getServerTime());
+  if (isSameLocalDay(date, now)) return time;
+  const day = formatDateTime(lang, date, { date: 'short', includeYear: date.getFullYear() !== now.getFullYear() });
+  return `${day} ${time}`;
 }

@@ -56,7 +56,31 @@ test('a transcript: the user\'s bubbles, answers, thinking, a tool card', SMOKE,
   await expect(card).toContainText('Bash');
   await expect(card).toContainText('e2e-42');
   await expect(card).toHaveAttribute('data-tau-status', 'done');
-  await expect(app.locator(row).last().locator('[data-tau-part="footer"]')).toBeVisible();
+  const footer = app.locator(row).last().locator('[data-tau-part="footer"]');
+  await expect(footer).toBeVisible();
+  // How fast the model answered, under the run (server/src/timing.ts)
+  await expect(footer).toContainText(/\ds to first token/);
+});
+
+test('a message from another day says its date beside the time, with the year for another year', async ({ app, api }) => {
+  await api.chat('Dated', ['hello dates']);
+  const sent = new Date();
+  const time = (date: Date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  const later = new Date(sent);
+  later.setDate(later.getDate() + 2);
+  await app.clock.setFixedTime(later);
+  await openChat(app, 'Dated');
+  const day = sent.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  await expect(app.locator(row).last().locator('[data-tau-part="footer"]')).toContainText(`${day} ${time(sent)}`);
+  await expect(app.locator('.Message.own .message-time').last()).toContainText(day);
+  // Next year: the year too
+  const nextYear = new Date(sent);
+  nextYear.setFullYear(nextYear.getFullYear() + 1);
+  await app.clock.setFixedTime(nextYear);
+  await app.reload();
+  await openChat(app, 'Dated');
+  const dated = sent.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  await expect(app.locator(row).last().locator('[data-tau-part="footer"]')).toContainText(`${dated} ${time(sent)}`);
 });
 
 test('an answer that comes while the chat is open streams in and stays', SMOKE, async ({ app, api }) => {

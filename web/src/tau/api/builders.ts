@@ -6,7 +6,7 @@ import type {
   ApiChat, ApiMessage, ApiPageBlock, ApiRichMessage, ApiThreadInfo, ApiUser,
 } from '../../api/types';
 import type { ThreadReadState } from '../../types';
-import type { ApiTauPart } from './types';
+import type { ApiTauPart, RunSpeed } from './types';
 import { MAIN_THREAD_ID } from '../../api/types';
 
 import { ARCHIVED_FOLDER_ID } from '../../config';
@@ -134,6 +134,41 @@ export function buildSummaryMessage(dialog: Dialog): ApiMessage | undefined {
   };
 }
 
+// Under a second of writing says too little about the speed
+const MIN_WRITING_MS = 1000;
+
+/**
+ * The speed of the run that the answer `entryId` ends, as iOS's `RunTiming`: its answers since the run before ended,
+ * failed ones left out. `firstTokenMs` is the server's (server/src/timing.ts); answers from before it have none, and
+ * their writing is their whole duration.
+ */
+export function runSpeedOf(entries: Iterable<Entry>, entryId: number): RunSpeed {
+  let answers: any[] = [];
+  for (const entry of entries) {
+    if (entry.id > entryId) break;
+    if (entry.kind !== 'pi.assistant') continue;
+    const message = (entry.model as any[] | undefined)?.[0];
+    if (!message || message.stopReason === 'error') continue;
+    if (entry.id < entryId && message.stopReason !== 'toolUse') {
+      answers = [];
+      continue;
+    }
+    answers.push(message);
+  }
+  if (!answers.length) return {};
+  let output = 0;
+  let writingMs = 0;
+  for (const message of answers) {
+    if (message.durationMs === undefined) continue;
+    output += message.usage?.output ?? 0;
+    writingMs += Math.max(0, message.durationMs - (message.firstTokenMs ?? 0));
+  }
+  return {
+    firstTokenMs: answers[0].firstTokenMs,
+    tokensPerSecond: writingMs >= MIN_WRITING_MS && output > 0 ? output / (writingMs / 1000) : undefined,
+  };
+}
+
 /** What building a message needs beyond its entry: from the replica it is in, and the chat list */
 export type MessageContext = {
   // Tool results by call ID: a call's result is a later entry, shown in the call's message
@@ -147,6 +182,8 @@ export type MessageContext = {
   errorState: (entryId: number) => 'retried' | 'pending' | 'stands';
   // Model errors the server asked past in the run an entry ends
   retriesBefore: (entryId: number) => number;
+  // How fast the model answered in the run an entry ends (runSpeedOf)
+  runSpeed: (entryId: number) => RunSpeed;
   // The note of a compaction that ended unused after this entry, if any
   compactionNote: (entryId: number) => string | undefined;
 };
@@ -301,6 +338,7 @@ export function buildMessage(entry: Entry, context: MessageContext): ApiMessage 
             ? {
               workedForMs: startAt !== undefined ? message.timestamp - startAt : undefined,
               retries: retries || undefined,
+              ...context.runSpeed(entry.id),
             }
             : undefined,
         },

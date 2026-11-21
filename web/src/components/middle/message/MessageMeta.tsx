@@ -14,6 +14,8 @@ import {
 import { formatStarsAsIcon } from '../../../util/localization/format';
 import { getRepeatPeriodText } from '../../../util/scheduledMessages';
 import { formatIntegerCompact } from '../../../util/textFormat';
+import { formatMessageDate } from '../../../tau/components/format'; // tau: the date under a message from another day
+import { IS_TAU } from '../../../tau/config'; // tau: the date under a message from another day
 import renderText from '../../common/helpers/renderText';
 
 import useFlag from '../../../hooks/useFlag';
@@ -143,7 +145,8 @@ const MessageMeta = ({
       return formatEditedDate(lang, message.date, message.editDate!, withFullDate, message.isVideoProcessingPending);
     }
 
-    const time = formatDateTime(lang, secondsToDate(message.date), { time: 'short' });
+    const time = IS_TAU ? formatMessageDate(lang, secondsToDate(message.date)) // tau: with the date from another day
+      : formatDateTime(lang, secondsToDate(message.date), { time: 'short' });
     const baseDate = !withFullDate
       ? time
       : formatCompactTimestamp(lang, secondsToDate(message.forwardInfo?.date || message.date), { withTime: true });

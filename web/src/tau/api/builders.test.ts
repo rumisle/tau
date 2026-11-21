@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { MessageContext } from './builders';
 
-import { buildMessage, compactionNotes, ME_ID } from './builders';
+import { buildMessage, compactionNotes, ME_ID, runSpeedOf } from './builders';
 
 const at = 1_700_000_000_000;
 const context = (
@@ -17,10 +17,33 @@ const context = (
   isBusy: () => busy,
   errorState: () => errorState,
   retriesBefore: () => retries,
+  runSpeed: () => ({}),
   compactionNote: () => undefined,
 });
 const entry = (id: number, kind: string, message: object): Entry => ({
   id, kind, conversationId: 7, model: [{ timestamp: at + 2500, ...message }],
+});
+
+describe('runSpeedOf', () => {
+  const answer = (id: number, stopReason: string, durationMs?: number, output = 0, firstTokenMs?: number) => entry(id,
+    'pi.assistant', { role: 'assistant', stopReason, durationMs, firstTokenMs, usage: { output } });
+
+  it('takes the run\'s first wait for a token, and its answers\' output over their writing', () => {
+    const entries = [
+      answer(1, 'stop', 9000, 900, 500), // the run before
+      entry(2, 'pi.user', { role: 'user', content: 'go' }),
+      answer(3, 'toolUse', 2200, 100, 1200),
+      answer(4, 'error', 100, 0, undefined),
+      answer(5, 'stop', 3500, 200, 500),
+    ];
+    // 300 tokens over 1.0 s and 3.0 s of writing
+    expect(runSpeedOf(entries, 5)).toEqual({ firstTokenMs: 1200, tokensPerSecond: 75 });
+  });
+
+  it('says nothing of the first token before the server timed it, nor of the speed under a second', () => {
+    expect(runSpeedOf([answer(1, 'stop', 4000, 200)], 1)).toEqual({ firstTokenMs: undefined, tokensPerSecond: 50 });
+    expect(runSpeedOf([answer(1, 'stop', 900, 20, 300)], 1)).toEqual({ firstTokenMs: 300, tokensPerSecond: undefined });
+  });
 });
 
 describe('buildMessage', () => {

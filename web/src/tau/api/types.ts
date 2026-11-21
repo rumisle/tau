@@ -2,6 +2,9 @@
 // keeps a rich-message rendering of the same, for previews, copy and the typing draft's handoff.
 import type { ApiPageBlock } from '../../api/types';
 
+/** How fast a run's model answered: its first request's wait for a token, its requests' output over their writing */
+export type RunSpeed = { firstTokenMs?: number; tokensPerSecond?: number };
+
 export type ApiTauToolStatus = 'running' | 'done' | 'failed';
 
 export type ApiTauPart =
@@ -61,7 +64,7 @@ export interface ApiTauContent {
   role: 'assistant' | 'notice';
   parts: ApiTauPart[];
   // The last message of a run: its footer, how long the run took
-  runEnd?: { workedForMs?: number; retries?: number };
+  runEnd?: { workedForMs?: number; retries?: number } & RunSpeed;
   // What Copy copies: the answer's Markdown
   copyText?: string;
 }
