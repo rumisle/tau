@@ -28,6 +28,7 @@ import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { CacheWarmer, type CacheWarmingMode } from "./cache.ts";
+import { timeFirstTokens } from "./timing.ts";
 import { type CompactionThreshold, compactionOverrides, DEFAULT_COMPACTION_THRESHOLD, FollowUpCompaction } from "./compaction.ts";
 import { CompactionLog } from "./compactions.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
@@ -282,7 +283,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const harness = await Harness.open(
 		storage,
 		{
-			models: cache.wrap(accounts.usage.wrap(models)),
+			models: cache.wrap(accounts.usage.wrap(timeFirstTokens(models))),
 			registry,
 			settings: () => settings,
 			env: ({ cwd: conversationCwd }) => new NodeExecutionEnv({ cwd: conversationCwd ?? cwd, ...(scopes === undefined ? {} : { shellPath: scopes.shellPath }) }),

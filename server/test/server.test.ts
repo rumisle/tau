@@ -150,6 +150,10 @@ describe("tau server", () => {
 		assert.deepEqual(kinds(replica), ["pi.user", "pi.system", "pi.assistant"]);
 		assert.match(assistantText(replica.ordered().at(-1)), /You said: hello there/);
 		assert.ok(partials > 0, "saw streamed partials");
+		// Timed: when its first token came and how long it took (src/timing.ts)
+		const answer = (replica.ordered().at(-1)?.model as Array<{ firstTokenMs?: number; durationMs?: number }>)[0]!;
+		assert.equal(typeof answer.firstTokenMs, "number");
+		assert.ok(answer.firstTokenMs! <= answer.durationMs!, `${answer.firstTokenMs} within ${answer.durationMs}`);
 
 		// The ops applied client-side reproduce the server's docs exactly.
 		const fresh = await TauClient.connect(slow.server.url);

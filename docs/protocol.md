@@ -454,3 +454,7 @@ Doc changes use Chord's operation format, applied in order. `path` is an array o
 - `pi.live.nestedTools[i]` is a call a running tool made (a code mode script's), by `parentCallId`; once the script
   ends its result's `details.calls` lists them. `tau.files` and `tau.subagent` entries are what such a call sent or
   started, display only (docs/codemode.md).
+- A `pi.assistant` message has `timestamp` (its request began), `durationMs` (until it ended) and, from servers that
+  time it, `firstTokenMs` (until its first text, thinking or tool call streamed; `server/src/timing.ts`). The clients
+  show a run's first `firstTokenMs` and its answers' `usage.output` over their writing (`durationMs` less
+  `firstTokenMs`) under its last answer: "1.2s to first token, 68 tokens/s", the speed only after a second of writing.
