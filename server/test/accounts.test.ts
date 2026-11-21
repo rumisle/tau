@@ -338,6 +338,34 @@ describe("accounts: an API key's plan", () => {
 	});
 });
 
+describe("accounts: a Mistral key's budgets", () => {
+	test("Vibe's and the API's month, in percent", async () => {
+		const accounts = new Accounts();
+		const account = await accounts.add("mistral", { type: "api_key", key: "mk" }, {});
+		const usage = new PlanUsage({
+			accounts,
+			models: {} as never,
+			minAskMs: 0,
+			fetch: (async (input: string | URL | Request) => {
+				assert.equal(String(input), "https://api.mistral.ai/v1/billing/budget");
+				return Response.json({
+					vibe_budget: { usage_percentage: 40.5, initial_budget: 255, currency: "EUR", reset_at: "2026-12-01T00:00:00Z" },
+					api_budget: { usage_percentage: 0, initial_budget: 25.5, currency: "EUR", reset_at: "2026-12-01T00:00:00Z" },
+				});
+			}) as typeof fetch,
+			onChange: () => {},
+		});
+		await usage.refresh(account.id);
+		assert.deepEqual(
+			usage.of(account.id)?.windows.map(({ id, label, usedPercent }) => ({ id, label, usedPercent })),
+			[
+				{ id: "vibe", label: "Vibe", usedPercent: 40.5 },
+				{ id: "api", label: "API", usedPercent: 0 },
+			],
+		);
+	});
+});
+
 describe("accounts: usage asked too often", () => {
 	test("a 429 keeps the numbers had, says nothing, and leaves the endpoint alone for its Retry-After", async () => {
 		const accounts = new Accounts();

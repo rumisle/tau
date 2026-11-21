@@ -34,7 +34,10 @@ login refresh it in turn, and each refresh rotates the refresh token, so the one
   the Accounts tab opens or is pulled. Each answer of an account in use also carries its 5-hour and weekly numbers in
   its response headers; they update the shown usage in between, without a request. An API key shows usage only where
   its provider tells a plan's: OpenCode Go (`GET opencode.ai/zen/go/v1/usage` with the key: `rolling`, `weekly` and
-  `monthly`, each a `percent` and `resetsAt`). Other keys show none: tau does not split its cost counters by account.
+  `monthly`, each a `percent` and `resetsAt`) and Mistral (`GET api.mistral.ai/v1/billing/budget` with the key, as the
+  Vibe CLI reads it: `vibe_budget`, the month's allowance a plan's key draws on, and `api_budget`, a pay-as-you-go
+  key's, each a `usage_percentage` from 0 to 100 and `reset_at`). Other keys show none: tau does not split its cost
+  counters by account.
 - **The app has an Accounts tab**, left of Chats: a server's accounts in one list. With several servers, the chat
   list's folder tabs (ChatListFolderTabsNode) name them under the title and a swipe goes between their lists, as
   between folders; with one, there are no tabs. Usage is what it is opened for; adding, switching and removing are

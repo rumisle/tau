@@ -116,7 +116,7 @@ const FETCHERS: Record<string, Fetcher> = {
 	},
 };
 
-/** Usage a provider tells an API key's holder: OpenCode Go's plan, which its keys draw on. */
+/** Usage a provider tells an API key's holder: OpenCode Go's plan, Mistral's monthly budgets. */
 export type KeyFetcher = (key: string, fetchImpl: typeof fetch) => Promise<Omit<Usage, "at">>;
 
 const KEY_FETCHERS: Record<string, KeyFetcher> = {
@@ -135,6 +135,25 @@ const KEY_FETCHERS: Record<string, KeyFetcher> = {
 			if (typeof window?.percent !== "number") continue;
 			const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
 			windows.push({ id, label, usedPercent: window.percent, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds });
+		}
+		return { windows };
+	},
+	// The organization's two monthly budgets, as the Vibe CLI reads them (mistral-vibe's vibe/app_server/_billing.py):
+	// Vibe's, which a plan's key draws on, and the API's, which a pay-as-you-go key does; usage_percentage is 0 to 100
+	mistral: async (key, fetchImpl) => {
+		type Budget = { usage_percentage?: number; reset_at?: string | null } | null;
+		const body = (await getJson(fetchImpl, "https://api.mistral.ai/v1/billing/budget", { authorization: `Bearer ${key}` })) as {
+			vibe_budget?: Budget;
+			api_budget?: Budget;
+		};
+		const windows: UsageWindow[] = [];
+		for (const [budget, id, label] of [
+			[body.vibe_budget, "vibe", "Vibe"],
+			[body.api_budget, "api", "API"],
+		] as const) {
+			if (typeof budget?.usage_percentage !== "number") continue;
+			const resetsAt = budget.reset_at ? Date.parse(budget.reset_at) : Number.NaN;
+			windows.push({ id, label, usedPercent: Math.max(0, budget.usage_percentage), ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds: MONTH });
 		}
 		return { windows };
 	},
