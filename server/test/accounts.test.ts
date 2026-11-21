@@ -248,6 +248,13 @@ describe("accounts: logins, switching and usage over the protocol", () => {
 		assert.equal(windows[1]!.usedPercent, 40);
 	});
 
+	test("an upgraded plan shows once the provider says so: the account's screen asks who it is", async () => {
+		const account = await host.accounts.accounts.add("anthropic", { type: "oauth", access: "claude-upgraded", refresh: "claude-upgraded-refresh", expires: Date.now() + 3_600_000 }, { email: "upgraded@example.com", plan: "Pro" });
+		await client.request("accounts.refresh", { id: account.id });
+		await until((each) => each.accounts.find((one) => one.id === account.id)?.plan === "Max");
+		assert.ok(requests.includes("https://api.anthropic.com/api/oauth/profile Bearer claude-upgraded"));
+	});
+
 	test("the headers come from the answers of the account in use", async () => {
 		const id = host.accounts.accounts.activeId("anthropic")!;
 		let seen: unknown;

@@ -170,13 +170,15 @@ export class Accounts implements CredentialStore {
 		});
 	}
 
-	/** Who the account is, once the provider said: for one added without it. */
+	/** Who the account is, as the provider says now: its email, and its plan, which an upgrade changes. */
 	identify(id: string, info: { email?: string; plan?: string }): Promise<void> {
 		return this.#queue(async () => {
 			const account = this.#find(id);
-			if (info.email === undefined || account.email !== undefined) return;
-			account.email = info.email;
-			if (info.plan !== undefined) account.plan = info.plan;
+			const email = info.email ?? account.email;
+			const plan = info.plan ?? account.plan;
+			if (email === account.email && plan === account.plan) return;
+			if (email !== undefined) account.email = email;
+			if (plan !== undefined) account.plan = plan;
 			this.#save();
 		});
 	}
@@ -326,6 +328,10 @@ type Pending = { promptId: string; resolve: (value: string) => void; reject: (er
 
 type Login = { state: LoginState; controller: AbortController; pending?: Pending; timer: ReturnType<typeof setTimeout>; cancelled?: boolean };
 
+/** How often the Accounts tab asks a provider who each account is, and an account's screen its own. */
+const IDENTIFY_EVERY_MS = 60 * 60_000;
+const IDENTIFY_ACCOUNT_EVERY_MS = 60_000;
+
 /** The accounts, their logins and usage, as clients see and change them. */
 export class AccountsService {
 	readonly accounts: Accounts;
@@ -341,6 +347,8 @@ export class AccountsService {
 	readonly #unsubscribe: () => void;
 
 	readonly #identities: Record<string, (credential: Credential) => Promise<{ email?: string; plan?: string }>>;
+	/** When each account's provider was last asked who it is. */
+	readonly #identified = new Map<string, number>();
 
 	constructor(options: {
 		accounts: Accounts;
@@ -371,23 +379,29 @@ export class AccountsService {
 		this.#unsubscribe = stop;
 	}
 
-	/** Starts asking for usage, now and every few minutes; asks who the accounts added without it are. */
+	/** Starts asking for usage, now and every few minutes, and who the accounts are, as their plans change. */
 	start(): void {
 		this.usage.start();
-		void this.#identifyMissing();
+		for (const account of this.accounts.all()) void this.#identify(account.id, 0);
 	}
 
-	async #identifyMissing(): Promise<void> {
-		for (const account of this.accounts.all()) {
-			if (account.email !== undefined || account.credential.type !== "oauth") continue;
-			const own = this.#identities[account.provider];
-			try {
-				const credential = await this.usage.fresh(account);
-				const info = await (own === undefined ? identify(account.provider, credential, this.usage.fetch) : own(credential));
-				await this.accounts.identify(account.id, info);
-			} catch {
-				// Asked again at the next start
-			}
+	/**
+	 * Asks the provider who a subscription account is, and its plan: at start, when the Accounts tab asks every usage
+	 * (at most hourly an account), and when an account's screen asks its own (at most every minute).
+	 */
+	async #identify(accountId: string, minimumAgeMs: number): Promise<void> {
+		const account = this.accounts.all().find((each) => each.id === accountId);
+		if (account === undefined || account.credential.type !== "oauth") return;
+		const asked = this.#identified.get(accountId);
+		if (asked !== undefined && Date.now() - asked < minimumAgeMs) return;
+		this.#identified.set(accountId, Date.now());
+		const own = this.#identities[account.provider];
+		try {
+			const credential = await this.usage.fresh(account);
+			const info = await (own === undefined ? identify(account.provider, credential, this.usage.fetch) : own(credential));
+			await this.accounts.identify(account.id, info);
+		} catch {
+			// Asked again next time
 		}
 	}
 
@@ -432,9 +446,14 @@ export class AccountsService {
 		return () => this.#listeners.delete(listener);
 	}
 
-	/** One account's usage now, or every one's. */
+	/** One account's usage now, or every one's; and who they are, should a plan have changed. */
 	refresh(accountId?: string): Promise<void> {
-		return accountId === undefined ? this.usage.refreshAll() : this.usage.refresh(accountId);
+		if (accountId === undefined) {
+			for (const account of this.accounts.all()) void this.#identify(account.id, IDENTIFY_EVERY_MS);
+			return this.usage.refreshAll();
+		}
+		void this.#identify(accountId, IDENTIFY_ACCOUNT_EVERY_MS);
+		return this.usage.refresh(accountId);
 	}
 
 	/** Puts the account in use, and asks its usage: the numbers shown with it should be its own, now. */
