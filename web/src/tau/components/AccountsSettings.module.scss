@@ -253,8 +253,8 @@
 // An amount at the left, when it resets at the right
 .windowNote {
   display: flex;
-  justify-content: space-between;
   gap: 0.625rem;
+  justify-content: space-between;
 }
 
 .windowAmount {

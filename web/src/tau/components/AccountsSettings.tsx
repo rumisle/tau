@@ -241,7 +241,12 @@ function Subtitle({ account, hasSiblings }: { account: ProviderAccount; hasSibli
       ? ` ${STRINGS.AccountsKeyEnding} ${account.keyHint}` : ''}`
     : `${serviceName(account.provider, account.providerName, true)}${account.plan ? ` ${account.plan}` : ''}`;
   if (!hasSiblings || !account.active) return text;
-  return <>{`${text}, `}<span className={styles.inUse} data-tau-in-use>{STRINGS.AccountsInUse}</span></>;
+  return (
+    <>
+      {`${text}, `}
+      <span className={styles.inUse} data-tau-in-use>{STRINGS.AccountsInUse}</span>
+    </>
+  );
 }
 
 function SmallWindow({ window, now }: { window: UsageWindow; now: number }) {

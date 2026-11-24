@@ -256,6 +256,8 @@ final class SendingUITests: XCTestCase {
         first.tap()
         settle()
         XCTAssertTrue(any["usageWindow"].firstMatch.waitForExistence(timeout: 10), "its usage, a bar for each limit")
+        XCTAssertTrue(any["5-Hour Limit"].firstMatch.exists, "the server's titles")
+        XCTAssertTrue(any["Extra Usage"].firstMatch.exists, "extra usage beyond the plan, so named")
         self.shot("accounts-4-detail")
         self.point(0.09, 0.098).tap()
         settle()
@@ -297,9 +299,20 @@ final class SendingUITests: XCTestCase {
         XCTAssertTrue(key.waitForExistence(timeout: 15), "the key's account")
         XCTAssertTrue((key.value as? String ?? "").contains("in use"), "a new account is put in use")
 
-        // Signing out of the one in use goes back to the one in use before.
+        // Its limits, as an OpenRouter key's: titled once, in money, saying nothing of resetting, and its balance a limit
+        // of its own, not extra usage.
         key.tap()
         settle()
+        let keyLimit = any.matching(NSPredicate(format: "identifier == 'usageWindow' AND label == 'Key Limit'")).firstMatch
+        XCTAssertTrue(keyLimit.waitForExistence(timeout: 10), "the key's limit")
+        XCTAssertTrue((keyLimit.value as? String ?? "").contains("$9.63 of $12.00 spent"), keyLimit.debugDescription)
+        XCTAssertFalse((keyLimit.value as? String ?? "").contains("Resets"), "it never resets")
+        let credits = any.matching(NSPredicate(format: "identifier == 'usageWindow' AND label == 'Credits'")).firstMatch
+        XCTAssertTrue((credits.value as? String ?? "").contains("$4.77 of $103.00 left"), credits.debugDescription)
+        XCTAssertFalse(any["Extra Usage"].firstMatch.exists)
+        self.shot("accounts-7-key-usage")
+
+        // Signing out of the one in use goes back to the one in use before.
         any["Sign Out"].firstMatch.tap()
         settle()
         self.shot("accounts-8-signout")
