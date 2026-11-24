@@ -440,7 +440,7 @@ final class MockStore: TauStore, TauServer {
         return ModelInfo(provider: provider, id: id, name: id, reasoning: true, thinkingLevels: ["off", "minimal", "low", "medium", "high"])
     }
 
-    func models() -> Signal<[ModelInfo], NoError> {
+    func models(query: String?, reload: Bool) -> Signal<[ModelInfo], NoError> {
         return .single([
             ModelInfo(provider: "anthropic", id: "claude-opus-5-5", name: "Claude Opus 5.5", reasoning: true),
             ModelInfo(provider: "anthropic", id: "claude-haiku-5-5", name: "Claude Haiku 5.5", reasoning: true),

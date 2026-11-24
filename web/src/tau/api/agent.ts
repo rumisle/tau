@@ -28,7 +28,7 @@ const CONFIRMED_TTL_MS = 5000;
 
 // Each server's models, by slot: a chat's are its server's
 const modelsBySlot = new Map<number, ModelInfo[]>();
-const modelsRequests = new Map<number, Promise<ModelInfo[] | undefined>>();
+const modelsRequests = new Map<string, Promise<ModelInfo[] | undefined>>();
 const overrides = new Map<number, { agent: Agent; token: number; confirmed: boolean }>();
 let nextToken = 0;
 const listeners = new Set<() => void>();
@@ -44,14 +44,15 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
-/** The models a server has credentials for, asked once per page */
-export function loadModels(slot = 0) {
+/** A picker reloads the server's local list; only a nonempty search miss may refresh its remote catalog. */
+export function loadModels(slot = 0, query?: string, reload = false) {
   const known = modelsBySlot.get(slot);
-  if (known) return Promise.resolve(known);
+  if (known && !query && !reload) return Promise.resolve(known);
   const client = clientOf(slot);
   if (!client) return Promise.resolve(undefined);
-  if (!modelsRequests.has(slot)) {
-    modelsRequests.set(slot, client.request<{ models: ModelInfo[] }>('models.list')
+  const key = `${slot}:${query ?? ''}`;
+  if (!modelsRequests.has(key)) {
+    modelsRequests.set(key, client.request<{ models: ModelInfo[] }>('models.list', query ? { query } : {})
       .then((result) => {
         modelsBySlot.set(slot, result.models);
         emit();
@@ -59,10 +60,10 @@ export function loadModels(slot = 0) {
       })
       .catch(() => undefined)
       .finally(() => {
-        modelsRequests.delete(slot);
+        modelsRequests.delete(key);
       }));
   }
-  return modelsRequests.get(slot)!;
+  return modelsRequests.get(key)!;
 }
 
 export function cachedModels(slot = 0) {

@@ -70,7 +70,7 @@ final class ModelPickerController: ViewController {
     }
 
     override func loadDisplayNode() {
-        self.displayNode = ModelPickerControllerNode(context: self.context, navigationBar: self.navigationBar!, current: self.current, requestDeactivateSearch: { [weak self] in
+        self.displayNode = ModelPickerControllerNode(context: self.context, server: self.server, navigationBar: self.navigationBar!, current: self.current, requestDeactivateSearch: { [weak self] in
             self?.deactivateSearch()
         }, select: { [weak self] model in
             guard let self else {
@@ -114,7 +114,7 @@ final class ModelPickerController: ViewController {
         self.navigationBar?.updateBackgroundAlpha(0.0, transition: .immediate)
         self.displayNodeDidLoad()
 
-        self.modelsDisposable = (self.server.models() |> deliverOnMainQueue).start(next: { [weak self] models in
+        self.modelsDisposable = (self.server.models(query: nil, reload: true) |> deliverOnMainQueue).start(next: { [weak self] models in
             self?.controllerNode.update(models: models)
         })
     }
@@ -183,6 +183,7 @@ private func modelMatches(_ model: ModelInfo, query: String) -> Bool {
 
 private final class ModelPickerControllerNode: ASDisplayNode {
     private let context: AppContext
+    private let server: TauServer
     private weak var navigationBar: NavigationBar?
     private let current: String?
     private let requestDeactivateSearch: () -> Void
@@ -195,8 +196,9 @@ private final class ModelPickerControllerNode: ASDisplayNode {
     private var containerLayout: (ContainerViewLayout, CGFloat)?
     private var searchDisplayController: SearchDisplayController?
 
-    init(context: AppContext, navigationBar: NavigationBar, current: String?, requestDeactivateSearch: @escaping () -> Void, select: @escaping (ModelInfo) -> Void) {
+    init(context: AppContext, server: TauServer, navigationBar: NavigationBar, current: String?, requestDeactivateSearch: @escaping () -> Void, select: @escaping (ModelInfo) -> Void) {
         self.context = context
+        self.server = server
         self.navigationBar = navigationBar
         self.current = current
         self.requestDeactivateSearch = requestDeactivateSearch
@@ -258,7 +260,7 @@ private final class ModelPickerControllerNode: ASDisplayNode {
             return
         }
         let presentationData = self.context.theme.presentationData
-        self.searchDisplayController = SearchDisplayController(presentationData: presentationData, contentNode: ModelSearchContainerNode(context: self.context, models: self.models, current: self.current, select: self.select), inline: true, cancel: { [weak self] in
+        self.searchDisplayController = SearchDisplayController(presentationData: presentationData, contentNode: ModelSearchContainerNode(context: self.context, server: self.server, models: self.models, current: self.current, updated: { [weak self] models in self?.update(models: models) }, select: self.select), inline: true, cancel: { [weak self] in
             self?.requestDeactivateSearch()
         }, fieldStyle: placeholderNode.fieldStyle)
         self.searchDisplayController?.containerLayoutUpdated(layout, navigationBarHeight: navigationBarHeight, transition: .immediate)
@@ -290,7 +292,13 @@ private final class ModelPickerControllerNode: ASDisplayNode {
 /// there is a query, then the matching models.
 private final class ModelSearchContainerNode: SearchDisplayControllerContentNode {
     private let context: AppContext
-    private let models: [ModelInfo]
+    private var models: [ModelInfo]
+    private let server: TauServer
+    private let updated: ([ModelInfo]) -> Void
+    private var refreshWork: DispatchWorkItem?
+    private var refreshDisposable: Disposable?
+    private var searched = Set<String>()
+    private var query = ""
     private let current: String?
     private let select: (ModelInfo) -> Void
     private let dimNode = ASDisplayNode()
@@ -303,9 +311,11 @@ private final class ModelSearchContainerNode: SearchDisplayControllerContentNode
         return true
     }
 
-    init(context: AppContext, models: [ModelInfo], current: String?, select: @escaping (ModelInfo) -> Void) {
+    init(context: AppContext, server: TauServer, models: [ModelInfo], current: String?, updated: @escaping ([ModelInfo]) -> Void, select: @escaping (ModelInfo) -> Void) {
         self.context = context
         self.models = models
+        self.server = server
+        self.updated = updated
         self.current = current
         self.select = select
         super.init()
@@ -317,6 +327,11 @@ private final class ModelSearchContainerNode: SearchDisplayControllerContentNode
         self.listNode.beganInteractiveDragging = { [weak self] _ in
             self?.dismissInput?()
         }
+    }
+
+    deinit {
+        self.refreshWork?.cancel()
+        self.refreshDisposable?.dispose()
     }
 
     override func didLoad() {
@@ -337,6 +352,23 @@ private final class ModelSearchContainerNode: SearchDisplayControllerContentNode
         }
         let query = text.trimmingCharacters(in: .whitespaces)
         let found = query.isEmpty ? [] : self.models.filter { modelMatches($0, query: query) }
+        self.query = query
+        self.refreshWork?.cancel()
+        self.refreshDisposable?.dispose()
+        if !query.isEmpty && found.isEmpty && !self.searched.contains(query.lowercased()) {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.query == query else { return }
+                self.searched.insert(query.lowercased())
+                self.refreshDisposable = (self.server.models(query: query, reload: false) |> deliverOnMainQueue).start(next: { [weak self] models in
+                    guard let self, self.query == query else { return }
+                    self.models = models
+                    self.updated(models)
+                    self.searchTextUpdated(text: query)
+                })
+            }
+            self.refreshWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        }
         var providers: [String] = []
         for model in found where !providers.contains(model.provider) {
             providers.append(model.provider)

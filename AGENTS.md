@@ -31,6 +31,7 @@ immutable entries the phone caches by ID, plus small live documents streamed as 
 | Doc | What |
 |---|---|
 | `docs/protocol.md` | The wire protocol: sync model, methods, pushes, op format |
+| `docs/models.md` | Model catalogs: cached pi.dev overlays, background updates and search-miss refreshes |
 | `docs/deploy.md` | Releases and deploying them: one bundle with pi in it, `install.sh` on Linux, `tau upgrade` and `tau rollback` |
 | `docs/notifications.md` | When the user hears about an answer: in-app banners, Apple's pushes, the relay, sealed pushes |
 | `docs/live-activity.md` | The Live Activity and Dynamic Island (`ios/TauWidgets`): which chats, what they show, and what waits for APNs |

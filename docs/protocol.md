@@ -66,10 +66,18 @@ so its answer comes before any other: a client may send its first requests right
 ignore their answers if `serverId` is not the database it sent them for.
 
 ### `models.list`
-`{}` -> `{ models: { provider, id, name, reasoning, thinkingLevels: string[], contextWindow, input: ("text"|"image")[] }[] }`
+`{ query?: string }` -> `{ models: { provider, id, name, reasoning, thinkingLevels: string[], contextWindow, input: ("text"|"image")[] }[] }`
 
 Models the server has credentials for. `thinkingLevels` are the levels the model has, `off` first (pi-ai's
-`getSupportedThinkingLevels`).
+`getSupportedThinkingLevels`). With no query, only reads the current local catalog; opening a picker never fetches
+upstream. Clients show cached models immediately and request this local list when opening the picker, so background
+updates appear without reconnecting.
+
+An optional nonempty `query` (at most 200 characters) asks the server to refresh only if no available model matches
+all its words, case-insensitively, in the name or `provider/id`. The response is still the full list, for the client to
+filter. Clients debounce empty-result searches by 500 ms and try a query once per picker; the server coalesces
+refreshes and permits at most one miss-triggered check per minute across all clients. A failed check keeps the last
+known models. See [Model catalogs](models.md) for background updates and persistence.
 
 ### `client.presence`
 `{ active: boolean }` -> `{}`

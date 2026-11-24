@@ -249,7 +249,7 @@ export class Connection {
 		const { harness } = this.#host;
 		switch (method) {
 			case "models.list":
-				return this.#models();
+				return this.#models(params);
 			case "devices.register": {
 				// A phone's APNs registration (src/notifier.ts): its device token once the user allows notifications,
 				// whether it wants answers, and the token that starts a Live Activity.
@@ -605,7 +605,10 @@ export class Connection {
 		return this.#notifier;
 	}
 
-	async #models(): Promise<unknown> {
+	async #models(params: Record<string, unknown>): Promise<unknown> {
+		const query = str(params, "query", true);
+		if (query !== undefined && query.length > 200) throw new ProtocolError("bad_request", "Model search is too long");
+		await this.#host.modelCatalogs.search(query);
 		const available = await this.#host.models.getAvailable();
 		return {
 			models: available.map((model) => ({

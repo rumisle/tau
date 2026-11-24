@@ -38,8 +38,8 @@ protocol TauServer: AnyObject {
     func storageUsage() -> StorageUsage
     /// Drops the cached transcripts of chats that are not open; they load again when opened.
     func clearCache()
-    /// Models the server has credentials for.
-    func models() -> Signal<[ModelInfo], NoError>
+    /// Models the server has credentials for. A query miss may refresh upstream; reload alone only reads its local list.
+    func models(query: String?, reload: Bool) -> Signal<[ModelInfo], NoError>
     /// A model from the last list, if one came.
     func cachedModel(provider: String, id: String) -> ModelInfo?
     /// What the models cost over the last `days` days (0: all), by day in this phone's time zone; nil when the
@@ -61,6 +61,12 @@ protocol TauServer: AnyObject {
     /// Empty: no name of the user's.
     func renameAccount(_ id: String, label: String)
     func removeAccount(_ id: String)
+}
+
+extension TauServer {
+    func models() -> Signal<[ModelInfo], NoError> {
+        return self.models(query: nil, reload: false)
+    }
 }
 
 /// What the screens need: conversations from every configured server (MultiStore), or canned data (MockStore).

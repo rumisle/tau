@@ -1,7 +1,7 @@
 // The model picker (ios/Tau after Telegram's LanguageSelectionScreen): the server's models in Web A's searchable
 // picker, the recent ones first, then by provider; the search matches a name, an ID or a provider; Enter takes the
 // first match. Its own root, so it outlives the menu that opened it.
-import { memo, useEffect, useMemo, useState } from '../../lib/teact/teact';
+import { memo, useEffect, useMemo, useRef, useState } from '../../lib/teact/teact';
 import TeactDOM from '../../lib/teact/teact-dom';
 import { getActions } from '../../global';
 
@@ -30,8 +30,8 @@ const keyOf = (model: { provider: string; id: string }) => `${model.provider}/${
 /** The models in the picker's order: recent first, then by provider and name; those the search matches */
 export function orderModels(models: ModelInfo[], recent: string[], filter: string) {
   const query = filter.trim().toLowerCase();
-  const matches = (model: ModelInfo) => !query || [model.name, model.id, model.provider]
-    .some((text) => text.toLowerCase().includes(query));
+  const matches = (model: ModelInfo) => query.split(/\s+/).every((word) =>
+    `${model.name} ${model.provider}/${model.id}`.toLowerCase().includes(word));
   const byKey = new Map(models.map((model) => [keyOf(model), model]));
   const first = recent.map((key) => byKey.get(key)).filter((model): model is ModelInfo => Boolean(model));
   const rest = models.filter((model) => !recent.includes(keyOf(model)))
@@ -47,10 +47,33 @@ const ModelPicker = ({ chatId, isOpen, onClose }: OwnProps) => {
   const current = agentOf(chatId).model;
 
   useEffect(() => {
-    void loadModels(slot).then(setModels);
+    let disposed = false;
+    void loadModels(slot, undefined, true).then((result) => {
+      if (!disposed && result) setModels(result);
+    });
+    return () => {
+      disposed = true;
+    };
   }, [slot]);
 
   const ordered = useMemo(() => orderModels(models ?? [], recentModels(), filter), [models, filter]);
+  const searchedRef = useRef(new Set<string>());
+  useEffect(() => {
+    const query = filter.trim();
+    const key = `${slot}:${query.toLowerCase()}`;
+    if (!isOpen || !models || !query || ordered.length || searchedRef.current.has(key)) return undefined;
+    let disposed = false;
+    const timeout = window.setTimeout(() => {
+      searchedRef.current.add(key);
+      void loadModels(slot, query).then((result) => {
+        if (!disposed && result) setModels(result);
+      });
+    }, 500);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeout);
+    };
+  }, [slot, filter, ordered.length, isOpen, models]);
   const items: ItemPickerOption[] = ordered.map((model) => ({
     value: keyOf(model), label: model.name, subLabel: `${model.provider}/${model.id}`,
   }));

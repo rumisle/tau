@@ -21,4 +21,11 @@ describe('orderModels', () => {
     expect(orderModels(models, [], 'Y').map((each) => each.name)).toEqual(['Zulu']);
     expect(orderModels(models, [], 'b').map((each) => each.name)).toEqual(['Bravo']);
   });
+
+  it('matches words across name and provider, and a full provider/id reference', () => {
+    const catalog = [model('openai', 'gpt-6.2-sol', 'GPT-6.2 Sol')];
+    expect(orderModels(catalog, [], 'OPENAI 6.2 sol')).toEqual(catalog);
+    expect(orderModels(catalog, [], 'openai/gpt-6.2-sol')).toEqual(catalog);
+    expect(orderModels(catalog, [], '6.2 terra')).toEqual([]);
+  });
 });

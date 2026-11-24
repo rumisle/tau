@@ -1918,11 +1918,11 @@ final class ServerStore: ConversationStore, TauServer {
         return self.modelsCache?.first { $0.provider == provider && $0.id == id }
     }
 
-    func models() -> Signal<[ModelInfo], NoError> {
-        if let cached = self.modelsCache {
+    func models(query: String?, reload: Bool) -> Signal<[ModelInfo], NoError> {
+        if query == nil && !reload, let cached = self.modelsCache {
             return .single(cached)
         }
-        return self.connection.request("models.list")
+        let request = self.connection.request("models.list", query.map { ["query": $0] } ?? [:])
         |> map { value -> [ModelInfo] in
             return value.objects("models").map { ModelInfo(provider: $0.string("provider") ?? "", id: $0.string("id") ?? "", name: $0.string("name") ?? $0.string("id") ?? "", reasoning: $0.bool("reasoning") ?? false, thinkingLevels: ($0["thinkingLevels"] as? [Any])?.compactMap { $0 as? String } ?? ["off"], contextWindow: $0.int("contextWindow")) }
         }
@@ -1935,6 +1935,10 @@ final class ServerStore: ConversationStore, TauServer {
                 self?.modelsCache = models
             }
         }
+        if query == nil && reload, let cached = self.modelsCache {
+            return .single(cached) |> then(request)
+        }
+        return request
     }
 
     /// A conversation's model: the one chosen just now, else its agent doc, else what the chat list said. A draft

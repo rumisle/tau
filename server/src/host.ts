@@ -8,7 +8,8 @@ import type { ModelThinkingLevel, MutableModels } from "@earendil-works/pi-ai";
 import { Accounts, AccountsService } from "./accounts.ts";
 import { DEV_ACCOUNT_PROVIDER, devAccountIdentity, devAccountProvider, devAccountUsage } from "./dev-accounts.ts";
 import { createModels } from "@earendil-works/pi-ai/models";
-import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { builtinProviders, getBuiltinModelDataGeneratedAt } from "@earendil-works/pi-ai/providers/all";
+import { CatalogStore, catalogProvider, ModelCatalogs, type ModelCatalogOptions } from "./model-catalog.ts";
 import {
 	createRegistry,
 	defineDoc,
@@ -126,6 +127,8 @@ export type HostOptions = {
 	accounts?: Accounts;
 	/** Instead of the global fetch, for the accounts' usage and profile requests: tests. */
 	accountsFetch?: typeof fetch;
+	/** pi.dev catalog overlay and background refresh; false for offline/test hosts. */
+	modelCatalog?: ModelCatalogOptions | false;
 	/** Speed of the dev model, for tests. */
 	devTokensPerSecond?: number;
 	/** A prompt cache lifetime for the dev model, in seconds, with prices to make warming it pay: to try warming. */
@@ -147,6 +150,8 @@ export type Host = {
 	readonly harness: Harness;
 	readonly storage: Storage;
 	readonly models: MutableModels;
+	/** Search misses can refresh the catalog; listing models alone never does. */
+	readonly modelCatalogs: ModelCatalogs;
 	/** The logins to model providers, their logins in progress and usage (docs/accounts.md). */
 	readonly accounts: AccountsService;
 	readonly serverId: string;
@@ -201,8 +206,16 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	let defaultModel = options.model ?? DEV_MODEL;
 
 	const accountsFile = options.accounts ?? new Accounts();
-	const models = createModels({ credentials: accountsFile });
-	for (const provider of builtinProviders()) models.setProvider(provider);
+	const models = createModels({
+		credentials: accountsFile,
+		modelsStore: new CatalogStore(options.database === undefined ? undefined : `${options.database.replace(/\.db$/, "")}.models`),
+	});
+	const catalogOptions = options.modelCatalog || {};
+	for (const provider of builtinProviders()) {
+		models.setProvider(options.modelCatalog === false ? provider : catalogProvider(provider, getBuiltinModelDataGeneratedAt(), catalogOptions));
+	}
+	const modelCatalogs = new ModelCatalogs(models, catalogOptions);
+	await modelCatalogs.restore();
 	models.setProvider(devProvider({ tokensPerSecond: options.devTokensPerSecond, cacheTtl: options.devCacheTtl }).provider);
 	let cacheWarming: CacheWarmingMode = "idle";
 	const cache = new CacheWarmer({ mode: () => cacheWarming });
@@ -317,6 +330,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	}
 	opened = { harness, serverId };
 	accounts.start();
+	if (options.modelCatalog !== false) modelCatalogs.start();
 	// Continue runs the last process left unfinished.
 	harness.resume();
 	// Subagents' failed runs, told to their leaders; those a stop of the server came between at once.
@@ -327,6 +341,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		harness,
 		storage,
 		models,
+		modelCatalogs,
 		accounts,
 		serverId,
 		...(options.database === undefined ? {} : { database: options.database }),
@@ -386,6 +401,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		images,
 		history,
 		close: async () => {
+			await modelCatalogs.close();
 			accounts.close();
 			cache.close();
 			compactions.close();
