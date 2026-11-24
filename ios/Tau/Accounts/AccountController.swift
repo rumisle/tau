@@ -64,8 +64,8 @@ final class AccountController: SettingsListController {
         var items: [ListViewItem] = []
         let hasSiblings = self.state?.accounts.contains { $0.provider == account.provider && $0.id != account.id } ?? false
         // Its problem has a section of its own below.
-        let subtitle = accountSubtitle(account, hasSiblings: hasSiblings, showsProblem: false).text
-        items.append(AccountHeaderItem(theme: theme, account: account, subtitle: subtitle))
+        let subtitle = accountSubtitle(account, hasSiblings: hasSiblings, showsProblem: false)
+        items.append(AccountHeaderItem(theme: theme, account: account, subtitle: subtitle.text, inUse: subtitle.inUse))
 
         if let problem = account.problem {
             items.append(SettingsTextItem(theme: theme, text: "", kind: .header))
@@ -92,7 +92,7 @@ final class AccountController: SettingsListController {
                 items.append(UsageWindowItem(theme: theme, window: window, position: SettingsRowPosition(isFirst: index == 0, isLast: index == usage.windows.count - 1 && usage.credits == nil)))
             }
             if let credits = usage.credits {
-                items.append(SettingsRowItem(theme: theme, icon: nil, title: "Beyond the Plan", accessory: .value(credits), position: SettingsRowPosition(isFirst: false, isLast: true), action: nil))
+                items.append(SettingsRowItem(theme: theme, icon: nil, title: "Extra Usage", accessory: .value(credits), position: SettingsRowPosition(isFirst: false, isLast: true), action: nil))
             }
             // When the numbers are from; a failed update since leaves them, and says nothing.
             if usage.at.timeIntervalSince1970 > 0 {
@@ -162,11 +162,13 @@ final class AccountHeaderItem: SyncListItem {
     let theme: TauTheme
     let account: ProviderAccount
     let subtitle: String
+    let inUse: Bool
 
-    init(theme: TauTheme, account: ProviderAccount, subtitle: String) {
+    init(theme: TauTheme, account: ProviderAccount, subtitle: String, inUse: Bool) {
         self.theme = theme
         self.account = account
         self.subtitle = subtitle
+        self.inUse = inUse
     }
 
     override func makeNode() -> SyncListItemNode {
@@ -196,7 +198,7 @@ final class AccountHeaderItemNode: SyncListItemNode {
         self.titleNode.attributedText = NSAttributedString(string: item.account.title, font: Font.semibold(24.0), textColor: item.theme.list.itemPrimaryTextColor)
         self.titleNode.maximumNumberOfLines = 1
         self.titleNode.truncationType = .middle
-        self.subtitleNode.attributedText = NSAttributedString(string: item.subtitle, font: Font.regular(16.0), textColor: item.theme.list.itemSecondaryTextColor)
+        self.subtitleNode.attributedText = accountSubtitleString(item.subtitle, inUse: item.inUse, font: Font.regular(16.0), color: item.theme.list.itemSecondaryTextColor, accentColor: item.theme.list.itemAccentColor)
         let titleSize = self.titleNode.updateLayout(CGSize(width: params.width - 40.0, height: 40.0))
         let subtitleSize = self.subtitleNode.updateLayout(CGSize(width: params.width - 40.0, height: 30.0))
         self.avatarNode.frame = CGRect(x: floor((params.width - avatarSize) / 2.0), y: 0.0, width: avatarSize, height: avatarSize)

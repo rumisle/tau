@@ -1,7 +1,18 @@
 // A server's logins to model providers, their logins in progress and their plan usage (docs/accounts.md): the state
 // `accounts.subscribe` gives and each `accounts` push replaces, and what Settings > Accounts says of it.
 
-export type UsageWindow = { id: string; label: string; usedPercent: number; resetsAt?: number; seconds?: number };
+export type UsageWindow = {
+  id: string;
+  /** Short, for the list: "5h", "Week", "Key" */
+  label: string;
+  /** Whole, for the account's window: "5-Hour Limit", "Credits"; older servers send none */
+  title?: string;
+  usedPercent: number;
+  resetsAt?: number;
+  seconds?: number;
+  /** In money, where the provider tells it: "$9.63 of $12.00 spent" */
+  amount?: string;
+};
 export type PlanUsage = { at: number; windows: UsageWindow[]; credits?: string; error?: string };
 export type ProviderAccount = {
   id: string;
@@ -107,14 +118,18 @@ export function durationText(ms: number) {
   return `${Math.max(1, minutes)}m`;
 }
 
-/** "5-Hour Limit", "Weekly Limit", "Opus Weekly Limit" */
+/** "5-Hour Limit", "Weekly Limit", "Opus Weekly Limit": the server's title, or one made as it makes them for an older one */
 export function windowTitle(window: UsageWindow) {
+  if (window.title) return window.title;
   const seconds = window.seconds ?? 0;
-  let span = window.label;
+  if (seconds <= 0) return window.label;
+  let span: string;
   if (Math.abs(seconds - WEEK) < HOUR) span = 'Weekly';
-  else if (seconds > 0 && seconds % DAY === 0) span = `${seconds / DAY}-Day`;
-  else if (seconds > 0) span = `${Math.round(seconds / HOUR)}-Hour`;
-  if (['5h', 'week', 'primary', 'secondary'].includes(window.id)) return `${span} Limit`;
+  else if (Math.abs(seconds - DAY) < HOUR) span = 'Daily';
+  else if (Math.abs(seconds - 30 * DAY) < DAY) span = 'Monthly';
+  else if (seconds % DAY === 0) span = `${seconds / DAY}-Day`;
+  else span = `${Math.round(seconds / HOUR)}-Hour`;
+  if (['5h', 'week', 'month', 'primary', 'secondary'].includes(window.id)) return `${span} Limit`;
   return `${window.label.split(' ')[0]} ${span} Limit`;
 }
 

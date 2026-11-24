@@ -250,6 +250,21 @@
   color: var(--color-text-secondary);
 }
 
+// An amount at the left, when it resets at the right
+.windowNote {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.625rem;
+}
+
+.windowAmount {
+  font-variant-numeric: tabular-nums;
+}
+
+.inUse {
+  color: var(--color-primary);
+}
+
 .code {
   cursor: var(--custom-cursor, pointer);
 

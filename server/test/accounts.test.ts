@@ -227,14 +227,14 @@ describe("accounts: logins, switching and usage over the protocol", () => {
 		const asked = await until((each) => each.accounts.find((one) => one.id === account.id)?.usage !== undefined);
 		const usage = asked.accounts.find((one) => one.id === account.id)!.usage!;
 		assert.deepEqual(
-			usage.windows.map(({ id, label, usedPercent, seconds }) => ({ id, label, usedPercent, seconds })),
+			usage.windows.map(({ id, label, title, usedPercent, seconds }) => ({ id, label, title, usedPercent, seconds })),
 			[
-				{ id: "5h", label: "5h", usedPercent: 16, seconds: 18_000 },
-				{ id: "week", label: "Week", usedPercent: 41, seconds: 604_800 },
+				{ id: "5h", label: "5h", title: "5-Hour Limit", usedPercent: 16, seconds: 18_000 },
+				{ id: "week", label: "Week", title: "Weekly Limit", usedPercent: 41, seconds: 604_800 },
 			],
 		);
 		assert.equal(usage.windows[0]!.resetsAt, Date.parse("2026-11-18T10:40:00.027Z"));
-		assert.equal(usage.credits, "$4.20 of $50.00 extra");
+		assert.equal(usage.credits, "$4.20 of $50.00 spent");
 		assert.ok(requests.includes("https://api.anthropic.com/api/oauth/usage Bearer claude-access"));
 		host.accounts.usage.headers(account.id, "anthropic", {
 			"Anthropic-Ratelimit-Unified-5h-Utilization": "0.23",
@@ -294,11 +294,11 @@ describe("accounts: Claude's list of limits", () => {
 		});
 		await usage.refresh(account.id);
 		assert.deepEqual(
-			usage.of(account.id)?.windows.map(({ id, label, usedPercent, seconds }) => ({ id, label, usedPercent, seconds })),
+			usage.of(account.id)?.windows.map(({ id, label, title, usedPercent, seconds }) => ({ id, label, title, usedPercent, seconds })),
 			[
-				{ id: "5h", label: "5h", usedPercent: 63, seconds: 18_000 },
-				{ id: "week", label: "Week", usedPercent: 17, seconds: 604_800 },
-				{ id: "week-fable", label: "Fable", usedPercent: 4, seconds: 604_800 },
+				{ id: "5h", label: "5h", title: "5-Hour Limit", usedPercent: 63, seconds: 18_000 },
+				{ id: "week", label: "Week", title: "Weekly Limit", usedPercent: 17, seconds: 604_800 },
+				{ id: "week-fable", label: "Fable", title: "Fable Weekly Limit", usedPercent: 4, seconds: 604_800 },
 			],
 		);
 	});
@@ -328,11 +328,11 @@ describe("accounts: an API key's plan", () => {
 		await usage.refresh(account.id);
 		assert.deepEqual(asked, ["https://opencode.ai/zen/go/v1/usage Bearer sk-go"]);
 		assert.deepEqual(
-			usage.of(account.id)?.windows.map(({ id, label, usedPercent, resetsAt }) => ({ id, label, usedPercent, resetsAt })),
+			usage.of(account.id)?.windows.map(({ id, label, title, usedPercent, resetsAt }) => ({ id, label, title, usedPercent, resetsAt })),
 			[
-				{ id: "5h", label: "5h", usedPercent: 12, resetsAt: Date.parse("2026-11-21T09:15:44.146Z") },
-				{ id: "week", label: "Week", usedPercent: 30, resetsAt: Date.parse("2026-11-23T00:00:00.000Z") },
-				{ id: "month", label: "Month", usedPercent: 100, resetsAt: Date.parse("2026-12-18T09:08:26.000Z") },
+				{ id: "5h", label: "5h", title: "5-Hour Limit", usedPercent: 12, resetsAt: Date.parse("2026-11-21T09:15:44.146Z") },
+				{ id: "week", label: "Week", title: "Weekly Limit", usedPercent: 30, resetsAt: Date.parse("2026-11-23T00:00:00.000Z") },
+				{ id: "month", label: "Month", title: "Monthly Limit", usedPercent: 100, resetsAt: Date.parse("2026-12-18T09:08:26.000Z") },
 			],
 		);
 	});
@@ -357,10 +357,10 @@ describe("accounts: a Mistral key's budgets", () => {
 		});
 		await usage.refresh(account.id);
 		assert.deepEqual(
-			usage.of(account.id)?.windows.map(({ id, label, usedPercent }) => ({ id, label, usedPercent })),
+			usage.of(account.id)?.windows.map(({ id, label, title, usedPercent, amount }) => ({ id, label, title, usedPercent, amount })),
 			[
-				{ id: "vibe", label: "Vibe", usedPercent: 40.5 },
-				{ id: "api", label: "API", usedPercent: 0 },
+				{ id: "vibe", label: "Vibe", title: "Vibe Monthly Budget", usedPercent: 40.5, amount: "€103.28 of €255.00 spent" },
+				{ id: "api", label: "API", title: "API Monthly Budget", usedPercent: 0, amount: "€0.00 of €25.50 spent" },
 			],
 		);
 	});
@@ -386,13 +386,14 @@ describe("accounts: an OpenRouter key's limits", () => {
 		await usage.refresh(account.id);
 		const shown = usage.of(account.id)!;
 		assert.deepEqual(
-			shown.windows.map(({ id, label, usedPercent, seconds }) => ({ id, label, usedPercent, seconds })),
+			shown.windows.map(({ id, label, title, usedPercent, seconds, amount }) => ({ id, label, title, usedPercent, seconds, amount })),
 			[
-				{ id: "key_limit", label: "Key", usedPercent: 75, seconds: 604_800 },
-				{ id: "credits", label: "Credits", usedPercent: 95, seconds: undefined },
+				{ id: "key_limit", label: "Key", title: "Weekly Key Limit", usedPercent: 75, seconds: 604_800, amount: "$9.00 of $12.00 spent" },
+				{ id: "credits", label: "Credits", title: "Credits", usedPercent: 95, seconds: undefined, amount: "$5.00 of $100.00 left" },
 			],
 		);
-		assert.equal(shown.credits, "$5.00 of $100.00 credits left");
+		// The balance is a window, not extra usage beyond a plan
+		assert.equal(shown.credits, undefined);
 	});
 });
 

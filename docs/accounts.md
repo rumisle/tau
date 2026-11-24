@@ -38,7 +38,7 @@ login refresh it in turn, and each refresh rotates the refresh token, so the one
   Vibe CLI reads it: `vibe_budget`, the month's allowance a plan's key draws on, and `api_budget`, a pay-as-you-go
   key's, each a `usage_percentage` from 0 to 100 and `reset_at`) and OpenRouter (`GET openrouter.ai/api/v1/key`: the
   key's `budgets`, each `limit_usd`, `spend_usd`, `reset_interval` and `resets_at`; `GET /api/v1/credits`: the account's
-  `total_credits` and `total_usage`, also as what is left). Other keys show none: tau does not split its cost counters
+  `total_credits` and `total_usage`, a window of its own with what is left, not extra usage). Other keys show none: tau does not split its cost counters
   by account.
 - **The app has an Accounts tab**, left of Chats: a server's accounts in one list. With several servers, the chat
   list's folder tabs (ChatListFolderTabsNode) name them under the title and a swipe goes between their lists, as
@@ -64,8 +64,14 @@ Ultra, once Max 20x, from Max, once Max 5x: both are `claude_max`); Codex's acce
 ## Protocol
 
 ```ts
-type Window = { id: string; label: string; usedPercent: number; resetsAt?: number /* ms */; seconds?: number };
-type Usage = { at: number; windows: Window[]; credits?: string; error?: string };
+type Window = {
+  id: string;
+  label: string;                        // short, for the list and the widget: "5h", "Week", "Fable", "Key"
+  title: string;                        // whole, for the account's page: "5-Hour Limit", "Fable Weekly Limit", "Credits"
+  usedPercent: number; resetsAt?: number /* ms */; seconds?: number;
+  amount?: string;                      // in money, where the provider tells it: "$9.63 of $12.00 spent", "$4.77 of $103.00 left"
+};
+type Usage = { at: number; windows: Window[]; credits?: string /* extra usage beyond the plan */; error?: string };
 type Account = {
   id: string; provider: string; providerName: string; type: "oauth" | "api_key";
   label?: string;                       // the user's name for it

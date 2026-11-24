@@ -244,7 +244,7 @@ final class AccountsController: ViewController {
             let hasSiblings = state.accounts.contains { $0.provider == account.provider && $0.id != account.id }
             let subtitle = accountSubtitle(account, hasSiblings: hasSiblings)
             rows.append { position in
-                AccountRowItem(theme: theme, icon: ProviderIcon.image(provider: account.provider, name: account.providerName, size: 36.0), title: account.title, subtitle: subtitle.text, isProblem: subtitle.isProblem, windows: account.usage?.windows ?? [], position: position, action: { [weak self] in
+                AccountRowItem(theme: theme, icon: ProviderIcon.image(provider: account.provider, name: account.providerName, size: 36.0), title: account.title, subtitle: subtitle.text, isProblem: subtitle.isProblem, inUse: subtitle.inUse, windows: account.usage?.windows ?? [], position: position, action: { [weak self] in
                     guard let self else {
                         return
                     }

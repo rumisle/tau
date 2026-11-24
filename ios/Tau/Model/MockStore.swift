@@ -490,9 +490,9 @@ final class MockStore: TauStore, TauServer {
         var state = AccountsState()
         state.accounts = [
             ProviderAccount(id: "a1", provider: "anthropic", providerName: "Anthropic", type: "oauth", email: "me@example.com", plan: "Max", active: true, usage: PlanUsage(at: now, windows: [
-                UsageWindow(id: "5h", label: "5h", usedPercent: 42, resetsAt: now.addingTimeInterval(2 * 3600 + 14 * 60), seconds: 5 * 3600),
-                UsageWindow(id: "week", label: "Week", usedPercent: 71, resetsAt: now.addingTimeInterval(3 * 86_400 + 5 * 3600), seconds: 7 * 86_400),
-            ])),
+                UsageWindow(id: "5h", label: "5h", title: "5-Hour Limit", usedPercent: 42, resetsAt: now.addingTimeInterval(2 * 3600 + 14 * 60), seconds: 5 * 3600),
+                UsageWindow(id: "week", label: "Week", title: "Weekly Limit", usedPercent: 71, resetsAt: now.addingTimeInterval(3 * 86_400 + 5 * 3600), seconds: 7 * 86_400),
+            ], credits: "$4.20 of $50.00 spent")),
             ProviderAccount(id: "a2", provider: "anthropic", providerName: "Anthropic", type: "oauth", label: "Work", email: "work@example.com", plan: "Pro", active: false, usage: PlanUsage(at: now, windows: [
                 UsageWindow(id: "5h", label: "5h", usedPercent: 3, resetsAt: now.addingTimeInterval(4 * 3600), seconds: 5 * 3600),
                 UsageWindow(id: "week", label: "Week", usedPercent: 18, resetsAt: now.addingTimeInterval(5 * 86_400), seconds: 7 * 86_400),
@@ -501,7 +501,10 @@ final class MockStore: TauStore, TauServer {
                 UsageWindow(id: "primary", label: "5h", usedPercent: 93, resetsAt: now.addingTimeInterval(41 * 60), seconds: 5 * 3600),
                 UsageWindow(id: "secondary", label: "Week", usedPercent: 31, resetsAt: now.addingTimeInterval(6 * 86_400), seconds: 7 * 86_400),
             ])),
-            ProviderAccount(id: "a4", provider: "openrouter", providerName: "OpenRouter", type: "api_key", keyHint: "9f3c", active: true),
+            ProviderAccount(id: "a4", provider: "openrouter", providerName: "OpenRouter", type: "api_key", keyHint: "9f3c", active: true, usage: PlanUsage(at: now, windows: [
+                UsageWindow(id: "key_limit", label: "Key", title: "Key Limit", usedPercent: 80.2, amount: "$9.63 of $12.00 spent"),
+                UsageWindow(id: "credits", label: "Credits", title: "Credits", usedPercent: 95.4, amount: "$4.77 of $103.00 left"),
+            ])),
         ]
         state.ambient = [AmbientLogin(provider: "fireworks", providerName: "Fireworks", source: "FIREWORKS_API_KEY")]
         state.providers = [

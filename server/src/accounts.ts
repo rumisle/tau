@@ -18,7 +18,7 @@ import type {
 	Models,
 	OAuthCredential,
 } from "@earendil-works/pi-ai";
-import { type Fetcher, PlanUsage, type Usage } from "./plan-usage.ts";
+import { type Fetcher, type KeyFetcher, PlanUsage, type Usage } from "./plan-usage.ts";
 
 export type StoredAccount = {
 	id: string;
@@ -358,6 +358,7 @@ export class AccountsService {
 		pollMs?: number;
 		/** More providers' usage and who their accounts are: the dev server's (src/dev-accounts.ts). */
 		usage?: Record<string, Fetcher>;
+		keyUsage?: Record<string, KeyFetcher>;
 		identities?: Record<string, (credential: Credential) => Promise<{ email?: string; plan?: string }>>;
 	}) {
 		this.accounts = options.accounts;
@@ -370,6 +371,7 @@ export class AccountsService {
 			...(options.fetch === undefined ? {} : { fetch: options.fetch }),
 			...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
 			...(options.usage === undefined ? {} : { fetchers: options.usage }),
+			...(options.keyUsage === undefined ? {} : { keyFetchers: options.keyUsage }),
 			onChange: () => this.#changed(),
 		});
 		const stop = this.accounts.onChange(() => {

@@ -228,20 +228,20 @@ function AccountRow({
     >
       <span className="title">{accountTitle(account)}</span>
       <span className={buildClassName('subtitle', account.problem && styles.problem)}>
-        {account.problem ? STRINGS.AccountsSignInAgain : subtitleOf(account, hasSiblings)}
+        {account.problem ? STRINGS.AccountsSignInAgain : <Subtitle account={account} hasSiblings={hasSiblings} />}
       </span>
     </ListItem>
   );
 }
 
-/** The service and plan, or what it is; with "in use" when the provider has others */
-function subtitleOf(account: ProviderAccount, hasSiblings: boolean) {
-  let text = account.type === 'api_key'
+/** The service and plan, or what it is; with "in use" in the accent color, as "online" is, when the provider has others */
+function Subtitle({ account, hasSiblings }: { account: ProviderAccount; hasSiblings: boolean }) {
+  const text = account.type === 'api_key'
     ? `${account.providerName} ${STRINGS.AccountsApiKey}${account.label && account.keyHint
       ? ` ${STRINGS.AccountsKeyEnding} ${account.keyHint}` : ''}`
     : `${serviceName(account.provider, account.providerName, true)}${account.plan ? ` ${account.plan}` : ''}`;
-  if (hasSiblings && account.active) text += `, ${STRINGS.AccountsInUse}`;
-  return text;
+  if (!hasSiblings || !account.active) return text;
+  return <>{`${text}, `}<span className={styles.inUse} data-tau-in-use>{STRINGS.AccountsInUse}</span></>;
 }
 
 function SmallWindow({ window, now }: { window: UsageWindow; now: number }) {
@@ -301,12 +301,11 @@ function AccountModal({
   const usage = account.usage;
   const hasSiblings = Boolean(server.state?.accounts.some((each) => each.provider === account.provider
     && each.id !== account.id));
-  const subtitle = subtitleOf(account, hasSiblings);
   return (
     <Modal isOpen onClose={onClose} hasCloseButton className={styles.modal} title={accountTitle(account)}>
       <div className={styles.header}>
         <ProviderAvatar provider={account.provider} name={account.providerName} isLarge />
-        <div className={styles.subtitle}>{subtitle}</div>
+        <div className={styles.subtitle}><Subtitle account={account} hasSiblings={hasSiblings} /></div>
       </div>
       {account.problem && (
         <>
@@ -342,18 +341,26 @@ function AccountModal({
                     <span className={styles.windowPercent}>{percentText(window.usedPercent)}</span>
                   </div>
                   <Bar window={window} now={now} isLarge />
-                  <div className={styles.windowNote}>
-                    {window.resetsAt === undefined ? ''
-                      : window.resetsAt <= now ? STRINGS.AccountsResetsNow
-                        : `${STRINGS.AccountsResetsIn} ${durationText(window.resetsAt - now)}`}
-                  </div>
+                  {/* What is spent or left in money, with when it resets at the right; a limit that never resets
+                      (a key's, a balance) says nothing of resetting */}
+                  {(window.amount !== undefined || window.resetsAt !== undefined) && (
+                    <div className={styles.windowNote}>
+                      {window.amount !== undefined && <span className={styles.windowAmount}>{window.amount}</span>}
+                      {window.resetsAt !== undefined && (
+                        <span>
+                          {window.resetsAt <= now ? STRINGS.AccountsResetsNow
+                            : `${STRINGS.AccountsResetsIn} ${durationText(window.resetsAt - now)}`}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {pace && <div className={styles.windowPace}>{pace}</div>}
                 </div>
               );
             })}
             {usage.credits && (
               <ListItem inactive rightElement={<span className="settings-item__current-value">{usage.credits}</span>}>
-                {STRINGS.AccountsBeyondPlan}
+                {STRINGS.AccountsExtraUsage}
               </ListItem>
             )}
           </Island>

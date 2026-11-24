@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ModelThinkingLevel, MutableModels } from "@earendil-works/pi-ai";
 import { Accounts, AccountsService } from "./accounts.ts";
-import { DEV_ACCOUNT_PROVIDER, devAccountIdentity, devAccountProvider, devAccountUsage } from "./dev-accounts.ts";
+import { DEV_ACCOUNT_PROVIDER, devAccountIdentity, devAccountKeyUsage, devAccountProvider, devAccountUsage } from "./dev-accounts.ts";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { builtinProviders, getBuiltinModelDataGeneratedAt } from "@earendil-works/pi-ai/providers/all";
 import { CatalogStore, catalogProvider, ModelCatalogs, type ModelCatalogOptions } from "./model-catalog.ts";
@@ -273,7 +273,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const accounts = new AccountsService({
 		accounts: accountsFile,
 		models,
-		...(devAccounts ? { usage: { [DEV_ACCOUNT_PROVIDER]: devAccountUsage }, identities: { [DEV_ACCOUNT_PROVIDER]: devAccountIdentity } } : {}),
+		...(devAccounts ? { usage: { [DEV_ACCOUNT_PROVIDER]: devAccountUsage }, keyUsage: { [DEV_ACCOUNT_PROVIDER]: devAccountKeyUsage }, identities: { [DEV_ACCOUNT_PROVIDER]: devAccountIdentity } } : {}),
 		deviceId: () => opened?.serverId ?? "tau",
 		...(options.accountsFetch === undefined ? {} : { fetch: options.accountsFetch }),
 	});

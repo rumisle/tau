@@ -132,26 +132,34 @@ struct PlanUsage: Equatable {
 
 struct UsageWindow: Equatable {
     var id: String
-    /// Short: "5h", "Week", "Opus".
+    /// Short, for the list and the widget: "5h", "Week", "Opus".
     var label: String
+    /// Whole, for the account's page: "5-Hour Limit", "Opus Weekly Limit", "Credits"; older servers send none.
+    var title: String?
     var usedPercent: Double
     var resetsAt: Date?
     var seconds: Double?
+    /// In money, where the provider tells it: "$9.63 of $12.00 spent", "$4.77 of $103.00 left".
+    var amount: String?
 
-    init(id: String, label: String, usedPercent: Double, resetsAt: Date? = nil, seconds: Double? = nil) {
+    init(id: String, label: String, title: String? = nil, usedPercent: Double, resetsAt: Date? = nil, seconds: Double? = nil, amount: String? = nil) {
         self.id = id
         self.label = label
+        self.title = title
         self.usedPercent = usedPercent
         self.resetsAt = resetsAt
         self.seconds = seconds
+        self.amount = amount
     }
 
     init(json: JSONObject) {
         self.id = json.string("id") ?? ""
         self.label = json.string("label") ?? ""
+        self.title = json.string("title")
         self.usedPercent = json.double("usedPercent") ?? 0.0
         self.resetsAt = json.double("resetsAt").map { Date(timeIntervalSince1970: $0 / 1000.0) }
         self.seconds = json.double("seconds")
+        self.amount = json.string("amount")
     }
 
     /// How much of the window's time has gone, 0 to 1: where an even pace would be now. Nil when it is not known.

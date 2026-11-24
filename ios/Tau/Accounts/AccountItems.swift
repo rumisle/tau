@@ -46,21 +46,29 @@ func durationText(until date: Date, now: Date = Date()) -> String {
     return "\(max(1, minutes))m"
 }
 
-/// "5-Hour Limit", "Weekly Limit", "Opus Weekly Limit".
+/// "5-Hour Limit", "Weekly Limit", "Opus Weekly Limit": the server's title, or one made as it makes them for an older
+/// server.
 func usageWindowTitle(_ window: UsageWindow) -> String {
-    let seconds = window.seconds ?? 0
+    if let title = window.title, !title.isEmpty {
+        return title
+    }
+    guard let seconds = window.seconds, seconds > 0 else {
+        return window.label
+    }
     let span: String
     if abs(seconds - 604_800) < 3_600 {
         span = "Weekly"
-    } else if seconds > 0, Int(seconds) % 86_400 == 0 {
+    } else if abs(seconds - 86_400) < 3_600 {
+        span = "Daily"
+    } else if abs(seconds - 2_592_000) < 86_400 {
+        span = "Monthly"
+    } else if Int(seconds) % 86_400 == 0 {
         span = "\(Int(seconds) / 86_400)-Day"
-    } else if seconds > 0 {
-        span = "\(Int((seconds / 3_600).rounded()))-Hour"
     } else {
-        span = window.label
+        span = "\(Int((seconds / 3_600).rounded()))-Hour"
     }
     switch window.id {
-    case "5h", "week", "primary", "secondary":
+    case "5h", "week", "month", "primary", "secondary":
         return "\(span) Limit"
     default:
         let name = window.label.components(separatedBy: " ").first ?? window.label
@@ -216,9 +224,9 @@ private func textSize(_ text: NSAttributedString, width: CGFloat) -> CGSize {
 
 /// What an account's row says under its name: the service and plan, or what it is; with "in use" when the provider has
 /// others; or why it needs signing in again.
-func accountSubtitle(_ account: ProviderAccount, hasSiblings: Bool, showsProblem: Bool = true) -> (text: String, isProblem: Bool) {
+func accountSubtitle(_ account: ProviderAccount, hasSiblings: Bool, showsProblem: Bool = true) -> (text: String, isProblem: Bool, inUse: Bool) {
     if showsProblem && account.problem != nil {
-        return ("Sign in again", true)
+        return ("Sign in again", true, false)
     }
     var text: String
     if account.type == "api_key" {
@@ -229,10 +237,23 @@ func accountSubtitle(_ account: ProviderAccount, hasSiblings: Bool, showsProblem
     } else {
         text = account.serviceName + (account.plan.map { " \($0)" } ?? "")
     }
-    if hasSiblings && account.active {
-        text += ", in use"
+    let inUse = hasSiblings && account.active
+    if inUse {
+        text += ", \(accountInUseText)"
     }
-    return (text, false)
+    return (text, false, inUse)
+}
+
+private let accountInUseText = "in use"
+
+/// The subtitle as shown: "in use" in the accent color, as Telegram's lists show "online", the rest as it is.
+func accountSubtitleString(_ text: String, inUse: Bool, font: UIFont, color: UIColor, accentColor: UIColor) -> NSAttributedString {
+    let string = NSMutableAttributedString(string: text, font: font, textColor: color)
+    if inUse, text.hasSuffix(accountInUseText) {
+        let length = (accountInUseText as NSString).length
+        string.addAttribute(.foregroundColor, value: accentColor, range: NSRange(location: (text as NSString).length - length, length: length))
+    }
+    return string
 }
 
 /// A row of the accounts: the provider's logo, a name, what it is under it, and its usage at the right in two small
@@ -243,16 +264,18 @@ final class AccountRowItem: SyncListItem {
     let title: String
     let subtitle: String
     let isProblem: Bool
+    let inUse: Bool
     let windows: [UsageWindow]
     let position: SettingsRowPosition
     let action: (() -> Void)?
 
-    init(theme: TauTheme, icon: UIImage?, title: String, subtitle: String, isProblem: Bool = false, windows: [UsageWindow] = [], position: SettingsRowPosition, action: (() -> Void)?) {
+    init(theme: TauTheme, icon: UIImage?, title: String, subtitle: String, isProblem: Bool = false, inUse: Bool = false, windows: [UsageWindow] = [], position: SettingsRowPosition, action: (() -> Void)?) {
         self.theme = theme
         self.icon = icon
         self.title = title
         self.subtitle = subtitle
         self.isProblem = isProblem
+        self.inUse = inUse
         self.windows = windows
         self.position = position
         self.action = action
@@ -325,7 +348,7 @@ final class AccountRowItemNode: SyncListItemNode {
         self.titleNode.maximumNumberOfLines = 1
         self.titleNode.truncationType = .end
         let titleSize = self.titleNode.updateLayout(CGSize(width: textWidth, height: 40.0))
-        self.subtitleNode.attributedText = NSAttributedString(string: item.subtitle, font: Font.regular(theme.scaled(14.0)), textColor: item.isProblem ? colorRed : theme.list.itemSecondaryTextColor)
+        self.subtitleNode.attributedText = accountSubtitleString(item.subtitle, inUse: item.inUse, font: Font.regular(theme.scaled(14.0)), color: item.isProblem ? colorRed : theme.list.itemSecondaryTextColor, accentColor: theme.list.itemAccentColor)
         self.subtitleNode.maximumNumberOfLines = 1
         self.subtitleNode.truncationType = .end
         let subtitleSize = self.subtitleNode.updateLayout(CGSize(width: textWidth, height: 40.0))
@@ -373,8 +396,8 @@ final class AccountRowItemNode: SyncListItemNode {
 
 // MARK: - A limit
 
-/// A limit of the account's plan: its name and how much is used, a bar with the pace tick, then when it resets and,
-/// ahead of pace, how much a day or an hour lasts until then.
+/// A limit of the account's plan: its name and how much is used, a bar with the pace tick, then what is spent or left
+/// in money where the provider says, when it resets and, ahead of pace, how much a day or an hour lasts until then.
 final class UsageWindowItem: SyncListItem {
     let theme: TauTheme
     let window: UsageWindow
@@ -396,13 +419,14 @@ final class UsageWindowItemNode: SyncListItemNode {
     private let titleNode = ImmediateTextNode()
     private let valueNode = ImmediateTextNode()
     private let barNode = UsageBarNode()
+    private let amountNode = ImmediateTextNode()
     private let resetNode = ImmediateTextNode()
     private let paceNode = ImmediateTextNode()
 
     override init() {
         super.init()
         self.background = SectionBackground(in: self)
-        for node in [self.titleNode, self.valueNode, self.barNode, self.resetNode, self.paceNode] as [ASDisplayNode] {
+        for node in [self.titleNode, self.valueNode, self.barNode, self.amountNode, self.resetNode, self.paceNode] as [ASDisplayNode] {
             self.addSubnode(node)
         }
     }
@@ -434,17 +458,38 @@ final class UsageWindowItemNode: SyncListItemNode {
         self.barNode.update(size: CGSize(width: width, height: 8.0), fraction: window.usedPercent / 100.0, pace: window.elapsed(now: now), color: usageColor(level, theme: theme), trackColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.18), paceColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.7), animated: animated)
         y += 8.0 + 9.0
 
+        // Under the bar: what is spent or left in money where the provider tells it, and when it resets, at the right
+        // beside an amount; a limit that never resets (a key's, a balance) says nothing of resetting.
         let small = Font.regular(theme.scaled(14.0))
-        let reset: String
+        var reset: String?
         if let resetsAt = window.resetsAt {
             reset = resetsAt <= now ? "Resets now" : "Resets in \(durationText(until: resetsAt, now: now))"
-        } else {
+        } else if window.seconds != nil {
             reset = window.usedPercent > 0 ? "Resets when the window ends" : "Not started"
         }
-        self.resetNode.attributedText = NSAttributedString(string: reset, font: small, textColor: theme.list.itemSecondaryTextColor)
-        let resetSize = self.resetNode.updateLayout(CGSize(width: width, height: 30.0))
-        self.resetNode.frame = CGRect(origin: CGPoint(x: left, y: y), size: resetSize)
-        y += resetSize.height
+        var lineHeight: CGFloat = 0.0
+        var resetWidth: CGFloat = 0.0
+        if let reset {
+            self.resetNode.isHidden = false
+            self.resetNode.attributedText = NSAttributedString(string: reset, font: small, textColor: theme.list.itemSecondaryTextColor)
+            let resetSize = self.resetNode.updateLayout(CGSize(width: width, height: 30.0))
+            let x = window.amount == nil ? left : right - resetSize.width
+            self.resetNode.frame = CGRect(origin: CGPoint(x: x, y: y), size: resetSize)
+            lineHeight = resetSize.height
+            resetWidth = resetSize.width
+        } else {
+            self.resetNode.isHidden = true
+        }
+        if let amount = window.amount {
+            self.amountNode.isHidden = false
+            self.amountNode.attributedText = NSAttributedString(string: amount, font: Font.with(size: theme.scaled(14.0), design: .regular, weight: .regular, traits: [.monospacedNumbers]), textColor: theme.list.itemSecondaryTextColor)
+            let amountSize = self.amountNode.updateLayout(CGSize(width: width - (resetWidth > 0.0 ? resetWidth + 10.0 : 0.0), height: 30.0))
+            self.amountNode.frame = CGRect(origin: CGPoint(x: left, y: y), size: amountSize)
+            lineHeight = max(lineHeight, amountSize.height)
+        } else {
+            self.amountNode.isHidden = true
+        }
+        y += lineHeight == 0.0 ? -9.0 : lineHeight
 
         // Ahead of pace or near the end: what lasts until it resets, as the usage monitor says it.
         var pace: String?
@@ -473,7 +518,7 @@ final class UsageWindowItemNode: SyncListItemNode {
         self.isAccessibilityElement = true
         self.accessibilityIdentifier = "usageWindow"
         self.accessibilityLabel = usageWindowTitle(window)
-        self.accessibilityValue = [usagePercentText(window.usedPercent), reset, pace].compactMap { $0 }.joined(separator: ", ")
+        self.accessibilityValue = [usagePercentText(window.usedPercent), window.amount, reset, pace].compactMap { $0 }.joined(separator: ", ")
         return ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets())
     }
 }

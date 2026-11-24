@@ -55,13 +55,24 @@ export function devAccountProvider() {
 	};
 }
 
-/** 42% of the 5 hours, resetting in 2 h 14 min; 71% of the week, ahead of its pace, in 3 days. */
+/** 42% of the 5 hours, resetting in 2 h 14 min; 71% of the week, ahead of its pace, in 3 days; extra usage. */
 export async function devAccountUsage(): Promise<Omit<Usage, "at">> {
 	const now = Date.now();
 	return {
 		windows: [
-			{ id: "5h", label: "5h", usedPercent: 42, resetsAt: now + (2 * 60 + 14) * 60_000, seconds: 5 * 3600 },
-			{ id: "week", label: "Week", usedPercent: 71, resetsAt: now + 3 * 86_400_000, seconds: 7 * 86_400 },
+			{ id: "5h", label: "5h", title: "5-Hour Limit", usedPercent: 42, resetsAt: now + (2 * 60 + 14) * 60_000, seconds: 5 * 3600 },
+			{ id: "week", label: "Week", title: "Weekly Limit", usedPercent: 71, resetsAt: now + 3 * 86_400_000, seconds: 7 * 86_400 },
+		],
+		credits: "$4.20 of $50.00 spent",
+	};
+}
+
+/** A key's, as OpenRouter's: a spending limit that does not reset, and the account's balance, both in money. */
+export async function devAccountKeyUsage(): Promise<Omit<Usage, "at">> {
+	return {
+		windows: [
+			{ id: "key_limit", label: "Key", title: "Key Limit", usedPercent: 80.2, amount: "$9.63 of $12.00 spent" },
+			{ id: "credits", label: "Credits", title: "Credits", usedPercent: 95.4, amount: "$4.77 of $103.00 left" },
 		],
 	};
 }

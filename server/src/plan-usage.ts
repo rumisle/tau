@@ -6,8 +6,12 @@ import type { Accounts, StoredAccount } from "./accounts.ts";
 export type UsageWindow = {
 	/** Stable across the endpoint's answers and the headers': "5h", "week", "week-opus", "primary", ... */
 	id: string;
-	/** Short: "5h", "Week", "Opus". */
+	/** Short, for the list and the widget: "5h", "Week", "Opus". */
 	label: string;
+	/** Whole, for the account's page: "5-Hour Limit", "Opus Weekly Limit", "Credits". */
+	title: string;
+	/** What is spent or left in money, where the provider tells it: "$9.63 of $12.00 spent". */
+	amount?: string;
 	/** 0 to 100. */
 	usedPercent: number;
 	/** When it starts again, ms. */
@@ -20,7 +24,7 @@ export type Usage = {
 	/** When the numbers were last had, ms. */
 	at: number;
 	windows: UsageWindow[];
-	/** Credits or extra usage beyond the plan, as words: "$4.20 of $50 extra", "120 credits". */
+	/** Extra usage beyond the plan, as words: "$4.20 of $50.00 spent", "120 credits". */
 	credits?: string;
 	/** Why the last ask failed; the windows are the last ones had. */
 	error?: string;
@@ -57,15 +61,18 @@ function claudeLimitWindow(limit: ClaudeLimit): UsageWindow[] {
 	const scope = limit.scope?.model?.display_name ?? (typeof surface === "string" ? surface : surface?.display_name) ?? undefined;
 	let id: string;
 	let label: string;
+	let title: string;
 	if (scope === undefined || scope === null || scope === "") {
 		id = seconds === WEEK ? "week" : "5h";
 		label = seconds === WEEK ? "Week" : "5h";
+		title = limitTitle(seconds);
 	} else {
 		const slug = scope.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 		id = seconds === WEEK ? `week-${slug}` : `5h-${slug}`;
 		label = seconds === WEEK ? scope : `${scope} 5h`;
+		title = limitTitle(seconds, scope);
 	}
-	return [{ id, label, usedPercent: limit.percent, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds }];
+	return [{ id, label, title, usedPercent: limit.percent, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds }];
 }
 
 export type Fetcher = (credential: OAuthCredential, fetchImpl: typeof fetch) => Promise<Omit<Usage, "at">>;
@@ -79,23 +86,23 @@ const FETCHERS: Record<string, Fetcher> = {
 			extra_usage?: { is_enabled?: boolean; used_credits?: number; monthly_limit?: number } | null;
 			limits?: ClaudeLimit[] | null;
 		};
-		const credits = body.extra_usage?.is_enabled ? `${dollars(body.extra_usage.used_credits)} of ${dollars(body.extra_usage.monthly_limit)} extra` : undefined;
+		const credits = body.extra_usage?.is_enabled ? `${dollars(body.extra_usage.used_credits)} of ${dollars(body.extra_usage.monthly_limit)} spent` : undefined;
 		// The list of limits, where the endpoint has it: the ones a model or a surface has of its own, such as Fable's
 		// week, are there only
 		if (Array.isArray(body.limits) && body.limits.length > 0) {
 			return { windows: body.limits.flatMap(claudeLimitWindow), ...(credits === undefined ? {} : { credits }) };
 		}
 		const windows: UsageWindow[] = [];
-		for (const [key, id, label, seconds] of [
-			["five_hour", "5h", "5h", 5 * HOUR],
-			["seven_day", "week", "Week", WEEK],
-			["seven_day_opus", "week-opus", "Opus", WEEK],
-			["seven_day_sonnet", "week-sonnet", "Sonnet", WEEK],
+		for (const [key, id, label, seconds, scope] of [
+			["five_hour", "5h", "5h", 5 * HOUR, undefined],
+			["seven_day", "week", "Week", WEEK, undefined],
+			["seven_day_opus", "week-opus", "Opus", WEEK, "Opus"],
+			["seven_day_sonnet", "week-sonnet", "Sonnet", WEEK, "Sonnet"],
 		] as const) {
 			const window = body[key];
 			if (window?.utilization === undefined || window.utilization === null) continue;
 			const resetsAt = window.resets_at ? Date.parse(window.resets_at) : Number.NaN;
-			windows.push({ id, label, usedPercent: window.utilization, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds });
+			windows.push({ id, label, title: limitTitle(seconds, scope), usedPercent: window.utilization, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds });
 		}
 		return { windows, ...(credits === undefined ? {} : { credits }) };
 	},
@@ -135,14 +142,14 @@ const KEY_FETCHERS: Record<string, KeyFetcher> = {
 			const window = body.usage?.[key];
 			if (typeof window?.percent !== "number") continue;
 			const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
-			windows.push({ id, label, usedPercent: window.percent, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds });
+			windows.push({ id, label, title: limitTitle(seconds), usedPercent: window.percent, ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds });
 		}
 		return { windows };
 	},
 	// The organization's two monthly budgets, as the Vibe CLI reads them (mistral-vibe's vibe/app_server/_billing.py):
 	// Vibe's, which a plan's key draws on, and the API's, which a pay-as-you-go key does; usage_percentage is 0 to 100
 	mistral: async (key, fetchImpl) => {
-		type Budget = { usage_percentage?: number; reset_at?: string | null } | null;
+		type Budget = { usage_percentage?: number; initial_budget?: number; currency?: string; reset_at?: string | null } | null;
 		const body = (await getJson(fetchImpl, "https://api.mistral.ai/v1/billing/budget", { authorization: `Bearer ${key}` })) as {
 			vibe_budget?: Budget;
 			api_budget?: Budget;
@@ -154,7 +161,17 @@ const KEY_FETCHERS: Record<string, KeyFetcher> = {
 		] as const) {
 			if (typeof budget?.usage_percentage !== "number") continue;
 			const resetsAt = budget.reset_at ? Date.parse(budget.reset_at) : Number.NaN;
-			windows.push({ id, label, usedPercent: Math.max(0, budget.usage_percentage), ...(Number.isFinite(resetsAt) ? { resetsAt } : {}), seconds: MONTH });
+			const usedPercent = Math.max(0, budget.usage_percentage);
+			const total = budget.initial_budget;
+			windows.push({
+				id,
+				label,
+				title: `${label} Monthly Budget`,
+				usedPercent,
+				...(typeof total === "number" && total > 0 ? { amount: `${money((total * usedPercent) / 100, budget.currency)} of ${money(total, budget.currency)} spent` } : {}),
+				...(Number.isFinite(resetsAt) ? { resetsAt } : {}),
+				seconds: MONTH,
+			});
 		}
 		return { windows };
 	},
@@ -171,10 +188,14 @@ const KEY_FETCHERS: Record<string, KeyFetcher> = {
 			if (typeof budget.limit_usd !== "number" || budget.limit_usd <= 0 || typeof budget.spend_usd !== "number") continue;
 			const resetsAt = budget.resets_at ? Date.parse(budget.resets_at) : Number.NaN;
 			const seconds = { daily: DAY, weekly: WEEK, monthly: MONTH }[budget.reset_interval ?? ""];
+			const label = budget.scope === "key_limit" ? "Key" : "Limit";
 			windows.push({
 				id: budget.scope ?? "limit",
-				label: budget.scope === "key_limit" ? "Key" : "Limit",
+				label,
+				// "Key Limit", "Weekly Key Limit"; a guardrail's, "Spending Limit"
+				title: `${seconds === undefined ? "" : `${spanName(seconds)} `}${label === "Key" ? "Key" : "Spending"} Limit`,
 				usedPercent: (budget.spend_usd / budget.limit_usd) * 100,
+				amount: `${money(budget.spend_usd)} of ${money(budget.limit_usd)} spent`,
 				...(Number.isFinite(resetsAt) ? { resetsAt } : {}),
 				...(seconds === undefined ? {} : { seconds }),
 			});
@@ -182,8 +203,15 @@ const KEY_FETCHERS: Record<string, KeyFetcher> = {
 		const total = credits.status === "fulfilled" ? credits.value.data : undefined;
 		if (typeof total?.total_credits !== "number" || total.total_credits <= 0) return { windows };
 		const used = total.total_usage ?? 0;
-		windows.push({ id: "credits", label: "Credits", usedPercent: (used / total.total_credits) * 100 });
-		return { windows, credits: `$${Math.max(0, total.total_credits - used).toFixed(2)} of $${total.total_credits.toFixed(2)} credits left` };
+		// The account's balance is not beyond a plan: it is all there is, so it is a window, with what is left
+		windows.push({
+			id: "credits",
+			label: "Credits",
+			title: "Credits",
+			usedPercent: (used / total.total_credits) * 100,
+			amount: `${money(Math.max(0, total.total_credits - used))} of ${money(total.total_credits)} left`,
+		});
+		return { windows };
 	},
 };
 
@@ -202,6 +230,7 @@ function codexWindows(name: string, limit: CodexLimit | undefined): UsageWindow[
 		windows.push({
 			id: name === "" ? which : `${name}:${which}`,
 			label: name === "" ? windowLabel(seconds) : `${name} ${windowLabel(seconds)}`,
+			title: limitTitle(seconds, name === "" ? undefined : name),
 			usedPercent: window.used_percent,
 			...(window.reset_at === undefined ? {} : { resetsAt: window.reset_at * 1000 }),
 			seconds,
@@ -221,7 +250,7 @@ const HEADER_READERS: Record<string, (headers: Record<string, string>) => UsageW
 			const used = Number(headers[`anthropic-ratelimit-unified-${key}-utilization`]);
 			if (headers[`anthropic-ratelimit-unified-${key}-utilization`] === undefined || !Number.isFinite(used)) continue;
 			const reset = Number(headers[`anthropic-ratelimit-unified-${key}-reset`]);
-			windows.push({ id, label, usedPercent: Math.round(used * 1000) / 10, ...(Number.isFinite(reset) && reset > 0 ? { resetsAt: reset * 1000 } : {}), seconds });
+			windows.push({ id, label, title: limitTitle(seconds), usedPercent: Math.round(used * 1000) / 10, ...(Number.isFinite(reset) && reset > 0 ? { resetsAt: reset * 1000 } : {}), seconds });
 		}
 		return windows;
 	},
@@ -233,7 +262,7 @@ const HEADER_READERS: Record<string, (headers: Record<string, string>) => UsageW
 			const minutes = Number(headers[`x-codex-${which}-window-minutes`]);
 			const seconds = Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : which === "primary" ? 5 * HOUR : WEEK;
 			const reset = Number(headers[`x-codex-${which}-reset-at`]);
-			windows.push({ id: which, label: windowLabel(seconds), usedPercent: used, ...(Number.isFinite(reset) && reset > 0 ? { resetsAt: reset * 1000 } : {}), seconds });
+			windows.push({ id: which, label: windowLabel(seconds), title: limitTitle(seconds), usedPercent: used, ...(Number.isFinite(reset) && reset > 0 ? { resetsAt: reset * 1000 } : {}), seconds });
 		}
 		return windows;
 	},
@@ -319,8 +348,8 @@ export class PlanUsage {
 			} else {
 				const old = merged[index]!;
 				if (old.usedPercent !== window.usedPercent || old.resetsAt !== window.resetsAt) changed = true;
-				// The endpoint's label stays: it names the window as it names the others.
-				merged[index] = { ...window, label: old.label };
+				// The endpoint's names stay: it names the window as it names the others.
+				merged[index] = { ...window, label: old.label, title: old.title };
 			}
 		}
 		this.#usage.set(accountId, { ...before, at: Date.now(), windows: merged });
@@ -441,6 +470,26 @@ function windowLabel(seconds: number): string {
 	if (Math.abs(seconds - WEEK) < HOUR) return "Week";
 	if (seconds % (24 * HOUR) === 0) return `${seconds / (24 * HOUR)}d`;
 	return `${Math.round(seconds / HOUR)}h`;
+}
+
+/** "5-Hour", "Daily", "Weekly", "Monthly", "3-Day". */
+function spanName(seconds: number): string {
+	if (Math.abs(seconds - WEEK) < HOUR) return "Weekly";
+	if (Math.abs(seconds - DAY) < HOUR) return "Daily";
+	if (Math.abs(seconds - MONTH) < DAY) return "Monthly";
+	if (seconds % DAY === 0) return `${seconds / DAY}-Day`;
+	return `${Math.round(seconds / HOUR)}-Hour`;
+}
+
+/** A plan limit's title: "5-Hour Limit", "Weekly Limit", "Opus Weekly Limit". */
+function limitTitle(seconds: number, scope?: string): string {
+	return `${scope === undefined ? "" : `${scope} `}${spanName(seconds)} Limit`;
+}
+
+/** "$9.63", "€255.00": an amount in its currency, US dollars when none is said. */
+function money(amount: number, currency = "USD"): string {
+	const symbol = ({ USD: "$", EUR: "€", GBP: "£" } as Record<string, string>)[currency.toUpperCase()];
+	return symbol === undefined ? `${amount.toFixed(2)} ${currency.toUpperCase()}` : `${symbol}${amount.toFixed(2)}`;
 }
 
 function dollars(cents: number | undefined): string {

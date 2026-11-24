@@ -84,7 +84,7 @@ export const STRINGS = {
   AccountsFrom: 'From',
   AccountsNotAvailable: 'Not Available',
   AccountsUsage: 'Usage',
-  AccountsBeyondPlan: 'Beyond the Plan',
+  AccountsExtraUsage: 'Extra Usage',
   AccountsResetsIn: 'Resets in',
   AccountsResetsNow: 'Resets now',
   AccountsKeyEnding: 'key ending',
