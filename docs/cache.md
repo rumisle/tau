@@ -22,7 +22,7 @@ Settings > a server > Keep Warm sets pi's three modes for the whole server (`set
 
 - **Every request of a conversation's run** starts warming, in place of the request before. Compaction requests and
   titles are not conversation requests.
-- **Only models that declare a cache lifetime** (`Model.promptCache`): pi-ai declares it for direct Anthropic only. A
+- **Only models that declare a cache lifetime** (`Model.promptCache`): pi-ai declares it for direct Anthropic only (and radius, which serves the same Claude models): Claude through OpenRouter, Bedrock, Vertex or a provider file is not warmed unless its catalog declares it. A
   request that cannot be sent again identically is skipped: Anthropic budget thinking takes its budget from
   `max_tokens`, which the cache is keyed on.
 - **At 90% of the lifetime**, keeping ten seconds of margin: 4.5 minutes for Anthropic. A refresh that would go too late
@@ -34,14 +34,29 @@ Settings > a server > Keep Warm sets pi's three modes for the whole server (`set
   chat says at once whether it is kept.
 - **It stops** when the run ends, when another request replaces it, when the context is compacted or reset, when the
   conversation's model changes, or an hour after the request it keeps.
+- **A refresh that fails** (the provider refuses it, or it never goes) is logged once per warming
+  (`[tau] cache refresh failed: conversation N, model: error`) and counted in `tau.cache`; it is tried once more 5 s
+  later while the entry still has its margin, and a second failure in a row, or no time for the retry, stops the
+  warming, so the chat no longer says the entry is kept. The next request starts warming again.
+
+## What a refresh sends
+
+The request it repeats, with `maxTokens: 1`, no retries and its own signal: the same model, context and options, less
+what belongs to that request's generation task. Its `signal` ends with the attempt, its `telemetry` span with the task,
+and its `onPayload` runs the task's `beforeProviderRequest` hooks, which throw "Task N invocation has ended" once the
+task is done: and it is done when its answer has come, before the run's tools run, which is when a refresh is due.
+Carried over, every refresh in a tool call failed before reaching the provider (from tau's pi upgrade on 2026-10-31
+until the fix; the old silent failure hid it). Dropped, the body is the one pi-ai builds, the same the request sent,
+for as long as no extension registers `beforeProviderRequest`: none does, and a server test fails if one is added.
+Were one needed, the refresh would have to run it too, through a hook durable runs without the ended task.
 
 
 ## What it records
 
 - **`tau.cache`**, a conversation document: the entry its last request to a model with a declared lifetime left (that
   model, the lifetime, when the entry was last written or read), and over the conversation's life the refreshes, their
-  cost, and what they saved. A refresh saved when the next request read an entry that only refreshes kept: the write it
-  avoided, less the read it paid. Compaction and resets clear the entry: the next request sends another prompt.
+  cost, and what they saved, and the refreshes that failed. A refresh saved when the next request read an entry that
+  only refreshes kept: the write it avoided, less the read it paid. Compaction and resets clear the entry: the next request sends another prompt.
 - **The Dialog's `cache`** (docs/protocol.md): the entry only while its model is the conversation's, since providers
   keep a cache per model and the next request reads that model's; with `warming` while refreshes are scheduled. After
   a switch to another model, or to one that declares no lifetime (all but direct Anthropic), there is none, and switching
@@ -59,5 +74,7 @@ and what they saved. The Cost there includes the refreshes. Settings > Usage sho
 ## Trying it
 
 `--dev-cache-ttl <seconds>` gives the dev model a prompt cache of that lifetime, priced at four times Claude Opus so
-that warming its small prompts pays, and adds `dev/echo-uncached`, the same model without a declared lifetime. `SendingUITests.testPromptCache` runs against one on port 7982 with 15 seconds,
+that warming its small prompts pays, and adds `dev/echo-uncached`, the same model without a declared lifetime. It calls
+the request's `onPayload` as pi-ai's APIs do, so a refresh that carries the ended task's fails there as it would with a
+real provider; `!refresh-fail` anywhere in a chat makes it refuse that chat's refreshes. `SendingUITests.testPromptCache` runs against one on port 7982 with 15 seconds,
 which `ios/scripts/sending-tests.sh` and `ios/scripts/uitests.py` start; the server test "keeps a working conversation's prompt cache warm" uses 11.

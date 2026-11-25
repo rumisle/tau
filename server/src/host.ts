@@ -158,6 +158,8 @@ export type Host = {
 	readonly models: MutableModels;
 	/** Search misses can refresh the catalog; listing models alone never does. */
 	readonly modelCatalogs: ModelCatalogs;
+	/** The extensions every conversation's agent is made of (tools, sections, hooks). */
+	readonly registry: ReturnType<typeof createRegistry>;
 	/** The provider files loaded (`--provider`), and the ones skipped with why. */
 	readonly providerFiles: { loaded: { id: string; file: string }[]; skipped: { file: string; reason: string }[] };
 	/** The logins to model providers, their logins in progress and usage (docs/accounts.md). */
@@ -379,6 +381,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		storage,
 		models,
 		modelCatalogs,
+		registry,
 		providerFiles,
 		accounts,
 		serverId,

@@ -355,14 +355,14 @@ function count(state: DialogState, entry: EntryRecord): void {
 export function promptCache(cache: CacheState | undefined, model: string, warming: { until?: number } | undefined): { cache?: Dialog["cache"] } {
 	if (cache === undefined) return {};
 	const current = cache.model === model && cache.ttl !== undefined && cache.at !== undefined;
-	const counters = cache.warms !== undefined && cache.warms > 0;
+	const counters = (cache.warms ?? 0) > 0 || (cache.failures ?? 0) > 0;
 	if (!current && !counters) return {};
 	return {
 		cache: {
 			...(current
 				? { ttl: cache.ttl!, at: cache.at!, ...(warming === undefined ? {} : { warming: true as const, ...(warming.until === undefined ? {} : { until: warming.until }) }) }
 				: {}),
-			...(counters ? { warms: cache.warms!, cost: cache.cost ?? 0, saved: cache.saved ?? 0 } : {}),
+			...(counters ? { warms: cache.warms ?? 0, cost: cache.cost ?? 0, saved: cache.saved ?? 0, ...((cache.failures ?? 0) > 0 ? { failures: cache.failures } : {}) } : {}),
 		},
 	};
 }

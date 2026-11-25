@@ -38,6 +38,15 @@ function until(replica: ConversationReplica, predicate: () => boolean, timeoutMs
 	});
 }
 
+/** Until `predicate` holds, checked every 50 ms: for what comes in pushes rather than in the replica. */
+async function poll(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
+	const end = Date.now() + timeoutMs;
+	while (!predicate()) {
+		if (Date.now() > end) throw new Error("timed out");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+}
+
 const idle = (replica: ConversationReplica) => (replica.docs["pi.live"] as { run?: unknown } | undefined)?.run === undefined;
 const kinds = (replica: ConversationReplica) => replica.ordered().map((entry) => entry.kind);
 
@@ -409,6 +418,53 @@ describe("tau server", () => {
 			await warmServer.close();
 			await warm.close();
 		}
+	});
+
+	test("a refresh that fails is logged, counted, and soon stops the warming, which no longer says the entry is kept", async () => {
+		const warm = await openHost({ devTokensPerSecond: 2_000, devCacheTtl: 11, cwd: tmpdir() });
+		const warmServer = await serve(warm);
+		const logged: string[] = [];
+		const error = console.error;
+		console.error = (...args: unknown[]) => {
+			logged.push(args.map(String).join(" "));
+		};
+		try {
+			const client = await TauClient.connect(warmServer.url);
+			const pushes: { cache?: { warming?: true; warms?: number; failures?: number } }[] = [];
+			client.on((push: Push) => {
+				if (push.event === "dialog") pushes.push(push.dialog as (typeof pushes)[number]);
+			});
+			await client.request("dialogs.subscribe");
+			const { dialog } = await client.request("conversation.create", {});
+			const replica = new ConversationReplica(dialog.conversation.id);
+			await replica.sync(client);
+			// The dev model refuses refreshes of a chat that says !refresh-fail, as an overloaded provider would.
+			await chat(client, replica, "!refresh-fail hello", "f1");
+			const { submission } = await client.request("conversation.submit", { conversationId: replica.id, requestId: "f2", content: "$ sleep 6" });
+			await poll(() => pushes.some((push) => (push.cache?.failures ?? 0) > 0), 10_000);
+			const failed = pushes.findLast((push) => (push.cache?.failures ?? 0) > 0)!.cache!;
+			assert.equal(replica.submissions.get(submission.id)?.status === "done", false, "while the command still runs");
+			assert.ok(pushes.some((push) => push.cache?.warming === true), "it was warming");
+			await poll(() => pushes.at(-1)?.cache?.warming === undefined, 10_000);
+			assert.ok((failed.failures ?? 0) <= 2);
+			assert.equal(failed.warms ?? 0, 0, "no refresh went through");
+			const lines = logged.filter((line) => line.includes("cache refresh failed"));
+			assert.equal(lines.length, 1, logged.join("\n"));
+			assert.match(lines[0]!, /conversation \d+, dev\/echo: 529 .*Overloaded/);
+			await until(replica, () => replica.submissions.get(submission.id)?.status === "done" && idle(replica), 30_000);
+			await client.close();
+		} finally {
+			console.error = error;
+			await warmServer.close();
+			await warm.close();
+		}
+	});
+
+	test("no extension changes a request's body before it is sent: a refresh, which sends it again without that hook, reads the same entry", () => {
+		// CacheWarmer drops the request's onPayload (src/cache.ts): it runs the generation task's beforeProviderRequest
+		// hooks, which throw once that task has ended. Were one registered, refreshes would send another body.
+		const hooked = host.registry.snapshot().installed().filter((extension) => (extension.hooks ?? []).some((each) => "beforeProviderRequest" in each.handlers));
+		assert.deepEqual(hooked.map((extension) => extension.name), []);
 	});
 
 	test("shows a prompt cache only while it is the one of the conversation's model, and not after a reset", async () => {

@@ -60,7 +60,7 @@ export type Dialog = {
 	 * after `at`; `warming` while refreshes keep it, as long as its run works or, between runs, until `until`; the
 	 * refresh counters are the conversation's life.
 	 */
-	cache?: { ttl?: number; at?: number; warming?: true; until?: number; warms?: number; cost?: number; saved?: number };
+	cache?: { ttl?: number; at?: number; warming?: true; until?: number; warms?: number; cost?: number; saved?: number; failures?: number };
 };
 
 export type AgentPatch = {

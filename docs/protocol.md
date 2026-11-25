@@ -220,6 +220,7 @@ type PromptCache = {
   at?: number;                        // epoch ms it was last written or read; it expires at `at + ttl`
   warming?: true;                     // refreshes keep it
   warms?: number; cost?: number; saved?: number; // refreshes over the conversation's life, their cost, what they saved
+  failures?: number;                  // refreshes that failed, when any did
 };
 type EntrySummary = { id: number; kind: string; role?: string; text: string; timestamp?: number };
 ```

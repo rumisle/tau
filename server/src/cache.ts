@@ -35,6 +35,10 @@ import { onCommit, changedValue } from "./commits.ts";
 
 /** A refresh is sent only when it is expected to save at least this much, in dollars (pi's threshold). */
 const MINIMUM_SAVINGS = 0.05;
+/** Refreshes that fail in a row before the warming stops: it would only say the entry is kept when it is not. */
+const MAX_FAILURES = 2;
+/** After a failed refresh, the next try: the entry still has the margin before its deadline (15 s for Anthropic). */
+const RETRY_MS = 5_000;
 /** Warming never goes on longer than this after the real request it keeps, as pi's safety limit. */
 const MAX_WARMING_MS = 60 * 60_000;
 /** Between runs, less long: the chance below is less sure the older the request. */
@@ -66,6 +70,8 @@ export type CacheState = {
 	warms?: number;
 	cost?: number;
 	saved?: number;
+	/** Refreshes that failed (the provider refused, or the request never went), over the conversation's life. */
+	failures?: number;
 };
 export const CacheDoc = defineDoc<CacheState>({
 	kind: "tau.cache",
@@ -137,6 +143,8 @@ type Run = {
 	from: number;
 	/** "idle" once the run that sent it has ended. */
 	phase: "streaming" | "idle";
+	/** Refreshes that failed since the last that went through; the first one's error is logged. */
+	failures: number;
 };
 
 /** A conversation's cache entry as its requests left it. */
@@ -311,9 +319,12 @@ export class CacheWarmer {
 			if (had) this.#changed(id);
 			return;
 		}
-		// The request's own signal ends with its attempt; a refresh has its own.
-		const { signal: _signal, ...rest } = options;
-		const run: Run = { model, context, options: rest, ttl, delay, startedAt, controller: new AbortController(), deadline: 0, from: startedAt, phase: "streaming" };
+		// What belongs to the request's own generation task stays with it: its signal ends with the attempt (a refresh has
+		// its own), its telemetry span with the task, and its onPayload runs the task's beforeProviderRequest hooks, which
+		// throw once the task has ended, as it has by the time a tool call is long enough to need a refresh. No extension
+		// registers one, so the request's body is what pi-ai builds, and the refresh's is the same (docs/cache.md).
+		const { signal: _signal, telemetry: _telemetry, onPayload: _onPayload, ...rest } = options;
+		const run: Run = { model, context, options: rest, ttl, delay, startedAt, controller: new AbortController(), deadline: 0, from: startedAt, phase: "streaming", failures: 0 };
 		this.#runs.set(id, run);
 		this.#schedule(id, run, startedAt);
 		if (!had && this.#runs.get(id) === run) this.#changed(id);
@@ -381,9 +392,12 @@ export class CacheWarmer {
 			this.#stop(id);
 			return;
 		}
+		let failure: string | undefined;
 		try {
 			const message = await models.streamSimple(run.model, run.context, { ...run.options, maxTokens: 1, maxRetries: 0, signal: run.controller.signal }).result();
+			if (message.stopReason === "error") failure = message.errorMessage ?? "error";
 			if (this.#runs.get(id) === run && message.stopReason !== "error" && message.stopReason !== "aborted") {
+				run.failures = 0;
 				const usage = message.usage;
 				if (usage.cacheRead > 0 && this.#entries.get(id) === entry) {
 					entry.at = now;
@@ -402,8 +416,25 @@ export class CacheWarmer {
 				const record = { conversationId: id, time: now, model: `${message.provider}/${message.model}`, usage };
 				for (const listener of this.#warmListeners) listener(record);
 			}
-		} catch {
-			// Best effort: a refresh that fails changes nothing for the run.
+		} catch (error) {
+			failure = (error as Error).message ?? String(error);
+		}
+		if (failure !== undefined && this.#runs.get(id) === run && !run.controller.signal.aborted) {
+			// Seen, not swallowed: logged once per warming, counted in the conversation's cache, and after a few in a row the
+			// warming stops, so the chat no longer says the entry is kept. The next request starts warming again.
+			run.failures += 1;
+			if (run.failures === 1) console.error(`[tau] cache refresh failed: conversation ${id}, ${cacheModel(run.model)}: ${failure}`);
+			this.#write(id, (state) => {
+				state.failures = (state.failures ?? 0) + 1;
+			});
+			// The entry was not read: it still expires a lifetime after the last read. Once more soon, while that holds.
+			if (run.failures >= MAX_FAILURES || now + RETRY_MS > run.deadline) {
+				this.#stop(id);
+				return;
+			}
+			run.timer = setTimeout(() => void this.#refresh(id, run), RETRY_MS);
+			run.timer.unref?.();
+			return;
 		}
 		if (this.#runs.get(id) === run) this.#schedule(id, run, now);
 	}

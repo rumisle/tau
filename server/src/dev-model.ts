@@ -159,18 +159,37 @@ function expiringCache(base: Provider, ttl: number): Provider {
 			const expired = session === undefined || now - (used.get(session) ?? Number.NEGATIVE_INFINITY) > ttl;
 			if (session !== undefined) used.set(session, now);
 			const outer = createAssistantMessageEventStream();
-			// A cap of a few tokens, as a cache refresh sends: a real provider stops at once, after reading the prompt.
-			const cap = streamOptions?.maxTokens;
-			if (cap !== undefined && cap <= 16) {
-				const prompt = Math.ceil(context.messages.map((message) => JSON.stringify(message.content)).join("").length / 4);
-				const usage = { input: 0, output: cap, cacheRead: expired ? 0 : prompt, cacheWrite: expired ? prompt : 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-				const message: AssistantMessage = { role: "assistant", content: [{ type: "text", text: "." }], api: model.api, provider: model.provider, model: model.id, usage, stopReason: "length", timestamp: now };
-				adjust(model, message, false, cap);
-				queueMicrotask(() => outer.push({ type: "done", reason: "length", message }));
-				return outer;
-			}
-			const inner = base.streamSimple(model, context, streamOptions);
 			void (async () => {
+				// As pi-ai's APIs do while they build the body: the caller's onPayload may replace it, or throw, which ends the
+				// stream with an error before anything is sent.
+				try {
+					await streamOptions?.onPayload?.({ model: model.id, messages: context.messages.length }, model);
+				} catch (error) {
+					const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+					const message: AssistantMessage = { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id, usage, stopReason: "error", errorMessage: (error as Error).message, timestamp: now };
+					outer.push({ type: "error", reason: "error", error: message });
+					outer.end(message);
+					return;
+				}
+				// A cap of a few tokens, as a cache refresh sends: a real provider stops at once, after reading the prompt.
+				// `!refresh-fail` anywhere in the chat: refused, as a provider's error would, for a refresh that fails.
+				const cap = streamOptions?.maxTokens;
+				if (cap !== undefined && cap <= 16 && context.messages.some((message) => message.role === "user" && userText(message.content).includes("!refresh-fail"))) {
+					const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+					const message: AssistantMessage = { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id, usage, stopReason: "error", errorMessage: '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}', timestamp: now };
+					outer.push({ type: "error", reason: "error", error: message });
+					outer.end(message);
+					return;
+				}
+				if (cap !== undefined && cap <= 16) {
+					const prompt = Math.ceil(context.messages.map((message) => JSON.stringify(message.content)).join("").length / 4);
+					const usage = { input: 0, output: cap, cacheRead: expired ? 0 : prompt, cacheWrite: expired ? prompt : 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+					const message: AssistantMessage = { role: "assistant", content: [{ type: "text", text: "." }], api: model.api, provider: model.provider, model: model.id, usage, stopReason: "length", timestamp: now };
+					adjust(model, message, false, cap);
+					outer.push({ type: "done", reason: "length", message });
+					return;
+				}
+				const inner = base.streamSimple(model, context, streamOptions);
 				for await (const event of inner) {
 					if (event.type === "done") adjust(model, event.message, expired, streamOptions?.maxTokens);
 					else if (event.type === "error") adjust(model, event.error, expired, streamOptions?.maxTokens);
