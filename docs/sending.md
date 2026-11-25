@@ -130,7 +130,8 @@ Telegram's sending, with the agent's two ways of reading a message.
   Follow-up or Send as Steer, Send Now (stops the agent and sends it), Delete. With several queued, the menu lists them
   first.
 - **Stop**: the run ends and the queued messages come back to the field in order, as pi's Escape returns queued
-  messages to the editor. Send Now does the same with the others.
+  messages to the editor. Send Now does the same with the others. A subagent's report stays queued instead (shown as
+  "helper answered: …", without Edit): its sender cannot send it again, so it waits for the next message.
 - **Refused**: Telegram's red badge beside the bubble (ChatMessageDeliveryFailedNode), which opens the reason with
   Resend and Delete. The chat list shows the red badge too, and the clock for a message on its way.
 - **No answer**: a run that ended without one (a model error after the server's retries, the server stopped while the

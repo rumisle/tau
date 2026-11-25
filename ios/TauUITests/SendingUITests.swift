@@ -190,6 +190,32 @@ final class SendingUITests: XCTestCase {
         XCTAssertEqual(field, "one\n\ntwo")
     }
 
+    /// A subagent's report waiting for the chat's step stays queued through Stop, as its answer, not back in the field.
+    func testStopKeepsSubagentReport() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("& slow: $ sleep 3 && echo finished")
+        self.send()
+        sleep(2)
+        self.type("$ sleep 15")
+        self.send()
+        // The answer comes while the chat runs its command: its report waits in the queue.
+        let report = self.app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'slow answered'")).firstMatch
+        XCTAssertTrue(report.waitForExistence(timeout: 15), "the report in the queue")
+        self.shot("report-0-queued")
+        self.app.buttons["stop"].firstMatch.tap()
+        settle()
+        self.shot("report-1-stopped")
+        let kept = self.app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'slow answered'")).firstMatch
+        XCTAssertTrue(kept.exists && kept.isHittable, "still queued after Stop")
+        let field = self.app.textViews.firstMatch.value as? String ?? ""
+        XCTAssertFalse(field.contains("subagent"), field)
+        self.tapAccessory()
+        settle()
+        self.shot("report-2-menu")
+        XCTAssertFalse(self.app.descendants(matching: .any)["Edit"].firstMatch.exists, "no Edit for a report")
+    }
+
     /// Send Now on a queued message: the run stops and the message goes at once; the other returns to the field.
     func testSendNow() {
         self.startWorking(20)

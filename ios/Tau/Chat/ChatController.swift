@@ -988,7 +988,7 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
                 case .newContext:
                     title = "New Context"
                 }
-                let text = queued.mode == .newContext ? "The model forgets this chat" : (queued.text.isEmpty ? "Photo" : queued.text.replacingOccurrences(of: "\n", with: " "))
+                let text = queued.mode == .newContext ? "The model forgets this chat" : (queued.text.isEmpty ? "Photo" : queued.displayText.replacingOccurrences(of: "\n", with: " "))
                 items.append(.action(ContextMenuActionItem(text: text, textLayout: .secondLineWithValue(title), icon: { _ in nil }, action: { [weak self] controller, _ in
                     guard let self else {
                         return
@@ -1013,12 +1013,14 @@ final class ChatController: ViewController, UIDocumentPickerDelegate, UIImagePic
             items.append(.separator)
         }
         if queued.mode != .newContext {
-            // pi's dequeue: the message comes back to the field to change and send again.
-            items.append(.action(ContextMenuActionItem(text: self.theme.presentationStrings.Conversation_MessageDialogEdit, icon: self.menuIcon("Chat/Context Menu/Edit"), action: { [weak self] _, f in
-                f(.default)
-                store.withdraw(queued, in: id, restore: true)
-                self?.controllerNode.inputPanelNode.activateInput()
-            })))
+            // pi's dequeue: the message comes back to the field to change and send again. Not a subagent's report.
+            if !queued.isReport {
+                items.append(.action(ContextMenuActionItem(text: self.theme.presentationStrings.Conversation_MessageDialogEdit, icon: self.menuIcon("Chat/Context Menu/Edit"), action: { [weak self] _, f in
+                    f(.default)
+                    store.withdraw(queued, in: id, restore: true)
+                    self?.controllerNode.inputPanelNode.activateInput()
+                })))
+            }
             let other: SendMode = queued.mode == .steer ? .followUp : .steer
             items.append(.action(ContextMenuActionItem(text: other == .followUp ? "Send as Follow-up" : "Send as Steer", icon: self.menuIcon(other == .followUp ? "Chat/Input/Menu/ScheduleIcon" : "Chat/Context Menu/Forward"), action: { _, f in
                 f(.default)

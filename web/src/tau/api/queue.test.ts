@@ -54,4 +54,12 @@ describe('buildQueue', () => {
     expect(queuedPreview({ ...base, text: 'two\nlines' })).toBe('two lines');
     expect(queuedPreview({ ...base, text: '', fileCount: 2 })).toBe('2 files');
   });
+
+  it('marks a subagent\'s report, and previews it as the subagent\'s answer', () => {
+    const text = '<subagent name="helper" conversation="12" status="answered">\nAll\ndone.\n</subagent>';
+    const [queued] = buildQueue([{ id: 9, mode: 'steer', content: text }], [], true);
+    expect(queued.isReport).toBe(true);
+    expect(queuedPreview(queued)).toBe('helper answered: All done.');
+    expect(buildQueue([{ id: 10, mode: 'steer', content: 'hi' }], [], true)[0].isReport).toBeUndefined();
+  });
 });

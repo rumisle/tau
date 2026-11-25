@@ -354,6 +354,19 @@ struct QueuedMessage: Equatable {
     var submissionId: Int?
     /// In the server's inbox behind a run that failed: it goes with the next message (or Retry).
     var isHeld: Bool = false
+
+    /// A subagent's report the server queued (server/src/subagent.ts): kept through Stop, never the user's to edit.
+    var isReport: Bool {
+        return self.outgoingId == nil && SubagentReport(self.text) != nil
+    }
+
+    /// The text to show: a report as its subagent's answer.
+    var displayText: String {
+        if self.outgoingId == nil, let report = SubagentReport(self.text) {
+            return "\(report.name) \(report.status): \(report.text)"
+        }
+        return self.text
+    }
 }
 
 /// What a chat screen renders: committed entries plus the answer still streaming (`pi.live.generation`).

@@ -94,7 +94,9 @@ const QueueBar = ({ chatId }: OwnProps) => {
     const other = queued.mode === 'steer' ? 'followUp' : 'steer';
     return (
       <>
-        <MenuItem icon="edit" onClick={run(() => withdraw(queued, true))}>{STRINGS.QueueEdit}</MenuItem>
+        {!queued.isReport && (
+          <MenuItem icon="edit" onClick={run(() => withdraw(queued, true))}>{STRINGS.QueueEdit}</MenuItem>
+        )}
         <MenuItem
           icon={other === 'followUp' ? 'schedule' : 'forward'}
           onClick={run(() => moveQueued(conversationId, queued, other))}

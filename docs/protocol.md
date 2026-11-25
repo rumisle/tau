@@ -233,7 +233,10 @@ send, a steer, or the user writing in the subagent's own chat. The report is a r
 working reads it at its next step, not after its whole answer), `<subagent name="…" conversation="…"
 status="answered|failed">answer</subagent>`, which an app shows as the subagent's card. A run that fails (its
 `pi.live.runFailure`) sends `status="failed"` with a short note instead ("helper failed: the model failed (…)."); a
-stopped one, or one a new context ended, sends nothing. A spawn may start from a copy of the parent (`fork: true`, the
+stopped one, or one a new context ended, sends nothing. Reports and notes are submitted with durable's `onAbort:
+"keep"`: the parent's Stop leaves one that waits in its queue there (`pi.inbox`), starting no run, and the parent's
+next run reads it; the apps show it in the queue as the subagent's answer, without Edit, and do not put it back in the
+field on Stop. Delete (`submission.abort`) still withdraws it. A spawn may start from a copy of the parent (`fork: true`, the
 transcript up to the request) and on another model or effort (`model: "provider/id"`, `thinking`). The call's details
 (`pi.live.tools[i].details` while it runs, the `pi.tool-result` entry's `details` after) say which:
 `{ name, conversationId, action, model?, thinking?, fork? }`. Subscribe to the conversation like any other to show the

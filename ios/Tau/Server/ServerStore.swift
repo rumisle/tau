@@ -1485,7 +1485,8 @@ final class ServerStore: ConversationStore, TauServer {
     private func interrupt(_ realId: Int, sendNow: String?) {
         let queue = self.state(for: realId).queued
         let own = queue.compactMap(\.outgoingId)
-        let others = queue.filter { $0.outgoingId == nil && $0.mode != .newContext && !$0.text.isEmpty }
+        // A subagent's report never comes back: the server keeps it queued through the Stop, for the next run.
+        let others = queue.filter { $0.outgoingId == nil && $0.mode != .newContext && !$0.text.isEmpty && !$0.isReport }
         self.outbox.interrupt(conversationId: realId, restoring: own, sendNow: sendNow) { [weak self] result in
             guard let self, case .success = result else {
                 return

@@ -397,7 +397,7 @@ final class ChatInputPanelNode: ASDisplayNode, UITextViewDelegate {
             self.accessoryView.update(content: InputAccessoryPanelView.Content(id: "edit", title: "Edit Message", text: editing, status: .none, count: 1), theme: theme, animated: animated)
         } else if let first = self.queue.first {
             var title: String
-            var text = first.text
+            var text = first.displayText
             if text.isEmpty {
                 text = first.imageCount == 1 ? "Photo" : "\(first.imageCount) Photos"
             }

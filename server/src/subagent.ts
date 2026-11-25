@@ -205,7 +205,7 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 			const report = reporter.state.checkpoint.report;
 			if (report !== undefined) {
 				const main = (await runtime.conversation(runtime.conversationId, taskContext))!;
-				const input = { type: "input", content: report, whenBusy: "steer" } as const;
+				const input = { type: "input", content: report, ...REPORT_INPUT } as const;
 				await main.submit({ ...input, requestId: `subagent-report:${reporter.id}` }, taskContext);
 			}
 			await runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), taskContext);
@@ -214,6 +214,11 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 	abort: (_reporter, runtime, taskContext) =>
 		runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), taskContext),
 });
+
+// How a report or a note goes to the leader: as a steer, and kept through the leader's Stop. The subagent cannot send
+// it again, so a Stop that withdrew it would lose the answer; kept, it waits in the queue, starts no run, and the
+// leader's next run reads it with the message that starts it.
+const REPORT_INPUT = { whenBusy: "steer", onAbort: "keep" } as const;
 
 // A subagent's run that answered, reported to its leader: a run-end task of the run (`afterRun`), so the subagent is
 // busy until the report is sent, Stop drops it, and a crash resumes it. Admitted in the task's terminal commit, under
@@ -229,8 +234,8 @@ const RunReport = defineTask<RunReportInput, { phase: "report" }, null>({
 			await runtime.commit(async (tx) => {
 				const content = (await editedAway(tx, task.input.leader, task.input.name)) ? withFact(task.input.report, EDITED_AWAY) : task.input.report;
 				// As a steer: it starts a turn when the leader is idle, or reaches it at its next step, so a leader still
-				// working reads it then, not after its whole answer.
-				if (leader !== undefined) await leader.admit(tx, { type: "input", content, whenBusy: "steer", requestId: task.input.requestId });
+				// working reads it then, not after its whole answer. The leader's Stop keeps it queued (REPORT_INPUT).
+				if (leader !== undefined) await leader.admit(tx, { type: "input", content, ...REPORT_INPUT, requestId: task.input.requestId });
 				return { status: "terminal", outcome: { status: "completed", result: null } };
 			}, taskContext);
 		},
@@ -358,7 +363,7 @@ export class SubagentFailures {
 			const report = subagentReport(of.name, id, "failed", note);
 			const away = await leader?.commit((tx) => editedAway(tx, of.leader!, of.name!), BACKGROUND_CONTEXT);
 			const content = away === true ? withFact(report, EDITED_AWAY) : report;
-			await leader?.submit({ type: "input", content, whenBusy: "steer", requestId }, BACKGROUND_CONTEXT);
+			await leader?.submit({ type: "input", content, ...REPORT_INPUT, requestId }, BACKGROUND_CONTEXT);
 		} catch (error) {
 			this.#sent.delete(requestId);
 			if (!this.#closed) console.error(`[tau] subagent ${id}: failure not reported:`, error);

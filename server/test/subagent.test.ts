@@ -124,6 +124,25 @@ describe("subagent reports", () => {
 		assert.equal((child.docs["pi.live"] as { runFailure?: { reason: string } }).runFailure?.reason, "aborted");
 	});
 
+	test("a report that waits for the leader's step is kept through the leader's Stop, and the leader's next run reads it", async () => {
+		const { leader, child } = await started(client, "slow", "$ sleep 2 && echo finished");
+		await until(leader, () => idle(leader));
+		// The leader works in a long command when the answer comes: the report waits in its queue, as a steer.
+		await send(client, leader, "$ sleep 8", "leader-sleep");
+		await until(leader, () => !idle(leader));
+		const inbox = () => (leader.docs["pi.inbox"] as { items?: unknown[] } | undefined)?.items?.length ?? 0;
+		await until(leader, () => inbox() === 1, 20_000);
+		await client.request("conversation.abort", { conversationId: leader.id });
+		await until(leader, () => idle(leader));
+		await settle();
+		assert.equal(inbox(), 1, "the Stop left the report queued");
+		assert.equal(reports(leader).length, 0, "not placed yet: the Stop starts no run");
+		await send(client, leader, "go on", "leader-next");
+		await until(leader, () => reports(leader, "answered").length === 1 && idle(leader), 20_000);
+		assert.match(reports(leader)[0]!, /finished/);
+		await until(child, () => idle(child));
+	});
+
 	test("the note says why in a few words, and nothing for a stop or a new context", () => {
 		assert.equal(failureNote("helper", "interrupted", "x"), "helper failed: the server stopped while it was answering.");
 		assert.equal(failureNote("helper", "turn_limit", "3 turns"), "helper failed: it reached its turn limit (3 turns).");

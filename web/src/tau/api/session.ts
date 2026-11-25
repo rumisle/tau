@@ -1488,9 +1488,12 @@ function interrupt(conversationId: number, sendNow?: string) {
   for (const item of outbox.itemsOf(conversationId)) {
     if (isInQueue(item) && !own.includes(item.requestId)) own.push(item.requestId);
   }
-  const others = queue.filter((queued) => !queued.outgoingId && queued.text);
+  // A subagent's report never comes back: the server keeps it queued through the Stop, for the next run
+  const others = queue.filter((queued) => !queued.outgoingId && queued.text && !queued.isReport);
   void outbox.interrupt(conversationId, { restoring: own, sendNow }).then(() => {
-    for (const queued of others) restoreToField(conversationId, queued.text);
+    // Only what the abort withdrew: one kept in the inbox still goes (iOS's `interrupt`)
+    const left = new Set(queueOf(conversationId).map((queued) => queued.submissionId));
+    for (const queued of others) if (!left.has(queued.submissionId)) restoreToField(conversationId, queued.text);
   }).catch(() => undefined);
 }
 

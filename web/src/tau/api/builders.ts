@@ -14,6 +14,7 @@ import { STRINGS } from '../strings';
 import { buildMediaRows, readUserContent } from './attachments';
 import { buildMarkdownBlocks, buildParagraph } from './markdown';
 import { cleanModelError, compactionError } from './modelErrors';
+import { SUBAGENT_REPORT } from './queue';
 
 // The user's own account. Conversation IDs are entry IDs, far below it.
 export const ME_ID = '9000000000';
@@ -222,8 +223,6 @@ export function buildCompactionNote(entry: Entry, text: string): ApiMessage {
     tau: { role: 'notice', parts: [{ type: 'note', text }] },
   };
 }
-
-const SUBAGENT_REPORT = /^<subagent name="([^"]*)" conversation="(\d+)" status="(\w+)">([\s\S]*)<\/subagent>$/;
 
 /** An entry's messages, in order: none for those the chat does not show, several for an album */
 export function buildRows(entry: Entry, context: MessageContext): ApiMessage[] {

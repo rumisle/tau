@@ -16,7 +16,12 @@ export type QueuedMessage = {
   // The outbox's message, when this device sent it
   outgoingId?: string;
   submissionId?: number;
+  // A subagent's report the server queued (server/src/subagent.ts): kept through Stop, and never the user's to edit
+  isReport?: boolean;
 };
+
+/** A subagent's report as the server submits it: `<subagent name="…" conversation="…" status="…">answer</subagent>` */
+export const SUBAGENT_REPORT = /^<subagent name="([^"]*)" conversation="(\d+)" status="(\w+)">([\s\S]*)<\/subagent>$/;
 
 /** Whether a message on its way shows in the panel rather than as a bubble */
 export function isInQueue(item: OutgoingMessage) {
@@ -61,6 +66,7 @@ export function buildQueue(inbox: JsonObject[], items: OutgoingMessage[], isSync
       const { text, photos, documents } = readUserContent(raw.content, 0, 0, 0);
       result.push({
         id: `s${submissionId}`, mode, text, fileCount: photos.length + documents.length, isSending: false, submissionId,
+        ...(SUBAGENT_REPORT.test(text) ? { isReport: true } : {}),
       });
     }
   }
@@ -78,7 +84,8 @@ export function buildQueue(inbox: JsonObject[], items: OutgoingMessage[], isSync
 
 /** One line for the panel and the menu: the text, or what it carries */
 export function queuedPreview(queued: QueuedMessage) {
-  const text = queued.text.replace(/\s+/g, ' ').trim();
+  const report = SUBAGENT_REPORT.exec(queued.text);
+  const text = (report ? `${report[1]} ${report[3]}: ${report[4]}` : queued.text).replace(/\s+/g, ' ').trim();
   if (text) return text;
   return queued.fileCount > 1 ? `${queued.fileCount} files` : 'File';
 }
