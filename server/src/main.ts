@@ -11,6 +11,10 @@
 //   instead; docs/web.md)
 //   [--check-data] (prints the database's path, then makes the check every start makes, the data on a local
 //   filesystem (src/localfs.ts), and exits: 2 with the reason when it fails; `tau setup` asks it before it starts)
+//   [--provider file]... (a model provider from outside tau, an ES module exporting a pi-ai Provider and optionally its
+//   keys' usage: src/external-providers.ts, docs/deploy.md; one that fails to load is skipped, the server starts)
+//   [--check-providers] (loads each --provider as a start does, prints what it got or why not, and exits: 3 when one
+//   is skipped; `tau status` asks it)
 // Clients must give the server's token (`Authorization: Bearer <token>`) when it has one: TAU_TOKEN, or else the
 // --token-file's (by convention ~/.config/tau/token), which must be readable by its owner only. Without one the server
 // listens on loopback only, unless --no-auth: anyone who reaches it can run commands as this user.
@@ -54,6 +58,8 @@ const { values } = parseArgs({
 		"command-scopes": { type: "boolean", default: false },
 		"command-slice": { type: "string" },
 		"check-data": { type: "boolean", default: false },
+		provider: { type: "string", multiple: true, default: [] },
+		"check-providers": { type: "boolean", default: false },
 		web: { type: "string" },
 		"web-dev": { type: "string" },
 		"no-web": { type: "boolean", default: false },
@@ -84,6 +90,17 @@ if (values["check-data"]) {
 	process.exit(refusal === undefined ? 0 : 2);
 }
 
+if (values["check-providers"]) {
+	// As a start loads them, refused ids included; nothing is opened.
+	const { builtinProviders } = await import("@earendil-works/pi-ai/providers/all");
+	const { loadProviderFiles } = await import("./external-providers.ts");
+	const { DEV_ACCOUNT_PROVIDER } = await import("./dev-accounts.ts");
+	const { loaded, skipped } = await loadProviderFiles(values.provider, [...builtinProviders().map((provider) => provider.id), DEV_MODEL.provider, DEV_ACCOUNT_PROVIDER], () => {});
+	for (const each of loaded) console.log(`${each.provider.id} from ${each.file}${each.usage.apiKey === undefined ? "" : ", with key usage"}`);
+	for (const each of skipped) console.log(`skipped ${each.file}: ${each.reason}`);
+	process.exit(skipped.length === 0 ? 0 : 3);
+}
+
 const token = readToken();
 if (token === undefined && !isLoopback(values.host) && !values["no-auth"]) {
 	console.error(`No token, and ${values.host} is not loopback: anyone who reaches it could run commands here.`);
@@ -104,10 +121,17 @@ const host = await openHost({
 	...(values["dev-cache-ttl"] === undefined ? {} : { devCacheTtl: Number(values["dev-cache-ttl"]) }),
 	accounts,
 	...(values["command-scopes"] ? { commandScopes: values["command-slice"] === undefined ? {} : { slice: values["command-slice"] } } : {}),
+	providers: values.provider,
 });
 if (host.models.getModel(model.provider, model.modelId) === undefined) {
-	console.error(`Unknown model ${model.provider}/${model.modelId}`);
-	process.exit(1);
+	// A provider file's model may not be known yet (its catalog comes with the key) or its file may have been skipped:
+	// the server starts, and chats on it fail until it is there, as after a model is removed. A built-in's is a typo.
+	const fromFile = host.providerFiles.loaded.some((each) => each.id === model.provider);
+	if (!fromFile && (host.models.getProvider(model.provider) !== undefined || host.providerFiles.skipped.length === 0)) {
+		console.error(`Unknown model ${model.provider}/${model.modelId}`);
+		process.exit(1);
+	}
+	console.error(`[tau] model ${model.provider}/${model.modelId} is not known yet: new chats on it fail until its provider lists it`);
 }
 const apns = openApns() ?? openRelay();
 const web = openWeb();

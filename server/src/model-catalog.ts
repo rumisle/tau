@@ -220,6 +220,22 @@ export class ModelCatalogs {
 		return this.#pending;
 	}
 
+	/**
+	 * These providers' catalogs again, now, after any check under way: one whose account in use changed, as a catalog
+	 * asked with the key may differ by key. Their own catalogs only; no four-hour window applies.
+	 */
+	async refreshProviders(ids: readonly string[]): Promise<void> {
+		if (this.#abort.signal.aborted || ids.length === 0) return;
+		await this.#pending;
+		const signal = AbortSignal.any([this.#abort.signal, AbortSignal.timeout(15_000)]);
+		try {
+			const result = await this.#models.refresh({ providers: ids, force: true, signal });
+			for (const [provider, error] of result.errors) this.#report(new Error(`Catalog ${provider}: ${error.message}`));
+		} catch (error) {
+			if (!signal.aborted) this.#report(error);
+		}
+	}
+
 	async search(query?: string): Promise<void> {
 		if (!query?.trim() || (await this.#models.getAvailable()).some((model) => modelMatches(model, query))) return;
 		const now = (this.#options.now ?? Date.now)();

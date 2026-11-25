@@ -49,6 +49,44 @@ run setup, so they change none of this. For a throwaway setup beside a real one:
 Model logins are added in the app's Accounts tab (docs/accounts.md), kept in `tau.accounts.json` beside the
 database; providers' API keys in the server's environment work too. The repository is private for now: give `TAU_GITHUB_TOKEN` (or `GITHUB_TOKEN`) to download.
 
+## Providers from outside tau
+
+`--provider FILE` in the flags (repeatable; an absolute path or `~/...`) loads a model provider that does not ship with
+tau, such as a company's own gateway: an ES module, TypeScript as Node strips it (erasable syntax only, relative
+imports with their `.ts`), that exports
+
+```ts
+export const provider: Provider;            // pi-ai's, usually from createProvider({ id, name, auth, models, fetchModels, api })
+export const usage = {                      // optional: what an API key of it has used (docs/accounts.md)
+  apiKey: async (key: string, { fetch, signal }) => ({ windows: [/* the protocol's Window, as plain JSON */] }),
+};
+```
+
+- **Imports.** It imports pi-ai as anything does (`@earendil-works/pi-ai`, `/models`, `/oauth`, `/compat`; the old
+  `@mariozechner/` names too). Those are the pi-ai this server runs, the same module instances, resolved by a Node
+  module hook (`server/src/external-providers.ts`), so the file needs no dependencies of its own and works with a
+  release's bundle as from the source. It is tied to `PI_REVISION`, as the rest of tau is: a pi upgrade may change the
+  contract under it. Other packages it must bring itself.
+- **The same file as a pi extension.** tau reads the named exports and leaves the default one alone, so
+  `export default (pi) => pi.registerProvider(provider)` makes the file a pi extension as well (with only type imports
+  from pi-coding-agent, which tau does not have).
+- **Loading.** At start, after the built-in providers and before the model catalogs are restored and conversations
+  resume. Its catalog is its own (`fetchModels`, asked with the key), cached in `tau.models/` as any provider's, never
+  pi.dev's (docs/models.md). A file that does not load, throws, exports no provider, or whose provider's id is taken (a
+  built-in's, the dev ones', a file's before it) is skipped with a log line, and the server starts without it; a chat on
+  one of its models fails its next run as after a model is removed. A `--model` of a provider file's provider may be
+  unknown at start (its catalog comes with the key): the server starts and says so. `tau status` loads each file as a
+  start would (`tau-server.js --check-providers`) and says what it got or why not.
+- **Accounts.** Its `auth.apiKey.login` (or `oauth`) is offered on the Accounts tab like a built-in's; credentials stay
+  in `tau.accounts.json`. When the account in use for it changes, its catalog is asked again at once.
+- **Usage.** `usage.apiKey` is asked as the built-in keys' usage is: every 5 minutes and when the tab opens, at most
+  every 20 s an account, left alone after a 429, within 30 s (`signal` aborts then). What it answers is checked
+  (`usageReport` in `server/src/plan-usage.ts`); a malformed report, a throw or no answer in time is the account's usage
+  error. It never schedules anything itself. Usage from answers' headers, and a subscription's (`usage.oauth`), are not
+  asked of a provider file yet.
+- **Trust.** Only the server's own flags name provider files, and the code runs in the server's process as the server's
+  user: as much trust as the flags themselves. No client request adds or changes one.
+
 ## Upgrade, roll back
 
 ```

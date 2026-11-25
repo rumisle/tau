@@ -44,6 +44,8 @@ export const test = base.extend<{ api: Api; app: Page }, { server: Server }>({
     const child = spawn(process.execPath, [
       '--no-warnings', join(ROOT, 'server/src/main.ts'), '--memory', '--port', String(port), '--host', '127.0.0.1',
       '--model', 'dev/echo', '--dev-tps', '400', ...WEB, '--cwd', home,
+      // A provider from outside tau, with its keys' usage (server/test/fixtures/gateway-provider.ts)
+      '--provider', join(ROOT, 'server/test/fixtures/gateway-provider.ts'),
     ], { env: { ...process.env, TAU_TOKEN: TOKEN, PI_CODING_AGENT_DIR: home }, stdio: ['ignore', 'pipe', 'pipe'] });
     await listening(child);
     await use({ origin: `http://127.0.0.1:${port}`, port, home });

@@ -31,6 +31,16 @@ func usagePercentText(_ value: Double) -> String {
     return "\(rounded)%"
 }
 
+/// The amount as the list has room for it: its first word, the figure ("$2,383.76" of "$2,383.76 spent").
+func usageShortAmount(_ amount: String) -> String {
+    return amount.split(separator: " ", maxSplits: 1).first.map(String.init) ?? amount
+}
+
+/// What the list says of a window: its percent, or for spend without a limit its figure.
+func usageShortText(_ window: UsageWindow) -> String {
+    return window.usedPercent.map(usagePercentText) ?? usageShortAmount(window.amount ?? "")
+}
+
 /// "2h 14m", "3d 5h", "12m": how long until `date`.
 func durationText(until date: Date, now: Date = Date()) -> String {
     let seconds = max(0, Int(date.timeIntervalSince(now)))
@@ -372,14 +382,19 @@ final class AccountRowItemNode: SyncListItemNode {
             let level = window.level()
             let y = linesTop + CGFloat(index) * (lineHeight + 3.0)
             entry.label.attributedText = NSAttributedString(string: window.label, font: small, textColor: theme.list.itemSecondaryTextColor)
-            entry.value.attributedText = NSAttributedString(string: usagePercentText(window.usedPercent), font: numbers, textColor: level == .normal ? theme.list.itemSecondaryTextColor : usageColor(level, theme: theme))
+            entry.value.attributedText = NSAttributedString(string: usageShortText(window), font: numbers, textColor: level == .normal ? theme.list.itemSecondaryTextColor : usageColor(level, theme: theme))
             let labelSize = entry.label.updateLayout(CGSize(width: 80.0, height: 20.0))
-            let valueSize = entry.value.updateLayout(CGSize(width: 60.0, height: 20.0))
+            // Spend without a limit: its figure across the bar's and the percent's room, no bar.
+            let valueSize = entry.value.updateLayout(CGSize(width: window.usedPercent == nil ? barWidth + 6.0 + valueWidth : 60.0, height: 20.0))
             entry.label.frame = CGRect(origin: CGPoint(x: usageLeft, y: y), size: labelSize)
             entry.value.frame = CGRect(origin: CGPoint(x: right - valueSize.width, y: y), size: valueSize)
-            let barX = usageLeft + labelWidth + 6.0
-            entry.bar.frame = CGRect(x: barX, y: y + floor((lineHeight - 4.0) / 2.0), width: barWidth, height: 4.0)
-            entry.bar.update(size: CGSize(width: barWidth, height: 4.0), fraction: window.usedPercent / 100.0, pace: window.elapsed(), color: usageColor(level, theme: theme), trackColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.18), paceColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.6), animated: animated)
+            if let used = window.usedPercent {
+                let barX = usageLeft + labelWidth + 6.0
+                entry.bar.frame = CGRect(x: barX, y: y + floor((lineHeight - 4.0) / 2.0), width: barWidth, height: 4.0)
+                entry.bar.update(size: CGSize(width: barWidth, height: 4.0), fraction: used / 100.0, pace: window.elapsed(), color: usageColor(level, theme: theme), trackColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.18), paceColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.6), animated: animated)
+            } else {
+                entry.bar.isHidden = true
+            }
         }
 
         self.iconNode.image = item.icon
@@ -388,7 +403,7 @@ final class AccountRowItemNode: SyncListItemNode {
         self.isAccessibilityElement = true
         self.accessibilityIdentifier = "account"
         self.accessibilityLabel = item.title
-        self.accessibilityValue = ([item.subtitle] + windows.map { "\($0.label) \(usagePercentText($0.usedPercent))" }).joined(separator: ", ")
+        self.accessibilityValue = ([item.subtitle] + windows.map { "\($0.label) \(usageShortText($0))" }).joined(separator: ", ")
         self.accessibilityTraits = item.action == nil ? [] : .button
         return ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets())
     }
@@ -446,17 +461,24 @@ final class UsageWindowItemNode: SyncListItemNode {
         let width = right - left
 
         self.titleNode.attributedText = NSAttributedString(string: usageWindowTitle(window), font: Font.regular(theme.scaled(17.0)), textColor: theme.list.itemPrimaryTextColor)
-        self.valueNode.attributedText = NSAttributedString(string: usagePercentText(window.usedPercent), font: Font.with(size: theme.scaled(17.0), design: .regular, weight: .semibold, traits: [.monospacedNumbers]), textColor: level == .normal ? theme.list.itemPrimaryTextColor : usageColor(level, theme: theme))
-        let valueSize = self.valueNode.updateLayout(CGSize(width: 100.0, height: 30.0))
+        // Spend without a limit: its title, then its amount; no percent and no bar.
+        self.valueNode.isHidden = window.usedPercent == nil
+        self.barNode.isHidden = window.usedPercent == nil
+        self.valueNode.attributedText = NSAttributedString(string: window.usedPercent.map(usagePercentText) ?? "", font: Font.with(size: theme.scaled(17.0), design: .regular, weight: .semibold, traits: [.monospacedNumbers]), textColor: level == .normal ? theme.list.itemPrimaryTextColor : usageColor(level, theme: theme))
+        let valueSize = window.usedPercent == nil ? CGSize() : self.valueNode.updateLayout(CGSize(width: 100.0, height: 30.0))
         let titleSize = self.titleNode.updateLayout(CGSize(width: width - valueSize.width - 10.0, height: 30.0))
 
         var y: CGFloat = 13.0
         self.titleNode.frame = CGRect(origin: CGPoint(x: left, y: y), size: titleSize)
         self.valueNode.frame = CGRect(origin: CGPoint(x: right - valueSize.width, y: y), size: valueSize)
-        y += max(titleSize.height, valueSize.height) + 10.0
-        self.barNode.frame = CGRect(x: left, y: y, width: width, height: 8.0)
-        self.barNode.update(size: CGSize(width: width, height: 8.0), fraction: window.usedPercent / 100.0, pace: window.elapsed(now: now), color: usageColor(level, theme: theme), trackColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.18), paceColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.7), animated: animated)
-        y += 8.0 + 9.0
+        if let used = window.usedPercent {
+            y += max(titleSize.height, valueSize.height) + 10.0
+            self.barNode.frame = CGRect(x: left, y: y, width: width, height: 8.0)
+            self.barNode.update(size: CGSize(width: width, height: 8.0), fraction: used / 100.0, pace: window.elapsed(now: now), color: usageColor(level, theme: theme), trackColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.18), paceColor: theme.list.itemSecondaryTextColor.withAlphaComponent(0.7), animated: animated)
+            y += 8.0 + 9.0
+        } else {
+            y += titleSize.height + 4.0
+        }
 
         // Under the bar: what is spent or left in money where the provider tells it, and when it resets, at the right
         // beside an amount; a limit that never resets (a key's, a balance) says nothing of resetting.
@@ -464,37 +486,43 @@ final class UsageWindowItemNode: SyncListItemNode {
         var reset: String?
         if let resetsAt = window.resetsAt {
             reset = resetsAt <= now ? "Resets now" : "Resets in \(durationText(until: resetsAt, now: now))"
-        } else if window.seconds != nil {
-            reset = window.usedPercent > 0 ? "Resets when the window ends" : "Not started"
+        } else if window.seconds != nil, let used = window.usedPercent {
+            reset = used > 0 ? "Resets when the window ends" : "Not started"
         }
-        var lineHeight: CGFloat = 0.0
-        var resetWidth: CGFloat = 0.0
+        // The amount first, whole; when it resets beside it at the right when both fit, else on the line below.
+        var amountSize = CGSize()
+        if let amount = window.amount {
+            self.amountNode.isHidden = false
+            self.amountNode.attributedText = NSAttributedString(string: amount, font: Font.with(size: theme.scaled(14.0), design: .regular, weight: .regular, traits: [.monospacedNumbers]), textColor: theme.list.itemSecondaryTextColor)
+            amountSize = self.amountNode.updateLayout(CGSize(width: width, height: 30.0))
+            self.amountNode.frame = CGRect(origin: CGPoint(x: left, y: y), size: amountSize)
+        } else {
+            self.amountNode.isHidden = true
+        }
+        var lineHeight = amountSize.height
         if let reset {
             self.resetNode.isHidden = false
             self.resetNode.attributedText = NSAttributedString(string: reset, font: small, textColor: theme.list.itemSecondaryTextColor)
             let resetSize = self.resetNode.updateLayout(CGSize(width: width, height: 30.0))
-            let x = window.amount == nil ? left : right - resetSize.width
-            self.resetNode.frame = CGRect(origin: CGPoint(x: x, y: y), size: resetSize)
-            lineHeight = resetSize.height
-            resetWidth = resetSize.width
+            if window.amount == nil {
+                self.resetNode.frame = CGRect(origin: CGPoint(x: left, y: y), size: resetSize)
+                lineHeight = resetSize.height
+            } else if amountSize.width + 10.0 + resetSize.width <= width {
+                self.resetNode.frame = CGRect(origin: CGPoint(x: right - resetSize.width, y: y), size: resetSize)
+                lineHeight = max(lineHeight, resetSize.height)
+            } else {
+                self.resetNode.frame = CGRect(origin: CGPoint(x: left, y: y + amountSize.height + 2.0), size: resetSize)
+                lineHeight = amountSize.height + 2.0 + resetSize.height
+            }
         } else {
             self.resetNode.isHidden = true
-        }
-        if let amount = window.amount {
-            self.amountNode.isHidden = false
-            self.amountNode.attributedText = NSAttributedString(string: amount, font: Font.with(size: theme.scaled(14.0), design: .regular, weight: .regular, traits: [.monospacedNumbers]), textColor: theme.list.itemSecondaryTextColor)
-            let amountSize = self.amountNode.updateLayout(CGSize(width: width - (resetWidth > 0.0 ? resetWidth + 10.0 : 0.0), height: 30.0))
-            self.amountNode.frame = CGRect(origin: CGPoint(x: left, y: y), size: amountSize)
-            lineHeight = max(lineHeight, amountSize.height)
-        } else {
-            self.amountNode.isHidden = true
         }
         y += lineHeight == 0.0 ? -9.0 : lineHeight
 
         // Ahead of pace or near the end: what lasts until it resets, as the usage monitor says it.
         var pace: String?
-        if level != .normal, level != .out, let resetsAt = window.resetsAt, resetsAt > now {
-            let left = max(0.0, 100.0 - window.usedPercent)
+        if level != .normal, level != .out, let resetsAt = window.resetsAt, resetsAt > now, let used = window.usedPercent {
+            let left = max(0.0, 100.0 - used)
             let remaining = resetsAt.timeIntervalSince(now)
             if (window.seconds ?? 0) > 86_400 && remaining > 86_400 {
                 pace = "Keep under \(Int((left / (remaining / 86_400)).rounded()))% a day to last until it resets"
@@ -518,7 +546,7 @@ final class UsageWindowItemNode: SyncListItemNode {
         self.isAccessibilityElement = true
         self.accessibilityIdentifier = "usageWindow"
         self.accessibilityLabel = usageWindowTitle(window)
-        self.accessibilityValue = [usagePercentText(window.usedPercent), window.amount, reset, pace].compactMap { $0 }.joined(separator: ", ")
+        self.accessibilityValue = [window.usedPercent.map(usagePercentText), window.amount, reset, pace].compactMap { $0 }.joined(separator: ", ")
         return ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets())
     }
 }

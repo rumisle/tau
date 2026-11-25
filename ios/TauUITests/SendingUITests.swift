@@ -324,6 +324,43 @@ final class SendingUITests: XCTestCase {
         self.shot("accounts-9-after")
     }
 
+    /// A provider from outside tau (the dev server's --provider, server/test/fixtures/gateway-provider.ts): its key's
+    /// usage, a budget with a limit and the month's spend without one, in the list and on the account's page.
+    func testAccountsSpend() {
+        self.launch(["-tab", "accounts"])
+        self.server("wipe")
+        sleep(3)
+        let any = self.app.descendants(matching: .any)
+        XCTAssertTrue(any["Add Account"].firstMatch.waitForExistence(timeout: 10))
+        any["Add Account"].firstMatch.tap()
+        settle()
+        let keyRow = any.matching(NSPredicate(format: "identifier == 'Fixture Gateway'")).firstMatch
+        for _ in 0 ..< 8 where !(keyRow.exists && keyRow.isHittable) {
+            self.app.swipeUp()
+        }
+        keyRow.tap()
+        XCTAssertTrue(any["Key"].firstMatch.waitForExistence(timeout: 10), "the key's field")
+        self.app.waitForKeyboard()
+        self.type("gw-ui")
+        any["Continue"].firstMatch.tap()
+        let account = any.matching(NSPredicate(format: "identifier == 'account' AND value BEGINSWITH 'Fixture Gateway API key'")).firstMatch
+        XCTAssertTrue(account.waitForExistence(timeout: 15), "the key's account")
+        let listed = NSPredicate(format: "value CONTAINS 'Month $2,383.76'")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: listed, object: account)], timeout: 15), .completed, account.debugDescription)
+        XCTAssertTrue((account.value as? String ?? "").contains("Budget 25%"), account.debugDescription)
+        self.shot("accounts-spend-list")
+        account.tap()
+        settle()
+        let month = any.matching(NSPredicate(format: "identifier == 'usageWindow' AND label == 'This Month'")).firstMatch
+        XCTAssertTrue(month.waitForExistence(timeout: 10), "the month's spend")
+        let value = month.value as? String ?? ""
+        XCTAssertTrue(value.hasPrefix("$2,383.76 spent"), value)
+        XCTAssertFalse(value.contains("%"), "no percent")
+        let budget = any.matching(NSPredicate(format: "identifier == 'usageWindow' AND label == 'Monthly Budget'")).firstMatch
+        XCTAssertTrue((budget.value as? String ?? "").hasPrefix("25%, $25.00 of $100.00 spent"), budget.debugDescription)
+        self.shot("accounts-spend-detail")
+    }
+
     /// Two servers: the chat list's folder tabs over the accounts, one list a server, a swipe between them as between
     /// folders, a tab tapped going to its server.
     func testAccountsServers() {

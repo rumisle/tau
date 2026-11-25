@@ -33,6 +33,8 @@ import { timeFirstTokens } from "./timing.ts";
 import { type CompactionThreshold, compactionOverrides, DEFAULT_COMPACTION_THRESHOLD, FollowUpCompaction } from "./compaction.ts";
 import { CompactionLog } from "./compactions.ts";
 import { DEV_MODEL, devProvider } from "./dev-model.ts";
+import { loadProviderFiles } from "./external-providers.ts";
+import type { KeyFetcher, Usage } from "./plan-usage.ts";
 import { Serial } from "./serial.ts";
 import { skillsSection } from "./skills.ts";
 import { contextFilesExtension } from "./context-files.ts";
@@ -144,6 +146,10 @@ export type HostOptions = {
 	maxFileBytes?: number;
 	/** Each bash command in its own systemd scope, in this slice (src/scopes.ts, docs/command-isolation.md); off when omitted. */
 	commandScopes?: { slice?: string; boundTo?: string };
+	/** Provider files from outside tau (`--provider`, src/external-providers.ts), loaded in order. */
+	providers?: readonly string[];
+	/** Where a skipped provider file's reason goes; default stderr. */
+	log?: (line: string) => void;
 };
 
 export type Host = {
@@ -152,6 +158,8 @@ export type Host = {
 	readonly models: MutableModels;
 	/** Search misses can refresh the catalog; listing models alone never does. */
 	readonly modelCatalogs: ModelCatalogs;
+	/** The provider files loaded (`--provider`), and the ones skipped with why. */
+	readonly providerFiles: { loaded: { id: string; file: string }[]; skipped: { file: string; reason: string }[] };
 	/** The logins to model providers, their logins in progress and usage (docs/accounts.md). */
 	readonly accounts: AccountsService;
 	readonly serverId: string;
@@ -214,6 +222,24 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	for (const provider of builtinProviders()) {
 		models.setProvider(options.modelCatalog === false ? provider : catalogProvider(provider, getBuiltinModelDataGeneratedAt(), catalogOptions));
 	}
+	// Providers from outside tau, before the catalogs are restored, so theirs is restored from tau.models/ with the
+	// rest; with their own catalogs, not pi.dev's. An id taken (a built-in's, the dev ones', a file's before) is refused.
+	const external = await loadProviderFiles(options.providers ?? [], [...models.getProviders().map((provider) => provider.id), DEV_MODEL.provider, DEV_ACCOUNT_PROVIDER], options.log);
+	const externalKeyUsage: Record<string, KeyFetcher> = {};
+	const providerFiles: Host["providerFiles"] = { loaded: [], skipped: [...external.skipped] };
+	for (const each of external.loaded) {
+		try {
+			models.setProvider(each.provider);
+		} catch (error) {
+			const reason = (error as Error).message;
+			providerFiles.skipped.push({ file: each.file, reason });
+			(options.log ?? console.error)(`[tau] provider file ${each.file} skipped: ${reason}`);
+			continue;
+		}
+		providerFiles.loaded.push({ id: each.provider.id, file: each.file });
+		const apiKey = each.usage.apiKey;
+		if (apiKey !== undefined) externalKeyUsage[each.provider.id] = async (key, fetchImpl, signal) => (await apiKey(key, { fetch: fetchImpl, signal })) as Omit<Usage, "at">;
+	}
 	const modelCatalogs = new ModelCatalogs(models, catalogOptions);
 	await modelCatalogs.restore();
 	models.setProvider(devProvider({ tokensPerSecond: options.devTokensPerSecond, cacheTtl: options.devCacheTtl }).provider);
@@ -273,9 +299,20 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 	const accounts = new AccountsService({
 		accounts: accountsFile,
 		models,
-		...(devAccounts ? { usage: { [DEV_ACCOUNT_PROVIDER]: devAccountUsage }, keyUsage: { [DEV_ACCOUNT_PROVIDER]: devAccountKeyUsage }, identities: { [DEV_ACCOUNT_PROVIDER]: devAccountIdentity } } : {}),
+		...(devAccounts ? { usage: { [DEV_ACCOUNT_PROVIDER]: devAccountUsage }, identities: { [DEV_ACCOUNT_PROVIDER]: devAccountIdentity } } : {}),
+		keyUsage: { ...externalKeyUsage, ...(devAccounts ? { [DEV_ACCOUNT_PROVIDER]: devAccountKeyUsage } : {}) },
 		deviceId: () => opened?.serverId ?? "tau",
 		...(options.accountsFetch === undefined ? {} : { fetch: options.accountsFetch }),
+	});
+	// A provider whose catalog comes with the credential (a gateway's own list, asked with the key) is asked again when
+	// the account in use for it changes: a key just added shows its models at once, not at the next four-hourly check.
+	const inUse = (): Map<string, string | undefined> => new Map(models.getProviders().filter((provider) => provider.refreshModels !== undefined && provider.refreshModelsAuth !== "configured").map((provider) => [provider.id, accountsFile.activeId(provider.id)]));
+	let following = inUse();
+	const stopCatalogFollowing = accountsFile.onChange(() => {
+		const now = inUse();
+		const changed = [...now].filter(([id, active]) => active !== undefined && following.get(id) !== active).map(([id]) => id);
+		following = now;
+		if (changed.length > 0) void modelCatalogs.refreshProviders(changed);
 	});
 
 	let storage: Storage;
@@ -342,6 +379,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		storage,
 		models,
 		modelCatalogs,
+		providerFiles,
 		accounts,
 		serverId,
 		...(options.database === undefined ? {} : { database: options.database }),
@@ -401,6 +439,7 @@ export async function openHost(options: HostOptions = {}): Promise<Host> {
 		images,
 		history,
 		close: async () => {
+			stopCatalogFollowing();
 			await modelCatalogs.close();
 			accounts.close();
 			cache.close();

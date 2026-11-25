@@ -7,10 +7,11 @@ export type UsageWindow = {
   label: string;
   /** Whole, for the account's window: "5-Hour Limit", "Credits"; older servers send none */
   title?: string;
-  usedPercent: number;
+  /** 0 to 100; none for spend without a limit, which only its amount says */
+  usedPercent?: number;
   resetsAt?: number;
   seconds?: number;
-  /** In money, where the provider tells it: "$9.63 of $12.00 spent" */
+  /** In money, where the provider tells it: "$9.63 of $12.00 spent", "$2,383.76 spent" */
   amount?: string;
 };
 export type PlanUsage = { at: number; windows: UsageWindow[]; credits?: string; error?: string };
@@ -94,12 +95,20 @@ export function elapsedOf(window: UsageWindow, now: number) {
 }
 
 export function levelOf(window: UsageWindow, now: number): UsageLevel {
-  if (window.usedPercent >= 100) return 'out';
-  if (window.usedPercent >= HIGH) return 'high';
+  const used = window.usedPercent;
+  // Spend without a limit is never near one
+  if (used === undefined) return 'normal';
+  if (used >= 100) return 'out';
+  if (used >= HIGH) return 'high';
   const elapsed = elapsedOf(window, now);
   if (elapsed === undefined) return 'normal';
   const floor = (window.seconds ?? 0) > DAY ? AHEAD_FLOOR_WEEK : AHEAD_FLOOR;
-  return window.usedPercent >= floor && window.usedPercent > elapsed * 100 + AHEAD_MARGIN ? 'ahead' : 'normal';
+  return used >= floor && used > elapsed * 100 + AHEAD_MARGIN ? 'ahead' : 'normal';
+}
+
+/** The amount as the list has room for it: its first word, the figure ("$2,383.76" of "$2,383.76 spent") */
+export function shortAmount(amount: string) {
+  return amount.split(' ')[0];
 }
 
 /** "42%", whole numbers, but never 100% before it is all used */
@@ -137,7 +146,8 @@ export function windowTitle(window: UsageWindow) {
 export function paceText(window: UsageWindow, now: number) {
   const level = levelOf(window, now);
   if (level === 'out') return 'Used up';
-  if (level === 'normal' || window.resetsAt === undefined || window.resetsAt <= now) return undefined;
+  if (level === 'normal' || window.usedPercent === undefined || window.resetsAt === undefined
+    || window.resetsAt <= now) return undefined;
   const left = Math.max(0, 100 - window.usedPercent);
   const remaining = (window.resetsAt - now) / 1000;
   if ((window.seconds ?? 0) > DAY && remaining > DAY) {
@@ -149,7 +159,7 @@ export function paceText(window: UsageWindow, now: number) {
 /** Accounts to see to: one to sign in to again, or the one in use out of a limit */
 export function attentionCount(state: AccountsState) {
   return state.accounts.filter((account) => account.problem
-    || (account.active && account.usage?.windows.some((window) => window.usedPercent >= 100))).length;
+    || (account.active && account.usage?.windows.some((window) => (window.usedPercent ?? 0) >= 100))).length;
 }
 
 /** The latest page and code to show */

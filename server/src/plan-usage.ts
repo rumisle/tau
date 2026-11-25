@@ -10,10 +10,10 @@ export type UsageWindow = {
 	label: string;
 	/** Whole, for the account's page: "5-Hour Limit", "Opus Weekly Limit", "Credits". */
 	title: string;
-	/** What is spent or left in money, where the provider tells it: "$9.63 of $12.00 spent". */
+	/** What is spent or left in money, where the provider tells it: "$9.63 of $12.00 spent", "$2,383.76 spent". */
 	amount?: string;
-	/** 0 to 100. */
-	usedPercent: number;
+	/** 0 to 100; none for spend without a limit, which only its amount says. */
+	usedPercent?: number;
 	/** When it starts again, ms. */
 	resetsAt?: number;
 	/** How long the window is. */
@@ -37,6 +37,8 @@ const DAY = 24 * HOUR;
 const REFRESH_MARGIN_MS = 60_000;
 /** An account's usage is asked at most this often, however many clients ask. */
 const MIN_ASK_MS = 20_000;
+/** How long an API key's usage may take to answer, a provider file's or a built-in one's. */
+const KEY_USAGE_TIMEOUT_MS = 30_000;
 /** How long to leave an endpoint that answered 429 alone when it does not say. */
 const RATE_LIMIT_BACKOFF_MS = 10 * 60_000;
 
@@ -125,7 +127,7 @@ const FETCHERS: Record<string, Fetcher> = {
 };
 
 /** Usage a provider tells an API key's holder: OpenCode Go's plan, Mistral's monthly budgets, OpenRouter's limits. */
-export type KeyFetcher = (key: string, fetchImpl: typeof fetch) => Promise<Omit<Usage, "at">>;
+export type KeyFetcher = (key: string, fetchImpl: typeof fetch, signal: AbortSignal) => Promise<Omit<Usage, "at">>;
 
 const KEY_FETCHERS: Record<string, KeyFetcher> = {
 	// The plan's rolling five hours, week and month, each a share of the month's dollars (opencode.ai/docs/console/go)
@@ -281,13 +283,15 @@ export class PlanUsage {
 	readonly #quietUntil = new Map<string, number>();
 	readonly #fetchers: Record<string, Fetcher>;
 	readonly #keyFetchers: Record<string, KeyFetcher>;
+	readonly #keyTimeoutMs: number;
 	readonly #minAskMs: number;
 	#timer: ReturnType<typeof setInterval> | undefined;
 
-	constructor(options: { accounts: Accounts; models: Models; fetch?: typeof fetch; pollMs?: number; minAskMs?: number; fetchers?: Record<string, Fetcher>; keyFetchers?: Record<string, KeyFetcher>; onChange: () => void }) {
+	constructor(options: { accounts: Accounts; models: Models; fetch?: typeof fetch; pollMs?: number; minAskMs?: number; fetchers?: Record<string, Fetcher>; keyFetchers?: Record<string, KeyFetcher>; keyTimeoutMs?: number; onChange: () => void }) {
 		this.#minAskMs = options.minAskMs ?? MIN_ASK_MS;
 		this.#fetchers = { ...FETCHERS, ...options.fetchers };
 		this.#keyFetchers = { ...KEY_FETCHERS, ...options.keyFetchers };
+		this.#keyTimeoutMs = options.keyTimeoutMs ?? KEY_USAGE_TIMEOUT_MS;
 		this.#accounts = options.accounts;
 		this.#models = options.models;
 		this.fetch = options.fetch ?? fetch;
@@ -408,7 +412,19 @@ export class PlanUsage {
 
 	/** The account's usage from its provider: with its key, or its OAuth token, refreshed once if refused. */
 	async #fetch(account: StoredAccount): Promise<Omit<Usage, "at">> {
-		if (account.credential.type === "api_key") return this.#keyFetchers[account.provider]!(account.credential.key ?? "", this.fetch);
+		if (account.credential.type === "api_key") {
+			// A provider file's fetcher as the built-ins: given a deadline, and what it answers checked
+			const fetcher = this.#keyFetchers[account.provider]!;
+			const abort = new AbortController();
+			const timer = setTimeout(() => abort.abort(new Error(`its usage did not answer in ${Math.round(this.#keyTimeoutMs / 100) / 10} s`)), this.#keyTimeoutMs);
+			try {
+				const aborted = new Promise<never>((_, reject) => abort.signal.addEventListener("abort", () => reject(abort.signal.reason), { once: true }));
+				return usageReport(await Promise.race([fetcher(account.credential.key ?? "", this.fetch, abort.signal), aborted]));
+			} finally {
+				clearTimeout(timer);
+				abort.abort();
+			}
+		}
 		const fetcher = this.#fetchers[account.provider]!;
 		try {
 			return await fetcher(await this.#fresh(account, false), this.fetch);
@@ -470,6 +486,56 @@ function windowLabel(seconds: number): string {
 	if (Math.abs(seconds - WEEK) < HOUR) return "Week";
 	if (seconds % (24 * HOUR) === 0) return `${seconds / (24 * HOUR)}d`;
 	return `${Math.round(seconds / HOUR)}h`;
+}
+
+/**
+ * A usage report as the protocol has it, from what a fetcher answered (a provider file's is plain JSON from outside):
+ * the fields it knows, checked, a window's title its label when it has none; or an error naming what is wrong, which
+ * the account shows as its usage's error.
+ */
+export function usageReport(value: unknown): Omit<Usage, "at"> {
+	const fail = (what: string): never => {
+		throw new Error(`malformed usage: ${what}`);
+	};
+	if (typeof value !== "object" || value === null) fail("not an object");
+	const report = value as { windows?: unknown; credits?: unknown };
+	if (!Array.isArray(report.windows)) fail("no windows list");
+	if (report.credits !== undefined && typeof report.credits !== "string") fail("credits is not a string");
+	const windows = (report.windows as unknown[]).map((each, index): UsageWindow => {
+		const which = `window ${index + 1}`;
+		if (typeof each !== "object" || each === null) fail(`${which} is not an object`);
+		const window = each as Record<string, unknown>;
+		const text = (key: string, required: boolean): string | undefined => {
+			const field = window[key];
+			if (field === undefined && !required) return undefined;
+			if (typeof field !== "string" || field === "") fail(`${which} has no ${key}`);
+			return field as string;
+		};
+		const number = (key: string): number | undefined => {
+			const field = window[key];
+			if (field === undefined) return undefined;
+			if (typeof field !== "number" || !Number.isFinite(field) || field < 0) fail(`${which}'s ${key} is not a number of 0 or more`);
+			return field as number;
+		};
+		const id = text("id", true)!;
+		const label = text("label", true)!;
+		const title = text("title", false) ?? label;
+		const amount = text("amount", false);
+		const usedPercent = number("usedPercent");
+		const resetsAt = number("resetsAt");
+		const seconds = number("seconds");
+		if (usedPercent === undefined && amount === undefined) fail(`${which} has neither usedPercent nor amount`);
+		return {
+			id,
+			label,
+			title,
+			...(usedPercent === undefined ? {} : { usedPercent }),
+			...(amount === undefined ? {} : { amount }),
+			...(resetsAt === undefined ? {} : { resetsAt }),
+			...(seconds === undefined || seconds === 0 ? {} : { seconds }),
+		};
+	});
+	return { windows, ...(report.credits === undefined ? {} : { credits: report.credits as string }) };
 }
 
 /** "5-Hour", "Daily", "Weekly", "Monthly", "3-Day". */

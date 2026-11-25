@@ -102,6 +102,14 @@
   text-align: end;
 }
 
+// Spend without a limit: across the bar's and the percent's columns
+.smallAmount {
+  grid-column: span 2;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  text-align: end;
+}
+
 .small[data-level='ahead'] .percent {
   color: #FF9F0A;
 }
@@ -253,7 +261,8 @@
 // An amount at the left, when it resets at the right
 .windowNote {
   display: flex;
-  gap: 0.625rem;
+  flex-wrap: wrap;
+  gap: 0 0.625rem;
   justify-content: space-between;
 }
 

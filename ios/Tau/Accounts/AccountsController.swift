@@ -124,7 +124,7 @@ final class AccountsController: ViewController {
     /// account is put in use, and every five minutes when the numbers move.
     private func reloadWidget() {
         let shown = self.states.keys.sorted().flatMap { slot in
-            (self.states[slot]?.accounts ?? []).filter(\.active).map { account in "\(account.id):" + (account.usage?.windows.map { "\(Int($0.usedPercent))" }.joined(separator: ",") ?? "") }
+            (self.states[slot]?.accounts ?? []).filter(\.active).map { account in "\(account.id):" + (account.usage?.windows.map { $0.usedPercent.map { "\(Int($0))" } ?? "-" }.joined(separator: ",") ?? "") }
         }
         guard shown != self.widgetShown else {
             return

@@ -38,8 +38,16 @@ login refresh it in turn, and each refresh rotates the refresh token, so the one
   Vibe CLI reads it: `vibe_budget`, the month's allowance a plan's key draws on, and `api_budget`, a pay-as-you-go
   key's, each a `usage_percentage` from 0 to 100 and `reset_at`) and OpenRouter (`GET openrouter.ai/api/v1/key`: the
   key's `budgets`, each `limit_usd`, `spend_usd`, `reset_interval` and `resets_at`; `GET /api/v1/credits`: the account's
-  `total_credits` and `total_usage`, a window of its own with what is left, not extra usage). Other keys show none: tau does not split its cost counters
-  by account.
+  `total_credits` and `total_usage`, a window of its own with what is left, not extra usage), and a provider from
+  outside tau whose file says how (`usage.apiKey`, docs/deploy.md), asked on the same schedule, its answer checked
+  (`usageReport`): a malformed one, a throw or none in 30 s is the account's usage error. Other keys show none: tau
+  does not split its cost counters by account.
+- **A window without a limit**: `usedPercent` is optional. Without it a window is spend only, its `amount`
+  ("$2,383.76 spent"), its `title` and its `resetsAt` when known: a pay-as-you-go key that reports what it has spent and
+  no budget. The account's page shows its title and amount without a bar; the list, its label and the amount's first
+  word, the figure ("Month $2,383.76"), where a limit's bar and percent are; the widget leaves it out (nothing to run
+  out of), and an account with nothing else; the tab's badge and the levels (ahead, past 90%, used up) ignore it. A
+  report needs one of the two, a percent or an amount. An app from before this shows such a window as 0%.
 - **The app has an Accounts tab**, left of Chats: a server's accounts in one list. With several servers, the chat
   list's folder tabs (ChatListFolderTabsNode) name them under the title and a swipe goes between their lists, as
   between folders; with one, there are no tabs. Usage is what it is opened for; adding, switching and removing are
@@ -68,7 +76,8 @@ type Window = {
   id: string;
   label: string;                        // short, for the list and the widget: "5h", "Week", "Fable", "Key"
   title: string;                        // whole, for the account's page: "5-Hour Limit", "Fable Weekly Limit", "Credits"
-  usedPercent: number; resetsAt?: number /* ms */; seconds?: number;
+  usedPercent?: number;                 // 0 to 100; none for spend without a limit, which its amount says
+  resetsAt?: number /* ms */; seconds?: number;
   amount?: string;                      // in money, where the provider tells it: "$9.63 of $12.00 spent", "$4.77 of $103.00 left"
 };
 type Usage = { at: number; windows: Window[]; credits?: string /* extra usage beyond the plan */; error?: string };

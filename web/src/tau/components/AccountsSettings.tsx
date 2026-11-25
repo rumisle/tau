@@ -11,7 +11,7 @@ import type { ServerAccounts } from '../api/session';
 
 import buildClassName from '../../util/buildClassName';
 import {
-  accountTitle, attentionCount, durationText, levelOf, paceText, percentText, serviceName, windowTitle,
+  accountTitle, attentionCount, durationText, levelOf, paceText, percentText, serviceName, shortAmount, windowTitle,
 } from '../api/accounts';
 import { accountsOfServers, onAccountsChange, onServersChange, requestAccounts } from '../api/session';
 import { STRINGS } from '../strings';
@@ -251,6 +251,15 @@ function Subtitle({ account, hasSiblings }: { account: ProviderAccount; hasSibli
 
 function SmallWindow({ window, now }: { window: UsageWindow; now: number }) {
   const level = levelOf(window, now);
+  // Spend without a limit: its figure where the bar and the percent would be
+  if (window.usedPercent === undefined) {
+    return (
+      <span className={styles.small} data-level={level}>
+        <span className={styles.label}>{window.label}</span>
+        <span className={styles.smallAmount}>{shortAmount(window.amount ?? '')}</span>
+      </span>
+    );
+  }
   return (
     <span className={styles.small} data-level={level}>
       <span className={styles.label}>{window.label}</span>
@@ -265,8 +274,12 @@ function Bar({ window, now, isLarge }: { window: UsageWindow; now: number; isLar
   const elapsed = window.resetsAt !== undefined && window.seconds
     ? Math.min(1, Math.max(0, 1 - (window.resetsAt - now) / 1000 / window.seconds)) : undefined;
   return (
-    <span className={buildClassName(styles.bar, isLarge && styles.large)} data-level={levelOf(window, now)}>
-      <span className={styles.fill} style={`width: ${Math.min(100, Math.max(0, window.usedPercent))}%`} />
+    <span
+      className={buildClassName(styles.bar, isLarge && styles.large)}
+      data-level={levelOf(window, now)}
+      data-tau-bar
+    >
+      <span className={styles.fill} style={`width: ${Math.min(100, Math.max(0, window.usedPercent ?? 0))}%`} />
       {elapsed !== undefined && elapsed > 0 && elapsed < 1 && (
         <span className={styles.pace} style={`left: ${elapsed * 100}%`} />
       )}
@@ -340,12 +353,15 @@ function AccountModal({
               const pace = paceText(window, now);
               const level = levelOf(window, now);
               return (
-                <div key={window.id} className={styles.window} data-level={level}>
+                <div key={window.id} className={styles.window} data-level={level} data-tau-window>
                   <div className={styles.windowTop}>
                     <span>{windowTitle(window)}</span>
-                    <span className={styles.windowPercent}>{percentText(window.usedPercent)}</span>
+                    {window.usedPercent !== undefined && (
+                      <span className={styles.windowPercent}>{percentText(window.usedPercent)}</span>
+                    )}
                   </div>
-                  <Bar window={window} now={now} isLarge />
+                  {/* Spend without a limit has no bar: its title and amount say it */}
+                  {window.usedPercent !== undefined && <Bar window={window} now={now} isLarge />}
                   {/* What is spent or left in money, with when it resets at the right; a limit that never resets
                       (a key's, a balance) says nothing of resetting */}
                   {(window.amount !== undefined || window.resetsAt !== undefined) && (

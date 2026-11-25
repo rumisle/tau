@@ -537,6 +537,11 @@ status)
 	has_unit && say "service   $(systemctl --user is-active "$unit")" || say "service   none ($unit)"
 	[ -n "$(current_version)" ] && command -v node >/dev/null && say "data      $(check_data "$config/flags" 2>&1 | tr '\n' ' ')"
 	# Every slice loads (a distribution's slice.d drop-ins), so the test is for a file of its own.
+	# Each provider file loaded as a start would load it: what it gave, or why it is skipped.
+	if [ -n "$(current_version)" ] && command -v node >/dev/null && grep -q -- '^[^#]*--provider' "$config/flags" 2>/dev/null; then
+		read_flags "$config/flags"
+		say "providers $(node --no-warnings "$lib/current/tau-server.js" ${flags[@]+"${flags[@]}"} --check-providers 2>&1 | paste -sd '|' - | sed 's/|/; /g')"
+	fi
 	if command -v systemctl >/dev/null && [ -n "$(systemctl --user show "$cmd_slice" -p FragmentPath --value 2>/dev/null)" ]; then
 		scopes="not in scopes"
 		grep -q -- '^[^#]*--command-scopes' "$config/flags" 2>/dev/null && scopes="in scopes (--command-scopes)"

@@ -11,7 +11,7 @@ struct AccountsState: Equatable {
 
     /// Accounts to see to: one to sign in to again, or the one in use out of a limit. The tab's badge.
     var attentionCount: Int {
-        return self.accounts.filter { $0.problem != nil || ($0.active && ($0.usage?.windows.contains { $0.usedPercent >= 100 } ?? false)) }.count
+        return self.accounts.filter { $0.problem != nil || ($0.active && ($0.usage?.windows.contains { ($0.usedPercent ?? 0) >= 100 } ?? false)) }.count
     }
 
     init() {}
@@ -136,13 +136,14 @@ struct UsageWindow: Equatable {
     var label: String
     /// Whole, for the account's page: "5-Hour Limit", "Opus Weekly Limit", "Credits"; older servers send none.
     var title: String?
-    var usedPercent: Double
+    /// 0 to 100; nil for spend without a limit, which only its amount says.
+    var usedPercent: Double?
     var resetsAt: Date?
     var seconds: Double?
     /// In money, where the provider tells it: "$9.63 of $12.00 spent", "$4.77 of $103.00 left".
     var amount: String?
 
-    init(id: String, label: String, title: String? = nil, usedPercent: Double, resetsAt: Date? = nil, seconds: Double? = nil, amount: String? = nil) {
+    init(id: String, label: String, title: String? = nil, usedPercent: Double?, resetsAt: Date? = nil, seconds: Double? = nil, amount: String? = nil) {
         self.id = id
         self.label = label
         self.title = title
@@ -156,7 +157,7 @@ struct UsageWindow: Equatable {
         self.id = json.string("id") ?? ""
         self.label = json.string("label") ?? ""
         self.title = json.string("title")
-        self.usedPercent = json.double("usedPercent") ?? 0.0
+        self.usedPercent = json.double("usedPercent")
         self.resetsAt = json.double("resetsAt").map { Date(timeIntervalSince1970: $0 / 1000.0) }
         self.seconds = json.double("seconds")
         self.amount = json.string("amount")
@@ -173,19 +174,22 @@ struct UsageWindow: Equatable {
     /// Used faster than the time going: more than 15 points past an even pace, from a third of the window used (the
     /// usage monitor's "ahead" rule, with its floors).
     func isAhead(now: Date = Date()) -> Bool {
-        guard let elapsed = self.elapsed(now: now) else {
+        guard let elapsed = self.elapsed(now: now), let used = self.usedPercent else {
             return false
         }
         let floor = (self.seconds ?? 0) > 86_400 ? 30.0 : 50.0
-        return self.usedPercent >= floor && self.usedPercent > elapsed * 100.0 + 15.0
+        return used >= floor && used > elapsed * 100.0 + 15.0
     }
 
-    /// The window's level, as its bar's color says it.
+    /// The window's level, as its bar's color says it; spend without a limit is never near one.
     func level(now: Date = Date()) -> UsageLevel {
-        if self.usedPercent >= 100 {
+        guard let used = self.usedPercent else {
+            return .normal
+        }
+        if used >= 100 {
             return .out
         }
-        if self.usedPercent >= 90 {
+        if used >= 90 {
             return .high
         }
         return self.isAhead(now: now) ? .ahead : .normal

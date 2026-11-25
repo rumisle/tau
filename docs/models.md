@@ -9,6 +9,17 @@ with native discovery keep it. Remote models override matching built-ins by mode
 from the remote list remain as fallbacks. The overlay includes chat, image and classifier models, not just what the
 picker displays. A remote catalog older than the model data shipped with pi is not applied.
 
+## Providers from outside tau
+
+A provider file's provider (`--provider`, docs/deploy.md) brings its own catalog: `fetchModels`, asked with the
+account's credential (a gateway's list of its models, with prices, limits and capabilities, asked with the key). The
+pi.dev overlay is never applied to it (`catalogProvider` leaves providers with their own `refreshModels` alone). It is
+registered before the catalogs are restored, so its last list comes back from `tau.models/` at start, offline, like any
+provider's; it is checked with the others after startup and every four hours, on a search miss, and at once when the
+account in use for it changes (`ModelCatalogs.refreshProviders`), so a key just added shows its models without waiting.
+The same goes for any provider whose catalog is asked with the credential, OpenRouter's narrowed list among them. Its
+models' prices are its catalog's, which the Usage screen's costs come from.
+
 ## When updates happen
 
 - Before resuming conversations, restore the last good catalog from disk without network requests.

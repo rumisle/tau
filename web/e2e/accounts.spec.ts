@@ -89,3 +89,34 @@ test('Accounts: a device code sign-in, its usage, a key, switching and signing o
   await app.locator('.confirm-dialog-button').filter({ hasText: 'Sign Out' }).click();
   await expect(key).toHaveCount(0);
 });
+
+test('Accounts: a provider from outside tau, its key\'s usage with a limit and without one', async ({ app }) => {
+  await openAccounts(app);
+  const content = app.locator('[data-tau-accounts]');
+  await content.locator('.ListItem').filter({ hasText: 'Add Account' }).click();
+  const modal = app.locator('.modal-dialog');
+  await modal.locator('.ListItem').filter({ hasText: 'Fixture Gateway' }).click();
+  await modal.locator('input[type="password"]').fill('gw-e2e');
+  await app.keyboard.press('Enter');
+  await expect(modal).toHaveCount(0, { timeout: 10_000 });
+
+  // In the list: the budget's bar and percent, and the month's spend as its figure, without a bar
+  const account = content.locator('.ListItem').filter({ hasText: 'Fixture Gateway API key' });
+  await expect(account).toContainText('25%', { timeout: 15_000 });
+  await expect(account).toContainText('Month');
+  await expect(account).toContainText('$2,383.76');
+  await expect(account.locator('[data-tau-bar]')).toHaveCount(1);
+
+  // Its window: the budget with a bar, the month's spend with its amount and when it resets, no bar
+  await account.click();
+  await expect(modal).toContainText('Monthly Budget');
+  await expect(modal).toContainText('$25.00 of $100.00 spent');
+  await expect(modal).toContainText('This Month');
+  await expect(modal).toContainText('$2,383.76 spent');
+  const windows = modal.locator('[data-tau-window]');
+  await expect(windows).toHaveCount(2);
+  await expect(windows.nth(0).locator('[data-tau-bar]')).toHaveCount(1);
+  await expect(windows.nth(1).locator('[data-tau-bar]')).toHaveCount(0);
+  await expect(windows.nth(1)).toContainText('Resets in');
+  await expect(windows.nth(1)).not.toContainText('%');
+});

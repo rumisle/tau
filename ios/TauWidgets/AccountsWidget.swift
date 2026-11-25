@@ -103,10 +103,14 @@ struct AccountsProvider: TimelineProvider {
                 let state = AccountsState(json: try await connection.request("accounts.subscribe", [:]))
                 answered = true
                 for account in state.accounts where account.active {
-                    guard let usage = account.usage, !usage.windows.isEmpty else {
+                    // Limits only: spend without one has no bar to show and nothing to run out of.
+                    let windows = (account.usage?.windows ?? []).compactMap { window in
+                        window.usedPercent.map { AccountsEntry.Window(label: window.label, usedPercent: $0, resetsAt: window.resetsAt, seconds: window.seconds) }
+                    }
+                    guard !windows.isEmpty else {
                         continue
                     }
-                    accounts.append(AccountsEntry.Account(id: account.id, service: account.serviceName, title: account.title, plan: account.plan, windows: usage.windows.map { AccountsEntry.Window(label: $0.label, usedPercent: $0.usedPercent, resetsAt: $0.resetsAt, seconds: $0.seconds) }))
+                    accounts.append(AccountsEntry.Account(id: account.id, service: account.serviceName, title: account.title, plan: account.plan, windows: windows))
                 }
             } catch {
                 continue
