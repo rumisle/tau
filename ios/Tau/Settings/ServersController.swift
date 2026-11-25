@@ -36,24 +36,6 @@ private func addIcon(_ theme: TauTheme) -> UIImage? {
     })
 }
 
-/// The address a field holds, as the app connects to it: a bare host gets ws:// and the default port.
-func normalizedServerAddress(_ text: String) -> String? {
-    var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    if text.isEmpty {
-        return nil
-    }
-    if !text.contains("://") {
-        text = "ws://" + text
-    }
-    guard var components = URLComponents(string: text), let scheme = components.scheme, scheme == "ws" || scheme == "wss", let host = components.host, !host.isEmpty else {
-        return nil
-    }
-    if components.port == nil && scheme == "ws" {
-        components.port = 7878
-    }
-    return components.string
-}
-
 /// Settings > Servers, after Telegram's proxy list (ProxyListSettingsController): Add Server first, then every server
 /// with what its connection is doing; a server opens its own page.
 final class ServersController: SettingsListController {
@@ -200,7 +182,7 @@ final class ServerController: SettingsListController {
             SettingsRowItem(theme: theme, icon: nil, title: "Name", accessory: .disclosure(label: server.name), position: middle, action: { [weak self] in
                 self?.editName()
             }),
-            SettingsRowItem(theme: theme, icon: nil, title: "Address", accessory: .disclosure(label: server.address.replacingOccurrences(of: "ws://", with: "")), position: middle, action: { [weak self] in
+            SettingsRowItem(theme: theme, icon: nil, title: "Address", accessory: .disclosure(label: displayedServerAddress(server.address)), position: middle, action: { [weak self] in
                 self?.editAddress()
             }),
             SettingsRowItem(theme: theme, icon: nil, title: "Token", accessory: .disclosure(label: store.serverToken(self.slot) == nil ? "None" : "Set"), position: last, action: { [weak self] in

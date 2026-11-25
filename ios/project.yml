@@ -188,13 +188,14 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: YES
-  # The pure logic's unit tests (docs/reading-position.md): its files compiled in, no app to host them.
+  # The pure logic's unit tests (docs/reading-position.md, server addresses): its files compiled in, no app to host them.
   TauTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: TauTests
       - path: Tau/Chat/ReadingPosition.swift
+      - path: Tau/Settings/ServerAddress.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID).tests
