@@ -9,6 +9,9 @@ pi="$root/vendor/pi"
 if [ ! -d "$pi/.git" ]; then
 	git clone --filter=blob:none https://github.com/earendil-works/pi "$pi"
 fi
+# Its real path: through a symlinked vendor, a package's relative imports and its node_modules links would name one
+# file twice, and TypeScript would take pi-ai's unique-symbol brands for two types.
+pi="$(cd "$pi" && pwd -P)"
 git -C "$pi" fetch -q origin main
 if [ "${1:-}" = "--latest" ]; then
 	git -C "$pi" rev-parse origin/main > "$root/PI_REVISION"

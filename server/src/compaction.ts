@@ -164,10 +164,10 @@ export class FollowUpCompaction {
 			const taskId = (api as { taskId?: number }).taskId;
 			if (compaction.reason === "threshold" && (await this.#summaryWaiting(api.conversationId, taskId, context))) {
 				if (taskId !== undefined) for (const listener of this.#declined) listener(api.conversationId, taskId);
-				return { decline: true };
+				return { kind: "decline" };
 			}
 			const summary = await this.#summarize(api.conversationId, api.models, compaction.firstKept, compaction.instructions, context, taskId);
-			return summary === undefined ? undefined : { summary };
+			return summary === undefined ? undefined : { kind: "summary", summary };
 		},
 	});
 

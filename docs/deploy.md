@@ -116,7 +116,9 @@ rollback one-way (the older durable leaves a newer task blocked, `task_too_old`,
 Before releasing a bump, run the new server on a `.backup` copy of a real database, write to it (a chat, a run with a
 tool call), then the old server on the same copy, and open every chat (`server/bench/runs.ts check`, `write`). From
 4b535d57 to 35dfa757 nothing moved: the old server opened all 212 chats of a copy of a real server's after the new one had
-written to it, and ran new chats.
+written to it, and ran new chats. From a05e3a07 to 660831bf it is one-way: durable 1.6.0 moves `pi.tool` to version 4 and `pi.generation` to 3,
+which an older Harness blocks (`task_too_old`); the new server opened all 634 chats of a copy of a real server's, with
+a tool call of the old version in flight, and ran new chats.
 
 Collection: after a switch that stays up, every version but `current` and `previous` is removed, and with it any
 download a failure left. Two versions are kept, one to run and one to roll back to; `tau gc` does the same by hand.

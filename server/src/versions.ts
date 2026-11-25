@@ -200,7 +200,7 @@ export async function editInPlace(conversation: Conversation, input: EditInput, 
 			const shown = entries.filter((entry) => !hiddenIn(state.hidden, entry.id));
 			const tail = entries.at(-1)!.id;
 
-			await conversation.submit(tx, { type: "input", content: input.content, whenBusy: "followUp", requestId: input.requestId });
+			await conversation.admit(tx, { type: "input", content: input.content, whenBusy: "followUp", requestId: input.requestId });
 			// Placed at once (the conversation is idle and nothing is queued): the run's first entry is the new message.
 			const placed = (await tx.doc(LiveDoc, id)).run?.first;
 			const edits: ContextEdit[] = shown.filter(readByModel).map((entry) => ({ target: entry.id, action: "omit" }));

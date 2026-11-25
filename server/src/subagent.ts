@@ -28,7 +28,7 @@ import {
 	hook,
 	LiveDoc,
 	type ModelRef,
-	runEndTask,
+	hookTask,
 	type TaskId,
 	type Tx,
 } from "@earendil-works/pi-durable";
@@ -230,7 +230,7 @@ const RunReport = defineTask<RunReportInput, { phase: "report" }, null>({
 				const content = (await editedAway(tx, task.input.leader, task.input.name)) ? withFact(task.input.report, EDITED_AWAY) : task.input.report;
 				// As a steer: it starts a turn when the leader is idle, or reaches it at its next step, so a leader still
 				// working reads it then, not after its whole answer.
-				if (leader !== undefined) await leader.submit(tx, { type: "input", content, whenBusy: "steer", requestId: task.input.requestId });
+				if (leader !== undefined) await leader.admit(tx, { type: "input", content, whenBusy: "steer", requestId: task.input.requestId });
 				return { status: "terminal", outcome: { status: "completed", result: null } };
 			}, taskContext);
 		},
@@ -244,7 +244,7 @@ const reportAfterRun = hook(GenerationTask, {
 		if (of?.leader === undefined || of.name === undefined) return undefined;
 		const answer = (await api.entry(AssistantEntry, run.answer, context))?.model?.[0] as AssistantMessage | undefined;
 		const report = subagentReport(of.name, api.conversationId, "answered", textOf(answer));
-		return { tasks: [runEndTask(RunReport, { leader: of.leader, name: of.name, report, requestId: `subagent-answer:${api.conversationId}:${run.answer}` })] };
+		return { tasks: [hookTask(RunReport, { leader: of.leader, name: of.name, report, requestId: `subagent-answer:${api.conversationId}:${run.answer}` })] };
 	},
 });
 
@@ -543,7 +543,7 @@ const subagentTool = defineTool({
 			const subagent = (await api.conversation(conversationId, callContext))!;
 			await api.commit(async (tx) => {
 				const whenBusy = action === "send" && followUp === true ? "followUp" : "steer";
-				await subagent.submit(tx, { type: "input", content: text, whenBusy, requestId: `subagent:${api.taskId}` });
+				await subagent.admit(tx, { type: "input", content: text, whenBusy, requestId: `subagent:${api.taskId}` });
 				await show(tx, conversationId);
 			}, callContext);
 		}
