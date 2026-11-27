@@ -50,6 +50,8 @@ final class ChatMessageItemInteraction {
     var rootView: () -> UIView? = { nil }
     /// A double tap selected text in a row: the chat keeps one selection, ending the one before.
     var beganInlineSelection: (ChatMessageItemNode) -> Void = { _ in }
+    /// That selection ended, however it did.
+    var endedInlineSelection: (ChatMessageItemNode) -> Void = { _ in }
     /// A selection's knob moves, the finger where it is in the window, nil once it lifts: near the list's ends the
     /// chat scrolls on.
     var selectionKnobMoved: (ChatMessageItemNode, CGPoint?) -> Void = { _, _ in }
@@ -793,15 +795,19 @@ final class ChatMessageItemNode: ListViewItemNode {
     private var inlineSelection: (node: TextSelectionNode, surface: MessageTextSurface, text: NSAttributedString)?
 
     /// The text node and character under a point of the row, when a double tap there selects: a message's own text
-    /// (the user's or the answer's, done), not a tool's card, and not code, which a tap copies.
+    /// (the user's or the answer's, streaming too, as far as it shows), not a tool's card, and not code, which a tap
+    /// copies.
     private func selectableText(at point: CGPoint) -> (InteractiveTextNode, Int)? {
-        guard let item = self.item, item.selection == nil, !item.isStreaming, item.message.tool == nil, item.message.role == .assistant || item.message.role == .user else {
+        guard let item = self.item, item.selection == nil, item.message.tool == nil, item.message.role == .assistant || item.message.role == .user else {
             return nil
         }
         for textNode in self.textNodes where textNode.supernode === self.contentNode {
             let local = self.view.convert(point, to: textNode.view)
             guard textNode.bounds.contains(local), let (index, attributes) = textNode.attributesAtPoint(local, orNearest: false) else {
                 continue
+            }
+            if let shown = self.revealedCount(in: textNode), index >= shown {
+                return nil
             }
             if attributes[MarkdownText.inlineCodeKey] != nil {
                 return nil
@@ -814,13 +820,85 @@ final class ChatMessageItemNode: ListViewItemNode {
         return nil
     }
 
+    /// What a selection holds to of a text: what shows of it. The rest of a streaming answer's last block is still being
+    /// written, and its Markdown changes as it is (half a `**`, a line that turns out to be a list).
+    private static func shownText(_ text: NSAttributedString, limit: Int?) -> NSAttributedString {
+        guard let limit, limit < text.length else {
+            return text
+        }
+        return text.attributedSubstring(from: NSRange(location: 0, length: max(0, limit)))
+    }
+
+    /// While the text is revealed: how many characters of a text node show; nil when all of them do.
+    private func revealedCount(in textNode: InteractiveTextNode) -> Int? {
+        guard let controller = self.revealController else {
+            return nil
+        }
+        let revealed = Int(controller.revealedCount)
+        var textCursor = 0
+        for block in self.laidOutBlocks {
+            guard case let .text(start, length, _, _) = block else {
+                continue
+            }
+            if textCursor < self.textNodes.count, self.textNodes[textCursor] === textNode {
+                return revealed >= start + length ? nil : max(0, revealed - start)
+            }
+            textCursor += 1
+        }
+        return nil
+    }
+
+    /// While the text is revealed: where what shows ends in a selection surface's text; nil when all of it shows.
+    private func revealedLimit(in surface: MessageTextSurface) -> Int? {
+        guard let controller = self.revealController else {
+            return nil
+        }
+        let revealed = Int(controller.revealedCount)
+        var textCursor = 0
+        var tableCursor = 0
+        var partCursor = 0
+        for block in self.laidOutBlocks {
+            // The block's node, and whether the surface has it (the next part), as selectionParts makes them.
+            let node: ASDisplayNode?
+            let start: Int
+            let length: Int
+            switch block {
+            case let .text(blockStart, blockLength, _, _):
+                node = textCursor < self.textNodes.count ? self.textNodes[textCursor] : nil
+                textCursor += 1
+                (start, length) = (blockStart, blockLength)
+            case let .table(blockStart, blockLength, _, _):
+                node = tableCursor < self.tableNodes.count ? self.tableNodes[tableCursor] : nil
+                tableCursor += 1
+                (start, length) = (blockStart, blockLength)
+            }
+            let isPart = partCursor < surface.parts.count && node != nil && surface.parts[partCursor].node === node
+            if revealed < start + length {
+                guard partCursor < surface.parts.count else {
+                    return surface.text.length
+                }
+                let offset = surface.offset(ofPart: partCursor)
+                if isPart, case .text = surface.parts[partCursor] {
+                    return offset + max(0, revealed - start)
+                }
+                // A table, or a block the surface leaves out: what comes before it.
+                return offset
+            }
+            if isPart {
+                partCursor += 1
+            }
+        }
+        return nil
+    }
+
     /// Selects the word at `index` of `textNode`, with its knobs and menu, where the text is; the knobs go on through
     /// the rest of the message.
     private func beginInlineSelection(textNode: InteractiveTextNode, at index: Int) {
         guard let item = self.item else {
             return
         }
-        self.endInlineSelection(animated: false)
+        // Another word in place of the one selected: the chat's hold goes on.
+        self.endInlineSelection(animated: false, notifies: false)
         let selection = self.addTextSelectionNode(item: item, updateIsActive: { [weak self] active in
             if !active {
                 self?.endInlineSelection(animated: true)
@@ -833,18 +911,32 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
         // A tap elsewhere ends it, as one outside a text view's selection does; a drag scrolls the chat under it
         // (ChatControllerNode's tap, not the menu's touch).
-        self.inlineSelection = (selection.node, selection.surface, text)
+        // A streaming answer: only what shows, as it grows (layoutInlineSelection keeps the selection then).
+        selection.surface.limit = { [weak self, weak surface = selection.surface] in
+            guard let self, let surface else {
+                return nil
+            }
+            return self.revealedLimit(in: surface)
+        }
+        self.inlineSelection = (selection.node, selection.surface, Self.shownText(text, limit: selection.surface.limit?()))
         item.interaction.beganInlineSelection(self)
-        selection.node.setSelection(range: wordRange(in: text.string as NSString, at: surfaceIndex), displayMenu: true)
+        var range = wordRange(in: text.string as NSString, at: surfaceIndex)
+        if let limit = selection.surface.limit?(), range.upperBound > limit {
+            range.length = max(1, limit - range.location)
+        }
+        selection.node.setSelection(range: range, displayMenu: true)
     }
 
-    func endInlineSelection(animated: Bool) {
+    func endInlineSelection(animated: Bool, notifies: Bool = true) {
         guard let selection = self.inlineSelection else {
             return
         }
         self.inlineSelection = nil
         selection.node.cancelSelection()
         Self.removeTextSelectionNode((selection.node, selection.surface), animated: animated)
+        if notifies {
+            self.item?.interaction.endedInlineSelection(self)
+        }
     }
 
     /// While the list scrolls under a selection made in place: its menu steps aside, and comes back where it is now.
@@ -864,12 +956,17 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.inlineSelection?.node.updateMovingKnob()
     }
 
-    /// Whether a point of the row (its own coordinates) is on the selection made in place, which takes its own taps.
+    /// Whether a point of the row (its own coordinates) is the selection's to take: a knob, or text (a tap there ends
+    /// the selection itself). Not the rest of the row, which in a long answer is most of the screen: there a tap is the
+    /// chat's, and ends the selection too.
     func inlineSelectionContains(_ point: CGPoint) -> Bool {
-        guard let node = self.inlineSelection?.node else {
+        guard let selection = self.inlineSelection else {
             return false
         }
-        return node.hitTest(self.view.convert(point, to: node.view), with: nil) != nil
+        if selection.node.hasKnob(at: self.view.convert(point, to: selection.node.view)) {
+            return true
+        }
+        return selection.surface.attributesAtPoint(self.view.convert(point, to: selection.surface.view), orNearest: false) != nil
     }
 
     /// The message's text on screen, in window coordinates: how far the list may scroll for a knob.
@@ -882,7 +979,8 @@ final class ChatMessageItemNode: ListViewItemNode {
         return top.union(bottom)
     }
 
-    /// After a layout: the selection follows its text, or ends when the text is not what it selected in.
+    /// After a layout: the selection follows its text, or ends when the text is not what it selected in. A streaming
+    /// answer's text only grows at its end: the selection stays while what it was made in is still the text's start.
     private func layoutInlineSelection() {
         if let selection = self.previewSelection {
             selection.surface.frame = self.contentNode.bounds
@@ -895,11 +993,15 @@ final class ChatMessageItemNode: ListViewItemNode {
             return
         }
         let parts = self.selectionParts()
-        guard let item = self.item, item.selection == nil, !item.isStreaming, MessageTextSurface.text(of: parts).0.isEqual(to: selection.text) else {
+        let text = MessageTextSurface.text(of: parts).0
+        // The characters, not their attributes: a formula's attachment is another object each time the text is laid
+        // out, and where the selection is drawn comes from the new layout anyway.
+        guard let item = self.item, item.selection == nil, text.length >= selection.text.length, (text.string as NSString).substring(to: selection.text.length) == selection.text.string else {
             self.endInlineSelection(animated: false)
             return
         }
         selection.surface.update(parts: parts)
+        self.inlineSelection = (selection.node, selection.surface, Self.shownText(text, limit: selection.surface.limit?()))
         selection.surface.frame = self.contentNode.bounds
         selection.node.frame = selection.surface.frame
         selection.node.highlightAreaNode.frame = selection.surface.frame

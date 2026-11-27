@@ -155,6 +155,10 @@ private func cancelContextGestures(view: UIView) {
 }
 
 open class ListViewImpl: ASDisplayNode, ListView, ASScrollViewDelegate, ASGestureRecognizerDelegate {
+    /// tau: rows that grow at their end (setInvertOffsetDirection) grow down the screen even at the end of the list,
+    /// as they do once it is scrolled back: what is on screen stays put, as while text is selected in it.
+    public var holdsGrowingItems: Bool = false
+
     public struct ScrollingIndicatorState {
         public struct Item {
             public var index: Int
@@ -4850,7 +4854,8 @@ open class ListViewImpl: ASDisplayNode, ListView, ASScrollViewDelegate, ASGestur
                 if itemNode.apparentFrame.maxY <= visualInsets.top {
                     offsetRanges.offset(IndexRange(first: 0, last: index), offset: -apparentHeightDelta)
                 } else if invertOffsetDirection /*&& itemNode.frame.height < self.visibleSize.height*/ {
-                    if self.scroller.contentOffset.y < 1.0 {
+                    // tau: held, a row growing at its end grows down even at the end of the list, as when scrolled back.
+                    if self.scroller.contentOffset.y < 1.0 && !self.holdsGrowingItems {
                         /*let overflowOffset = visualInsets.top - (itemNode.apparentFrame.minY - apparentHeightDelta)
                         let remainingOffset = apparentHeightDelta - overflowOffset
                         offsetRanges.offset(IndexRange(first: 0, last: index), offset: -remainingOffset)

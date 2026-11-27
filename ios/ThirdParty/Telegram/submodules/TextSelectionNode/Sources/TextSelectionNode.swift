@@ -744,6 +744,11 @@ public final class TextSelectionNode: ASDisplayNode {
         }
     }
     
+    /// tau: whether a point (in this node) is on one of the knobs.
+    public func hasKnob(at point: CGPoint) -> Bool {
+        return self.knobAtPoint(point) != nil
+    }
+
     private func knobAtPoint(_ point: CGPoint) -> (Knob, CGPoint)? {
         if !self.leftKnob.alpha.isZero, self.leftKnob.frame.insetBy(dx: -4.0, dy: -8.0).contains(point) {
             return (.left, self.leftKnob.frame.offsetBy(dx: 0.0, dy: self.leftKnob.frame.width / 2.0).center)

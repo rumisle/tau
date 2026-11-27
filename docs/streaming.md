@@ -28,7 +28,8 @@ with the dev model's `!doc <sections>` (a long answer of headings, paragraphs, l
 
 - **The row grows down the screen** (`ListViewItemApply.setInvertOffsetDirection`, as Telegram's expanding bubbles
   do). At the end of the chat the list still follows the answer; scrolled back, the text stays where it is and new text
-  goes on below, under the arrow to the end.
+  goes on below, under the arrow to the end. While text is selected in place (docs/typography.md) it grows down at the
+  end of the chat too (`ListViewImpl.holdsGrowingItems`, patch 0018).
 - **Inside a streaming row nothing animates**: blocks are put in place at once, and only the row's height animates in
   the list. New text comes in through Telegram's reveal (`TextRevealController`).
 - **The streaming row is drawn as it is laid out** (`displaysAsynchronously = false`, with InteractiveTextNode patched

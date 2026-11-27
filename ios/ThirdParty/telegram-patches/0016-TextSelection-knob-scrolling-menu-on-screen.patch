@@ -1,8 +1,6 @@
-diff --git a/submodules/TextSelectionNode/Sources/TextSelectionNode.swift b/submodules/TextSelectionNode/Sources/TextSelectionNode.swift
-index d944fea..61f4eb5 100644
 --- a/submodules/TextSelectionNode/Sources/TextSelectionNode.swift
 +++ b/submodules/TextSelectionNode/Sources/TextSelectionNode.swift
-@@ -86,6 +86,11 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
+@@ -86,6 +86,11 @@
      fileprivate var knobAtPoint: ((CGPoint) -> (Knob, CGPoint)?)?
      fileprivate var moveKnob: ((Knob, CGPoint) -> Void)?
      public var finishedMovingKnob: (() -> Void)?
@@ -14,12 +12,12 @@ index d944fea..61f4eb5 100644
      public var clearSelection: (() -> Void)?
      public private(set) var didRecognizeTap: Bool = false
      fileprivate var isSelecting: Bool = false
-@@ -104,6 +109,18 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
+@@ -104,7 +109,19 @@
          
          self.movingKnob = nil
          self.currentLocation = nil
 +        self.windowLocation = nil
-+    }
+     }
 +
 +    /// tau: the knob follows the finger again where it is now in the view, after what is under it moved (a list
 +    /// scrolled while the finger held still).
@@ -30,10 +28,11 @@ index d944fea..61f4eb5 100644
 +        let currentLocation = view.convert(windowLocation, from: nil)
 +        self.currentLocation = currentLocation
 +        self.moveKnob?(knob, CGPoint(x: initialKnobPosition.x + currentLocation.x - initialGesturePosition.x, y: initialKnobPosition.y + currentLocation.y - initialGesturePosition.y))
-     }
++    }
      
      override public func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-@@ -115,8 +132,10 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
+         super.touchesBegan(touches, with: event)
+@@ -115,8 +132,10 @@
          if let currentLocation = currentLocation {
              if let (knob, knobPosition) = self.knobAtPoint?(currentLocation) {
                  self.movingKnob = (knob, knobPosition, currentLocation)
@@ -44,7 +43,7 @@ index d944fea..61f4eb5 100644
              } else if self.canBeginSelection?(currentLocation) ?? true {
                  if self.longTapTimer == nil {
                      final class TimerTarget: NSObject {
-@@ -149,7 +168,9 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
+@@ -149,7 +168,9 @@
          self.currentLocation = currentLocation
          
          if let (knob, initialKnobPosition, initialGesturePosition) = self.movingKnob, let currentLocation = currentLocation {
@@ -54,7 +53,7 @@ index d944fea..61f4eb5 100644
          }
      }
      
-@@ -170,6 +191,7 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
+@@ -170,6 +191,7 @@
              self.clearSelection?()
          } else {
              if let _ = self.currentLocation, let _ = self.movingKnob {
@@ -62,7 +61,7 @@ index d944fea..61f4eb5 100644
                  self.finishedMovingKnob?()
              }
          }
-@@ -179,6 +201,10 @@ public final class TextSelectionGestureRecognizer: UIGestureRecognizer, UIGestur
+@@ -179,6 +201,10 @@
      override public func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
          super.touchesCancelled(touches, with: event)
          
@@ -73,7 +72,7 @@ index d944fea..61f4eb5 100644
          self.state = .cancelled
      }
      
-@@ -287,6 +313,11 @@ public final class TextSelectionNode: ASDisplayNode {
+@@ -287,6 +313,11 @@
      public var enableShare: Bool = true
      public var enableAutomaticScrolling: Bool = true
      public var cancelSelectionOnOutsideTap: Bool = false
@@ -85,7 +84,7 @@ index d944fea..61f4eb5 100644
      
      public var menuSkipCoordnateConversion: Bool = false
      
-@@ -360,6 +391,10 @@ public final class TextSelectionNode: ASDisplayNode {
+@@ -360,6 +391,10 @@
                  case .right:
                      updatedRight = stringIndex
                  }
@@ -96,21 +95,33 @@ index d944fea..61f4eb5 100644
                  if strongSelf.currentRange?.0 != updatedLeft || strongSelf.currentRange?.1 != updatedRight {
                      strongSelf.currentRange = (updatedLeft, updatedRight)
                      let updatedRange = NSRange(location: min(updatedLeft, updatedRight), length: max(updatedLeft, updatedRight) - min(updatedLeft, updatedRight))
-@@ -378,6 +413,13 @@ public final class TextSelectionNode: ASDisplayNode {
+@@ -377,6 +412,13 @@
+                 return
              }
              strongSelf.displayMenu()
-         }
++        }
 +        // tau: the menu steps aside while a knob moves, as UIKit's does.
 +        recognizer.beganMovingKnob = { [weak self] in
 +            self?.hideMenu()
 +        }
 +        recognizer.movedKnob = { [weak self] point in
 +            self?.knobMoved?(point)
-+        }
+         }
          recognizer.beginSelection = { [weak self] point in
              guard let strongSelf = self, let attributedString = strongSelf.textNodeOrView.currentText else {
-                 return
-@@ -731,6 +773,24 @@ public final class TextSelectionNode: ASDisplayNode {
+@@ -702,6 +744,11 @@
+         }
+     }
+     
++    /// tau: whether a point (in this node) is on one of the knobs.
++    public func hasKnob(at point: CGPoint) -> Bool {
++        return self.knobAtPoint(point) != nil
++    }
++
+     private func knobAtPoint(_ point: CGPoint) -> (Knob, CGPoint)? {
+         if !self.leftKnob.alpha.isZero, self.leftKnob.frame.insetBy(dx: -4.0, dy: -8.0).contains(point) {
+             return (.left, self.leftKnob.frame.offsetBy(dx: 0.0, dy: self.leftKnob.frame.width / 2.0).center)
+@@ -731,6 +778,24 @@
          self.dismissSelection()
          self.updateIsActive(false)
      }
@@ -135,7 +146,7 @@ index d944fea..61f4eb5 100644
      
      private func displayMenu() {
          guard let currentRects = self.currentRects, !currentRects.isEmpty, let currentRange = self.currentRange, let attributedString = self.textNodeOrView.currentText else {
-@@ -840,10 +900,19 @@ public final class TextSelectionNode: ASDisplayNode {
+@@ -840,10 +905,19 @@
                  return nil
              }
              

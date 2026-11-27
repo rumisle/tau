@@ -378,6 +378,10 @@ final class ChatControllerNode: ASDisplayNode {
 
     func update(state: ConversationState) {
         self.updateTestState(state)
+        // The selected row's node went (off screen, remade) without saying so: the hold goes with it.
+        if self.selectionHeldAtBottom != nil && self.inlineSelectionNode == nil {
+            self.releaseSelectionHold()
+        }
         // Messages leaving the queue for the transcript rise from the panel.
         let left = (self.state?.queued ?? []).filter { old in old.mode != .newContext && !state.queued.contains(where: { $0.id == old.id }) }
         if !left.isEmpty, let source = self.inputPanelNode.accessoryFrameInWindow() {
@@ -699,6 +703,28 @@ final class ChatControllerNode: ASDisplayNode {
 
     /// The row whose text a double tap selected, in place (ChatMessageItemNode.beginInlineSelection): one at a time.
     private weak var inlineSelectionNode: ChatMessageItemNode?
+    /// While text is selected in place, a streaming row grows down the screen even at the end of the chat, as when it
+    /// is scrolled back, so the selected words stay under the finger and the menu by them; whether the chat was at its
+    /// end when the selection began, to go back there once it ends.
+    private var selectionHeldAtBottom: Bool?
+
+    private func holdForSelection() {
+        if self.selectionHeldAtBottom == nil {
+            self.selectionHeldAtBottom = self.isAtBottom
+        }
+        self.historyNode.holdsGrowingItems = true
+    }
+
+    private func releaseSelectionHold() {
+        guard let wasAtBottom = self.selectionHeldAtBottom else {
+            return
+        }
+        self.selectionHeldAtBottom = nil
+        self.historyNode.holdsGrowingItems = false
+        if wasAtBottom && !self.isAtBottom {
+            self.scrollToBottom()
+        }
+    }
 
     private let selectionTapDelegate = SimultaneousGestureDelegate()
 
@@ -794,6 +820,7 @@ final class ChatControllerNode: ASDisplayNode {
         self.inlineSelectionNode?.endInlineSelection(animated: true)
         self.inlineSelectionNode = nil
         self.stopSelectionScrolling()
+        self.releaseSelectionHold()
     }
 
     // MARK: - Scrolling under a selection's knob
@@ -891,10 +918,20 @@ final class ChatControllerNode: ASDisplayNode {
                 guard let self else {
                     return
                 }
-                if let current = self.inlineSelectionNode, current !== node {
-                    current.endInlineSelection(animated: true)
-                }
+                // The new one first: the old one's end then keeps the hold.
+                let previous = self.inlineSelectionNode
                 self.inlineSelectionNode = node
+                self.holdForSelection()
+                if let previous, previous !== node {
+                    previous.endInlineSelection(animated: true)
+                }
+            }
+            self.interaction.endedInlineSelection = { [weak self] node in
+                guard let self, self.inlineSelectionNode === node || self.inlineSelectionNode == nil else {
+                    return
+                }
+                self.inlineSelectionNode = nil
+                self.releaseSelectionHold()
             }
             self.interaction.selectionKnobMoved = { [weak self] node, point in
                 self?.selectionKnobMoved(node, point)

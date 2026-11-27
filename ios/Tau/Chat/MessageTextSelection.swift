@@ -37,6 +37,9 @@ final class MessageTextSurface: ASDisplayNode, TextNodeProtocol {
     private(set) var parts: [Part] = []
     private var offsets: [Int] = []
     private(set) var text = NSAttributedString()
+    /// Where the text shown ends while the rest is still being revealed (a streaming answer): a selection begins and
+    /// its knobs go only up to there. Nil: all of it.
+    var limit: (() -> Int?)?
 
     override init() {
         super.init()
@@ -65,6 +68,11 @@ final class MessageTextSurface: ASDisplayNode, TextNodeProtocol {
         return (text, offsets)
     }
 
+    /// Where a part begins in the text.
+    func offset(ofPart index: Int) -> Int {
+        return self.offsets[index]
+    }
+
     /// The part and the surface's index a character of a text node has.
     func index(of textNode: InteractiveTextNode, _ index: Int) -> Int? {
         for (partIndex, part) in self.parts.enumerated() {
@@ -89,6 +97,20 @@ final class MessageTextSurface: ASDisplayNode, TextNodeProtocol {
     }
 
     func attributesAtPoint(_ point: CGPoint, orNearest: Bool) -> (Int, [NSAttributedString.Key: Any])? {
+        guard let (index, attributes) = self.unlimitedAttributesAtPoint(point, orNearest: orNearest) else {
+            return nil
+        }
+        guard let limit = self.limit?() else {
+            return (index, attributes)
+        }
+        // Not on what is not shown yet; a knob stops at the end of what is.
+        if !orNearest {
+            return index < limit ? (index, attributes) : nil
+        }
+        return (min(index, limit), attributes)
+    }
+
+    private func unlimitedAttributesAtPoint(_ point: CGPoint, orNearest: Bool) -> (Int, [NSAttributedString.Key: Any])? {
         guard !self.parts.isEmpty else {
             return nil
         }
@@ -135,6 +157,10 @@ final class MessageTextSurface: ASDisplayNode, TextNodeProtocol {
     }
 
     func textRangeRects(in range: NSRange) -> (rects: [CGRect], start: TextRangeRectEdge, end: TextRangeRectEdge)? {
+        var range = range
+        if let limit = self.limit?(), range.upperBound > limit {
+            range.length = max(0, limit - range.location)
+        }
         guard range.length > 0 else {
             return nil
         }

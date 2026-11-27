@@ -2471,6 +2471,37 @@ final class SendingUITests: XCTestCase {
         }
     }
 
+    /// A word of an answer still streaming, double tapped: selected with its menu, which stays by it while the answer
+    /// goes on (the row grows down the screen meanwhile); once the selection ends, the chat follows the answer again.
+    func testSelectWhileStreaming() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("!doc 20")
+        self.send()
+        sleep(5)
+        let copy = self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy'")).firstMatch
+        self.shot("sws-pre")
+        self.point(0.5, 0.5).doubleTap()
+        usleep(500_000)
+        self.shot("sws-tapped")
+        XCTAssertTrue(copy.waitForExistence(timeout: 3), "the selection's menu while the answer streams")
+        let before = copy.frame
+        self.shot("sws-0-selected")
+        sleep(2)
+        self.shot("sws-1-still")
+        XCTAssertEqual(self.app.chatState, "busy", "the answer still streams")
+        XCTAssertTrue(copy.exists, "the selection outlives the text that came")
+        XCTAssertEqual(copy.frame.minY, before.minY, accuracy: 2.0, "the menu stays by the word")
+        // A tap elsewhere, in the same answer but not on its text (beside a heading), ends it; the chat goes back to
+        // the end.
+        self.point(0.85, 0.4).tap()
+        sleep(1)
+        self.shot("sws-2-ended")
+        XCTAssertFalse(copy.exists)
+        XCTAssertFalse(self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Quote'")).firstMatch.exists)
+        XCTAssertFalse(self.app.descendants(matching: .any)["downButton"].firstMatch.isHittable, "at the end again")
+    }
+
     /// The streaming answer leaves the screen (the user reads an older one) and comes back: it goes on where it was,
     /// not revealed again from its first letter.
     func testStreamingRecycle() {
