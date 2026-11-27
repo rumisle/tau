@@ -73,9 +73,9 @@ Two ways, both Telegram's `TextSelectionNode` with its knobs and its Copy / Quot
   a selection, a long press selects a word instead of opening the menu. A tap elsewhere ends it, also in the same
   long answer away from its text (beside a heading, between paragraphs): only a knob or text is the selection's.
 - **In a streaming answer too**, over what shows of it: a double tap past the reveal does nothing, and the knobs stop
-  at its end (`MessageTextSurface.limit`). The text only grows at its end, so the selection stays while what showed
-  when it was made is still the text's start (by its characters: a formula's attachment is a new object each layout),
-  and ends if that changes. While it is up the row grows down the screen even at the end of the chat
+  at its end (`MessageTextSurface.limit`). The selection stays while the text up to its end is as it showed (by its
+  characters: a formula's attachment is a new object each layout), and ends if that changes. What comes after it may
+  change: a table's first row shows as text until the table is whole. While it is up the row grows down the screen even at the end of the chat
   (`ListViewImpl.holdsGrowingItems`, docs/streaming.md), so the word stays under the finger and the menu by it; once
   it ends, a chat that was at its end goes back there and follows the answer again.
 - **In the message's menu** (a long press lifts it out): a long press on its text, as in Telegram.

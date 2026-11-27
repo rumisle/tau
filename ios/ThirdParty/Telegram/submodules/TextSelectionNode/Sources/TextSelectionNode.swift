@@ -744,6 +744,11 @@ public final class TextSelectionNode: ASDisplayNode {
         }
     }
     
+    /// tau: what is selected, in the text's characters.
+    public var selectedRange: NSRange? {
+        return self.currentRange.map { NSRange(location: $0.0, length: $0.1 - $0.0) }
+    }
+
     /// tau: whether a point (in this node) is on one of the knobs.
     public func hasKnob(at point: CGPoint) -> Bool {
         return self.knobAtPoint(point) != nil

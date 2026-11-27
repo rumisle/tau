@@ -2481,10 +2481,14 @@ final class SendingUITests: XCTestCase {
         sleep(5)
         let copy = self.app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy'")).firstMatch
         self.shot("sws-pre")
-        self.point(0.5, 0.5).doubleTap()
-        usleep(500_000)
+        // Well above the field, where the end of what shows is: text there may not show yet when the tap lands, and a
+        // double tap past the reveal selects nothing. Words, not a table or the room between blocks: tried a few places.
+        for y in [0.33, 0.27, 0.39, 0.21] where !copy.exists {
+            self.point(0.5, y).doubleTap()
+            _ = copy.waitForExistence(timeout: 1.5)
+        }
         self.shot("sws-tapped")
-        XCTAssertTrue(copy.waitForExistence(timeout: 3), "the selection's menu while the answer streams")
+        XCTAssertTrue(copy.exists, "the selection's menu while the answer streams")
         let before = copy.frame
         self.shot("sws-0-selected")
         sleep(2)
@@ -2492,9 +2496,9 @@ final class SendingUITests: XCTestCase {
         XCTAssertEqual(self.app.chatState, "busy", "the answer still streams")
         XCTAssertTrue(copy.exists, "the selection outlives the text that came")
         XCTAssertEqual(copy.frame.minY, before.minY, accuracy: 2.0, "the menu stays by the word")
-        // A tap elsewhere, in the same answer but not on its text (beside a heading), ends it; the chat goes back to
-        // the end.
-        self.point(0.85, 0.4).tap()
+        // A tap elsewhere, in the same answer but not on its text (its right margin), ends it; the chat goes back to the
+        // end.
+        self.point(0.98, 0.45).tap()
         sleep(1)
         self.shot("sws-2-ended")
         XCTAssertFalse(copy.exists)

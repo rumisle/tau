@@ -994,9 +994,12 @@ final class ChatMessageItemNode: ListViewItemNode {
         }
         let parts = self.selectionParts()
         let text = MessageTextSurface.text(of: parts).0
+        // The text up to the selection's end, as it showed: what comes after it may change as the answer goes on (a
+        // table's first row is text until the table is whole) and the selection is still over the same characters.
         // The characters, not their attributes: a formula's attachment is another object each time the text is laid
         // out, and where the selection is drawn comes from the new layout anyway.
-        guard let item = self.item, item.selection == nil, text.length >= selection.text.length, (text.string as NSString).substring(to: selection.text.length) == selection.text.string else {
+        let end = min(selection.text.length, selection.node.selectedRange?.upperBound ?? selection.text.length)
+        guard let item = self.item, item.selection == nil, text.length >= end, (text.string as NSString).substring(to: end) == (selection.text.string as NSString).substring(to: end) else {
             self.endInlineSelection(animated: false)
             return
         }

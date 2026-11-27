@@ -39,6 +39,12 @@ with the dev model's `!doc <sections>` (a long answer of headings, paragraphs, l
   text did not change.
 - **Every block keeps a reveal count until the reveal ends**: its whole length once the reveal has passed it. Segments
   a layout creates take the count at once.
+- **What the count reveals shows at once** (patch 0019). Telegram's reveal hands the characters a step adds to snippets
+  that fade in, and its mask caught up with them only at the next step; tau's text has no snippets (it is laid out
+  without character rects), so the mask stayed a step behind, and where the reveal stopped the last step stayed hidden.
+  A block revealed in one step (a chat back from the background shows what came as written) was blank until the
+  answer moved again, which after a burst of thinking is as long as the model goes on thinking. `!opus N` (the dev
+  model) streams thinking in such bursts.
 - **How far each answer has been revealed** is kept per chat (`ChatMessageItemInteraction.revealProgress`), so a new
   node picks up where the last one stopped.
 - **Fence lines pass through the math scanner whole.**

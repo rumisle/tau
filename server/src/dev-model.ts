@@ -7,7 +7,7 @@
 // `!read <path>` reads a file with the read tool (an image comes back as one); `!send <path> [<path>…]` sends files to
 // the user (src/send-file.ts). `!code <script>` runs a code mode script (docs/codemode.md), `!code @<path>` the one in a file. `!doc <sections>` streams a long Markdown answer (headings, paragraphs, lists, code, tables, math), to read while it
 // streams. `!burst <text>` answers as the echo does but all at once, its thinking and text in one go, as a provider that
-// buffers; `!burst+<ms> <text>` sends the thinking, then the rest that long after, `!burst-<ms>` the end that long after, `!burst*<ms>` each event that long after the one before. A message that /tmp/tau-dev-answers.json (or TAU_DEV_ANSWERS) maps to an answer is answered with it as written, for screenshots of answers. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
+// buffers; `!burst+<ms> <text>` sends the thinking, then the rest that long after, `!burst-<ms>` the end that long after, `!burst*<ms>` each event that long after the one before. `!opus <N>` first in a chat: N steps of thinking and a bash call of a few seconds, then an answer, the thinking sent a paragraph at once after pauses, as a model that summarizes its thinking (Claude) sends it. A message that /tmp/tau-dev-answers.json (or TAU_DEV_ANSWERS) maps to an answer is answered with it as written, for screenshots of answers. With a cache lifetime (`--dev-cache-ttl <seconds>`) it charges as a costly model whose prompt cache expires
 // that long after it was last used, to try cache warming (src/cache.ts) without paying for it.
 import { type Api, calculateCost, createAssistantMessageEventStream, type AssistantMessage, type Message, type Model, type Provider } from "@earendil-works/pi-ai";
 import { readFileSync } from "node:fs";
@@ -116,6 +116,7 @@ function buffering(base: Provider): Provider {
 		streamSimple(model, context, streamOptions) {
 			const inner = base.streamSimple(model, context, streamOptions);
 			const last = context.messages.findLast((message) => (message.role as string) !== "system");
+			if (opusRounds(context.messages) !== null) return paced(inner);
 			const burst = last?.role === "user" ? /^!burst(?:([+*-])(\d+))?/.exec(userText(last.content)) : null;
 			if (burst === null) return inner;
 			const outer = createAssistantMessageEventStream();
@@ -133,6 +134,46 @@ function buffering(base: Provider): Provider {
 			return outer;
 		},
 	};
+}
+
+/** `!opus N` as the first message of a chat: its rounds, else null. */
+function opusRounds(messages: readonly Message[]): number | null {
+	const first = messages.find((message) => message.role === "user");
+	const match = first === undefined ? null : /^!opus (\d+)/.exec(userText((first as Extract<Message, { role: "user" }>).content));
+	return match === null ? null : Number(match[1]);
+}
+
+/**
+ * For `!opus`: thinking as a model that summarizes it sends it, a paragraph at once after a pause, and a longer pause
+ * after the last; the rest as it streams.
+ */
+function paced(inner: ReturnType<Provider["streamSimple"]>): ReturnType<Provider["streamSimple"]> {
+	const outer = createAssistantMessageEventStream();
+	const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+	void (async () => {
+		let held: Parameters<typeof outer.push>[0][] = [];
+		for await (const event of inner) {
+			if (event.type === "thinking_start") {
+				held.push(event);
+			} else if (event.type === "thinking_delta") {
+				held.push(event);
+				if (event.delta.includes("\n\n")) {
+					for (const each of held) outer.push(each);
+					held = [];
+					await wait(1200);
+				}
+			} else if (event.type === "thinking_end") {
+				for (const each of held) outer.push(each);
+				held = [];
+				outer.push(event);
+				await wait(3000);
+			} else {
+				outer.push(event);
+			}
+		}
+		outer.end(await inner.result());
+	})();
+	return outer;
 }
 
 /**
@@ -206,6 +247,17 @@ function expiringCache(base: Provider, ttl: number): Provider {
 function reply(messages: readonly Message[], who: string) {
 	// System messages carry prompt changes; the request is about the message before them.
 	const last = messages.findLast((message) => (message.role as string) !== "system");
+	const rounds = opusRounds(messages);
+	if (rounds !== null) {
+		const done = messages.filter((message) => message.role === "toolResult").length;
+		const paragraph = (n: number) =>
+			`Step ${done + 1}, thought ${n}: I'm checking whether the names are actually taken or just showing wildcard records, and they probably are wildcards. Then I'm looking at the next idea, though it seems likely taken or not real.\n\n`;
+		if (done < rounds) {
+			return fauxAssistantMessage([fauxThinking(paragraph(1) + paragraph(2)), fauxToolCall("bash", { command: `sleep ${2 + (done % 3) * 2}; echo step ${done + 1}` })], { stopReason: "toolUse" });
+		}
+		const words = Array.from({ length: 60 }, (_, i) => ["the", "names", "that", "were", "free", "when", "checked", "and", "their", "prices"][i % 10]).join(" ");
+		return fauxAssistantMessage([fauxThinking(paragraph(1) + paragraph(2)), fauxText(`Done after ${rounds} steps.\n\n${words}.\n\n${words}.`)]);
+	}
 	if (last?.role === "toolResult" && last.toolName === "codemode") return fauxAssistantMessage([fauxText(last.isError ? "The script failed." : "Ran the script.")]);
 	// The history tools' JSON is for the model; the card shows it.
 	if (last?.role === "toolResult" && last.toolName.startsWith("history_")) return fauxAssistantMessage([fauxText(last.isError ? "That failed." : "Looked it up.")]);

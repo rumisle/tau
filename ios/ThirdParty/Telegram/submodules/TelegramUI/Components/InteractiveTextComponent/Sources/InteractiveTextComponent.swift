@@ -3286,7 +3286,11 @@ final class TextContentItemLayer: SimpleLayer {
         if let lowestAnimating = self.animatingSnippetLayers.min(by: { $0.characterIndex < $1.characterIndex })?.characterIndex {
             maskCharacterLimit = lowestAnimating
         } else {
-            maskCharacterLimit = self.previousMaxCharacterDrawCount
+            // tau: with no snippet animating, what is revealed now shows now. Up to the count before, the characters this
+            // reveal added (none of which got a snippet: text laid out without character rects, or not drawn yet) showed
+            // only at the next call, and when the reveal stopped there, never: a block revealed in one step (a chat back
+            // from the background, its text shown as written) stayed blank while the model went on thinking.
+            maskCharacterLimit = effectiveCharacterDrawCount
         }
         let maskLineInfos = self.computeRevealedLines(lines: lines, layerSize: layerSize, offset: offset, characterLimit: maskCharacterLimit)
 
