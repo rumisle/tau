@@ -75,9 +75,12 @@ test('an answer\'s menu open, its footer says the date from another day, the yea
   await answer.locator('[data-tau-part="text"] p').first().click({ button: 'right' });
   await expect(footer).toContainText(`${day} ${time(sent)}`);
   // How fast the model answered (server/src/timing.ts)
-  await expect(footer).toContainText(/\ds to first token/);
+  await expect(footer).toContainText(/ttft \d/);
+  // On the footer's one line: the speed adds no line
+  const lines = await footer.evaluate((node) => Math.round(node.getBoundingClientRect().height / parseFloat(getComputedStyle(node).lineHeight)));
+  expect(lines).toBe(1);
   await app.keyboard.press('Escape');
-  await expect(footer).not.toContainText('first token');
+  await expect(footer).not.toContainText('ttft');
   await expect(footer).not.toContainText(day);
   // Next year: the year too
   const nextYear = new Date(sent);

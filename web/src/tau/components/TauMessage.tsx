@@ -110,16 +110,16 @@ const TauMessage = ({
   }
 
   const { runEnd } = tau;
-  // How long the run took, and the model errors the server asked past, as iOS's footer
+  // How long the run took, and the model errors the server asked past, as iOS's footer; while its menu is open, as
+  // iOS's lifted message, how fast the model wrote on the same line, and the date beside the time
   const workedFor = [
     runEnd?.workedForMs !== undefined && runEnd.workedForMs >= 1000
       ? `worked for ${formatDuration(runEnd.workedForMs)}` : undefined,
     runEnd?.retries ? (runEnd.retries === 1 ? STRINGS.RetriedOnce
       : STRINGS.RetriedTimes.replace('{n}', String(runEnd.retries))) : undefined,
+    runEnd && isContextMenuOpen ? formatRunSpeed(runEnd) : undefined,
   ].filter(Boolean).join(', ') || undefined;
-  // While its menu is open, as iOS's lifted message: the date beside the time, and how fast the model wrote
   const date = secondsToDate(message.date);
-  const speed = runEnd && isContextMenuOpen ? formatRunSpeed(runEnd) : undefined;
 
   return (
     <div
@@ -140,11 +140,10 @@ const TauMessage = ({
       {tau.parts.map(renderPart)}
       {runEnd && !message.isTypingDraft && (
         <div className={styles.footer} data-tau-part="footer">
-          <span>{workedFor}</span>
+          <span className={styles.run}>{workedFor}</span>
           <span title={formatDateTime(lang, date, { date: 'short', time: 'long' })}>
             {isContextMenuOpen ? formatMessageDate(lang, date) : formatDateTime(lang, date, { time: 'short' })}
           </span>
-          {speed && <span className={styles.speed}>{speed}</span>}
         </div>
       )}
       {contextMenuAnchor && (

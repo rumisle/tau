@@ -322,10 +322,9 @@ private func contentHeight(_ blocks: [LaidOutBlock], revealed: Int?) -> CGFloat 
 final class ChatMessageItemNode: ListViewItemNode {
     private let bubbleNode = GradientBubbleNode()
     private let dateNode = TextNode()
-    /// An answer's run, on the left of its footer: "worked for 38s", with the time on the right.
+    /// An answer's run, on the left of its footer: "worked for 38s", with the time on the right; lifted, how fast the
+    /// model answered too: "worked for 38s, ttft 1.2s, 68 tok/s".
     private let runNode = TextNode()
-    /// Under it, how fast the model answered: "1.2s to first token, 68 tokens/s".
-    private let speedNode = TextNode()
     /// Telegram's status after the time: the turning clock while on its way, two checks once the model has it.
     private let clockFrameNode = ASImageNode()
     private let clockMinNode = ASImageNode()
@@ -386,7 +385,6 @@ final class ChatMessageItemNode: ListViewItemNode {
         didSet {
             // Only an answer's footer has them; that layout shows them again.
             self.runNode.isHidden = true
-            self.speedNode.isHidden = true
         }
     }
     private var laidOutBlocks: [LaidOutBlock] = []
@@ -441,8 +439,6 @@ final class ChatMessageItemNode: ListViewItemNode {
         self.contentNode.addSubnode(self.dateNode)
         self.runNode.isHidden = true
         self.contentNode.addSubnode(self.runNode)
-        self.speedNode.isHidden = true
-        self.contentNode.addSubnode(self.speedNode)
         for node in [self.clockFrameNode, self.clockMinNode, self.checkSentNode, self.checkReadNode] {
             node.isLayerBacked = true
             node.displaysAsynchronously = false
@@ -1108,7 +1104,6 @@ final class ChatMessageItemNode: ListViewItemNode {
     func asyncLayout() -> (_ item: ChatMessageItem, _ params: ListViewItemLayoutParams, _ neighbors: ListViewItemNeighbors) -> (ListViewItemNodeLayout, (ListViewItemUpdateAnimation) -> Void) {
         let makeDateLayout = TextNode.asyncLayout(self.dateNode)
         let makeRunLayout = TextNode.asyncLayout(self.runNode)
-        let makeSpeedLayout = TextNode.asyncLayout(self.speedNode)
         let makeToolTitleLayout = TextNode.asyncLayout(self.toolTitleNode)
         let makeToolTextLayout = TextNode.asyncLayout(self.toolTextNode)
         let makeToolShowAllLayout = TextNode.asyncLayout(self.toolShowAllNode)
@@ -1466,8 +1461,6 @@ final class ChatMessageItemNode: ListViewItemNode {
                 var footerApply: (() -> TextNode)?
                 var runLayout: TextNodeLayout?
                 var runApply: (() -> TextNode)?
-                var speedLayout: TextNodeLayout?
-                var speedApply: (() -> TextNode)?
                 if let turn = message.turn, !item.isStreaming, revealed == nil {
                     let (layout, apply) = makeDateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.showsDetails ? messageDateString(turn.finishedAt) : messageTimeString(turn.finishedAt), font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 40.0)))
                     footerLayout = layout
@@ -1480,20 +1473,18 @@ final class ChatMessageItemNode: ListViewItemNode {
                     if let duration = turn.duration, duration >= 1.0 {
                         parts.append("worked for \(formatDuration(duration))")
                     }
+                    // Lifted: how fast the model answered, on the same line, cut at its end when it does not fit.
+                    if item.showsDetails, let speed = runSpeedString(turn) {
+                        parts.append(speed)
+                    }
                     if !parts.isEmpty {
                         let (layout, apply) = makeRunLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: parts.joined(separator: ", "), font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth - layout.size.width - 12.0, height: 40.0)))
                         runLayout = layout
                         runApply = apply
                     }
-                    if item.showsDetails, let speed = runSpeedString(turn) {
-                        let (layout, apply) = makeSpeedLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: speed, font: dateFont(item.theme), textColor: theme.freeSecondaryTextColor), maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: 40.0)))
-                        speedLayout = layout
-                        speedApply = apply
-                    }
                 }
                 let footerSpacing: CGFloat = 5.0
-                let speedSpacing: CGFloat = 1.0
-                let height = textHeight + (footerLayout.map { footerSpacing + $0.size.height } ?? 0.0) + (speedLayout.map { speedSpacing + $0.size.height } ?? 0.0)
+                let height = textHeight + (footerLayout.map { footerSpacing + $0.size.height } ?? 0.0)
                 let insets = UIEdgeInsets(top: mergedTop ? 6.0 : 10.0, left: 0.0, bottom: 6.0, right: 0.0)
                 let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: insets)
 
@@ -1501,14 +1492,13 @@ final class ChatMessageItemNode: ListViewItemNode {
                     guard let self else {
                         return
                     }
-                    // Lifted or put back: the time and the date with it cross-fade, and the speed's line fades in
-                    // under them, or out.
+                    // Lifted or put back: the time and the date with it, and the run's line with its speed, cross-fade.
                     let detailsChanged = self.item.map { $0.message.id == item.message.id && $0.showsDetails != item.showsDetails } ?? false
+                    // A run too short for "worked for" has no line until it is lifted: then it fades in.
+                    let runWasHidden = self.runNode.isHidden
                     if detailsChanged {
                         self.crossfade(self.dateNode)
-                        if !self.speedNode.isHidden {
-                            self.fadeOutSnapshot(of: self.speedNode)
-                        }
+                        self.crossfade(self.runNode)
                     }
                     self.item = item
                     self.laidOutBlocks = laidOut
@@ -1525,19 +1515,11 @@ final class ChatMessageItemNode: ListViewItemNode {
                         self.dateNode.frame = CGRect(origin: CGPoint(x: x + maxTextWidth - footerLayout.size.width, y: textHeight + footerSpacing), size: footerLayout.size)
                         if let runLayout, let runApply {
                             let _ = runApply()
-                            if appearing {
+                            if appearing || (detailsChanged && runWasHidden) {
                                 self.runNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.25)
                             }
                             self.runNode.isHidden = false
                             self.runNode.frame = CGRect(origin: CGPoint(x: x, y: textHeight + footerSpacing), size: runLayout.size)
-                        }
-                        if let speedLayout, let speedApply {
-                            let _ = speedApply()
-                            if appearing || detailsChanged {
-                                self.speedNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.25)
-                            }
-                            self.speedNode.isHidden = false
-                            self.speedNode.frame = CGRect(origin: CGPoint(x: x, y: textHeight + footerSpacing + footerLayout.size.height + speedSpacing), size: speedLayout.size)
                         }
                     } else {
                         self.dateNode.isHidden = true
@@ -3142,15 +3124,15 @@ func messageDateString(_ date: Date, now: Date = Date()) -> String {
     return "\(formatter.string(from: date)) \(time)"
 }
 
-/// How fast a run's model answered, under its answer: "1.2s to first token, 68 tokens/s", either alone when the other
-/// is not known.
+/// How fast a run's model answered, after "worked for" while its answer is lifted: "ttft 1.2s, 68 tok/s", either alone
+/// when the other is not known.
 func runSpeedString(_ turn: TurnInfo) -> String? {
     var parts: [String] = []
     if let firstToken = turn.firstToken {
-        parts.append("\(formatDuration(firstToken)) to first token")
+        parts.append("ttft \(formatDuration(firstToken))")
     }
     if let speed = turn.tokensPerSecond {
-        parts.append("\(Int(speed.rounded())) tokens/s")
+        parts.append("\(Int(speed.rounded())) tok/s")
     }
     return parts.isEmpty ? nil : parts.joined(separator: ", ")
 }

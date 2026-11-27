@@ -30,11 +30,11 @@ export function formatDuration(ms: number) {
   return `${Math.floor(seconds / 3600)}h ${pad(Math.floor((seconds % 3600) / 60))}m`;
 }
 
-/** As iOS's `runSpeedString`: "1.2s to first token, 68 tokens/s", either alone when the other is not known */
+/** As iOS's `runSpeedString`: "ttft 1.2s, 68 tok/s", either alone when the other is not known */
 export function formatRunSpeed(speed: { firstTokenMs?: number; tokensPerSecond?: number }) {
   return [
-    speed.firstTokenMs !== undefined ? `${formatDuration(speed.firstTokenMs)} to first token` : undefined,
-    speed.tokensPerSecond !== undefined ? `${Math.round(speed.tokensPerSecond)} tokens/s` : undefined,
+    speed.firstTokenMs !== undefined ? `ttft ${formatDuration(speed.firstTokenMs)}` : undefined,
+    speed.tokensPerSecond !== undefined ? `${Math.round(speed.tokensPerSecond)} tok/s` : undefined,
   ].filter(Boolean).join(', ') || undefined;
 }
 

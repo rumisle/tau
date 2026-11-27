@@ -190,6 +190,22 @@ final class SendingUITests: XCTestCase {
         XCTAssertEqual(field, "one\n\ntwo")
     }
 
+    /// A lifted answer: how fast the model answered joins "worked for" on the footer's one line, the date beside the time.
+    func testAnswerSpeedLifted() {
+        self.launch(["-newChat", "YES"])
+        self.focusInput()
+        self.type("$ sleep 2 && echo done")
+        self.send()
+        self.app.waitForBusy()
+        XCTAssertTrue(self.app.waitForIdle(timeout: 20))
+        settle()
+        self.shot("speed-0-footer")
+        let answer = self.app.descendants(matching: .any).matching(identifier: "assistantMessage").allElementsBoundByIndex.last!
+        answer.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).press(forDuration: 1.0)
+        settle()
+        self.shot("speed-1-lifted")
+    }
+
     /// A subagent's report waiting for the chat's step stays queued through Stop, as its answer, not back in the field.
     func testStopKeepsSubagentReport() {
         self.launch(["-newChat", "YES"])
