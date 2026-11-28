@@ -31,7 +31,10 @@ with the dev model's `!doc <sections>` (a long answer of headings, paragraphs, l
   goes on below, under the arrow to the end. While text is selected in place (docs/typography.md) it grows down at the
   end of the chat too (`ListViewImpl.holdsGrowingItems`, patch 0018).
 - **Inside a streaming row nothing animates**: blocks are put in place at once, and only the row's height animates in
-  the list. New text comes in through Telegram's reveal (`TextRevealController`).
+  the list. New text comes in through Telegram's reveal (`TextRevealController`), spread over at most 0.35 s (patch
+  0020): it paced what came to last until the next text was due, and the first text at 40 characters a second, so
+  thinking a model sends a paragraph at once, seconds apart (Claude's summaries), crept in over those seconds. Tokens
+  tens of milliseconds apart come in as smoothly as before (TauTests/TextRevealTests.swift).
 - **The streaming row is drawn as it is laid out** (`displaysAsynchronously = false`, with InteractiveTextNode patched
   so that its segments follow). A segment whose characters, lines and places are the same as before keeps its drawing,
   so a step draws only the paragraph that grew: about 0.8 ms a step on the main thread (90th percentile 2 ms).

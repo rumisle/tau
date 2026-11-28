@@ -8,6 +8,11 @@ public final class TextRevealController {
     private static let finalizeTime: Double = 0.3
     private static let frameDtCap: Double = 0.05
     private static let initialInputRate: Double = 40.0
+    /// tau: the longest the reveal spreads text that has come over. It paced what came to last until the next text was
+    /// due, by the gaps so far, and the first text at 40 characters a second: a model that sends its thinking a paragraph
+    /// at once, seconds apart (Claude's summaries), had each paragraph creep in over those seconds. The reveal is there
+    /// to smooth a stream's tokens, which come tens of milliseconds apart; a paragraph that came shows within a moment.
+    private static let maxSpread: Double = 0.35
 
     public private(set) var revealedCount: Double
     private var velocity: Double = 0.0
@@ -73,9 +78,9 @@ public final class TextRevealController {
         if self.isFinalizing {
             targetVelocity = max(self.velocity, lag / TextRevealController.finalizeTime)
         } else if self.chunkCount < 2 {
-            targetVelocity = lag > 0.0 ? TextRevealController.initialInputRate : 0.0
+            targetVelocity = lag > 0.0 ? max(TextRevealController.initialInputRate, lag / TextRevealController.maxSpread) : 0.0
         } else if let predNext = self.predictedNextArrivalTime {
-            let timeToNext = max(TextRevealController.stallFloor, predNext - now)
+            let timeToNext = min(TextRevealController.maxSpread, max(TextRevealController.stallFloor, predNext - now))
             targetVelocity = lag / timeToNext
         } else {
             targetVelocity = lag > 0.0 ? TextRevealController.initialInputRate : 0.0

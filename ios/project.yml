@@ -188,7 +188,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: YES
-  # The pure logic's unit tests (docs/reading-position.md, server addresses): its files compiled in, no app to host them.
+  # The pure logic's unit tests (docs/reading-position.md, server addresses, the streaming reveal's pacing): its files compiled in, no app to host them.
   TauTests:
     type: bundle.unit-test
     platform: iOS
@@ -196,6 +196,7 @@ targets:
       - path: TauTests
       - path: Tau/Chat/ReadingPosition.swift
       - path: Tau/Settings/ServerAddress.swift
+      - path: ThirdParty/Telegram/submodules/TelegramUI/Components/StreamingTextReveal/Sources/TextRevealController.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TAU_BUNDLE_ID).tests
